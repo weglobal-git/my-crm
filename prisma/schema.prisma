@@ -1,0 +1,208 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- NEXTAUTH SCHEMA ---
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  
+  // RBAC Fields
+  role          Role      @default(STAFF)
+  departmentId  String?
+
+  accounts      Account[]
+  sessions      Session[]
+  department    Department? @relation(fields: [departmentId], references: [id])
+  
+  // CRM Relations
+  deals         Deal[]      @relation("DealOwner")
+  quotations    Quotation[] @relation("QuotationCreator")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+model Department {
+  id    String @id @default(cuid())
+  name  String @unique
+  users User[]
+}
+
+// --- CRM SCHEMA ---
+
+model Customer {
+  id          String   @id @default(cuid())
+  name        String   // Company Name
+  email       String?
+  phone       String?
+  address     String?  @db.Text
+  country     String?
+  
+  deals       Deal[]
+  quotations  Quotation[]
+  customPrices CustomerPrice[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Deal {
+  id          String   @id @default(cuid())
+  name        String   // Project Name
+  value       Float?
+  
+  stageId     String
+  stage       PipelineStage @relation(fields: [stageId], references: [id])
+  
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+
+  ownerId     String
+  owner       User     @relation("DealOwner", fields: [ownerId], references: [id])
+
+  quotations  Quotation[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model PipelineStage {
+  id          String   @id @default(cuid())
+  name        String   // e.g., "New Lead", "Negotiation", "Closed Won"
+  order       Int      // For Kanban sorting
+  deals       Deal[]
+}
+
+// --- PRODUCTS & QUOTATION SCHEMA ---
+
+model Product {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  description String?  @db.Text
+  basePrice   Float    // Default price
+  weight      Float?   // Weight per unit (kg)
+  cbm         Float?   // CBM per unit (m3)
+
+  quotationItems QuotationItem[]
+  customPrices   CustomerPrice[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// For customer-specific pricing
+model CustomerPrice {
+  id          String   @id @default(cuid())
+  price       Float
+
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+  
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([productId, customerId])
+}
+
+model Quotation {
+  id          String   @id @default(cuid())
+  quoteNumber String   @unique // e.g., QT-2026-0001
+  status      QuoteStatus @default(DRAFT)
+  
+  totalAmount Float    @default(0)
+  totalWeight Float    @default(0)
+  totalCBM    Float    @default(0)
+
+  // Relations
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+
+  dealId      String?
+  deal        Deal?    @relation(fields: [dealId], references: [id])
+
+  creatorId   String
+  creator     User     @relation("QuotationCreator", fields: [creatorId], references: [id])
+
+  items       QuotationItem[]
+
+  validUntil  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+  INVOICED
+}
+
+model QuotationItem {
+  id          String   @id @default(cuid())
+  quantity    Int
+  unitPrice   Float
+  discount    Float    @default(0)
+  
+  // Calculated fields stored for historical record in case product changes
+  totalPrice  Float
+  totalWeight Float?
+  totalCBM    Float?
+
+  quotationId String
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+}
