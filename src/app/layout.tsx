@@ -9,6 +9,8 @@ export const metadata: Metadata = {
 import { SessionProvider } from "@/components/providers/SessionProvider";
 import { ClientShell } from "@/components/layout/ClientShell";
 
+import { DialogProvider } from "@/providers/DialogProvider";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
@@ -17,9 +19,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body className="min-h-full flex h-screen overflow-hidden text-slate-900 bg-[var(--background)]">
         <SessionProvider>
-          <ClientShell>
-            {children}
-          </ClientShell>
+          <DialogProvider>
+            <ClientShell>
+              {children}
+            </ClientShell>
+          </DialogProvider>
         </SessionProvider>
       </body>
     </html>

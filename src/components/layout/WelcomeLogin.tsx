@@ -65,7 +65,7 @@ export function WelcomeLogin() {
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
-              className="w-full btn-secondary text-base disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3 border-gray-300 shadow-sm"
+              className="w-full btn-secondary text-base disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3 border-gray-300 "
             >
               {loading ? (
                 <span className="flex items-center gap-2">

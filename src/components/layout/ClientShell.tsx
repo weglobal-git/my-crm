@@ -4,6 +4,7 @@ import { useSession } from "next-auth/react";
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { ReactNode } from "react";
+import { PermissionProvider } from "@/providers/PermissionProvider";
 
 export function ClientShell({ children }: { children: ReactNode }) {
   const { data: session, status } = useSession();
@@ -21,14 +22,14 @@ export function ClientShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <>
+    <PermissionProvider>
       {session && <Sidebar />}
       <div className="flex flex-1 flex-col overflow-hidden">
         {session && <Header />}
-        <main className={`flex-1 overflow-y-auto ${session ? 'px-10 pb-10 pt-2' : ''}`}>
+        <main className="flex-1 flex flex-col h-full overflow-hidden">
           {children}
         </main>
       </div>
-    </>
+    </PermissionProvider>
   );
 }

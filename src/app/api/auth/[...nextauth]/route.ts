@@ -3,8 +3,10 @@ import GoogleProvider from "next-auth/providers/google"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import prisma from "@/lib/prisma"
 
+import { Adapter } from "next-auth/adapters";
+
 export const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma) as unknown as any, // Using unknown to satisfy strict linting before any if needed, actually NextAuth type system often needs 'any' here. Let's use `as Adapter` if we can.
+  adapter: PrismaAdapter(prisma) as Adapter,
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID as string,
@@ -31,7 +33,11 @@ export const authOptions: NextAuthOptions = {
       
       return true;
     },
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
+      if (trigger === "update" && session?.image) {
+        token.picture = session.image;
+      }
+      
       if (user) {
         // Auto-promote weglobal.server@gmail.com to ADMIN if needed
         if (user.email === "weglobal.server@gmail.com") {
@@ -41,14 +47,14 @@ export const authOptions: NextAuthOptions = {
            });
         }
 
-        // Find the user from the database to get their role and department
         const dbUser = await prisma.user.findUnique({
           where: { id: user.id },
-          include: { department: true }
+          include: { departments: true }
         })
         if (dbUser) {
           token.role = dbUser.role
-          token.department = dbUser.department?.name || null
+          token.departments = dbUser.departments.map(d => d.name)
+          token.picture = dbUser.image
         }
       }
       return token
@@ -57,7 +63,8 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.sub as string
         session.user.role = token.role as string
-        session.user.department = token.department as string | null
+        session.user.departments = (token.departments as string[]) || []
+        session.user.image = token.picture as string | null | undefined
       }
       return session
     }

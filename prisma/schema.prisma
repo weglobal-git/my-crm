@@ -44,11 +44,10 @@ model User {
   
   // RBAC Fields
   role          Role      @default(GENERAL)
-  departmentId  String?
 
   accounts      Account[]
   sessions      Session[]
-  department    Department? @relation(fields: [departmentId], references: [id])
+  departments   Department[]
   
   // CRM Relations
   opportunities Opportunity[] @relation("OpportunityOwner")
@@ -112,9 +111,43 @@ enum NotificationStatus {
 }
 
 model Department {
-  id    String @id @default(cuid())
-  name  String @unique
-  users User[]
+  id          String @id @default(cuid())
+  name        String @unique
+  users       User[]
+  permissions DepartmentMenuPermission[]
+}
+
+// ====== Menu System ======
+
+model MenuItem {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  label       String
+  level       Int
+  parentKey   String?
+  icon        String?
+  href        String?
+  description String?  @db.Text
+  sortOrder   Int      @default(0)
+
+  permissions DepartmentMenuPermission[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model DepartmentMenuPermission {
+  id            String   @id @default(cuid())
+
+  departmentId  String
+  department    Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+
+  menuItemId    String
+  menuItem      MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  visible       Boolean  @default(false)
+
+  @@unique([departmentId, menuItemId])
 }
 
 // --- CRM SCHEMA ---

@@ -1,7 +1,7 @@
 "use server";
 
 import prisma from "@/lib/prisma";
-import { OpportunityStatus, BoardType, Prisma } from "@prisma/client";
+import { OpportunityStatus, Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 
 export async function moveOpportunity(

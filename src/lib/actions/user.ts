@@ -19,7 +19,7 @@ export async function getUsers() {
     throw new Error("Unauthorized.");
   }
   return await prisma.user.findMany({
-    include: { department: true },
+    include: { departments: true },
     orderBy: { createdAt: "desc" }
   });
 }
@@ -44,11 +44,15 @@ export async function updateUserRole(userId: string, newRole: Role) {
   return user;
 }
 
-export async function updateUserDepartment(userId: string, departmentId: string | null) {
+export async function updateUserDepartments(userId: string, departmentIds: string[]) {
   await checkAdmin();
   const user = await prisma.user.update({
     where: { id: userId },
-    data: { departmentId: departmentId }
+    data: { 
+      departments: {
+        set: departmentIds.map(id => ({ id }))
+      }
+    }
   });
   revalidatePath("/user");
   return user;
@@ -83,10 +87,10 @@ export async function deleteDepartment(id: string) {
   return true;
 }
 
-export async function createUser(data: { name: string, email: string, role: Role, departmentId: string }) {
+export async function createUser(data: { name: string, email: string, role: Role, departmentIds: string[] }) {
   await checkAdmin();
-  if (!data.name.trim() || !data.email.trim() || !data.role || !data.departmentId || data.departmentId === "NONE") {
-    throw new Error("Name, Email, Role, and Department are required.");
+  if (!data.name.trim() || !data.email.trim() || !data.role) {
+    throw new Error("Name, Email, and Role are required.");
   }
   
   const existingEmail = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
@@ -111,7 +115,9 @@ export async function createUser(data: { name: string, email: string, role: Role
       name: data.name.trim(),
       email: data.email.toLowerCase(),
       role: data.role,
-      departmentId: data.departmentId
+      departments: {
+        connect: data.departmentIds.map(id => ({ id }))
+      }
     }
   });
   

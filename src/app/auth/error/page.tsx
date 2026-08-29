@@ -15,7 +15,7 @@ function AuthErrorContent() {
   }
 
   return (
-    <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-100 max-w-md w-full text-center animate-fade-in-up">
+    <div className="bg-white rounded-3xl p-8  border border-slate-100 max-w-md w-full text-center animate-fade-in-up">
       <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
         <AlertTriangle className="w-8 h-8 text-red-500" />
       </div>
@@ -28,7 +28,7 @@ function AuthErrorContent() {
       
       <Link 
         href="/"
-        className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-3.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors shadow-sm"
+        className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-3.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors "
       >
         <ArrowLeft className="w-4 h-4" />
         Back to Login

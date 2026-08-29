@@ -1,4 +1,4 @@
-import { PrismaClient, BoardType, OpportunityType, OpportunityStatus } from '@prisma/client'
+import { PrismaClient, BoardType } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {

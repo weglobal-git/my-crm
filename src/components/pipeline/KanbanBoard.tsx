@@ -19,7 +19,8 @@ import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCardUI, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
 import { PipelineStage } from "@prisma/client";
 import { moveOpportunity } from "@/lib/actions/opportunity";
-import { EditDealPanel } from "./EditDealPanel";
+import { EditDealPanel, TabType } from "./EditDealPanel";
+import { useDialog } from "@/providers/DialogProvider";
 
 interface KanbanBoardProps {
   initialStages: PipelineStage[];
@@ -27,6 +28,7 @@ interface KanbanBoardProps {
 }
 
 export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoardProps) {
+  const { toast } = useDialog();
   // Group opportunities by stageId
   const initialDeals = initialStages.reduce((acc, stage) => {
     const stageDeals = initialOpportunities.filter(o => o.pipelineStageId === stage.id);
@@ -73,14 +75,16 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
       return acc;
     }, {} as Record<string, OpportunityWithRelations[]>);
 
-    setDeals(newDeals);
+    setTimeout(() => {
+      setDeals(newDeals);
 
-    setSelectedDeal(prev => {
-      if (!prev) return prev;
-      const freshDeal = initialOpportunities.find(o => o.id === prev.deal.id);
-      if (freshDeal) return { ...prev, deal: freshDeal };
-      return prev;
-    });
+      setSelectedDeal(prev => {
+        if (!prev) return prev;
+        const freshDeal = initialOpportunities.find(o => o.id === prev.deal.id);
+        if (freshDeal) return { ...prev, deal: freshDeal };
+        return prev;
+      });
+    }, 0);
   }, [initialOpportunities, initialStages, activeDeal]);
 
   const sensors = useSensors(
@@ -88,12 +92,12 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const findColumnOfDeal = (dealId: string) => {
+  const findColumnOfDeal = useCallback((dealId: string) => {
     for (const [colId, colDeals] of Object.entries(deals)) {
       if (colDeals.some(d => d.id === dealId)) return colId;
     }
     return null;
-  };
+  }, [deals]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event;
@@ -139,7 +143,7 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
 
       return { ...prev, [activeCol]: sourceItems, [overCol]: destItems };
     });
-  }, [deals, initialStages]);
+  }, [initialStages, findColumnOfDeal]);
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -170,15 +174,17 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
 
     try {
       await moveOpportunity(activeId, columnId);
-    } catch (error: any) {
-      alert("Error moving opportunity: " + error.message);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        toast({ title: "Error", description: "Error moving opportunity: " + error.message, type: "error" });
+      }
       // Ideally revert state here on failure
     }
-  }, [deals]);
+  }, [findColumnOfDeal, toast]);
 
   return (
     <>
-      <div className="w-full flex gap-6 overflow-x-auto pb-8 custom-scrollbar">
+      <div className="w-full flex gap-6 overflow-x-auto pb-8 hide-scrollbar">
         <DndContext
           id="kanban-dnd"
           sensors={sensors}
@@ -210,7 +216,7 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
       {selectedDeal && (
         <EditDealPanel 
           deal={selectedDeal.deal} 
-          initialTab={selectedDeal.tab as any}
+          initialTab={selectedDeal.tab as TabType}
           isOpen={!!selectedDeal} 
           onClose={() => setSelectedDeal(null)} 
         />

@@ -70,7 +70,7 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
       className={`
         w-full p-3 rounded-[2rem] flex flex-col gap-5
         ${highlight ? "bg-[#d4ff3a]" : "bg-white"}
-        ${isDragging ? "opacity-30" : "shadow-sm hover:shadow-md cursor-pointer"}
+        ${isDragging ? "opacity-30" : "  cursor-pointer"}
       `}
     >
       {/* Top row: Avatar, Name, Company, Arrow/Bell */}
@@ -79,7 +79,7 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
           <div className="relative mr-2 flex-shrink-0">
             <div 
               onClick={(e) => { e.stopPropagation(); onOpenPanel?.('collaborate'); }}
-              className="w-12 h-12 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center shrink-0 border-2 border-white shadow-sm cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative z-10"
+              className="w-12 h-12 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center shrink-0 border-2 border-white  cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative z-10"
             >
               <img 
                 src={deal.owner.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
@@ -89,7 +89,7 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
             </div>
             {deal.teamMembers && deal.teamMembers.length > 0 && (
               <div 
-                className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full border-2 border-white bg-[#111111] text-white flex items-center justify-center text-[12px] font-bold z-20 cursor-pointer shadow-sm"
+                className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full border-2 border-white bg-[#111111] text-white flex items-center justify-center text-[12px] font-bold z-20 cursor-pointer "
                 title={`${deal.teamMembers.length} team members`}
                 onClick={(e) => { e.stopPropagation(); onOpenPanel?.('collaborate'); }}
               >

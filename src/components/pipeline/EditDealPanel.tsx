@@ -1,6 +1,6 @@
 "use client";
 
-import { X, MessageSquare, Send, Users, Building2, FileText, FileBadge, Image as ImageIcon, Paperclip } from "lucide-react";
+import { X, MessageSquare, Send, Users } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { useRouter } from "next/navigation";
 import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog } from "@/lib/actions/opportunity";
@@ -11,6 +11,9 @@ import { useEffect, useState, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { User } from "@prisma/client";
 import { MoreHorizontal } from "lucide-react";
+import { usePermissions } from "@/providers/PermissionProvider";
+import { IconMap } from "@/lib/menu-registry";
+import { useDialog } from "@/providers/DialogProvider";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
@@ -22,7 +25,7 @@ const renderCommentContent = (text: string) => {
   return parts.map((part, index) => {
     if (part.startsWith('@')) {
       return (
-        <span key={index} className="font-bold text-black bg-[#d4ff3a] px-1.5 py-1 rounded-md text-xs mx-0.5 shadow-sm">
+        <span key={index} className="font-bold text-black bg-[#d4ff3a] px-1.5 py-1 rounded-md text-xs mx-0.5 ">
           {part}
         </span>
       );
@@ -125,7 +128,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
                 </button>
                 
                 {showMenu && (
-                  <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg flex flex-col py-1 w-24 z-10">
+                  <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-lg  flex flex-col py-1 w-24 z-10">
                     <button 
                       onClick={() => { setIsEditing(true); setShowMenu(false); }} 
                       className="text-left px-3 py-1.5 hover:bg-slate-50 text-slate-700 text-sm"
@@ -190,7 +193,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
                 <div className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 min-h-[60px] focus-within:ring-1 focus-within:ring-slate-300 flex flex-col gap-1">
                   {replyingToUsername && (
                     <div className="flex items-center gap-1 mb-1">
-                      <span className="font-bold text-black bg-[#d4ff3a] px-1.5 py-1 rounded-md text-xs shadow-sm flex items-center gap-1">
+                      <span className="font-bold text-black bg-[#d4ff3a] px-1.5 py-1 rounded-md text-xs  flex items-center gap-1">
                         @{replyingToUsername}
                         <button onClick={() => setReplyingToUsername(null)} className="hover:text-slate-600 ml-0.5">
                           <X className="w-3 h-3" />
@@ -209,7 +212,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
                 </div>
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => { setIsReplying(false); setReplyingToUsername(null); }} className="text-xs font-semibold text-slate-500 hover:underline">Cancel</button>
-                  <button onClick={handleReply} className="text-xs font-bold bg-[#d4ff3a] text-black px-3 py-1.5 rounded-full hover:bg-[#b3ff25] shadow-sm"><Send className="w-3 h-3 inline mr-1"/> Reply</button>
+                  <button onClick={handleReply} className="text-xs font-bold bg-[#d4ff3a] text-black px-3 py-1.5 rounded-full hover:bg-[#b3ff25] "><Send className="w-3 h-3 inline mr-1"/> Reply</button>
                 </div>
               </div>
             </div>
@@ -220,7 +223,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
   );
 }
 
-type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'document' | 'images' | 'files';
+export type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'document' | 'images' | 'files';
 
 interface EditDealPanelProps {
   deal: OpportunityWithRelations;
@@ -233,12 +236,14 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const router = useRouter();
   const [newLog, setNewLog] = useState("");
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
+  const { visibleRightMenus } = usePermissions();
+  const rightMenus = visibleRightMenus("pipeline");
   
-  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
-    // Toast logic can be implemented here
-    console.log(text, type);
-  };
+  // Try to find the initial tab matching a visible right menu, fallback to the first one available
+  const allowedInitialTab = rightMenus.find(m => m.key.endsWith(`.${initialTab}`)) ? initialTab : (rightMenus[0]?.key.split('.').pop() as TabType || 'activity');
+  const [activeTab, setActiveTab] = useState<TabType>(allowedInitialTab);
+  
+  const { toast } = useDialog();
 
   // Users state for ownership transfer
   const [users, setUsers] = useState<Awaited<ReturnType<typeof getAllUsers>>>([]);
@@ -276,7 +281,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       router.refresh();
     } catch (e) {
       if (e instanceof Error) {
-        showToast("Failed to add log: " + e.message, 'error');
+        toast({ title: "Error", description: "Failed to add log: " + e.message, type: "error" });
       }
     } finally {
       setIsSubmittingLog(false);
@@ -291,15 +296,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       
       const newOwner = users.find(u => u.id === newOwnerId);
       if (session?.user?.id && newOwner) {
-        await addSystemLog(deal.id, `Requested to transfer ownership to ${newOwner.name}`, session.user.id);
+        await addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`, session?.user?.id || 'SYSTEM');
       }
-      
-      showToast("Transfer request sent successfully!");
+      toast({ title: "Success", description: "Transfer request sent successfully", type: "success" });
       router.refresh();
     } catch (e) {
-      if (e instanceof Error) {
-        showToast("Failed to request transfer: " + e.message, 'error');
-      }
+      console.error(e);
+      toast({ title: "Error", description: "Failed to transfer ownership", type: "error" });
     } finally {
       setIsTransferring(false);
     }
@@ -324,7 +327,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       router.refresh();
     } catch (e) {
       setLocalTeamMembers(deal.teamMembers || []); // Revert
-      if (e instanceof Error) showToast(e.message, 'error');
+      if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
     } finally {
       setIsUpdatingTeam(false);
     }
@@ -346,7 +349,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       router.refresh();
     } catch (e) {
       setLocalTeamMembers(deal.teamMembers || []); // Revert
-      if (e instanceof Error) alert(e.message);
+      if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
     } finally {
       setIsUpdatingTeam(false);
     }
@@ -364,16 +367,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   if (!isOpen && !mounted) return null;
 
-  const tabs = [
-    { id: 'activity', icon: MessageSquare, label: 'Activity Log' },
-    { id: 'collaborate', icon: Users, label: 'Collaborate' },
-    { id: 'information', icon: Building2, label: 'Information' },
-    { id: 'notes', icon: FileText, label: 'Notes' },
-    { id: 'document', icon: FileBadge, label: 'Document' },
-    { id: 'images', icon: ImageIcon, label: 'Images' },
-    { id: 'files', icon: Paperclip, label: 'Files' },
-  ];
-
   return (
     <>
       <div 
@@ -384,26 +377,30 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       <div className={`fixed inset-y-0 right-0 z-50 flex transform transition-transform duration-300 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
         
         {/* Tab Sidebar */}
-        <div className="w-16 bg-white border-r border-slate-100 shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.05)] flex flex-col items-center py-3 gap-3 z-10 rounded-l-2xl">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as TabType)}
-              title={tab.label}
-              className={`
-                flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200
-                ${activeTab === tab.id || (activeTab === 'system' && tab.id === 'activity')
-                  ? "bg-[#111111] text-white shadow-md" 
-                  : "text-[#888888] hover:bg-[#F4F5F7] hover:text-[#111111]"}
-              `}
-            >
-              <tab.icon className="h-5 w-5" strokeWidth={activeTab === tab.id || (activeTab === 'system' && tab.id === 'activity') ? 2.5 : 2} />
-            </button>
-          ))}
+        <div className="w-16 bg-white border-r border-slate-100  flex flex-col items-center py-3 gap-3 z-10 rounded-l-2xl">
+          {rightMenus.map(menu => {
+            const tabId = menu.key.split('.').pop() as TabType;
+            const Icon = menu.iconName ? IconMap[menu.iconName] : MessageSquare;
+            return (
+              <button
+                key={menu.key}
+                onClick={() => setActiveTab(tabId)}
+                title={menu.label}
+                className={`
+                  flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200
+                  ${activeTab === tabId || (activeTab === 'system' && tabId === 'activity')
+                    ? "bg-[#111111] text-white " 
+                    : "text-[#888888] hover:bg-[#F4F5F7] hover:text-[#111111]"}
+                `}
+              >
+                <Icon className="h-5 w-5" strokeWidth={activeTab === tabId || (activeTab === 'system' && tabId === 'activity') ? 2.5 : 2} />
+              </button>
+            )
+          })}
         </div>
 
         {/* Main Panel Content */}
-        <div className="w-[600px] max-w-[90vw] bg-white shadow-2xl flex flex-col">
+        <div className="w-[600px] max-w-[90vw] bg-white  flex flex-col">
           <div className="flex items-center justify-between p-6 border-b border-slate-100 shrink-0">
             <h2 className="text-xl font-bold text-slate-900 line-clamp-1">{deal.topic || 'Untitled Deal'}</h2>
             <button 
@@ -543,7 +540,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                             {members.map(tm => {
                               const isRowOwner = tm.id === deal.ownerId;
                               return (
-                                <div key={tm.id} className="group flex items-center justify-between p-3 rounded-2xl border border-slate-100 bg-white shadow-sm hover:border-slate-200 transition-all relative">
+                                <div key={tm.id} className="group flex items-center justify-between p-3 rounded-2xl border border-slate-100 bg-white  hover:border-slate-200 transition-all relative">
                                   <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden shrink-0">
                                       <img src={tm.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${tm.name || tm.email || tm.id}`} alt="Avatar" className="w-full h-full object-cover" />
@@ -606,9 +603,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             )}
 
             {['information', 'notes', 'document', 'images', 'files'].includes(activeTab) && (
-              <div className="flex flex-col items-center justify-center flex-1 min-h-[300px] text-center gap-3">
-                <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center text-slate-300">
-                  {tabs.find(t => t.id === activeTab)?.icon({ className: "w-8 h-8" })}
+              <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-4">
+                <div className="p-4 bg-slate-50 rounded-full">
+                  {(() => {
+                    const Icon = IconMap[rightMenus.find(m => m.key.endsWith(`.${activeTab}`))?.iconName || 'Building2'];
+                    return <Icon className="w-8 h-8" />;
+                  })()}
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 capitalize">{activeTab}</h3>
                 <p className="text-slate-500 max-w-sm">
@@ -620,8 +620,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
           {/* Sticky Footer for Activity Tab */}
           {activeTab === 'activity' && (
-            <div className="p-4 bg-white border-t border-slate-100 shrink-0 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.05)] z-10">
-              <div className="flex gap-3 bg-white p-2 rounded-2xl border border-slate-200 focus-within:ring-2 focus-within:ring-slate-200 transition-shadow">
+            <div className="p-4 bg-white border-t border-slate-100 shrink-0  z-10">
+              <div className="flex gap-3 bg-white p-2 rounded-2xl border border-slate-200 focus-within:ring-2 focus-within:ring-slate-200 transition-">
                 <div className="w-10 h-10 rounded-full bg-slate-200 shrink-0 overflow-hidden mt-1 ml-1">
                   <img src={session?.user?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${session?.user?.name || session?.user?.email || "User"}`} alt="Avatar" className="w-full h-full object-cover" />
                 </div>
@@ -637,7 +637,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     <button 
                       onClick={handleAddLog}
                       disabled={isSubmittingLog || !newLog.trim()}
-                      className="flex items-center gap-2 bg-black text-white px-4 py-1.5 rounded-full text-xs font-bold hover:bg-slate-800 transition-colors disabled:opacity-50 shadow-sm"
+                      className="flex items-center gap-2 bg-black text-white px-4 py-1.5 rounded-full text-xs font-bold hover:bg-slate-800 transition-colors disabled:opacity-50 "
                     >
                       <Send className="w-3 h-3" />
                       {isSubmittingLog ? "Posting..." : "Post"}

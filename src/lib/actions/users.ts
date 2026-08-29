@@ -38,7 +38,7 @@ export async function getActiveUsers() {
         email: true,
         image: true,
         role: true,
-        department: {
+        departments: {
           select: {
             name: true,
           }
@@ -69,7 +69,7 @@ export async function getAllUsers() {
         email: true,
         image: true,
         role: true,
-        department: {
+        departments: {
           select: { name: true }
         }
       },

@@ -64,7 +64,7 @@ export function UserSearchDropdown({
   const alignmentClass = align === "left" ? "left-0" : "right-0";
 
   return (
-    <div ref={dropdownRef} className={`absolute top-full ${alignmentClass} mt-2 w-80 bg-white rounded-xl shadow-lg border border-slate-100 z-30 p-2 animate-fade-in-up`}>
+    <div ref={dropdownRef} className={`absolute top-full ${alignmentClass} mt-2 w-80 bg-white rounded-xl  border border-slate-100 z-30 p-2 animate-fade-in-up`}>
       <div className="mb-2">
         <input 
           type="text" 
