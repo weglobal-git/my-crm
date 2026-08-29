@@ -30,7 +30,7 @@ async function run() {
     let changed = false;
 
     // Check for [Prefix]
-    const match = newContent.match(/^\[(.*?)\]\s*(.*)$/s);
+    const match = newContent.match(/^\[(.*?)\]\s*([\s\S]*)$/);
     if (match) {
       const prefix = match[1].trim();
       const body = match[2].trim();
