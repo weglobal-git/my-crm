@@ -1,0 +1,3825 @@
+function doGet() {
+  return HtmlService.createTemplateFromFile('index')
+  .evaluate()
+  .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+  .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+}
+
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename)
+    .getContent();
+}
+
+//------------------------------------ Journey List For Contact ------------------------------------
+function processJourneyListForContact() {
+  const ss = SpreadsheetApp.openById('1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE');
+  const recordQuotationSheet = ss.getSheetByName('RecordQuotation');
+  const productsSheet = ss.getSheetByName('Products'); // Access the correct sheet with product info
+  const contactsSheet = ss.getSheetByName('Contacts');
+  
+  // Step 1: Collect unique "selectedProduct" for each "projectName" from "RecordQuotation"
+  const headers = recordQuotationSheet.getRange('A1:1').getValues()[0];
+  const projectNameColumn = headers.indexOf('projectName');
+  const selectedProductColumn = headers.indexOf('selectedProduct');
+  
+  // Validate that the columns are found
+  if (projectNameColumn === -1 || selectedProductColumn === -1) {
+    throw new Error('Required columns not found in RecordQuotation sheet');
+  }
+  
+  const data = recordQuotationSheet.getRange(2, 1, recordQuotationSheet.getLastRow() - 1, recordQuotationSheet.getLastColumn()).getValues();
+  
+  const projectProductMap = {};
+
+  data.forEach(row => {
+    const projectName = row[projectNameColumn] ? String(row[projectNameColumn]).trim() : '';
+    const selectedProduct = row[selectedProductColumn] ? String(row[selectedProductColumn]).trim() : '';
+    
+    if (projectName && selectedProduct) {
+      if (!projectProductMap[projectName]) {
+        projectProductMap[projectName] = new Set();
+      }
+      projectProductMap[projectName].add(selectedProduct);
+    }
+  });
+
+  // Convert sets to arrays for easier processing
+  Object.keys(projectProductMap).forEach(project => {
+    projectProductMap[project] = Array.from(projectProductMap[project]);
+  });
+
+  console.log('Step 1 - Unique Products per Project Name:', projectProductMap);
+
+  // Step 2: Create a mapping from "Full-Product-Name" to "Category" using the "Products" sheet
+  const productsHeaders = productsSheet.getRange('A1:1').getValues()[0];
+  const fullProductNameColumn = productsHeaders.indexOf('Full-Product-Name');
+  const categoryColumn = productsHeaders.indexOf('Category');
+  
+  // Validate that the columns are found
+  if (fullProductNameColumn === -1 || categoryColumn === -1) {
+    throw new Error('Required columns not found in Products sheet');
+  }
+  
+  const productsData = productsSheet.getRange(2, 1, productsSheet.getLastRow() - 1, productsSheet.getLastColumn()).getValues();
+  
+  const productCategoryMap = {};
+
+  productsData.forEach(row => {
+    const fullProductName = row[fullProductNameColumn] ? String(row[fullProductNameColumn]).trim() : '';
+    const category = row[categoryColumn] ? String(row[categoryColumn]).trim() : '';
+    
+    if (fullProductName && category) {
+      productCategoryMap[fullProductName] = category;
+    }
+  });
+
+  // Log the product-category mapping
+  console.log('Step 2 - Product to Category Mapping:', productCategoryMap);
+
+  // Step 2: Map each selectedProduct to its category using the Full-Product-Name to Category mapping
+  const projectCategoryMap = {};
+
+  Object.keys(projectProductMap).forEach(projectName => {
+    const categories = projectProductMap[projectName]
+      .map(product => productCategoryMap[product]) // Match directly with the Full-Product-Name from the "Products" sheet
+      .filter(category => category !== undefined && category !== ''); // Filter out undefined or empty categories
+    projectCategoryMap[projectName] = Array.from(new Set(categories)).join(', '); // Remove duplicates and join categories
+  });
+
+  console.log('Step 2 - Unique Categories per Project Name:', projectCategoryMap);
+
+  // Step 3: Match "projectName" and set "Journeys" in "Contacts" sheet
+  const contactsHeaders = contactsSheet.getRange('A1:1').getValues()[0];
+  const projectColumn = contactsHeaders.indexOf('Project');
+  const journeysColumn = contactsHeaders.indexOf('Journeys');
+  
+  // Validate that the columns are found
+  if (projectColumn === -1 || journeysColumn === -1) {
+    throw new Error('Required columns not found in Contacts sheet');
+  }
+
+  const contactsData = contactsSheet.getRange(2, 1, contactsSheet.getLastRow() - 1, contactsSheet.getLastColumn()).getValues();
+
+  contactsData.forEach((row, index) => {
+    const projectName = row[projectColumn] ? String(row[projectColumn]).trim() : '';
+    
+    if (projectName && projectCategoryMap[projectName]) {
+      const uniqueCategories = projectCategoryMap[projectName];
+
+      // Fetch existing data in the Journeys cell
+      const existingJourneys = row[journeysColumn] ? String(row[journeysColumn]).trim() : '';
+
+      // Split the existing data into an array and clean it
+      let existingJourneysList = existingJourneys ? existingJourneys.split(',').map(item => item.trim()) : [];
+
+      // Split the new data into an array
+      const newJourneysList = uniqueCategories.split(',').map(item => item.trim());
+
+      // Combine existing and new data, and remove duplicates
+      const combinedJourneys = [...new Set([...existingJourneysList, ...newJourneysList])];
+
+      // Join the combined list back into a string
+      const finalJourneys = combinedJourneys.join(', ');
+
+      // Log the matched project names and categories being set
+      console.log(`Step 3 - Updating Project: ${projectName} with Categories: ${finalJourneys}`);
+
+      // Update the cell only if the new combined data differs from the existing data
+      if (finalJourneys !== existingJourneys) {
+        contactsSheet.getRange(index + 2, journeysColumn + 1).setValue(finalJourneys);
+      }
+    }
+  });
+}
+
+
+function fetchFilteredMOFData() {
+  // Define the API base URL
+  const baseUrl = "https://dataservices.mof.go.th/api/data/importexport/data_by_product_country";
+
+  // Get today's date and calculate 5 months back
+  const today = new Date();
+  const fiveMonthsAgo = new Date(today);
+  fiveMonthsAgo.setMonth(today.getMonth() - 5);
+
+  // Calculate the starting date to fetch 12 months of data
+  const startDate = new Date(fiveMonthsAgo);
+  startDate.setMonth(fiveMonthsAgo.getMonth() - 11);
+
+  // Set frequency and data type
+  const freq = "month";
+  const type = "export";
+  const detail = "country";
+  const filterCode = "33"; // Filter for export category code 33
+
+  // Format the 'from' and 'to' dates in Y-m-d format
+  const fromDate = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-01`;
+  const toDate = `${fiveMonthsAgo.getFullYear()}-${String(fiveMonthsAgo.getMonth() + 1).padStart(2, '0')}-01`;
+
+  // Construct the API URL with the filter code
+  const apiUrl = `${baseUrl}?from=${fromDate}&to=${toDate}&freq=${freq}&type=${type}&detail=${detail}&key=${filterCode}`;
+
+  // Fetch the data from the API
+  try {
+    const response = UrlFetchApp.fetch(apiUrl, {
+      'method': 'get',
+      'muteHttpExceptions': true
+    });
+
+    // Check if the response is successful
+    if (response.getResponseCode() === 200) {
+      const jsonData = JSON.parse(response.getContentText());
+      const sheet = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE").getSheetByName("MOFData");
+
+      // Extract relevant fields from the API response
+      const items = jsonData.items;
+
+      // Create an array of last 12 months from the adjusted starting point
+      let last12Months = [];
+      for (let i = 0; i < 12; i++) {
+        let date = new Date(fiveMonthsAgo);
+        date.setMonth(date.getMonth() - i);
+        last12Months.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+      }
+
+      // Set headers for the last 12 months
+      const headers = ["Country"].concat(last12Months.map(month => `'${month}`));
+      sheet.clear(); // Clear existing data
+      sheet.appendRow(headers);
+
+      // Prepare country-wise data
+      let countryData = {};
+
+      // Iterate through items and organize by country and month
+      items.forEach(itemGroup => {
+        const countryKey = itemGroup.key;
+        if (!countryData[countryKey]) {
+          countryData[countryKey] = new Array(12).fill(0); // Initialize with zeros
+        }
+
+        itemGroup.items.forEach(subItem => {
+          // Extract and format year and month correctly
+          const yearMonthThai = subItem.year_month; // Example: "มิถุนายน 2566"
+          const exportAmount = parseFloat(subItem.baht_amnt) || 0;
+
+          // Convert Thai year to the Gregorian year (if applicable)
+          const yearMonth = convertThaiYearToGregorian(yearMonthThai);
+          
+          // Log details for debugging
+          Logger.log(`Country: ${countryKey}, Year-Month (Gregorian): ${yearMonth}, Export Amount: ${exportAmount}`);
+
+          const index = last12Months.indexOf(yearMonth);
+          if (index !== -1) {
+            countryData[countryKey][index] = exportAmount;
+          }
+        });
+      });
+
+      // Write country-wise data to the sheet
+      Object.keys(countryData).forEach(country => {
+        sheet.appendRow([country].concat(countryData[country]));
+      });
+
+    } else {
+      Logger.log(`Failed to fetch data. Response Code: ${response.getResponseCode()}`);
+      Logger.log(response.getContentText());
+    }
+  } catch (error) {
+    Logger.log(`Error fetching data: ${error}`);
+  }
+}
+
+// Helper function to convert Thai year-month to Gregorian year-month (YYYY-MM)
+function convertThaiYearToGregorian(thaiYearMonth) {
+  const monthsInThai = [
+    "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+    "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+  ];
+
+  // Extract Thai month and year
+  const [thaiMonth, thaiYear] = thaiYearMonth.split(" ");
+  const monthIndex = monthsInThai.indexOf(thaiMonth) + 1;
+  const yearInGregorian = parseInt(thaiYear) - 543; // Convert Thai year to Gregorian year
+
+  // Format to YYYY-MM
+  return `${yearInGregorian}-${String(monthIndex).padStart(2, '0')}`;
+}
+
+
+
+//------------------------------------ General Parts ------------------------------------
+function getOAuthService() {
+  const CLIENT_ID = 'REMOVED_FOR_SECURITY';
+  const CLIENT_SECRET = 'REMOVED_FOR_SECURITY';
+  
+  return OAuth2.createService('GoogleDataService')  // Generic name for accessing multiple APIs
+    .setAuthorizationBaseUrl('https://accounts.google.com/o/oauth2/auth')
+    .setTokenUrl('https://oauth2.googleapis.com/token')
+    .setClientId(CLIENT_ID)
+    .setClientSecret(CLIENT_SECRET)
+    .setCallbackFunction('authCallback')
+    .setPropertyStore(PropertiesService.getUserProperties())
+    .setScope('https://www.googleapis.com/auth/webmasters https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/adwords')
+    .setParam('access_type', 'offline')
+    .setParam('prompt', 'consent');
+}
+
+function authCallback(request) {
+  const service = getOAuthService();
+  const authorized = service.handleCallback(request);
+  if (authorized) {
+    return HtmlService.createHtmlOutput('Success! You can close this tab.');
+  } else {
+    return HtmlService.createHtmlOutput('Denied. You can close this tab');
+  }
+}
+
+function authorize() {
+  const service = getOAuthService();
+  if (!service.hasAccess()) {
+    const authorizationUrl = service.getAuthorizationUrl();
+    Logger.log('Open the following URL and authorize the script: %s', authorizationUrl);
+  } else {
+    Logger.log('Authorization already obtained.');
+  }
+}
+
+function resetOAuth() {
+  const service = getOAuthService();
+  service.reset();
+}
+
+//-------------------------------- Google Analytic PageViews Fetch and Write ----------------------------------------
+function fetchAndWritePageViews() {
+  var PROPERTY_ID = '457684161';
+  var SHEET_ID = '1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE';
+  var SHEET_NAME = 'PageViews';
+  var service = getOAuthService();
+  
+  if (!service.hasAccess()) {
+    var authorizationUrl = service.getAuthorizationUrl();
+    Logger.log('Authorize the script by visiting this URL: %s', authorizationUrl);
+    return;
+  }
+
+  var today = new Date();
+  var yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+
+  var startOfDay = new Date(yesterday);
+  startOfDay.setHours(0, 0, 0, 0);
+  var endOfDay = new Date(yesterday);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  var recordDate = Utilities.formatDate(startOfDay, Session.getScriptTimeZone(), 'dd/MM/yyyy');
+
+
+
+  var url = `https://analyticsdata.googleapis.com/v1beta/properties/${PROPERTY_ID}:runReport`;
+
+  var requestBody = {
+    dateRanges: [{ startDate: Utilities.formatDate(startOfDay, Session.getScriptTimeZone(), 'yyyy-MM-dd'), 
+                   endDate: Utilities.formatDate(endOfDay, Session.getScriptTimeZone(), 'yyyy-MM-dd') }],
+    metrics: [{ name: 'screenPageViews' }],
+    dimensions: [{ name: 'pagePath' }, { name: 'country' }]
+  };
+
+  var response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: `Bearer ${service.getAccessToken()}` },
+    payload: JSON.stringify(requestBody),
+    muteHttpExceptions: true
+  });
+
+  var data = JSON.parse(response.getContentText());
+  Logger.log('Full API Response: ' + response.getContentText());
+
+  if (data.rows && data.rows.length > 0) {
+    var enPageViews = 0;
+    var thPageViews = 0;
+    var totalPageViews = 0;
+    var countryViews = {};
+
+    data.rows.forEach(function(row) {
+      var pagePath = row.dimensionValues[0].value;
+      var country = row.dimensionValues[1].value;
+      var pageViews = parseInt(row.metricValues[0].value, 10);
+
+      if (pagePath.includes('/th')) {
+        thPageViews += pageViews;
+      } else {
+        enPageViews += pageViews;
+      }
+
+      totalPageViews += pageViews;
+
+      if (!countryViews[country]) {
+        countryViews[country] = [];
+      }
+      countryViews[country].push(`${pagePath} (${pageViews})`);
+    });
+
+    // Write data to Google Sheets
+    var sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+    
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var headerMap = {};
+    
+    // Create a map of existing headers
+    headers.forEach(function(header, index) {
+      headerMap[header] = index + 1; // Column index starts from 1 in Sheets API
+    });
+
+    var recordDateColIndex = headerMap['Record Date'];
+    var enPageViewsColIndex = headerMap['EN-Page View'];
+    var thPageViewsColIndex = headerMap['TH-Page View'];
+    var totalPageViewsColIndex = headerMap['Total Page View'];
+
+    var newRow = [];
+    newRow[recordDateColIndex - 1] = "'" + recordDate; // Update to include single quote for text format
+    newRow[enPageViewsColIndex - 1] = enPageViews;
+    newRow[thPageViewsColIndex - 1] = thPageViews;
+    newRow[totalPageViewsColIndex - 1] = totalPageViews;
+
+    var lastRow = sheet.getLastRow();
+    sheet.appendRow(newRow);
+    var currentRow = lastRow + 1;
+
+    var columnStartIndex = headers.length + 1; // Start at the first empty column after the existing headers
+
+    // Write country-specific data, ensuring no duplicate headers
+    for (var country in countryViews) {
+      var countryColIndex = headerMap[country];
+      if (!countryColIndex) {
+        countryColIndex = columnStartIndex;
+        sheet.getRange(1, countryColIndex).setValue(country);
+        headerMap[country] = columnStartIndex; // Add new country to header map
+        columnStartIndex++;
+      }
+
+      var pagePaths = countryViews[country].join(', ');
+      sheet.getRange(currentRow, countryColIndex).setValue(pagePaths);
+    }
+
+    Logger.log('Data for ' + recordDate + ' written to Google Sheets successfully.');
+  } else {
+    Logger.log('No data found for the given dates.');
+  }
+}
+
+
+function fetchGoogleAdsKeywordData() {
+  var customerId = '1848800101';  // Test Google Ads Customer ID
+  var developerToken = 'SwbDSFnlJUXGWV3HinqPbw';  // Test Developer Token
+  var service = getOAuthService();
+
+  // Ensure that the service has access
+  if (!service.hasAccess()) {
+    var authorizationUrl = service.getAuthorizationUrl();
+    Logger.log('Authorize the script by visiting this URL: %s', authorizationUrl);
+    return;
+  }
+
+  // Correct API URL using the latest version (v18)
+  var url = `https://googleads.googleapis.com/v18/customers/${customerId}/googleAds:search`;
+
+  // Define the request body
+  var requestBody = {
+    query: `SELECT
+              campaign.id,
+              ad_group.id,
+              ad_group_criterion.keyword.text,
+              metrics.impressions,
+              metrics.clicks,
+              metrics.cost_micros,
+              metrics.average_cpc
+            FROM
+              keyword_view
+            WHERE
+              ad_group_criterion.keyword.text LIKE 'skin care'
+              AND segments.date DURING LAST_30_DAYS
+            LIMIT 10`
+  };
+
+  // Make the API request
+  var response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: `Bearer ${service.getAccessToken()}`,  // OAuth2 Access Token
+      'developer-token': developerToken  // Developer Token for Test Account
+    },
+    payload: JSON.stringify(requestBody),
+    muteHttpExceptions: true
+  });
+
+  // Log and parse the response
+  var contentText = response.getContentText();
+  Logger.log('Response: ' + contentText);
+
+  try {
+    var data = JSON.parse(contentText);
+    Logger.log('Parsed Data: ' + JSON.stringify(data));
+
+    if (data.results) {
+      data.results.forEach(row => {
+        Logger.log(`Keyword: ${row.adGroupCriterion.keyword.text}, Impressions: ${row.metrics.impressions}, Clicks: ${row.metrics.clicks}, Cost: ${row.metrics.costMicros}, Avg CPC: ${row.metrics.averageCpc}`);
+      });
+    } else {
+      Logger.log('No results found');
+    }
+  } catch (e) {
+    Logger.log('Error parsing JSON: ' + e.toString());
+    Logger.log('Full Response: ' + contentText);
+  }
+}
+
+
+
+
+
+
+//-------------------------------- Google Search Console Query Fetch and Write ----------------------------------------
+function fetchAndWriteGoogleSearchConsoleData() {
+  var SHEET_ID = '1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE';
+  var SHEET_NAME = 'GoogleSearchConsole';
+  var service = getOAuthService();
+
+  if (!service.hasAccess()) {
+    var authorizationUrl = service.getAuthorizationUrl();
+    Logger.log('Authorize the script by visiting this URL: %s', authorizationUrl);
+    return;
+  }
+
+  var today = new Date();
+  var endDate = Utilities.formatDate(today, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var startDate = Utilities.formatDate(new Date(today.setDate(today.getDate() - 3)), Session.getScriptTimeZone(), 'yyyy-MM-dd');  // Start date is 3 days ago
+
+  var url = `https://www.googleapis.com/webmasters/v3/sites/sc-domain:carebeau-enjoy.com/searchAnalytics/query`;
+
+  // Request for Total Impressions based on `date` dimension only
+  var totalRequest = {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['date'],
+    rowLimit: 1000
+  };
+
+  // Request for Skin Care and Thai Skin Care Impressions based on `query` and `country`
+  var queryRequest = {
+    startDate: startDate,
+    endDate: endDate,
+    dimensions: ['query', 'country', 'date'],
+    rowLimit: 1000
+  };
+
+  // Fetch Total Impressions data
+  var totalResponse = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: `Bearer ${service.getAccessToken()}` },
+    payload: JSON.stringify(totalRequest),
+    muteHttpExceptions: true
+  });
+
+  // Fetch Skin Care and Thai Skin Care Impressions data
+  var queryResponse = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: `Bearer ${service.getAccessToken()}` },
+    payload: JSON.stringify(queryRequest),
+    muteHttpExceptions: true
+  });
+
+  var totalData = JSON.parse(totalResponse.getContentText());
+  var queryData = JSON.parse(queryResponse.getContentText());
+
+  Logger.log('Total Impressions API Response: ' + JSON.stringify(totalData, null, 2));
+  Logger.log('Query Data API Response: ' + JSON.stringify(queryData, null, 2));
+
+  var countryDataMap = {};
+
+  // Process Total Impressions based on `date`
+  if (totalData.rows && totalData.rows.length > 0) {
+    totalData.rows.forEach(function(row) {
+      var recordDate = row.keys[0];
+      var formattedRecordDate = Utilities.formatDate(new Date(recordDate), Session.getScriptTimeZone(), 'dd/MM/yyyy');
+      var totalImpressions = row.impressions || 0;
+
+      if (!countryDataMap[formattedRecordDate]) {
+        countryDataMap[formattedRecordDate] = {
+          skinCareImpression: 0,
+          thaiSkinCareImpression: 0,
+          totalImpression: totalImpressions,
+          countryData: {}
+        };
+      } else {
+        countryDataMap[formattedRecordDate].totalImpression = totalImpressions;
+      }
+    });
+  }
+
+  // Process Skin Care and Thai Skin Care Impressions data based on `query` and `country`
+  if (queryData.rows && queryData.rows.length > 0) {
+    queryData.rows.forEach(function(row) {
+      var query = row.keys[0];
+      var country = row.keys[1];
+      var recordDate = row.keys[2];
+      var formattedRecordDate = Utilities.formatDate(new Date(recordDate), Session.getScriptTimeZone(), 'dd/MM/yyyy');
+      var impressions = row.impressions || 0;
+
+      if (!countryDataMap[formattedRecordDate]) {
+        countryDataMap[formattedRecordDate] = {
+          skinCareImpression: 0,
+          thaiSkinCareImpression: 0,
+          totalImpression: 0,
+          countryData: {}
+        };
+      }
+
+      if (query.toLowerCase().includes('skin care')) {
+        countryDataMap[formattedRecordDate].skinCareImpression += impressions;
+      }
+      if (query.includes('สกินแคร์')) {
+        countryDataMap[formattedRecordDate].thaiSkinCareImpression += impressions;
+      }
+
+      if (!countryDataMap[formattedRecordDate].countryData[country]) {
+        countryDataMap[formattedRecordDate].countryData[country] = [];
+      }
+      countryDataMap[formattedRecordDate].countryData[country].push(`${query} (${impressions})`);
+    });
+  }
+
+  Logger.log(`Final Aggregated Data: ${JSON.stringify(countryDataMap)}`);
+
+  // Write the aggregated data to the Google Sheet
+  var sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var headerMap = {};
+
+  headers.forEach(function(header, index) {
+    headerMap[header.trim()] = index + 1; // Trim headers to remove extra spaces
+  });
+
+  for (var recordDate in countryDataMap) {
+    var dataForDate = countryDataMap[recordDate];
+    var newRow = [];
+
+    var recordDateColIndex = headerMap['record-date'];
+    var skinCareImpressionColIndex = headerMap['skin-care-impression'];
+    var thaiSkinCareImpressionColIndex = headerMap['th-impression'];
+    var totalImpressionColIndex = headerMap['total-impression'];
+
+    if (!recordDateColIndex || !skinCareImpressionColIndex || !thaiSkinCareImpressionColIndex || !totalImpressionColIndex) {
+      Logger.log('Error: One or more required headers not found. Check your sheet headers.');
+      Logger.log(`recordDateColIndex: ${recordDateColIndex}, skinCareImpressionColIndex: ${skinCareImpressionColIndex}, thaiSkinCareImpressionColIndex: ${thaiSkinCareImpressionColIndex}, totalImpressionColIndex: ${totalImpressionColIndex}`);
+      return;
+    }
+
+    newRow[recordDateColIndex - 1] = "'" + recordDate;
+    newRow[skinCareImpressionColIndex - 1] = dataForDate.skinCareImpression;
+    newRow[thaiSkinCareImpressionColIndex - 1] = dataForDate.thaiSkinCareImpression;
+    newRow[totalImpressionColIndex - 1] = dataForDate.totalImpression;
+
+    var lastRow = sheet.getLastRow();
+    sheet.appendRow(newRow);
+    var currentRow = lastRow + 1;
+
+    var columnStartIndex = headers.length + 1;
+
+    for (var country in dataForDate.countryData) {
+      var countryColIndex = headerMap[country];
+      if (!countryColIndex) {
+        countryColIndex = columnStartIndex;
+        sheet.getRange(1, countryColIndex).setValue(country);
+        headerMap[country] = columnStartIndex;
+        columnStartIndex++;
+      }
+
+      var queriesText = dataForDate.countryData[country].join(', ');
+      sheet.getRange(currentRow, countryColIndex).setValue(queriesText);
+    }
+  }
+
+  Logger.log('Data for Google Search Console written to Google Sheets successfully.');
+}
+
+
+//-------------------------------- Track Website Pages by Search Console ----------------------------------------
+function fetchAndWriteWeeklyKeywordData() {
+  var TRACKED_SHEET_ID = '1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE';
+  var TRACKED_SHEET_NAME = 'TrackKeyword';
+  var service = getOAuthService();
+
+  if (!service.hasAccess()) {
+    Logger.log('Authorize the script by visiting this URL: %s', service.getAuthorizationUrl());
+    return;
+  }
+
+  var sheet = SpreadsheetApp.openById(TRACKED_SHEET_ID).getSheetByName(TRACKED_SHEET_NAME);
+  var today = new Date();
+  var lastSaturday = new Date(today);
+  lastSaturday.setDate(today.getDate() - today.getDay() - 1);
+
+  // Generate the last 6 full weeks (Sunday to Saturday)
+  var weekPeriods = Array.from({ length: 6 }, (_, i) => {
+    var endDate = new Date(lastSaturday);
+    endDate.setDate(lastSaturday.getDate() - 7 * i);
+    var startDate = new Date(endDate);
+    startDate.setDate(endDate.getDate() - 6);
+    return {
+      startDate: startDate,
+      endDate: endDate,
+      formatted: `${Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'dd/MM/yy')} - ${Utilities.formatDate(endDate, Session.getScriptTimeZone(), 'dd/MM/yy')}`
+    };
+  });
+
+  // Update the week period headers in columns H to M
+  sheet.getRange(1, 8, 1, 6).setValues([weekPeriods.map(w => w.formatted)]);
+
+  // Fetch tracked data (columns D, E, G) from the sheet
+  var data = sheet.getRange(3, 4, sheet.getLastRow() - 2, 4).getValues(); // Start from row 3 to include only the data rows
+
+  var monthlySearchValues = [];
+  var totalMonthlySearch = 0; // To track the total of the monthly search column
+  var weekDataValues = data.map(() => Array(6).fill(''));
+
+  data.forEach((row, index) => {
+    var [trackedPage, keywordsString, , countryCode] = row.map(v => (v || '').toString().trim());
+    countryCode = countryCode.toUpperCase();
+
+    if (!trackedPage || !keywordsString || !/^[A-Z]{3}$/.test(countryCode)) {
+      Logger.log(`Row ${index + 3}: Invalid data or country code '${countryCode}', skipping.`);
+      monthlySearchValues.push(['']);
+      return;
+    }
+
+    // Extract keywords and calculate the total search volume
+    var totalSearchVolume = 0;
+    var keywords = keywordsString.split(',').map(keyword => {
+      var matches = keyword.match(/\((\d+)\)/);
+      if (matches) totalSearchVolume += parseInt(matches[1]);
+      return keyword.replace(/\s*\(\d+\)\s*/g, '').trim();
+    });
+
+    // Add the total search volume to the cumulative total
+    totalMonthlySearch += totalSearchVolume;
+    monthlySearchValues.push([totalSearchVolume]);
+    Logger.log(`Fetching data for Page: ${trackedPage}, Keywords: ${keywords.join(', ')}, Country: ${countryCode}`);
+
+    keywords.forEach(keyword => {
+      weekPeriods.forEach((week, weekIndex) => {
+        var request = createRequestObject(trackedPage, keyword, countryCode, week.startDate, week.endDate);
+        var resultString = fetchDataForKeyword(service, request, keyword);
+        weekDataValues[index][weekIndex] += resultString;
+      });
+    });
+  });
+
+  // Insert the total search volume into row 2 of the "Monthly Search" column (F2)
+  sheet.getRange(2, 6).setValue(totalMonthlySearch);
+
+  // Batch update the rest of the "Monthly Search" column, starting from row 3
+  sheet.getRange(3, 6, monthlySearchValues.length, 1).setValues(monthlySearchValues);
+
+  // Batch update weekly data (H to M columns)
+  sheet.getRange(3, 8, weekDataValues.length, 6).setValues(weekDataValues);
+
+  Logger.log('Weekly keyword data recorded successfully.');
+}
+
+function createRequestObject(trackedPage, keyword, countryCode, startDate, endDate) {
+  return {
+    startDate: Utilities.formatDate(startDate, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    endDate: Utilities.formatDate(endDate, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    dimensions: ['page', 'query', 'country'],
+    dimensionFilterGroups: [{
+      filters: [
+        { dimension: 'page', expression: trackedPage },
+        { dimension: 'query', expression: keyword },
+        { dimension: 'country', expression: countryCode }
+      ]
+    }],
+    rowLimit: 1
+  };
+}
+
+function fetchDataForKeyword(service, request, keyword) {
+  var url = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent('sc-domain:carebeau-enjoy.com')}/searchAnalytics/query`;
+  try {
+    var response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: `Bearer ${service.getAccessToken()}` },
+      payload: JSON.stringify(request),
+      muteHttpExceptions: true
+    });
+
+    var data = JSON.parse(response.getContentText());
+    if (data.rows && data.rows.length > 0) {
+      var row = data.rows[0];
+      var click = row.clicks || 0;
+      var impression = row.impressions || 0;
+      var ctr = row.ctr ? (row.ctr * 100).toFixed(2) + '%' : '0.0%';
+      var position = row.position ? row.position.toFixed(2) : '0.0';
+
+      return `[${keyword}: ${click}/${impression}/${ctr}/${position}]\n`;
+    } else {
+      return `[${keyword}:]\n`;
+    }
+  } catch (e) {
+    Logger.log(`Error fetching data for ${keyword}: ${e.message}`);
+    return `[${keyword}:]\n`;
+  }
+}
+
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function storeExchangeRate() {
+  var apiKey = "9fb344c29a045a432301269e";
+  var url = "https://v6.exchangerate-api.com/v6/" + apiKey + "/latest/USD";
+
+  var response = UrlFetchApp.fetch(url);
+  var responseData = JSON.parse(response.getContentText());
+  var exchangeRateTHB = responseData.conversion_rates.THB;
+
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName("ExchangeRate");
+
+  var date = new Date();
+  var formattedDate = "'" + Utilities.formatDate(date, Session.getScriptTimeZone(), "dd/MM/yyyy");
+  
+  sheet.appendRow([formattedDate, exchangeRateTHB]);
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getExchangeRate() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('ExchangeRate');
+  var lastRow = sheet.getLastRow(); // Get the index of the last row with data
+  var data = sheet.getRange(lastRow, 1, 1, sheet.getLastColumn()).getValues()[0]; // Get data from the last row
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]; // Get headers from the first row
+
+  var usdRateIndex = headers.indexOf("USD-Rate");
+
+  if (usdRateIndex !== -1) {
+    return data[usdRateIndex]; // Return the value of the "USD-Rate" column
+  } else {
+    return 0; // Return a default value if the "USD-Rate" column is not found
+  }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+
+function getOpportunities() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues(); // Get all data from the sheet
+  var headers = data[0]; // Extract the headers (column names) from the first row
+  var info = []; // Initialize an empty array to store info
+
+  for (var i = 1; i < data.length; i++) { // Loop through rows starting from the second row (index 1)
+    var item = {}; // Create an object for each item
+    for (var j = 0; j < headers.length; j++) { // Loop through columns
+      item[headers[j]] = data[i][j]; // Assign the value from the current row to the corresponding header/column
+    }
+    info.push(item); // Add the item object to the info array
+  }
+  return info; // Return the array of info
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getPromotions() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('Promotions');
+  var data = sheet.getDataRange().getValues(); // Get all data from the sheet
+  var headers = data[0]; // Extract the headers (column names) from the first row
+  var info = []; // Initialize an empty array to store info
+
+  for (var i = 1; i < data.length; i++) { // Loop through rows starting from the second row (index 1)
+    var item = {}; // Create an object for each item
+    for (var j = 0; j < headers.length; j++) { // Loop through columns
+      item[headers[j]] = data[i][j]; // Assign the value from the current row to the corresponding header/column
+    }
+    info.push(item); // Add the item object to the info array
+  }
+  return info; // Return the array of info
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function savePromotionData(data) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName("Promotions");
+  
+  // For each record sent from the client, generate a unique ID on the server
+  data.forEach(function(rowObj) {
+    rowObj["Promotion-Unique-ID"] = generateUniqueID(); 
+  });
+  
+  // Here are the columns in your target sheet, referencing them by name:
+  var columns = [
+    "Promotion-Unique-ID",
+    "Promotion-Book-Date",
+    "Exclusive-Distributor-Name",
+    "Promotion-Year",
+    "Promotion-Used",
+    "MKT-Amount",
+    "Promotion-Code",
+    "Promotion-Name",
+    "Promotion-Related-Products",
+    "Referred-Product-Name",
+    "Promotion-Type",
+    "Promotion-Ctn-Qty",
+    "Value-Pack-Percentage",
+    "Setup-Price",
+    "Promotion-Type-logo",
+    "Promotion-Product-Image"
+  ];
+  
+  // Build the rows array by columns
+  var rows = data.map(function(rowObj) {
+    return columns.map(function(colName) {
+      return rowObj[colName] || "";
+    });
+  });
+  
+  // Append to the sheet
+  if (rows.length > 0) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, columns.length).setValues(rows);
+  }
+  return getPromotions();
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateTagInSheet(uniqueId, newTag) {
+  const ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  const sheet = ss.getSheetByName('Opportunities');
+  const data = sheet.getDataRange().getValues();
+
+  const headers = data[0]; // Extract headers from the first row
+  const uniqueIdColumnIndex = headers.indexOf('Unique-ID'); // Get the column index for 'Unique-ID'
+  const tagsColumnIndex = headers.indexOf('Tags'); // Get the column index for 'Tags'
+
+  if (uniqueIdColumnIndex === -1 || tagsColumnIndex === -1) {
+    throw new Error("Column headers not found");
+  }
+
+  // Find the correct row by matching the unique ID
+  for (let i = 1; i < data.length; i++) { // Start from the second row (index 1)
+    if (data[i][uniqueIdColumnIndex] === uniqueId) { 
+      // Update the 'Tags' column with the new tag
+      sheet.getRange(i + 1, tagsColumnIndex + 1).setValue(newTag); 
+      break;
+    }
+  }
+}
+
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getMOFData() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('MOFData');
+  var data = sheet.getDataRange().getValues(); // Get all data from the sheet
+  var headers = data[0]; // Extract the headers (column names) from the first row
+  var info = []; // Initialize an empty array to store info
+
+  for (var i = 1; i < data.length; i++) { // Loop through rows starting from the second row (index 1)
+    var item = {}; // Create an object for each item
+    for (var j = 0; j < headers.length; j++) { // Loop through columns
+      item[headers[j]] = data[i][j]; // Assign the value from the current row to the corresponding header/column
+    }
+    info.push(item); // Add the item object to the info array
+  }
+  return info; // Return the array of info
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getPageViews() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('PageViews');
+  var data = sheet.getDataRange().getValues(); // Get all data from the sheet
+  var headers = data[0]; // Extract the headers (column names) from the first row
+  var info = []; // Initialize an empty array to store info
+
+  for (var i = 1; i < data.length; i++) { // Loop through rows starting from the second row (index 1)
+    var item = {}; // Create an object for each item
+    for (var j = 0; j < headers.length; j++) { // Loop through columns
+      item[headers[j]] = data[i][j]; // Assign the value from the current row to the corresponding header/column
+    }
+    info.push(item); // Add the item object to the info array
+  }
+  return info; // Return the array of info
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getCountriesPageViews() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('PageViews');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0]; // Get the headers from the first row (which include country names starting from column G)
+
+  var countries = [];
+  for (var j = 4; j < headers.length; j++) { // Starting from column G (index 6)
+    var countryData = {
+      country: headers[j], // The country name from the header
+      pagePaths: []
+    };
+
+    // Loop through rows to extract page paths data for the current country
+    for (var i = 1; i < data.length; i++) {
+      countryData.pagePaths.push(data[i][j]); // Get page paths and counts for the country
+    }
+
+    countries.push(countryData);
+  }
+
+  return countries; // Return the array containing country names and their page paths
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getGoogleSearchConsole() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('GoogleSearchConsole');
+  var data = sheet.getDataRange().getValues(); // Get all data from the sheet
+  var headers = data[0]; // Extract the headers (column names) from the first row
+  var info = []; // Initialize an empty array to store info
+
+  for (var i = 1; i < data.length; i++) { // Loop through rows starting from the second row (index 1)
+    var item = {}; // Create an object for each item
+    for (var j = 0; j < headers.length; j++) { // Loop through columns
+      item[headers[j]] = data[i][j]; // Assign the value from the current row to the corresponding header/column
+    }
+    info.push(item); // Add the item object to the info array
+  }
+  return info; // Return the array of info
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getCountriesGoogleSearchConsole() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('GoogleSearchConsole');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0]; // Get the headers from the first row (which include country names starting from column G)
+
+  var countries = [];
+  for (var j = 4; j < headers.length; j++) { 
+    var countryData = {
+      country: headers[j], // The country name from the header
+      queries: []
+    };
+
+    // Loop through rows to extract page paths data for the current country
+    for (var i = 1; i < data.length; i++) {
+      countryData.queries.push(data[i][j]); // Get page paths and counts for the country
+    }
+
+    countries.push(countryData);
+  }
+
+  return countries; // Return the array containing country names and their page paths
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateLoadingCheck(uniqueId, newStatus) {
+  const ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  const sheet = ss.getSheetByName('Opportunities');
+  const data = sheet.getDataRange().getValues();
+  
+  // Find the row with the matching Unique-ID
+  const headers = data[0];
+  const uniqueIdIndex = headers.indexOf('Unique-ID');
+  const loadingCheckIndex = headers.indexOf('Loading-Check');
+  
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][uniqueIdIndex] === uniqueId) {
+      sheet.getRange(i + 1, loadingCheckIndex + 1).setValue(newStatus); // Update the "Loading-Check" status
+      break;
+    }
+  }
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+
+function getContactForm() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('ContactForm');
+  var data = sheet.getDataRange().getValues(); // Get all data from the sheet
+  var headers = data[0]; // Extract the headers (column names) from the first row
+  var info = []; // Initialize an empty array to store info
+
+  for (var i = 1; i < data.length; i++) { // Loop through rows starting from the second row (index 1)
+    var item = {}; // Create an object for each item
+    for (var j = 0; j < headers.length; j++) { // Loop through columns
+      item[headers[j]] = data[i][j]; // Assign the value from the current row to the corresponding header/column
+    }
+    info.push(item); // Add the item object to the info array
+  }
+  return info;
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getLongTimeNoContactProjectsEnhanced() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var opportunitiesSheet = ss.getSheetByName('Opportunities');
+  var contactsSheet = ss.getSheetByName('Contacts');
+
+  // Fetch data from both sheets
+  var opportunitiesData = opportunitiesSheet.getDataRange().getValues();
+  var contactsData = contactsSheet.getDataRange().getValues();
+
+  // Identify indexes for necessary columns in Contacts sheet
+  var projectIndexInContacts = contactsData[0].indexOf('Project');
+  var qualificationIndex = contactsData[0].indexOf('Qualification');
+
+  // Filter for "Qualified" projects in "Contacts" sheet
+  var qualifiedProjects = new Set();
+  contactsData.forEach((row, index) => {
+    if (index > 0 && row[qualificationIndex] === 'Qualified') {
+      qualifiedProjects.add(row[projectIndexInContacts]);
+    }
+  });
+
+  var today = new Date();
+  var projectInfo = {}; // Holds comprehensive information on each project
+
+  var projectIndexInOpportunities = opportunitiesData[0].indexOf('Project');
+  var statusIndex = opportunitiesData[0].indexOf('Status');
+  var followUpHistoryIndex = opportunitiesData[0].indexOf('Follow-Up-History');
+  var typeIndex = opportunitiesData[0].indexOf('Type');
+  var amountIndex = opportunitiesData[0].indexOf('Amount'); // Get the index of "Amount" column
+  var endDateIndex = opportunitiesData[0].indexOf('End-Date'); // Get the index of "End-Date" column
+
+  opportunitiesData.forEach((row, index) => {
+    if (index > 0) {
+      var projectType = row[typeIndex];
+      var projectName = row[projectIndexInOpportunities];
+      var projectStatus = row[statusIndex];
+      var followUpHistory = row[followUpHistoryIndex];
+      var amount = parseFloat(row[amountIndex]) || 0; // Parse amount as a number, defaulting to 0 if not a number
+      var endDate = row[endDateIndex]; // End-Date as a string
+
+      // Ensure project is of type 'Leads' and is qualified
+      if (projectType === 'Leads' && qualifiedProjects.has(projectName)) {
+        if (!projectInfo[projectName]) {
+          projectInfo[projectName] = { 
+            wins: 0, 
+            quotedLoss: 0, 
+            followingLoss: 0, 
+            latestDate: new Date(0), 
+            totalAmount: 0,
+            monthlyAmounts: {} // Store monthly amounts
+          };
+        }
+
+        // Update counts and amount based on status
+        if (projectStatus === 'Won') {
+          projectInfo[projectName].wins++;
+          projectInfo[projectName].totalAmount += amount; // Summarize amount for "Won" status
+          
+          // Process End-Date to get month/year
+          var dateParts = endDate.split('/');
+          var monthYear = `${dateParts[1]}/${dateParts[2]}`; // Extract "mm/yyyy"
+
+          // Summarize amounts by month/year
+          if (!projectInfo[projectName].monthlyAmounts[monthYear]) {
+            projectInfo[projectName].monthlyAmounts[monthYear] = 0;
+          }
+          projectInfo[projectName].monthlyAmounts[monthYear] += amount;
+        } else if (projectStatus === 'Quoted-Loss') {
+          projectInfo[projectName].quotedLoss++;
+        } else if (projectStatus === 'Following-Loss') {
+          projectInfo[projectName].followingLoss++;
+        }
+
+        // Determine the latest follow-up date
+        var regex = /\[(\w{3} \d{1,2}, \d{4})\]/g;
+        var match;
+        while ((match = regex.exec(followUpHistory)) !== null) {
+          var date = new Date(match[1]);
+          if (date > projectInfo[projectName].latestDate) {
+            projectInfo[projectName].latestDate = date;
+          }
+        }
+      }
+    }
+  });
+
+  var projectsArray = Object.keys(projectInfo).map(function(key) {
+    var info = projectInfo[key];
+    var diffDays = Math.round((today - info.latestDate) / (1000 * 60 * 60 * 24));
+    var totalQuote = info.wins + info.quotedLoss + info.followingLoss;
+    var winRate = (info.wins + totalQuote === 0) ? '0%' : ((info.wins / totalQuote) * 100).toFixed(0) + '%';
+
+    return {
+      project: key,
+      days: formatDuration(diffDays),
+      numericDays: diffDays,
+      accumulatedWon: info.wins > 0 ? info.wins : '0',
+      winRate: winRate,
+      totalQuote: totalQuote,
+      amount: info.totalAmount.toFixed(2), // Format amount to 2 decimal places
+      monthlyAmounts: info.monthlyAmounts // Include monthly amounts in the result
+    };
+  });
+
+  projectsArray.sort(function(b, a) { return a.numericDays - b.numericDays; }); // Sort by oldest contact
+  return projectsArray;
+}
+
+//------------------- Calculate LTC Count and Record to LTCRate Sheet -------------------------
+function calculateLTCCount() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+
+  // Get Opportunities data
+  var oppSheet = ss.getSheetByName("Opportunities");
+  var oppData = oppSheet.getDataRange().getValues();
+  var oppHeaders = oppData[0];
+  var typeIdx = oppHeaders.indexOf("Type");
+  var projectIdx = oppHeaders.indexOf("Project");
+  var historyIdx = oppHeaders.indexOf("Follow-Up-History");
+
+  var projectsWithDates = {};
+  for (var i = 1; i < oppData.length; i++) {
+    if (oppData[i][typeIdx].includes("Leads") && oppData[i][historyIdx]) {
+      var history = oppData[i][historyIdx];
+      var project = oppData[i][projectIdx];
+      var dateMatches = history.match(/\[(\w{3} \d{1,2}, \d{4})\]/g);
+      if (dateMatches) {
+        var dates = dateMatches.map(d => new Date(d.replace(/[\[\]]/g, '')));
+        var latestDate = new Date(Math.max.apply(null, dates.map(d => d.getTime())));
+        if (!projectsWithDates[project] || latestDate > projectsWithDates[project]) {
+          projectsWithDates[project] = latestDate;
+        }
+      }
+    }
+  }
+
+  var today = new Date();
+  var twoMonthsAgo = new Date();
+  twoMonthsAgo.setMonth(today.getMonth() - 2);
+  var oldProjects = Object.keys(projectsWithDates).filter(project => projectsWithDates[project] <= twoMonthsAgo);
+
+  var contactSheet = ss.getSheetByName("Contacts");
+  var contactData = contactSheet.getDataRange().getValues();
+  var contactHeaders = contactData[0];
+  var contactProjectIdx = contactHeaders.indexOf("Project");
+  var qualificationIdx = contactHeaders.indexOf("Qualification");
+
+  var qualifiedOldProjects = oldProjects.filter(project => {
+    return contactData.some(row => row[contactProjectIdx] === project && row[qualificationIdx].includes("Qualified"));
+  });
+
+  var uniqueLeadsProjects = [...new Set(oppData
+    .filter(row => row[typeIdx].includes("Leads"))
+    .map(row => row[projectIdx])
+  )];
+
+  var totalQualifiedProjects = uniqueLeadsProjects.filter(project => {
+    return contactData.some(row => row[contactProjectIdx] === project && row[qualificationIdx].includes("Qualified"));
+  });
+
+  var qualifiedCount = qualifiedOldProjects.length;
+  var totalQualifiedCount = totalQualifiedProjects.length;
+
+  var result = `${qualifiedCount}/${totalQualifiedCount}`;
+  Logger.log(result);
+
+  var ltcSheet = ss.getSheetByName("LTCRate");
+  var todayFormatted = "'" + Utilities.formatDate(today, Session.getScriptTimeZone(), "dd/MM/yyyy").toString();
+  var percentage = (qualifiedCount / totalQualifiedCount) * 100;
+  ltcSheet.appendRow([todayFormatted, qualifiedCount, totalQualifiedCount, percentage.toFixed(2).toString()]); // Ensure all values are string if necessary
+
+  return result;
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function sayHiToOpportunity(projectName) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  
+  // Retrieve header row and create a mapping of header names to their 1-indexed column positions.
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Get the card owner's name
+  var cardOwner = authorizedUser(); // Assumes authorizedUser() returns the card owner's name
+  
+  // Format the current date for "Created-Date"
+  var currentDate = new Date();
+  var day = String(currentDate.getDate()).padStart(2, '0');
+  var month = String(currentDate.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+  var year = currentDate.getFullYear();
+  var formattedDate = day + '/' + month + '/' + year;
+  
+  // Format the current date for "Follow-Up-History" with the card owner info.
+  var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  var formattedFollowUpHistory = "[" + monthNames[currentDate.getMonth()] + " " + day + ", " + year + "] ['" + cardOwner + "' has created this card]";
+  
+  // Create a new row array with empty strings for all columns.
+  var newRow = new Array(headers.length).fill('');
+  
+  // Map our values into the correct columns using header names.
+  if (columnMap["Type"]) {
+    newRow[columnMap["Type"] - 1] = "Leads";
+  }
+  if (columnMap["Status"]) {
+    newRow[columnMap["Status"] - 1] = "Qualified";
+  }
+  if (columnMap["Project"]) {
+    newRow[columnMap["Project"] - 1] = projectName;
+  }
+  if (columnMap["Created-Date"]) {
+    newRow[columnMap["Created-Date"] - 1] = "'" + formattedDate;
+  }
+  if (columnMap["Topic"]) {
+    newRow[columnMap["Topic"] - 1] = "Long Time Contact (LTC)";  // This remains as the topic string.
+  }
+  if (columnMap["Follow-Up-History"]) {
+    newRow[columnMap["Follow-Up-History"] - 1] = formattedFollowUpHistory;
+  }
+  if (columnMap["Unique-ID"]) {
+    newRow[columnMap["Unique-ID"] - 1] = generateUniqueID();
+  }
+  if (columnMap["Card-Owner"]) {
+    newRow[columnMap["Card-Owner"] - 1] = cardOwner;
+  }
+  
+  // Append the new row to the sheet.
+  sheet.appendRow(newRow);
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateContactCheckInSheet(formId, status) {
+    var spreadsheetId = '1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE';
+    var sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName('ContactForm');
+    var data = sheet.getDataRange().getValues(); // Fetch all data from the sheet
+    var contactCheckColumnIndex = data[0].indexOf('Contact Check'); // Index of the "Contact Check" column
+    var formIdColumnIndex = data[0].indexOf('Form ID'); // Index of the "Form ID" column
+
+    for (var i = 1; i < data.length; i++) { // Start from 1 to skip header row
+        if (data[i][formIdColumnIndex] === formId) { // Match the Form ID
+            sheet.getRange(i + 1, contactCheckColumnIndex + 1).setValue(status); // Update to "Rejected"
+            break; // Stop after updating the correct row
+        }
+    }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateContactCheckToPassed(formId) {
+    var spreadsheetId = '1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE';
+    var sheet = SpreadsheetApp.openById(spreadsheetId).getSheetByName('ContactForm');
+    var data = sheet.getDataRange().getValues(); // Fetch all data from the sheet
+    var formIdColumnIndex = data[0].indexOf('Form ID'); // Index of the "Form ID" column
+    var contactCheckColumnIndex = data[0].indexOf('Contact Check'); // Index of the "Contact Check" column
+
+    for (var i = 1; i < data.length; i++) { // Start from 1 to skip the header row
+        if (data[i][formIdColumnIndex] === formId) { // Match the Form ID
+            sheet.getRange(i + 1, contactCheckColumnIndex + 1).setValue('Passed'); // Update "Contact Check" to "Passed"
+            break; // Stop after updating the correct row
+        }
+    }
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getCardOwners() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var colIndex = headers.indexOf("Card-Owner") + 1;
+  
+  if (colIndex === 0) {
+    throw new Error("Card-Owner column not found");
+  }
+  
+  // Fetch values in the "Card-Owner" column starting from row 2
+  var data = sheet.getRange(2, colIndex, sheet.getLastRow() - 1, 1).getValues();
+  var owners = data.map(function(row) {
+    return row[0];
+  }).filter(function(owner) {
+    return owner;
+  });
+  
+  return owners;
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function sendConditionalEmails() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var contactsSheet = ss.getSheetByName("Contacts");
+  var emailAutomationSheet = ss.getSheetByName("EmailAutomation");
+
+  var contactsData = contactsSheet.getDataRange().getValues();
+  var emailAutomationData = emailAutomationSheet.getDataRange().getValues();
+
+  var today = new Date();
+
+  // Function to replace placeholders
+  function replacePlaceholders(text, contactRow) {
+    return text.replace(/\{\{([\w-]+)\}\}/g, function(match, columnName) {
+      var columnIndex = headersInContacts.indexOf(columnName);
+      return columnIndex > -1 ? contactRow[columnIndex] : match;
+    }).replace(/\n/g, '<br>'); // Convert newline characters to HTML line breaks
+  }
+
+  var footerHtml = `
+  <hr style="border: none; height: 1px; background-color: #ccc; width: 100%;">
+  <p style="text-align: center; font-size: 12px;">
+    Copyright (C) 2024 SB Interlab Co., Ltd. All rights reserved.
+    <br>
+    <a href="https://www.carebeau-enjoy.com/menu-categories/all-product" target="_blank" style="color: #007bff; text-decoration: none;">Explore Our Products in carebeau-enjoy.com</a>
+  </p>
+  `;
+
+  var headersInContacts = contactsData[0];
+  var emailTypesInContactsIndex = headersInContacts.indexOf("Journeys");
+  var emailInContactsIndex = headersInContacts.indexOf("Marketing-Email");
+  var emailHistoryInContactsIndex = headersInContacts.indexOf("EmailHistory");
+
+  var headersInAutomation = emailAutomationData[0];
+  var emailTypesInAutomationIndex = headersInAutomation.indexOf("Journeys");
+  var uniqueIDIndex = headersInAutomation.indexOf("Email-Unique-ID");
+  var subjectIndex = headersInAutomation.indexOf("Email-Subject");
+  var bodyIndex = headersInAutomation.indexOf("Email-Body");
+  var frequencyIndex = headersInAutomation.indexOf("Email-Frequency");
+
+  // Organize and sort emails by type
+  var emailsToSend = emailAutomationData.slice(1).reduce(function(acc, row) {
+    var emailType = row[emailTypesInAutomationIndex];
+    acc[emailType] = acc[emailType] || [];
+    acc[emailType].push({
+      uniqueID: row[uniqueIDIndex],
+      subject: row[subjectIndex],
+      body: row[bodyIndex],
+      frequency: row[frequencyIndex],
+      type: emailType
+    });
+    return acc;
+  }, {});
+
+  Object.keys(emailsToSend).forEach(function(type) {
+    emailsToSend[type].sort(function(a, b) {
+      return a.uniqueID.localeCompare(b.uniqueID);
+    });
+  });
+
+  // Iterate over contacts to send emails
+contactsData.slice(1).forEach(function(contactRow, index) {
+  var contactEmail = contactRow[emailInContactsIndex];
+  var contactEmailHistory = contactRow[emailHistoryInContactsIndex] || "";
+  var sentRecords = []; // Store records of sent emails
+
+  if (!contactEmail) return; // Skip if no email
+
+  var journeyTypes = contactRow[emailTypesInContactsIndex].split(',').map(type => type.trim());
+
+  var emailSent = false;  // Track if an email has already been sent to this contact
+
+  journeyTypes.forEach(function(type) {
+    if (emailSent) return; // If an email was already sent, skip further processing
+
+    var emailsOfType = emailsToSend[type] || [];
+    for (var emailToSend of emailsOfType) {
+      if (!emailToSend.body.trim()) continue;  // Skip if the body is empty
+
+      // Check email history and frequency conditions
+      var regex = new RegExp(`\\[([^\\]]+)\\] \\[${type}\\] \\[Frequency-(\\d+)\\]`, 'g');
+      var match, shouldSend = true;
+      while ((match = regex.exec(contactEmailHistory)) !== null) {
+        var [_, dateString, frequency] = match;
+        var recordedDate = new Date(dateString);
+        var frequencyDays = parseInt(frequency, 10);
+        var nextSendDate = new Date(recordedDate);
+        nextSendDate.setDate(recordedDate.getDate() + frequencyDays);
+        if (nextSendDate > today) {
+          shouldSend = false;
+          break;
+        }
+      }
+
+      if (shouldSend && !contactEmailHistory.includes(emailToSend.uniqueID)) {
+        // Prepare and send email
+        var personalizedSubject = replacePlaceholders(emailToSend.subject, contactRow);
+        var personalizedBody = `
+                                    <html>
+                                      <head>
+                                        <style type="text/css">
+                                          @media only screen and (max-device-width: 640px) {
+                                            .responsive-font {
+                                              font-size: 2rem !important;
+                                            }
+                                          }
+                                          @media only screen and (max-device-width: 479px) {
+                                            .responsive-font {
+                                              font-size: 2rem !important;
+                                            }
+                                          }
+                                          .responsive-font {
+                                            color: rgb(0, 0, 0);
+                                            font-family: Poppins, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                                            font-weight: 400;
+                                            font-style: normal;
+                                          }
+                                        </style>
+                                      </head>
+                                      <body>
+                                        <div style="background-color: white; width: calc(600px - 10px); margin: 0 auto; box-sizing: border-box; font-size: 16px; color: #222222;" class="responsive-font">
+                                          ${replacePlaceholders(emailToSend.body, contactRow)}${footerHtml}
+                                        </div>
+                                      </body>
+                                    </html>`;
+
+        try {
+          MailApp.sendEmail({
+            to: contactEmail,
+            subject: personalizedSubject,
+            htmlBody: personalizedBody // This now contains styled HTML
+          });
+
+          // Update sent email record
+          var sendDate = Utilities.formatDate(today, Session.getScriptTimeZone(), "[MMM dd, yyyy]");
+          sentRecords.push(`${sendDate} [${emailToSend.type}] [Frequency-${emailToSend.frequency}] ${emailToSend.uniqueID}`);
+          emailSent = true;  // Set the flag to true once an email is sent
+          break;  // Stop after sending one email
+        } catch (e) {
+          console.error(`Failed to send email to: ${contactEmail} Error: ${e.message}`);
+        }
+      }
+    }
+  });
+
+  // Update EmailHistory if any emails were sent
+  if (sentRecords.length > 0) {
+    var newHistory = contactEmailHistory + (contactEmailHistory ? "\n" : "") + sentRecords.join("\n");
+    contactsSheet.getRange(index + 2, emailHistoryInContactsIndex + 1).setValue(newHistory);
+  }
+});
+}
+
+
+
+
+
+
+
+//-------------------------------Used Function--------------------------------------------
+function sendTestEmail(formData) {
+  var testEmail = formData.testEmail;
+  var emailSubject = formData.emailSubject;
+  var emailBody = formData.emailBody;
+
+  var footerHtml = `
+  <hr style="border: none; height: 1px; background-color: #ccc; width: 100%;">
+  <p style="text-align: center; font-size: 12px;">
+    Copyright (C) 2024 SB Interlab Co., Ltd. All rights reserved.
+    <br>
+    <a href="https://www.carebeau-enjoy.com/menu-categories/all-product" target="_blank" style="color: #007bff; text-decoration: none;">Explore Our Products in carebeau-enjoy.com</a>
+  </p>
+  `;
+
+  var personalizedBody = `
+    <html>
+      <head>
+        <style type="text/css">
+          @media only screen and (max-device-width: 640px) {
+            .responsive-font {
+              font-size: 2rem !important;
+            }
+          }
+          @media only screen and (max-device-width: 479px) {
+            .responsive-font {
+              font-size: 2rem !important;
+            }
+          }
+          .responsive-font {
+            color: rgb(0, 0, 0);
+            font-family: Poppins, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            font-weight: 400;
+            font-style: normal;
+          }
+        </style>
+      </head>
+      <body>
+        <div style="background-color: white; width: calc(600px - 10px); margin: 0 auto; box-sizing: border-box; font-size: 16px; color: #222222;" class="responsive-font">
+          ${emailBody}${footerHtml}
+        </div>
+      </body>
+    </html>`;
+
+  try {
+    MailApp.sendEmail({
+      to: testEmail,
+      subject: emailSubject,
+      htmlBody: personalizedBody
+    });
+    Logger.log('Test email sent successfully to ' + testEmail);
+  } catch (e) {
+    Logger.log('Failed to send test email to: ' + testEmail + ' Error: ' + e.message);
+  }
+}
+
+
+//-------------------------------Used Function--------------------------------------------
+function updateJourneyHeaders(oldName, newName) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  
+  // Update "EmailAutomation" Sheet, Column "Journeys"
+  var sheetEmailAutomation = ss.getSheetByName("EmailAutomation");
+  var headersEmailAutomation = sheetEmailAutomation.getRange(1, 1, 1, sheetEmailAutomation.getLastColumn()).getValues()[0];
+  var journeyColIndexEmailAutomation = headersEmailAutomation.indexOf("Journeys") + 1;
+  var dataEmailAutomation = sheetEmailAutomation.getRange(2, 1, sheetEmailAutomation.getLastRow() - 1, sheetEmailAutomation.getLastColumn()).getValues();
+  
+  dataEmailAutomation.forEach(function(row) {
+    if (row[journeyColIndexEmailAutomation - 1] === oldName) {
+      row[journeyColIndexEmailAutomation - 1] = newName;
+    }
+  });
+  
+  sheetEmailAutomation.getRange(2, 1, dataEmailAutomation.length, dataEmailAutomation[0].length).setValues(dataEmailAutomation);
+
+  // Update "Contacts" Sheet, Column "Journeys"
+  var sheetContacts = ss.getSheetByName("Contacts");
+  var headersContacts = sheetContacts.getRange(1, 1, 1, sheetContacts.getLastColumn()).getValues()[0];
+  var journeyColIndexContacts = headersContacts.indexOf("Journeys") + 1;
+  var emailHistoryColIndexContacts = headersContacts.indexOf("EmailHistory") + 1;
+  var dataContacts = sheetContacts.getRange(2, 1, sheetContacts.getLastRow() - 1, sheetContacts.getLastColumn()).getValues();
+  
+  dataContacts.forEach(function(row) {
+    if (row[journeyColIndexContacts - 1].includes(oldName)) {
+      row[journeyColIndexContacts - 1] = row[journeyColIndexContacts - 1].split(',').map(function(journey) {
+        return journey.trim() === oldName ? newName : journey.trim();
+      }).join(', ');
+    }
+    if (row[emailHistoryColIndexContacts - 1].includes(oldName)) {
+      row[emailHistoryColIndexContacts - 1] = row[emailHistoryColIndexContacts - 1].replace(new RegExp("\\[" + oldName + "\\]", 'g'), "[" + newName + "]");
+    }
+  });
+  
+  sheetContacts.getRange(2, 1, dataContacts.length, dataContacts[0].length).setValues(dataContacts);
+}
+
+
+//-------------------------------Used Function--------------------------------------------
+function updateJourneyName(oldName, newName) {
+  var lock = LockService.getScriptLock();
+  try {
+    // Attempt to acquire the lock, waiting for up to 30 seconds.
+    lock.waitLock(30000);
+
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var emailAutomationSheet = ss.getSheetByName("EmailAutomation");
+    var contactsSheet = ss.getSheetByName("Contacts");
+
+    // Update in EmailAutomation Sheet in Column "Journeys"
+    var headersEmailAutomation = emailAutomationSheet.getRange(1, 1, 1, emailAutomationSheet.getLastColumn()).getValues()[0];
+    var journeyColIndexEmailAutomation = headersEmailAutomation.indexOf("Journeys") + 1;
+    var dataEmailAutomation = emailAutomationSheet.getRange(2, 1, emailAutomationSheet.getLastRow() - 1, emailAutomationSheet.getLastColumn()).getValues();
+    
+    dataEmailAutomation.forEach(function(row) {
+      if (row[journeyColIndexEmailAutomation - 1] === oldName) {
+        row[journeyColIndexEmailAutomation - 1] = newName;
+      }
+    });
+    
+    emailAutomationSheet.getRange(2, 1, dataEmailAutomation.length, dataEmailAutomation[0].length).setValues(dataEmailAutomation);
+
+    // Update in Contacts Sheet in Column "Journeys"
+    var headersContacts = contactsSheet.getRange(1, 1, 1, contactsSheet.getLastColumn()).getValues()[0];
+    var journeyColIndexContacts = headersContacts.indexOf("Journeys") + 1;
+    var emailHistoryColIndexContacts = headersContacts.indexOf("EmailHistory") + 1;
+    var dataContacts = contactsSheet.getRange(2, 1, contactsSheet.getLastRow() - 1, contactsSheet.getLastColumn()).getValues();
+    
+    dataContacts.forEach(function(row) {
+      if (row[journeyColIndexContacts - 1].includes(oldName)) {
+        row[journeyColIndexContacts - 1] = row[journeyColIndexContacts - 1].split(',').map(function(journey) {
+          return journey.trim() === oldName ? newName : journey.trim();
+        }).join(', ');
+      }
+      if (row[emailHistoryColIndexContacts - 1].includes(oldName)) {
+        row[emailHistoryColIndexContacts - 1] = row[emailHistoryColIndexContacts - 1].replace(new RegExp("\\[" + oldName + "\\]", 'g'), "[" + newName + "]");
+      }
+    });
+    
+    contactsSheet.getRange(2, 1, dataContacts.length, dataContacts[0].length).setValues(dataContacts);
+
+  } catch (e) {
+    Logger.log('Could not obtain lock after 30 seconds: ' + e);
+    throw new Error('The system is busy. Please try again later.');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+
+function checkJourneyExists(journeyName) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("EmailAutomation");
+    var data = sheet.getDataRange().getValues();
+
+    var headers = data[0];
+    var journeyColIndex = headers.indexOf("Journeys");
+
+    for (var i = 1; i < data.length; i++) {
+        if (data[i][journeyColIndex] === journeyName) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+function listDriveImages(folderId) {
+    var folder = DriveApp.getFolderById(folderId);
+    var files = folder.getFilesByType("image/jpeg"); // You can adjust the MIME type as needed.
+    var images = [];
+    while (files.hasNext()) {
+        var file = files.next();
+        images.push({
+            name: file.getName(),
+            url: file.getUrl(), // Using direct URL or 'webViewLink' based on your need.
+            id: file.getId() // Optional, if needed for further processing
+        });
+    }
+    return images;
+}
+
+
+
+function updateSheetEmailCard(formData) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName("EmailAutomation");
+  var data = sheet.getDataRange().getValues();
+
+  var rowIndexToUpdate = -1;
+  for (var i = 0; i < data.length; i++) {
+    if (data[i][0] == formData.uniqueID) {
+      rowIndexToUpdate = i + 1;
+      break;
+    }
+  }
+  if (rowIndexToUpdate > 0) {
+    sheet.getRange(rowIndexToUpdate, 3, 1, 4).setValues([
+      [formData.emailFrequency, formData.emailTemplate, formData.emailSubject, formData.emailBody]
+    ]);
+  } else {
+    Logger.log('No matching "Email-Unique-ID" found.');
+  }
+}
+
+
+function getEmailHistoryCounts() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var contactsSheet = ss.getSheetByName('Contacts');
+  var headers = contactsSheet.getRange(1, 1, 1, contactsSheet.getLastColumn()).getValues()[0]; // Get the header row
+  var emailHistoryColumnIndex = headers.indexOf('EmailHistory') + 1; // Find the index of 'EmailHistory' column (1-based index)
+
+  if (emailHistoryColumnIndex === 0) {
+    throw new Error("EmailHistory column not found.");
+  }
+
+  var emailHistoryData = contactsSheet.getRange(2, emailHistoryColumnIndex, contactsSheet.getLastRow() - 1).getValues(); // Get the data from the 'EmailHistory' column
+  var countMap = {};
+
+  emailHistoryData.forEach(function(row) {
+    var historyEntries = row[0].split('\n');
+    historyEntries.forEach(function(entry) {
+      // Updated regex to match the specified format
+      var match = entry.match(/\d{8}-\d{9}-\d{6}/);
+      if (match) {
+        var uniqueId = match[0];
+        if (countMap[uniqueId]) {
+          countMap[uniqueId]++;
+        } else {
+          countMap[uniqueId] = 1;
+        }
+      }
+    });
+  });
+
+  return countMap;
+}
+
+
+function getJourneyNames() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('EmailAutomation');
+  var range = sheet.getRange('B2:B' + sheet.getLastRow()); // Assuming 'Journeys' are in column A
+  var data = range.getValues();
+  var journeyNames = data.map(function(row) { return row[0]; }) // Extract names
+                        .filter(function(value, index, self) { return self.indexOf(value) === index; }); // Remove duplicates
+  return journeyNames;
+}
+
+function recordNewJourney(formData) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName("EmailAutomation");
+  sheet.appendRow([formData.uniqueID, formData.journeyName, formData.emailFrequency, formData.emailTemplate]);
+}
+
+function recordEmailTemplate(formData) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName("EmailAutomation");
+  sheet.appendRow([formData.uniqueID, formData.journeyName, formData.emailFrequency, formData.emailTemplate]);
+}
+
+
+function getEmailAutomation() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE"); // Open the spreadsheet using its ID
+  var sheet = ss.getSheetByName('EmailAutomation');
+  var data = sheet.getDataRange().getValues(); // Get all data from the sheet
+  var headers = data[0]; // Extract the headers (column names) from the first row
+  var info = []; // Initialize an empty array to store info
+
+  for (var i = 1; i < data.length; i++) { // Loop through rows starting from the second row (index 1)
+    var item = {}; // Create an object for each item
+    for (var j = 0; j < headers.length; j++) { // Loop through columns
+      item[headers[j]] = data[i][j]; // Assign the value from the current row to the corresponding header/column
+    }
+    info.push(item); // Add the item object to the info array
+  }
+  return info; // Return the array of info
+}
+
+
+
+function updateProjectDate(uniqueId, newDate, isLoadedProject) {
+  Logger.log("uniqueId: " + uniqueId);
+  Logger.log("newDate (raw): " + newDate);
+  Logger.log("isLoadedProject: " + isLoadedProject);
+
+  if (!uniqueId || !newDate || isLoadedProject === undefined) {
+    Logger.log("Error: Missing required parameters.");
+    return;
+  }
+
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+
+  var columnToUpdate = isLoadedProject ? "Goods-Loading-Date" : "Goods-Ready-Date";
+  var columnIndex = headers.indexOf(columnToUpdate);
+
+  if (columnIndex === -1) {
+    Logger.log("Error: Column not found.");
+    return;
+  }
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][headers.indexOf('Unique-ID')] == uniqueId) {
+      sheet.getRange(i + 1, columnIndex + 1).setValue(newDate);
+      Logger.log("Date updated successfully for row " + (i + 1));
+      return;
+    }
+  }
+  Logger.log("Error: Unique ID not found.");
+}
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function formatDuration(diffDays) {
+    var years = Math.floor(diffDays / 365);
+    diffDays -= years * 365;
+    var months = Math.floor(diffDays / 30); // Approximation
+    diffDays -= months * 30;
+    var days = diffDays;
+
+    if (years > 0) {
+        // If it's more than a year, display "xx year and xx months"
+        return years + " year" + (years > 1 ? "s" : "") + ", " + months + " month" + (months !== 1 ? "s" : "");
+    } else if (months > 0) {
+        // If it's less than a year but more than a month, display "xx months and xx days"
+        return months + " month" + (months > 1 ? "s" : "") + ", " + days + " day" + (days !== 1 ? "s" : "");
+    } else {
+        // If it's less than a month, display "xx days"
+        return days + " day" + (days !== 1 ? "s" : "");
+    }
+}
+
+
+function disqualifyProject(projectName) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Contacts');
+  var data = sheet.getDataRange().getValues();
+
+  // Find the headers
+  var headers = data[0];
+  var projectIndex = headers.indexOf('Project');
+  var qualificationIndex = headers.indexOf('Qualification');
+
+  // Check if both necessary columns are present
+  if (projectIndex == -1 || qualificationIndex == -1) return;
+
+  // Loop through rows to find the matching project and update its Qualification
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][projectIndex] === projectName) {
+      // Update the Qualification column for this row
+      sheet.getRange(i + 1, qualificationIndex + 1).setValue('Unqualified');
+      break; // Assuming only one match is needed; remove if multiple updates are required
+    }
+  }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+
+function updateCardOwner(uniqueId, newOwner, displayName) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+  var idColumnIndex = data[0].indexOf('Unique-ID');
+  var ownerColumnIndex = data[0].indexOf('Card-Owner');
+  var followUpHistoryColumnIndex = data[0].indexOf('Follow-Up-History');
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][idColumnIndex] == uniqueId) {
+      var oldOwner = data[i][ownerColumnIndex];
+      var followUpHistory = data[i][followUpHistoryColumnIndex];
+      var now = new Date();
+      var dateOptions = { day: '2-digit', month: 'short', year: 'numeric' };
+      var formattedDate = Utilities.formatDate(now, Session.getScriptTimeZone(), "MMM dd, yyyy");
+      
+      var changeMessage = `[${formattedDate}] ['${displayName}' Changed Card Owner from '${oldOwner}' to '${newOwner}']`;
+      var newFollowUpHistory = changeMessage + '\n' + (followUpHistory || '');
+      
+      sheet.getRange(i + 1, ownerColumnIndex + 1).setValue(newOwner);
+      sheet.getRange(i + 1, followUpHistoryColumnIndex + 1).setValue(newFollowUpHistory);
+      break;
+    }
+  }
+}
+
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getContacts() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Contacts');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var info = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) {
+      item[headers[j]] = data[i][j];
+    }
+    info.push(item);
+  }
+  return info;
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getProducts() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Products');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var info = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) {
+      item[headers[j]] = data[i][j];
+    }
+    info.push(item);
+  }
+  return info;
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getQuotation() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('RecordQuotation');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var info = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) {
+      item[headers[j]] = data[i][j];
+    }
+    info.push(item);
+  }
+  return info;
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getOemlab() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('OEMLab');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var info = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) {
+      item[headers[j]] = data[i][j];
+    }
+    info.push(item);
+  }
+  return info;
+}
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function saveQuotation(data) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("RecordQuotation");
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+    var documentUniqueID = data.documentUniqueID;
+    var products = data.products || [];
+
+    // Find rows with the same `documentUniqueID`
+    var dataRange = sheet.getDataRange().getValues();
+    var matchingRows = [];
+    for (var i = 1; i < dataRange.length; i++) {
+        if (dataRange[i][headers.indexOf("documentUniqueID")] === documentUniqueID) {
+            matchingRows.push(i + 1); // Store 1-based index
+        }
+    }
+
+    // Helper function to convert data to string and prefix with "'"
+    function toText(value) {
+        return value !== undefined && value !== null ? "'" + value.toString() : "''";
+    }
+
+    // Condition 1: If documentUniqueID is not found, create new rows for the document
+    if (matchingRows.length === 0) {
+        // Create a new row for each product
+        products.forEach(function(product) {
+            var newRow = [];
+            
+            headers.forEach(function(header) {
+                if (data[header] !== undefined) {
+                    newRow.push(toText(data[header]));
+                } else if (product[header] !== undefined) {
+                    newRow.push(toText(product[header]));
+                } else {
+                    newRow.push("''"); // Leave blank if no data
+                }
+            });
+
+            sheet.appendRow(newRow); // Append the new row
+        });
+        return; // Exit the function after adding new rows
+    }
+
+    // Condition 2: If documentUniqueID is found
+    // Step 2.1: Update document-level columns for all matching rows
+    var documentColumns = [
+        "documentType", "projectName", "customerName", "companyName", "companyAddress",
+        "emailAddress", "phoneNumber", "taxInvoice", "documentNo", "documentDate",
+        "termOfDelivery", "termOfPayment", "shippedFrom", "shippedTo", "discountValue",
+        "taxType", "documentRemarks", "shippingMark", "accountName", "accountNumber",
+        "bankName", "swiftCode", "bankAddress", "currencyType", "madeBy"
+    ];
+
+    matchingRows.forEach(function(rowIndex) {
+        documentColumns.forEach(function(columnName) {
+            var columnIndex = headers.indexOf(columnName);
+            if (columnIndex !== -1 && data[columnName] !== undefined) {
+                sheet.getRange(rowIndex, columnIndex + 1).setValue(toText(data[columnName]));
+            }
+        });
+    });
+
+    // Step 2.2: Update item-level columns for rows matching `itemUniqueID`
+    var itemColumns = [
+        "selectedProduct", "productName", "productDetails", 
+        "ctn", "gw", "cbm", "units", "unitPrice", "productSort"
+    ];
+
+    products.forEach(function(product) {
+        var itemUniqueID = product.itemUniqueID;
+        if (!itemUniqueID) return; // Skip if `itemUniqueID` is invalid or missing
+
+        // Find the row matching `itemUniqueID`
+        var itemRowFound = false;
+        for (var i = 1; i < dataRange.length; i++) {
+            if (dataRange[i][headers.indexOf("itemUniqueID")] === itemUniqueID) {
+                // Update item-level columns only for the matching `itemUniqueID`
+                itemColumns.forEach(function(columnName) {
+                    var columnIndex = headers.indexOf(columnName);
+                    if (columnIndex !== -1 && product[columnName] !== undefined) {
+                        sheet.getRange(i + 1, columnIndex + 1).setValue(toText(product[columnName]));
+                    }
+                });
+                itemRowFound = true;
+                break; // Stop searching once the row is found
+            }
+        }
+        // Do not create a new row for mismatched `itemUniqueID` (per Condition 2)
+    });
+}
+
+
+
+
+function addNewSpreadsheetRow(documentUniqueID, itemUniqueID, selectedProduct) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("RecordQuotation");
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+    var dataRange = sheet.getDataRange().getValues();
+    var existingRows = [];
+    for (var i = 1; i < dataRange.length; i++) {
+        if (dataRange[i][headers.indexOf("documentUniqueID")] === documentUniqueID) {
+            existingRows.push(i + 1); // Add 1-based index
+        }
+    }
+
+    if (existingRows.length > 0) {
+        var lastRow = Math.max(...existingRows);
+        sheet.insertRowAfter(lastRow);
+
+        var rowData = new Array(headers.length).fill("");
+        rowData[headers.indexOf("documentUniqueID")] = documentUniqueID;
+        rowData[headers.indexOf("itemUniqueID")] = itemUniqueID;
+        rowData[headers.indexOf("selectedProduct")] = selectedProduct; // Save selectedProduct
+
+        sheet.getRange(lastRow + 1, 1, 1, rowData.length).setValues([rowData]);
+    }
+}
+
+function addNewTextSpreadsheetRow(documentUniqueID, itemUniqueID, productName, productDetails) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("RecordQuotation");
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+    var dataRange = sheet.getDataRange().getValues();
+    var existingRows = [];
+    for (var i = 1; i < dataRange.length; i++) {
+        if (dataRange[i][headers.indexOf("documentUniqueID")] === documentUniqueID) {
+            existingRows.push(i + 1); // Add 1-based index
+        }
+    }
+
+    if (existingRows.length > 0) {
+        var lastRow = Math.max(...existingRows);
+        sheet.insertRowAfter(lastRow);
+
+        var rowData = new Array(headers.length).fill("");
+        rowData[headers.indexOf("documentUniqueID")] = documentUniqueID;
+        rowData[headers.indexOf("itemUniqueID")] = itemUniqueID;
+        rowData[headers.indexOf("productName")] = productName; // Save product name
+        rowData[headers.indexOf("productDetails")] = productDetails; // Save product details
+
+        sheet.getRange(lastRow + 1, 1, 1, rowData.length).setValues([rowData]);
+    }
+}
+
+
+
+function deleteRowFromSpreadsheet(itemUniqueID) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("RecordQuotation");
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    var itemUniqueIDColumnIndex = headers.indexOf("itemUniqueID");
+
+    if (itemUniqueIDColumnIndex === -1) {
+        throw new Error("Column 'itemUniqueID' not found.");
+    }
+
+    for (var i = 1; i < data.length; i++) {
+        if (data[i][itemUniqueIDColumnIndex] === itemUniqueID) {
+            sheet.deleteRow(i + 1); // Delete the row (1-based index)
+            return;
+        }
+    }
+
+    throw new Error("Row with itemUniqueID '" + itemUniqueID + "' not found.");
+}
+
+
+function getAllDocumentNos() {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("RecordQuotation");
+
+    // Temporarily remove all filters
+    var filter = sheet.getFilter();
+    if (filter) {
+        filter.remove(); // Remove the filter to unhide all rows
+    }
+
+    // Fetch all data including previously hidden rows
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0]; // Get the header row
+    var documentNos = []; // Array to store document numbers and unique IDs
+
+    // Iterate through each row starting from the second (skipping headers)
+    for (var i = 1; i < data.length; i++) {
+        var item = {};
+        for (var j = 0; j < headers.length; j++) {
+            item[headers[j]] = data[i][j]; // Map each column to its header
+        }
+        documentNos.push({
+            documentNo: item['documentNo'], // Extract the document number
+            documentUniqueID: item['documentUniqueID'] // Extract the unique ID
+        });
+    }
+    return documentNos; 
+}
+
+
+
+
+function permanentDelete(documentUniqueID) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("RecordQuotation");
+    var data = sheet.getDataRange().getValues();
+    var deleteRows = [];
+
+    // Collect row numbers to delete
+    for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === documentUniqueID) {
+            deleteRows.unshift(i + 1); // Use unshift to add row numbers at the start (to delete from bottom to top)
+        }
+    }
+
+    // Delete rows from the bottom to avoid messing up the indices
+    for (var j = 0; j < deleteRows.length; j++) {
+        sheet.deleteRow(deleteRows[j]);
+    }
+}
+
+
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getRedCount() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('RedCount');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var info = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) {
+      item[headers[j]] = data[i][j];
+    }
+    info.push(item);
+  }
+  return info;
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getLTCRate() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('LTCRate');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var info = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) {
+      item[headers[j]] = data[i][j];
+    }
+    info.push(item);
+  }
+  return info;
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+
+function getCalendar() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Calendar');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var info = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) {
+      item[headers[j]] = data[i][j];
+    }
+    info.push(item);
+  }
+  return info;
+}
+
+function submitEventData(eventDate, eventTime, eventAlert, eventTitle, eventMessage) {
+    var uniqueID = generateUniqueID();
+    
+    // Format eventDate to the desired format (dd/mm/yyyy)
+    var dateParts = eventDate.split('-'); // Split date string by hyphen
+    var formattedDate = "'" + dateParts[2] + '/' + dateParts[1] + '/' + dateParts[0];
+    
+    // Convert eventTime and eventAlert to string format
+    var timeString = eventTime.toString();
+    var alertString = eventAlert.toString();
+    
+    // Convert eventTitle and eventMessage to string format
+    var titleString = eventTitle.toString();
+    var messageString = eventMessage.toString();
+    
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName('Calendar');
+    var lastRow = sheet.getLastRow();
+    
+    // Append data to the next empty row
+    sheet.getRange(lastRow + 1, 1, 1, 6).setValues([[uniqueID, formattedDate, timeString, alertString, titleString, messageString]]);
+    
+    // Return the uniqueID so the client-side code can use it
+    return uniqueID;
+}
+
+function getHolidayDate() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName("Holiday");
+  var lastRow = sheet.getLastRow();
+  
+  if (lastRow < 1) return []; // If empty, return empty array
+
+  var dateRange = sheet.getRange(1, 1, lastRow);
+  var dateValues = dateRange.getValues();
+
+  var holidays = dateValues.map(function(row) {
+    var cellValue = row[0];
+
+    // Convert Date object to "dd/mm/yyyy" format if necessary
+    if (cellValue instanceof Date) {
+      var day = cellValue.getDate().toString().padStart(2, '0');
+      var month = (cellValue.getMonth() + 1).toString().padStart(2, '0'); // Month is 0-indexed
+      var year = cellValue.getFullYear();
+      cellValue = `${day}/${month}/${year}`;
+    }
+    
+    return cellValue.toString().trim();
+  });
+
+  return holidays; // Return array of holiday dates
+}
+
+
+
+function updateHolidayDate(dateStr, isChecked) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName("Holiday");
+  
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 1) return; // Exit if sheet is empty
+
+  var dateRange = sheet.getRange(1, 1, lastRow);
+  var dateValues = dateRange.getValues();
+
+  var foundRow = -1;
+
+  for (var i = 0; i < dateValues.length; i++) {
+    var cellValue = dateValues[i][0];
+
+    // Convert Date object to "dd/mm/yyyy" format if necessary
+    if (cellValue instanceof Date) {
+      var day = cellValue.getDate().toString().padStart(2, '0');
+      var month = (cellValue.getMonth() + 1).toString().padStart(2, '0'); // Month is 0-indexed
+      var year = cellValue.getFullYear();
+      cellValue = `${day}/${month}/${year}`;
+    }
+
+    // Compare as strings
+    if (cellValue.toString().trim() === dateStr.trim()) {
+      foundRow = i + 1;
+      break;
+    }
+  }
+
+  if (isChecked) {
+    if (foundRow === -1) {
+      // Append the date with a preceding quote to force text format.
+      var newRow = sheet.getLastRow() + 1;
+      var range = sheet.getRange(newRow, 1);
+      range.setValue("'" + dateStr);
+      range.setNumberFormat("@"); // Force text format
+    }
+  } else {
+    if (foundRow !== -1) {
+      sheet.deleteRow(foundRow);
+    }
+  }
+}
+
+
+
+function updateEvent(calendarUniqueId, eventDate, eventTime, eventAlert, eventTitle, eventMessage) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName('Calendar');
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+    
+    // Convert eventTime and eventAlert to string format
+    var timeString = eventTime.toString();
+    var alertString = eventAlert.toString();
+    
+    // Format eventDate to the desired format (dd/mm/yyyy) if it is not blank
+    var formattedDate = '';
+    if (eventDate) {
+        var dateParts = eventDate.split('-'); // Split date string by hyphen
+        formattedDate = "'" + dateParts[2] + '/' + dateParts[1] + '/' + dateParts[0]; // Rearrange date parts with preceding quote
+    }
+    
+    // Find the row with the matching Calendar-Unique-ID
+    for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === calendarUniqueId) { // Assuming the Calendar-Unique-ID is in the first column
+            // Update the event data
+            data[i][1] = formattedDate; // Set formatted date, or blank if eventDate is empty
+            data[i][2] = eventDate ? timeString : ''; // Set eventTime if eventDate is not empty, otherwise set to blank
+            data[i][3] = alertString; // Convert eventAlert to string format
+            data[i][4] = eventTitle;
+            data[i][5] = eventMessage;
+            
+            // Write the updated data back to the sheet
+            sheet.getRange(i + 1, 1, 1, headers.length).setValues([data[i]]);
+            
+            return; // Exit the loop once the data is updated
+        }
+    }
+}
+
+function updateEventDate(calendarUniqueId, newDate) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName('Calendar');
+    var data = sheet.getDataRange().getValues();
+
+    // Find the row with the matching Calendar-Unique-ID
+    for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === calendarUniqueId) { // Assuming the Calendar-Unique-ID is in the first column
+            // Update the event date with a preceding quote to enforce text format.
+            data[i][1] = "'" + newDate;
+            // Write the updated data back to the sheet
+            sheet.getRange(i + 1, 1, 1, data[i].length).setValues([data[i]]);
+            return; // Exit the loop once the data is updated
+        }
+    }
+}
+
+
+function deleteEventData(calendarUniqueId) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName('Calendar');
+    var data = sheet.getDataRange().getValues();
+    
+    // Find the row with the matching Calendar-Unique-ID
+    for (var i = 1; i < data.length; i++) {
+        if (data[i][0] === calendarUniqueId) { // Assuming the Calendar-Unique-ID is in the first column
+            // Delete the row when the ID is found
+            sheet.deleteRow(i + 1); // Adjust because sheet rows are 1-based
+            return; // Exit the function after deleting the row
+        }
+    }
+}
+
+
+function calendarAlertToLine() {
+    var lineToken = "YknW4pYNKM9ygVzus7DNJvrok3ruQEtqMT5KZLw3loH";
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName('Calendar');
+    var data = sheet.getDataRange().getValues();
+    var headers = data[0];
+
+    // Find the indices of each column based on the header names
+    var idIndex = headers.indexOf('Calendar-Unique-ID');
+    var dateIndex = headers.indexOf('Event-Date');
+    var timeIndex = headers.indexOf('Event-Time');
+    var alertIndex = headers.indexOf('Event-Alert');
+    var nameIndex = headers.indexOf('Event-Name');
+    var messageIndex = headers.indexOf('Event-Message');
+    var notifiedIndex = headers.indexOf('Notified');
+
+    var currentDate = new Date();
+
+    for (var i = 1; i < data.length; i++) {
+        var eventId = data[i][idIndex];
+        var eventDate = data[i][dateIndex];
+        var eventTime = data[i][timeIndex];
+        var eventAlert = data[i][alertIndex];
+        var eventName = data[i][nameIndex];
+        var eventMessage = data[i][messageIndex];
+        var notified = data[i][notifiedIndex];
+
+        if (eventAlert === "Yes" && eventTime && notified !== "Yes") {
+            var eventDateTime = new Date(eventDate.split('/').reverse().join('-') + 'T' + eventTime);
+            var oneHourBefore = new Date(eventDateTime.getTime() - 60 * 60 * 1000);
+
+            if (currentDate >= oneHourBefore && currentDate <= eventDateTime) {
+                var message = "\n\n" + "⏰" + eventName + "\n" +
+                              "⏰ on " + eventDate + " at " + eventTime + "\n\n";
+
+                if (eventMessage) {
+                    message += "⏰" + eventMessage;
+                }
+
+                sendToLine(lineToken, message);
+
+                // Mark event as alerted to prevent duplicate notifications
+                sheet.getRange(i + 1, alertIndex + 1).setValue('No');
+                sheet.getRange(i + 1, notifiedIndex + 1).setValue('Yes'); 
+            }
+        }
+    }
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function getQualifiedProjects() {
+  var ss = SpreadsheetApp.openByUrl("https://docs.google.com/spreadsheets/d/1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE/edit?pli=1#gid=1317428960"); 
+  var sheet = ss.getSheetByName('Contacts');
+  var data = sheet.getDataRange().getValues();
+  
+  var qualifiedProjects = [];
+  
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === "Qualified") { // Assuming "Qualified" is in column A (index 0)
+      qualifiedProjects.push(data[i][1]); // Assuming "Project" column is in column B (index 1)
+    }
+  }
+  return qualifiedProjects;
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function addNewCardtoOpportunity(projectName, cardType, topic, specialCard, customCardOwner) {
+  var ss = SpreadsheetApp.openByUrl("https://docs.google.com/spreadsheets/d/1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE/edit#gid=438835088");
+  var sheet = ss.getSheetByName('Opportunities');
+  
+  // Retrieve header row and create a mapping of header names to column indices (1-indexed)
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Determine status based on card type.
+  var status = '';
+  if (cardType === 'Leads') {
+    status = 'Qualified';
+  } else if (cardType === 'Tasks') {
+    status = 'Doing';
+  }
+  
+  // Generate unique ID and get card owner.
+  var uniqueID = generateUniqueID(); 
+  // Use customCardOwner if provided; otherwise, use the authorized user's name.
+  var cardOwner = customCardOwner || authorizedUser();
+  
+  // Format the current date for "Created-Date" and the follow-up history.
+  var currentDate = new Date();
+  var day = String(currentDate.getDate()).padStart(2, '0');
+  var month = String(currentDate.getMonth() + 1).padStart(2, '0');
+  var year = currentDate.getFullYear();
+  var formattedDate = day + '/' + month + '/' + year;
+  
+  var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  var formattedFollowUpHistory = "[" + monthNames[currentDate.getMonth()] + " " + day + ", " + year + "] ['" + cardOwner + "' has created this card]";
+  
+  // Create a new row array with a default empty string for each column.
+  var newRow = new Array(headers.length).fill('');
+  
+  // Map our values into the correct columns using header names.
+  if (columnMap["Type"]) {
+    newRow[columnMap["Type"] - 1] = cardType;
+  }
+  if (columnMap["Status"]) {
+    newRow[columnMap["Status"] - 1] = status;
+  }
+  if (columnMap["Project"]) {
+    newRow[columnMap["Project"] - 1] = projectName;
+  }
+  if (columnMap["Created-Date"]) {
+    newRow[columnMap["Created-Date"] - 1] = "'" + formattedDate;
+  }
+  if (columnMap["Topic"]) {
+    newRow[columnMap["Topic"] - 1] = String(topic);
+  }
+  if (columnMap["Follow-Up-History"]) {
+    newRow[columnMap["Follow-Up-History"] - 1] = formattedFollowUpHistory;
+  }
+  if (columnMap["Unique-ID"]) {
+    newRow[columnMap["Unique-ID"] - 1] = uniqueID;
+  }
+  if (columnMap["Card-Owner"]) {
+    newRow[columnMap["Card-Owner"] - 1] = cardOwner;
+  }
+  if (columnMap["Special-Card"]) {
+    newRow[columnMap["Special-Card"] - 1] = specialCard ? "Special" : "";
+  }
+  
+  // Append the new row to the sheet.
+  sheet.appendRow(newRow);
+}
+
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function generateUniqueID() {
+    // Get current date
+    var currentDate = new Date();
+
+    // Get date components (ddmmyyy)
+    var dateComponents = ('0' + currentDate.getDate()).slice(-2) +
+                        ('0' + (currentDate.getMonth() + 1)).slice(-2) +
+                        currentDate.getFullYear().toString().slice(-4);
+
+    // Get timestamp components (hour + minute + second + millisecond)
+    var timestampComponents = ('0' + currentDate.getHours()).slice(-2) +
+                             ('0' + currentDate.getMinutes()).slice(-2) +
+                             ('0' + currentDate.getSeconds()).slice(-2) +
+                             ('00' + currentDate.getMilliseconds()).slice(-3);
+
+    // Generate a random 6-digit number
+    var randomNum = ('000000' + Math.floor(Math.random() * 1000000)).slice(-6);
+
+    // Create a unique ID by combining date, timestamp, and random number
+    var uniqueID = dateComponents + '-' + timestampComponents + '-' + randomNum;
+
+    return uniqueID;
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateOpportunityStatusAndLossReasonAndAmount(uniqueId, newStatus, lossReason, inputAmount, displayName) {
+  var ss = SpreadsheetApp.openByUrl("https://docs.google.com/spreadsheets/d/1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE/edit#gid=438835088");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var columnMap = {};
+  for (var j = 0; j < headers.length; j++) {
+    columnMap[headers[j]] = j + 1;
+  }
+  
+  // Loop through rows to find the matching Unique-ID.
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][columnMap["Unique-ID"] - 1] === uniqueId) {
+      // Update the "Status" column.
+      sheet.getRange(i + 1, columnMap["Status"]).setValue(newStatus);
+      
+      var currentDate = new Date();
+      var day = String(currentDate.getDate()).padStart(2, '0');
+      var month = String(currentDate.getMonth() + 1).padStart(2, '0');
+      var year = currentDate.getFullYear();
+      var monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      
+      // Update End-Date if the status is one of the following.
+      if (["Completed", "Discarded", "Qualified-Loss", "Quoted-Loss", "Following-Loss", "Won"].indexOf(newStatus) > -1) {
+        sheet.getRange(i + 1, columnMap["End-Date"]).setValue("'" + day + '/' + month + '/' + year);
+      }
+      
+      // For Won status, mark the loading check if not already set.
+      if (newStatus === "Won") {
+        var loadingCheckCell = sheet.getRange(i + 1, columnMap["Loading-Check"]);
+        if (loadingCheckCell.getValue() === "") {
+          loadingCheckCell.setValue("Checked");
+        }
+      }
+      
+      // If status is Quoted, update the amount and quoted date.
+      if (newStatus === 'Quoted') {
+        sheet.getRange(i + 1, columnMap["Amount"]).setValue(inputAmount);
+        sheet.getRange(i + 1, columnMap["Quoted-Date"]).setValue("'" + day + '/' + month + '/' + year);
+      }
+      
+      // Construct the formatted follow-up history string.
+      var formattedFollowUpHistory = "";
+      if (["Completed", "Quoted", "Following", "Won"].indexOf(newStatus) > -1) {
+        formattedFollowUpHistory = "[" + monthNames[currentDate.getMonth()] + " " + day + ", " + year + "] [" + newStatus + " by '" + displayName + "']";
+      } else if (["Discarded", "Qualified-Loss", "Quoted-Loss", "Following-Loss"].indexOf(newStatus) > -1) {
+        formattedFollowUpHistory = "[" + monthNames[currentDate.getMonth()] + " " + day + ", " + year + "] [" + newStatus + " by '" + displayName + "'] [" + lossReason + "]";
+      }
+
+      // Prepend the new follow-up history to the existing value.
+      var existingHistory = sheet.getRange(i + 1, columnMap["Follow-Up-History"]).getValue();
+      sheet.getRange(i + 1, columnMap["Follow-Up-History"]).setValue(formattedFollowUpHistory + "\n" + existingHistory);
+      
+      // (Removed update to "Loss Reason" column.)
+      
+      break;
+    }
+  }
+}
+
+
+
+//---------------------------------Count Total Card and Red Card---------------------------------------
+function updateTotalCountCards() {
+  // IDs and sheet names
+  var opportunitiesSpreadsheetId = "1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE";
+  var redCountSpreadsheetId = "1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE";
+  var opportunitiesSheetName = "Opportunities";
+  var redCountSheetName = "RedCount";
+
+  // Open the Opportunities spreadsheet and get all data
+  var oppSpreadsheet = SpreadsheetApp.openById(opportunitiesSpreadsheetId);
+  var oppSheet = oppSpreadsheet.getSheetByName(opportunitiesSheetName);
+  var oppData = oppSheet.getDataRange().getValues();
+  if (oppData.length < 2) return; // no data
+
+  // Get header row and map column names to indices (0-based)
+  var headers = oppData[0];
+  var colIndex = {
+    status: headers.indexOf("Status"),
+    dueDate: headers.indexOf("Due-Date"),
+    followUp: headers.indexOf("Follow-Up-History"),
+    owner: headers.indexOf("Card-Owner"),
+    specialCard: headers.indexOf("Special-Card")
+  };
+
+  // Prepare a dictionary to hold counts per owner.
+  // For each owner we store:
+  //   totalCards (non-special rows only),
+  //   redCardDueDateCount, redCardAgeCount, combinedRedCards (a Set),
+  //   totalSpecialCardCount, specialCardCount.
+  var countsByOwner = {};
+
+  var currentDate = new Date();
+  currentDate.setHours(0, 0, 0, 0);
+  var todayFormatted = Utilities.formatDate(currentDate, Session.getScriptTimeZone(), "dd/MM/yyyy");
+
+  // Use today's formatted date for Red-Date column, with a preceding quote.
+  var formattedDate = "'" + todayFormatted;
+
+  // Get holiday dates from the Holiday sheet (dates stored as text in "dd/mm/yyyy")
+  var holidayDates = getHolidayDate(); // see function below
+
+  // Determine if today is a Sunday or is listed as a holiday
+  var isTodayHoliday = (currentDate.getDay() === 0) || (holidayDates.indexOf(todayFormatted) > -1);
+
+  // Loop over each row (starting from row 2, index 1)
+  for (var i = 1; i < oppData.length; i++) {
+    var row = oppData[i];
+    var status = row[colIndex.status];
+    var owner = row[colIndex.owner];
+    // If no owner, skip.
+    if (!owner) continue;
+
+    // Initialize counts if not already
+    if (!countsByOwner[owner]) {
+      countsByOwner[owner] = {
+        totalCards: 0,
+        redCardDueDateCount: 0,
+        redCardAgeCount: 0,
+        combinedRedCards: new Set(),
+        totalSpecialCardCount: 0,
+        specialCardCount: 0
+      };
+    }
+    var ownerCounts = countsByOwner[owner];
+
+    // Determine if this row is special.
+    // (Assume the row’s "Special-Card" cell contains the text "Special" if it is a special row.)
+    var specialText = row[colIndex.specialCard] ? row[colIndex.specialCard].toString() : "";
+    var isSpecial = specialText.indexOf("Special") !== -1;
+
+    // If the row is NOT special, process for red card counting
+    if (!isSpecial) {
+      // Only count rows with Status of interest.
+      if (["Doing", "Qualified", "Quoted", "Following"].indexOf(status) !== -1) {
+        ownerCounts.totalCards++;
+
+        // Parse Due-Date if present
+        var dueDate = null;
+        var dueDateStr = row[colIndex.dueDate];
+        if (dueDateStr) {
+          dueDate = parseDueDate(dueDateStr);
+        }
+        // Condition 1: Due-Date is defined and is less than or equal to current date.
+        if (dueDate && dueDate <= currentDate) {
+          ownerCounts.redCardDueDateCount++;
+          ownerCounts.combinedRedCards.add(i); // using row index as unique id
+        }
+
+        // Condition 2: Check Follow-Up-History for age condition.
+        // (Assuming the cell contains a date in square brackets e.g. "[22/02/2025]".)
+        var followUpStr = row[colIndex.followUp];
+        if (followUpStr) {
+          var match = followUpStr.toString().match(/\[([^\]]+)\]/);
+          if (match) {
+            var followUpDate = new Date(match[1]);
+            var diffInDays = Math.floor((currentDate - followUpDate) / (1000 * 60 * 60 * 24));
+            if (diffInDays > 2 && (!dueDate || dueDate <= currentDate)) {
+              ownerCounts.redCardAgeCount++;
+              ownerCounts.combinedRedCards.add(i);
+            }
+          }
+        }
+      }
+    } else {
+      // For rows that are special:
+      // Count every special row for Total-Special-Card.
+      ownerCounts.totalSpecialCardCount++;
+      
+      // Now, only count as a "Special-Card" if the latest date in Follow-Up-History is older than today.
+      // Extract date from Follow-Up-History (if any)
+      var followUpStr = row[colIndex.followUp];
+      if (followUpStr) {
+        var match = followUpStr.toString().match(/\[([^\]]+)\]/);
+        if (match) {
+          var followUpDate = new Date(match[1]);
+          // If followUpDate is strictly before today, count it.
+          if (followUpDate < currentDate) {
+            ownerCounts.specialCardCount++;
+          }
+        }
+      } else {
+        // If no follow-up date is present, count it as special.
+        ownerCounts.specialCardCount++;
+      }
+    }
+  } // end for each row
+
+  // Now open the RedCount spreadsheet and write out the results.
+  var redSpreadsheet = SpreadsheetApp.openById(redCountSpreadsheetId);
+  var redSheet = redSpreadsheet.getSheetByName(redCountSheetName);
+  var lastRow = redSheet.getLastRow();
+
+  // For each owner in our dictionary, write one row.
+  // If today is holiday/Sunday, record counts as 0 and Remark as "Holiday"
+  for (var owner in countsByOwner) {
+    lastRow++;
+    var ownerCounts = countsByOwner[owner];
+    var remark = "";
+    
+    if (isTodayHoliday) {
+      // Override counts with 0
+      ownerCounts.combinedRedCards = new Set();
+      ownerCounts.totalCards = 0;
+      ownerCounts.specialCardCount = 0;
+      ownerCounts.totalSpecialCardCount = 0;
+      remark = "Holiday";
+    }
+    
+    redSheet.getRange("A" + lastRow).setValue(formattedDate);         // Red-Date with leading quote
+    redSheet.getRange("B" + lastRow).setValue(owner);                   // Owner
+    redSheet.getRange("C" + lastRow).setValue(ownerCounts.combinedRedCards.size); // Red-Card
+    redSheet.getRange("D" + lastRow).setValue(ownerCounts.totalCards);    // Total-Card
+    var percentageRedCards = (ownerCounts.totalCards > 0) ? ((ownerCounts.combinedRedCards.size / ownerCounts.totalCards) * 100).toFixed(2) : 0;
+    redSheet.getRange("E" + lastRow).setValue(percentageRedCards);       // Percentage
+
+    redSheet.getRange("F" + lastRow).setValue(ownerCounts.specialCardCount); // Special-Card
+    redSheet.getRange("G" + lastRow).setValue(ownerCounts.totalSpecialCardCount); // Total-Special-Card
+    var specialCardPercentage = (ownerCounts.totalSpecialCardCount > 0) ? ((ownerCounts.specialCardCount / ownerCounts.totalSpecialCardCount) * 100).toFixed(2) : 0;
+    redSheet.getRange("H" + lastRow).setValue(specialCardPercentage);    // Special-Card-Percentage
+    redSheet.getRange("I" + lastRow).setValue(remark);                     // Remark
+  }
+}
+
+// Helper function to parse a due date string in "dd/MM/yyyy" format.
+function parseDueDate(dueDateStr) {
+  var parts = dueDateStr.split('/');
+  return new Date(parts[2], parts[1] - 1, parts[0]);
+}
+
+
+
+
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateFollowUpHistory(uniqueId, newComment) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+
+  // Build a mapping from header names to their 1-indexed column positions.
+  var headers = data[0];
+  var columnMap = {};
+  for (var j = 0; j < headers.length; j++) {
+    columnMap[headers[j]] = j + 1;
+  }
+  
+  // Loop through the data starting from the second row.
+  for (var i = 1; i < data.length; i++) {
+    // Check if the Unique-ID column matches the provided uniqueId.
+    if (data[i][columnMap["Unique-ID"] - 1] === uniqueId) {
+      
+      // Get the existing Follow-Up-History.
+      var existingComments = data[i][columnMap["Follow-Up-History"] - 1];
+      var updatedComments = newComment + (existingComments ? '\n' + existingComments.trim() : '');
+      
+      // Update the Follow-Up-History column.
+      sheet.getRange(i + 1, columnMap["Follow-Up-History"]).setValue(updatedComments);
+      
+      // Retrieve additional data using column names.
+      var projectName = data[i][columnMap["Project Name"] - 1];
+      var topic = data[i][columnMap["Topic"] - 1];
+      
+      // Call the notification function after updating the comments.
+      sendUpdateHistoryToLineNotification(newComment, uniqueId, projectName, topic);
+      break;
+    }
+  }
+}
+
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+
+function sendUpdateHistoryToLineNotification(comment, uniqueID, projectName, topic) {
+  var lineToken = "ywWtWJxoQvQ9xj0e7yJpuGC2OFIrWNgy14wRgi2beD4";
+  var message = "\n" + "\n" +
+    "🎯" + encodeURIComponent(projectName) + "\n" +
+    "🎯(" + encodeURIComponent(topic) + ")" + "\n" + "\n" +
+    "🎯(" + encodeURIComponent(comment) + ")";
+  sendToLine(lineToken, message);
+}
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateDueDateAndReason(uniqueId, newDueDate, dueDateReason, displayName) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var currentDate = new Date();
+  var formattedCurrentDate = Utilities.formatDate(currentDate, Session.getScriptTimeZone(), "MMM dd, yyyy");
+
+  // Get header row and create a mapping from header names to 1-indexed column positions.
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Check that necessary columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Due-Date"] || !columnMap["Follow-Up-History"]) {
+    throw new Error("One or more required columns (Unique-ID, Due-Date, Follow-Up-History) are missing.");
+  }
+
+  // Find the row based on the Unique-ID column.
+  var lastRow = sheet.getLastRow();
+  var uniqueIdRange = sheet.getRange(2, columnMap["Unique-ID"], lastRow - 1, 1);
+  var values = uniqueIdRange.getValues();
+  for (var i = 0; i < values.length; i++) {
+    if (values[i][0] == uniqueId) {
+      var rowIndex = i + 2; // Adjust for header row
+
+      // Determine if there's an existing due date.
+      var currentDueDate = sheet.getRange(rowIndex, columnMap["Due-Date"]).getValue();
+      var reasonType = currentDueDate ? "changed due date to" : "added due date to";
+
+      // Update Due-Date column with a preceding quote to store the date as text.
+      sheet.getRange(rowIndex, columnMap["Due-Date"]).setValue("'" + newDueDate);
+
+      // Update Follow-Up-History column with the new reason.
+      var existingReason = sheet.getRange(rowIndex, columnMap["Follow-Up-History"]).getValue() || '';
+      var newReason = "[" + formattedCurrentDate + "] ['" + displayName + "' " + reasonType + " " + newDueDate + "] " + dueDateReason;
+      sheet.getRange(rowIndex, columnMap["Follow-Up-History"]).setValue(newReason + "\n" + existingReason);
+      break;
+    }
+  }
+}
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateCardAmount(uniqueId, newAmount) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+
+  // Create a mapping from header names to 1-indexed column positions.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+
+  // Ensure that required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Amount"]) {
+    throw new Error("Required column(s) missing: Unique-ID and/or Amount.");
+  }
+
+  // Get the Unique-ID column values (excluding the header row).
+  var lastRow = sheet.getLastRow();
+  var uniqueIdRange = sheet.getRange(2, columnMap["Unique-ID"], lastRow - 1, 1);
+  var uniqueIdValues = uniqueIdRange.getValues();
+
+  // Loop through the Unique-ID values to find the matching row.
+  for (var i = 0; i < uniqueIdValues.length; i++) {
+    if (uniqueIdValues[i][0] == uniqueId) {
+      var rowIndex = i + 2; // Adjust for header row
+      // Update the "Amount" column for the matching row.
+      sheet.getRange(rowIndex, columnMap["Amount"]).setValue(newAmount);
+      break;
+    }
+  }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateCardTopic(uniqueId, topic) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+  
+  // Create a mapping from header names to their 1-indexed column numbers.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Ensure that the required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Topic"]) {
+    throw new Error("Required column(s) missing: Unique-ID and/or Topic.");
+  }
+  
+  // Get the Unique-ID column values (excluding the header row).
+  var lastRow = sheet.getLastRow();
+  var uniqueIdRange = sheet.getRange(2, columnMap["Unique-ID"], lastRow - 1, 1);
+  var uniqueIdValues = uniqueIdRange.getValues();
+  
+  // Loop through the Unique-ID values to find the matching row.
+  for (var i = 0; i < uniqueIdValues.length; i++) {
+    if (uniqueIdValues[i][0] == uniqueId) {
+      var rowIndex = i + 2; // Adjust for header row
+      // Update the "Topic" column for the matching row.
+      sheet.getRange(rowIndex, columnMap["Topic"]).setValue(topic);
+      break;
+    }
+  }
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateLink(uniqueId, link) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+  
+  // Create a mapping from header names to 1-indexed column numbers.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Ensure that the required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Link"]) {
+    throw new Error("Required column(s) missing: Unique-ID and/or Link.");
+  }
+  
+  // Get the Unique-ID column values (excluding header)
+  var lastRow = sheet.getLastRow();
+  var uniqueIdRange = sheet.getRange(2, columnMap["Unique-ID"], lastRow - 1, 1);
+  var uniqueIdValues = uniqueIdRange.getValues();
+  
+  for (var i = 0; i < uniqueIdValues.length; i++) {
+    if (uniqueIdValues[i][0] == uniqueId) {
+      var rowIndex = i + 2; // Adjust for header row
+      
+      // Update the "Link" column value.
+      sheet.getRange(rowIndex, columnMap["Link"]).setValue(link);
+      break;
+    }
+  }
+}
+
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateDocumentNumber(uniqueId, reserveNumber, invoiceNumber, docUniqueId) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+
+  // Create a mapping from header names to 1-indexed column positions.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+
+  // Ensure required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Reserve"] || !columnMap["Invoice"] || !columnMap["Doc-Unique-ID"]) {
+    throw new Error("One or more required columns (Unique-ID, Reserve, Invoice, Doc-Unique-ID) are missing.");
+  }
+
+  // Get the Unique-ID column values (excluding the header row).
+  var lastRow = sheet.getLastRow();
+  var uniqueIdRange = sheet.getRange(2, columnMap["Unique-ID"], lastRow - 1, 1);
+  var uniqueIdValues = uniqueIdRange.getValues();
+
+  // Loop through the Unique-ID values to find the matching row.
+  for (var i = 0; i < uniqueIdValues.length; i++) {
+    if (uniqueIdValues[i][0] == uniqueId) {
+      var rowIndex = i + 2; // Adjust for header row
+
+      // Update values in the appropriate columns.
+      sheet.getRange(rowIndex, columnMap["Reserve"]).setValue(reserveNumber);
+      sheet.getRange(rowIndex, columnMap["Invoice"]).setValue(invoiceNumber);
+      sheet.getRange(rowIndex, columnMap["Doc-Unique-ID"]).setValue(docUniqueId);
+      break;
+    }
+  }
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateGoodsDate(uniqueId, goodsReadyDate, goodsLoadingDate) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+  
+  // Create a mapping from header names to their 1-indexed column positions.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Ensure that required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Goods-Ready-Date"] || !columnMap["Goods-Loading-Date"]) {
+    throw new Error("One or more required columns (Unique-ID, Goods-Ready-Date, Goods-Loading-Date) are missing.");
+  }
+  
+  // Get the Unique-ID column values (excluding the header row).
+  var lastRow = sheet.getLastRow();
+  var uniqueIdRange = sheet.getRange(2, columnMap["Unique-ID"], lastRow - 1, 1);
+  var uniqueIdValues = uniqueIdRange.getValues();
+  
+  // Loop through the Unique-ID values to find the matching row.
+  for (var i = 0; i < uniqueIdValues.length; i++) {
+    if (uniqueIdValues[i][0] == uniqueId) {
+      var rowIndex = i + 2; // Adjust for header row
+      
+      // Update the "Goods-Ready-Date" and "Goods-Loading-Date" columns.
+      sheet.getRange(rowIndex, columnMap["Goods-Ready-Date"]).setValue("'" + goodsReadyDate);
+      sheet.getRange(rowIndex, columnMap["Goods-Loading-Date"]).setValue("'" + goodsLoadingDate);
+      break;
+    }
+  }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function updateFdaRegistrationDate(uniqueId, oemStatus, fdaRegisterDate) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+
+  // Create a mapping from header names to 1-indexed column numbers.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+
+  // Ensure required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Gantt-Status"] || !columnMap["FDA-Started-Date"]) {
+    throw new Error("One or more required columns (Unique-ID, Gantt-Status, FDA-Started-Date) are missing.");
+  }
+
+  // Get the Unique-ID column values (excluding header row)
+  var lastRow = sheet.getLastRow();
+  var uniqueIdRange = sheet.getRange(2, columnMap["Unique-ID"], lastRow - 1, 1);
+  var uniqueIdValues = uniqueIdRange.getValues();
+
+  // Loop through the Unique-ID values to find the matching row.
+  for (var i = 0; i < uniqueIdValues.length; i++) {
+    if (uniqueIdValues[i][0] == uniqueId) {
+      var rowIndex = i + 2; // Adjust for header row
+      sheet.getRange(rowIndex, columnMap["Gantt-Status"]).setValue(oemStatus);
+      sheet.getRange(rowIndex, columnMap["FDA-Started-Date"]).setValue("'" + fdaRegisterDate);
+      break;
+    }
+  }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function authorizedUser() {
+  var userEmail = Session.getActiveUser().getEmail();
+  var authorizedEmails = {
+    "Top-Level": {
+      "export@carebeau-enjoy.com": "BOY",
+      "papaorn@carebeau-enjoy.com": "KHUN ANN"
+    },
+    "Middle-Level": {
+      "salesexport@carebeau-enjoy.com": "YUI",
+      "kasama@carebeau-enjoy.com": "GUS",
+      "adminexport@carebeau-enjoy.com": "NOEY"
+    },
+    "Low-Level": {
+      "jakkaphan.jindarug@gmail.com": "LIGHT"
+    }
+  };
+
+  for (var level in authorizedEmails) {
+    if (authorizedEmails[level][userEmail]) {
+      return authorizedEmails[level][userEmail];
+    }
+  }
+  return null; // Return null if the user is not authorized
+}
+
+function getAllAuthorizedUsers() {
+  return {
+    "Top-Level": ["BOY", "KHUN ANN"],
+    "Middle-Level": ["YUI", "GUS", "NOEY"],
+    "Low-Level": ["LIGHT"]
+  };
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function removeDueDateAndUpdateReason(uniqueId, dueDateReason, displayName) {
+  var ss = SpreadsheetApp.openByUrl("https://docs.google.com/spreadsheets/d/1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE/edit#gid=438835088");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+  
+  // Create a mapping from header names to 1-indexed column numbers.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Ensure required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Due-Date"] || !columnMap["Follow-Up-History"]) {
+    throw new Error("One or more required columns (Unique-ID, Due-Date, Follow-Up-History) are missing.");
+  }
+  
+  // Get current date and format it as [Jun 06, 2024]
+  var currentDate = new Date();
+  var formattedCurrentDate = Utilities.formatDate(currentDate, Session.getScriptTimeZone(), "MMM dd, yyyy");
+  
+  // Loop through rows starting from row 2 (index 1) to find the matching Unique-ID.
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][columnMap["Unique-ID"] - 1] == uniqueId) {
+      var rowIndex = i + 1; // Adjust for 1-indexed sheet rows
+      
+      // Clear the Due-Date (header "Due-Date")
+      sheet.getRange(rowIndex, columnMap["Due-Date"]).setValue('');
+      
+      // Retrieve the existing Follow-Up-History (header "Follow-Up-History")
+      var existingReason = sheet.getRange(rowIndex, columnMap["Follow-Up-History"]).getValue();
+      var newReason = "[" + formattedCurrentDate + "] ['" + displayName + "' has removed due date] " + dueDateReason;
+      sheet.getRange(rowIndex, columnMap["Follow-Up-History"]).setValue(newReason + "\n" + existingReason);
+      break;
+    }
+  }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function removeDueDateWithoutReason(uniqueId) {
+  var ss = SpreadsheetApp.openByUrl("https://docs.google.com/spreadsheets/d/1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE/edit#gid=438835088");
+  var sheet = ss.getSheetByName('Opportunities');
+  var data = sheet.getDataRange().getValues();
+
+  // Create a mapping of header names to their 1-indexed column positions.
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i + 1;
+  }
+  
+  // Ensure required columns exist.
+  if (!columnMap["Unique-ID"] || !columnMap["Due-Date"]) {
+    throw new Error("Required column(s) missing: Unique-ID and/or Due-Date.");
+  }
+  
+  // Loop through rows starting from row 2 to find the matching Unique-ID.
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][columnMap["Unique-ID"] - 1] == uniqueId) {
+      var rowIndex = i + 1; // Adjust for 1-indexed sheet rows
+      
+      // Clear the Due-Date column.
+      sheet.getRange(rowIndex, columnMap["Due-Date"]).setValue('');
+      break;
+    }
+  }
+}
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function addContactToSheet(data) {
+    var sheet = SpreadsheetApp.openById('1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE').getSheetByName('Contacts');
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]; // Get headers from the first row
+    var lastRow = sheet.getLastRow() + 1;
+
+    // Generate a unique ID for the contact
+    data['Contact-Unique-ID'] = generateContactUniqueID();
+
+    // Prepare the row data with correct headers mapping
+    var newRow = headers.map(header => {
+        // Insert apostrophe for all values except Contact-Unique-ID
+        if (header === 'Contact-Unique-ID') {
+            return data[header] || '';
+        } else if (header in data) {
+            return "'" + (data[header] || '');
+        } else {
+            return ''; // Empty value if header not found in data
+        }
+    });
+    sheet.getRange(lastRow, 1, 1, newRow.length).setValues([newRow]);
+}
+
+
+function getExistingProjectsFromSheet() {
+    var sheet = SpreadsheetApp.openById('1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE').getSheetByName('Contacts');
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]; // Get headers from the first row
+    var projectColumnIndex = headers.indexOf("Project") + 1; // Adding 1 because getRange is 1-indexed
+
+    if (projectColumnIndex === 0) {
+        throw new Error('Project column not found.');
+    }
+    var projectNames = sheet.getRange(2, projectColumnIndex, sheet.getLastRow() - 1, 1).getValues().flat(); 
+    return projectNames;
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function generateContactUniqueID() {
+    var currentDate = new Date();
+
+    // Get date components (ddmmyyyy)
+    var dateComponents = ('0' + currentDate.getDate()).slice(-2) +
+                        ('0' + (currentDate.getMonth() + 1)).slice(-2) +
+                        currentDate.getFullYear().toString().slice(-4);
+
+    // Get timestamp components (hour + minute + second + millisecond)
+    var timestampComponents = ('0' + currentDate.getHours()).slice(-2) +
+                            ('0' + currentDate.getMinutes()).slice(-2) +
+                            ('0' + currentDate.getSeconds()).slice(-2) +
+                            ('00' + currentDate.getMilliseconds()).slice(-3);
+
+    // Generate a random 6-digit number
+    var randomNum = ('000000' + Math.floor(Math.random() * 1000000)).slice(-6);
+
+    // Create a unique ID by combining date, timestamp, and random number
+    var uniqueID = dateComponents + '-' + timestampComponents + '-' + randomNum;
+
+    return uniqueID;
+}
+
+
+//--------------------------------------------------------------------------------------
+
+function onChange(e) {
+  const sheet = e.source.getSheetByName('Opportunities');
+  const dataRange = sheet.getDataRange();
+  const values = dataRange.getValues();
+
+  // Loop through each row, starting from row 2 (to skip the header)
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    const columnC = row[2]; // Column C is the 3rd element in the row array
+    const columnP = row[15]; // Column P is the 16th element in the row array
+
+    // If column C is not empty and column P is empty, set a unique ID in column P
+    if (columnC && !columnP) {
+      sheet.getRange(i + 1, 16).setValue(Utilities.getUuid()); // i + 1 because sheet is 1-indexed
+    }
+    // If column C is empty and column P is not empty, clear the content in column P
+    else if (!columnC && columnP) {
+      sheet.getRange(i + 1, 16).clearContent();
+    }
+  }
+}
+
+
+//---------------------------------------------------- USED FUNCTION ----------------------------------------------------
+function sendLineNotification() {
+  // Line Token
+  var lineToken = "ywWtWJxoQvQ9xj0e7yJpuGC2OFIrWNgy14wRgi2beD4";
+
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Opportunities');
+
+  // Get all the values in the sheet (including headers)
+  var data = sheet.getDataRange().getValues();
+
+  // Build header mapping from the first row (headers)
+  var headers = data[0];
+  var columnMap = {};
+  for (var i = 0; i < headers.length; i++) {
+    columnMap[headers[i]] = i; // 0-indexed for use with our data array
+  }
+  
+  // Initialize the summary variable
+  var summary = 0;
+
+  // Get the current date in GMT+07:00, then reset time to 00:00:00 for accurate comparison
+  var currentDate = new Date();
+  currentDate = Utilities.formatDate(currentDate, "GMT+07:00", "MM/dd/yyyy HH:mm:ss");
+  currentDate = new Date(currentDate);
+  currentDate.setHours(0, 0, 0, 0);
+
+  // Define a helper function to parse dates in the "dd/MM/yyyy" format.
+  function parseDate(dateString) {
+    var parts = dateString.split("/");
+    return new Date(parts[2], parts[1] - 1, parts[0]);
+  }
+
+  // Loop through each row (skipping header row)
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var status = row[columnMap["Status"]];
+    var dateString = row[columnMap["End-Date"]];
+    var number = row[columnMap["Amount"]];
+    
+    // Check if the status is "Won" and the date is provided
+    if (status === "Won" && dateString) {
+      var date = parseDate(dateString);
+      if (date.getMonth() === currentDate.getMonth() && date.getFullYear() === currentDate.getFullYear()) {
+        // Sum the parsed amount (ensure it's a number)
+        summary += parseFloat(number) || 0;
+      }
+    }
+  }
+
+  // Format the summary with commas
+  var formattedSummary = summary.toLocaleString();
+
+  // Format the current month and year for the message header
+  var monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  var formattedDate = monthNames[currentDate.getMonth()] + " " + currentDate.getFullYear();
+
+  // Construct the message with line breaks
+  var message = "\n\n✅Order in " + formattedDate + ": " + formattedSummary + " Baht\n" +
+    "\n✅Dashboard: https://script.google.com/a/macros/carebeau-enjoy.com/s/AKfycbwFokZItvJIr1u05DehHJkv7Vm8KYX6U5DhBEPDT2pYAGGbMA4sodzfDu7zuut81pIj/exec";
+
+  // Send the summary to LINE
+  sendToLine(lineToken, message);
+}
+
+
+
+function sendToLine(token, message) {
+  // LINE Notify API endpoint
+  var apiUrl = "https://notify-api.line.me/api/notify";
+
+  // Set up the options for the HTTP request
+  var options = {
+    "method": "post",
+    "headers": {
+      "Authorization": "Bearer " + token,
+    },
+    "payload": "message=" + message,
+    "muteHttpExceptions": true
+  };
+
+  // Send the HTTP request
+  var response = UrlFetchApp.fetch(apiUrl, options);
+
+  // Log the response for debugging
+  Logger.log(response.getContentText());
+}
+
+
+function sendLineNotificationThuongtin() {
+  // Line Token for the other LINE group
+  var lineToken = "TyW0x4KarFLIVV6KjT07Wvu8xvfV6mwfZ3JjsyyBNH5";
+
+  // Access the spreadsheet and the specific sheet
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Opportunities");
+
+  // Get all the values in the sheet
+  var data = sheet.getDataRange().getValues();
+
+  // Initialize the summary variables
+  var monthlySummary = 0;
+  var yearlySummary = 0;
+
+  // Get the current date and set the time to 00:00:00 for accurate comparison
+  var currentDate = new Date();
+  currentDate = Utilities.formatDate(currentDate, "GMT+07:00", "MM/dd/yyyy HH:mm:ss");
+  currentDate = new Date(currentDate);
+  currentDate.setHours(0, 0, 0, 0);
+
+  // Define a function to parse dates in the "dd/MM/yyyy" format
+  function parseDate(dateString) {
+    var parts = dateString.split("/");
+    return new Date(parts[2], parts[1] - 1, parts[0]);
+  }
+
+  // Loop through each row in the sheet
+  for (var i = 0; i < data.length; i++) {
+    // Get the values for columns B, C, I, and J
+    var status = data[i][1]; // Column B
+    var location = data[i][2]; // Column C
+    var dateString = data[i][8]; // Column I
+    var number = data[i][9]; // Column J
+
+    // Check if the status is "Won" and location is "Thuong Tin"
+    if (status === "Won" && location === "Thuong Tin" && dateString) {
+      var date = parseDate(dateString);
+
+      // Check if the date is within this month and year
+      if (date.getMonth() === currentDate.getMonth() && date.getFullYear() === currentDate.getFullYear()) {
+        monthlySummary += parseFloat(number) || 0;
+      }
+
+      // Check if the date is within this year
+      if (date.getFullYear() === currentDate.getFullYear()) {
+        yearlySummary += parseFloat(number) || 0;
+      }
+    }
+  }
+
+  // Format the summaries with commas
+  var formattedMonthlySummary = monthlySummary.toLocaleString();
+  var formattedYearlySummary = yearlySummary.toLocaleString();
+
+  // Format the current month and year
+  var monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  var formattedDate = monthNames[currentDate.getMonth()] + " " + currentDate.getFullYear();
+
+  // Construct the message with line breaks
+  var message = "\n\n✅ Orders in " + formattedDate + ":\n" + formattedMonthlySummary + " Baht\n\n" +
+    "✅ Accumulated Orders " + currentDate.getFullYear() + ":\n" + formattedYearlySummary + " Baht\n" +
+    "\n✅Exclusive Distrubutor Promotions: https://www.carebeau-enjoy.com/en/distributor-promotion";
+
+
+  // Send the summary to LINE
+  sendToLine(lineToken, message);
+}
+
+//--------------------------------------------------------------------
+
+
+function getProductsData() {
+  var ss = SpreadsheetApp.openByUrl("https://docs.google.com/spreadsheets/d/1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE/edit#gid=0");
+  var sheet = ss.getSheetByName("Products");
+  var dataRange = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn());
+  var data = dataRange.getValues();
+
+  var headerRow = data[0]; // Assuming the first row contains the headers
+  var products = [];
+
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var product = {
+      id: row[0],
+      brand: row[1],
+      category: row[2],
+      subCategory: row[3],
+      product: row[4],
+      formula: row[5],
+      fullProductName: row[6],
+      hsCode: row[7],
+      thaiDes: row[8],
+      nw: row[9],
+      gw: row[10], 
+      cartonDimension: row[11],
+      cbm: row[15],
+      unitQuantity: row[16], 
+      exportPrice: row[17], 
+      stepPrice: row[18],
+      productPhoto: row[20],
+    };
+
+    // Assuming the distributor prices start from a specific index (e.g., index 21)
+    for (var j = 21; j < row.length; j++) {
+      var distributorColumnName = headerRow[j]; // Assuming you have headers for distributors in the first row
+      product[distributorColumnName] = row[j];
+    }
+
+    products.push(product);
+  }
+
+  return products;
+}
+
+
+function getDistributorNamesFromSheet() {
+  const ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  const sheet = ss.getSheetByName("Products");
+  const range = sheet.getRange(1, 22, 1, sheet.getLastColumn() - 21); // Retrieve data from column 22 (V) to the last column
+  const values = range.getValues();
+  
+  // Get the first row values as distributor names
+  const distributorNames = values[0].filter(name => name.trim() !== ''); // Exclude empty cells
+  
+  console.log(distributorNames); // Log to check retrieved data
+
+  return distributorNames;
+}
+
+
+function getDataForProjectName(projectName) {
+    var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+    var sheet = ss.getSheetByName("Contacts");
+    var data = sheet.getDataRange().getValues();
+
+    var rowData;
+    for (var i = 1; i < data.length; i++) {
+        if (data[i][1] === projectName) { // Assuming project name is in column B
+            rowData = data[i].slice(1, 13); // Columns B to M are indices 1 to 12
+            break;
+        }
+    }
+
+    if (rowData) {
+        var headerRow = sheet.getRange(1, 2, 1, 12).getValues()[0]; // Fetching headers for columns B to M
+        return { rowData: rowData, headerRow: headerRow };
+    } else {
+        return null;
+    }
+}
+
+//-----------------------Update Due Date---------------------------------
+
+// Update Due Date in Google Sheets
+function updateDueDateInSheet(uniqueID, newDueDate) {
+  const sheet = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE").getSheetByName("Opportunities");
+  const data = sheet.getDataRange().getValues();
+
+  for (let i = 0; i < data.length; i++) {
+    if (data[i][15] === uniqueID) { // Check uniqueID in column P
+      const existingDueDate = data[i][11]; // Get the existing due date from column L (index 11)
+      const formattedNewDueDate = newDueDate ? formatDate(new Date(newDueDate)) : ''; // Format the new due date if it exists
+
+      if (formattedNewDueDate !== existingDueDate) {
+        sheet.getRange(i + 1, 12).setValue(formattedNewDueDate); // Update due date in column L (row[11] in the code corresponds to column L)
+      }
+      break;
+    }
+  }
+}
+
+// Function to format date as dd/mm/yyyy
+function formatDate(date) {
+  const day = date.getUTCDate().toString().padStart(2, '0');
+  const month = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+  const year = date.getUTCFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+
+
+
+
+function getPaymentData() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Contacts');
+  var data = sheet.getDataRange().getValues(); 
+  var headers = data[0];
+  var info = [];
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) { 
+      item[headers[j]] = data[i][j]; 
+    }
+    info.push(item); 
+  }
+  return info; 
+}
+
+function getDataValidation() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('DataValidation');
+  var data = sheet.getDataRange().getValues(); 
+  var headers = data[0];
+  var info = [];
+  for (var i = 1; i < data.length; i++) {
+    var item = {}; 
+    for (var j = 0; j < headers.length; j++) { 
+      item[headers[j]] = data[i][j]; 
+    }
+    info.push(item); 
+  }
+  return info; 
+}
+
+
+
+function updatePaymentStatus(uniqueID, newStatus, timestamp) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Contacts');
+  var data = sheet.getDataRange().getValues();
+
+  var headers = data[0];
+  var idIndex = headers.indexOf('Contact-Unique-ID');
+  var statusIndex = headers.indexOf('Qualification');
+  var timestampIndex = headers.indexOf('Approve-Stamp');
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][idIndex] === uniqueID) {
+      sheet.getRange(i + 1, statusIndex + 1).setValue(newStatus); // Update the status
+      sheet.getRange(i + 1, timestampIndex + 1).setValue(timestamp); // Update the timestamp
+      break;
+    }
+  }
+}
+
+function getUserEmail() {
+  return Session.getActiveUser().getEmail();
+}
+
+
+function addNewContact(contactData) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Contacts');
+
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  var projectIndex = headers.indexOf('Project');
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][projectIndex].toLowerCase() === contactData['Project'].toLowerCase()) {
+      return 'Duplicate project name found. Contact not added.';
+    }
+  }
+
+  var newContactUniqueID = generateUniqueID();
+
+  var newRow = [];
+  headers.forEach(function(header) {
+    if (header === 'Contact-Unique-ID') {
+      newRow.push(newContactUniqueID);
+    } else {
+      // Prepend single quote for all fields except Contact-Unique-ID
+      newRow.push("'" + (contactData[header] || ''));
+    }
+  });
+
+  sheet.appendRow(newRow);
+  return 'Contact added successfully.';
+}
+
+
+
+
+function updateContact(contact) {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  var sheet = ss.getSheetByName('Contacts');
+  var data = sheet.getDataRange().getValues();
+
+  var headers = data[0];
+  var idIndex = headers.indexOf('Contact-Unique-ID');
+  var projectIndex = headers.indexOf('Project');
+
+  var oldProjectName;
+
+  // Check for duplicate project names, excluding the current contact
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][projectIndex].toLowerCase() === contact['Project'].toLowerCase() && data[i][idIndex] !== contact['Contact-Unique-ID']) {
+      return 'Duplicate project name found. Contact not updated.';
+    }
+  }
+
+  // Find and update the existing contact
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][idIndex] === contact['Contact-Unique-ID']) {
+      oldProjectName = data[i][projectIndex];
+
+      for (var j = 0; j < headers.length; j++) {
+        if (headers[j] !== 'Contact-Unique-ID') {
+          // Prepend single quote for all fields except Contact-Unique-ID
+          data[i][j] = "'" + (contact[headers[j]] !== undefined ? contact[headers[j]] : data[i][j]);
+        }
+      }
+      sheet.getRange(i + 1, 1, 1, data[i].length).setValues([data[i]]);
+      break;
+    }
+  }
+
+  // Update the 'Project' column in the 'Opportunities' sheet
+  var opportunitiesSheet = ss.getSheetByName('Opportunities');
+  var opportunitiesData = opportunitiesSheet.getDataRange().getValues();
+  var opportunitiesHeaders = opportunitiesData[0];
+  var opportunitiesProjectIndex = opportunitiesHeaders.indexOf('Project');
+
+  for (var i = 1; i < opportunitiesData.length; i++) {
+    if (opportunitiesData[i][opportunitiesProjectIndex] === oldProjectName) {
+      opportunitiesSheet.getRange(i + 1, opportunitiesProjectIndex + 1).setValue("'" + contact['Project']);
+    }
+  }
+
+  // Update the 'projectName' column in the 'RecordQuotation' sheet
+  var recordQuotationSheet = ss.getSheetByName('RecordQuotation');
+  var recordQuotationData = recordQuotationSheet.getDataRange().getValues();
+  var recordQuotationHeaders = recordQuotationData[0];
+  var recordQuotationProjectIndex = recordQuotationHeaders.indexOf('projectName');
+
+  for (var i = 1; i < recordQuotationData.length; i++) {
+    if (recordQuotationData[i][recordQuotationProjectIndex] === oldProjectName) {
+      recordQuotationSheet.getRange(i + 1, recordQuotationProjectIndex + 1).setValue("'" + contact['Project']);
+    }
+  }
+
+  return 'Contact updated successfully.';
+}
+
+
+
+
+
+function updateContactNote(contactUniqueId, note) {
+  const sheetId = '1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE';
+  const sheetName = 'Contacts';
+  const columnToUpdate = 'Note'; // Change this to the actual column name if it's different
+
+  const spreadsheet = SpreadsheetApp.openById(sheetId);
+  const sheet = spreadsheet.getSheetByName(sheetName);
+  const data = sheet.getDataRange().getValues();
+  const headerRow = data[0];
+  const noteColumnIndex = headerRow.indexOf(columnToUpdate);
+  const uniqueIdColumnIndex = headerRow.indexOf('Contact-Unique-ID');
+
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][uniqueIdColumnIndex] === contactUniqueId) {
+      sheet.getRange(i + 1, noteColumnIndex + 1).setValue(note);
+      return;
+    }
+  }
+}
+
+
+function getJourneyDataAndContacts() {
+  var ss = SpreadsheetApp.openById("1XaxRAoYVF-3CVYXF6lmHhtgxXLFi30NjYMS7Pp-2jjE");
+  
+  // Fetch Journeys data
+  var journeySheet = ss.getSheetByName('EmailAutomation');
+  var journeyData = journeySheet.getDataRange().getValues();
+  var journeys = journeyData.slice(1).map(row => row[journeyData[0].indexOf('Journeys')]);
+  var uniqueJourneys = [...new Set(journeys.join(',').split(',').map(journey => journey.trim()))];
+
+  // Fetch Contacts data
+  var contactSheet = ss.getSheetByName('Contacts');
+  var contactData = contactSheet.getDataRange().getValues();
+  var contacts = contactData.slice(1).map(row => {
+    var contact = {};
+    contactData[0].forEach((header, index) => {
+      contact[header] = row[index];
+    });
+    return contact;
+  });
+
+  return {
+    uniqueJourneys: uniqueJourneys,
+    contacts: contacts
+  };
+}
+
+
+
+

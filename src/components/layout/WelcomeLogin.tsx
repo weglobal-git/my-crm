@@ -1,22 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Image from "next/image";
-import { signIn } from "next-auth/react";
 import { LayoutDashboard } from "lucide-react";
+import { signIn } from "next-auth/react";
 
-export default function LoginPage() {
+export function WelcomeLogin() {
   const [loading, setLoading] = useState(false);
-  
-  // Use searchParams safely handling if it's not ready
-  const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-  const redirectParam = searchParams?.get("callbackUrl") || "/";
-  const redirectTo = redirectParam.startsWith("/") ? redirectParam : "/";
 
   const handleGoogleLogin = async () => {
     setLoading(true);
-    await signIn("google", { callbackUrl: redirectTo });
+    await signIn("google", { callbackUrl: "/" });
   };
 
   return (
@@ -44,7 +37,7 @@ export default function LoginPage() {
           </div>
 
           <div className="flex gap-4 text-white/40 text-sm font-medium">
-            <span>© 2024 SB Interlab Co., Ltd.</span>
+            <span>© 2026 SB Interlab Co., Ltd.</span>
             <span>•</span>
             <span>Internal Use Only</span>
           </div>
@@ -69,6 +62,7 @@ export default function LoginPage() {
 
           <div className="space-y-6">
             <button
+              type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
               className="w-full btn-secondary text-base disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3 border-gray-300 shadow-sm"
@@ -108,6 +102,8 @@ export default function LoginPage() {
             
             <p className="text-center text-xs text-slate-400 mt-8">
               Only authorized personnel can access this system.
+              <br />
+              If you encounter an error, contact your administrator.
             </p>
           </div>
         </div>

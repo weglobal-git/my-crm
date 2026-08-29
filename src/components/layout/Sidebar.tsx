@@ -13,11 +13,13 @@ import {
 } from "lucide-react";
 
 const navigation = [
+
   { name: "Back", href: "#", icon: ArrowLeft },
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Pipeline", href: "/pipeline", icon: MousePointer2 },
   { name: "Quotations", href: "/quotations", icon: FileText },
   { name: "Customers", href: "/customers", icon: MessageSquare },
+  { name: "System Settings", href: "/system", icon: Settings },
 ];
 
 export function Sidebar() {

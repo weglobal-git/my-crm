@@ -41,6 +41,6 @@ yarn-error.log*
 next-env.d.ts
 
 # reference / backup files (not for production)
-/backup_old_code/
-/target_ux/
+# /backup_old_code/
+# /target_ux/
 .vscode/

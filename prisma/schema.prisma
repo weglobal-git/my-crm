@@ -43,7 +43,7 @@ model User {
   image         String?
   
   // RBAC Fields
-  role          Role      @default(STAFF)
+  role          Role      @default(GENERAL)
   departmentId  String?
 
   accounts      Account[]
@@ -51,11 +51,17 @@ model User {
   department    Department? @relation(fields: [departmentId], references: [id])
   
   // CRM Relations
-  deals         Deal[]      @relation("DealOwner")
-  quotations    Quotation[] @relation("QuotationCreator")
+  opportunities Opportunity[] @relation("OpportunityOwner")
+  teamOpportunities Opportunity[] @relation("OpportunityTeam")
+  quotations    Quotation[]   @relation("QuotationCreator")
+  activityLogs  ActivityLog[]
+  
+  receivedNotifications Notification[] @relation("ReceivedNotifications")
+  sentNotifications     Notification[] @relation("SentNotifications")
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  lastActive    DateTime  @default(now())
 }
 
 model VerificationToken {
@@ -68,8 +74,41 @@ model VerificationToken {
 
 enum Role {
   ADMIN
-  MANAGER
-  STAFF
+  MANAGEMENT
+  GENERAL
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  recipientId String
+  recipient   User     @relation("ReceivedNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
+  
+  senderId    String?
+  sender      User?    @relation("SentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
+  
+  type        NotificationType
+  title       String
+  message     String?  @db.Text
+  
+  referenceId String?  
+  status      NotificationStatus @default(PENDING)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum NotificationType {
+  DEAL_TRANSFER_REQUEST
+  TEAM_INVITE_REQUEST
+  SYSTEM_ALERT
+  DEAL_COMMENT
+}
+
+enum NotificationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  READ
 }
 
 model Department {
@@ -80,48 +119,143 @@ model Department {
 
 // --- CRM SCHEMA ---
 
-model Customer {
+model Company {
   id          String   @id @default(cuid())
   name        String   // Company Name
-  email       String?
-  phone       String?
   address     String?  @db.Text
   country     String?
   
-  deals       Deal[]
+  contacts    Contact[]
+  opportunities Opportunity[]
   quotations  Quotation[]
-  customPrices CustomerPrice[]
+  customPrices CompanyPrice[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
-model Deal {
+model Contact {
   id          String   @id @default(cuid())
-  name        String   // Project Name
-  value       Float?
+  name        String
+  email       String?
+  phone       String?
   
-  stageId     String
-  stage       PipelineStage @relation(fields: [stageId], references: [id])
-  
-  customerId  String
-  customer    Customer @relation(fields: [customerId], references: [id])
-
-  ownerId     String
-  owner       User     @relation("DealOwner", fields: [ownerId], references: [id])
-
-  quotations  Quotation[]
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+enum OpportunityType {
+  LEAD
+  TASK
+}
+
+enum OpportunityStatus {
+  OPEN
+  WON
+  LOST
+  COMPLETED
+  CANCELLED
+}
+
+model Opportunity {
+  id             String            @id @default(cuid())
+  type           OpportunityType   @default(LEAD)
+  topic          String            // e.g., "Order 1/26"
+  value          Float?            // Amount
+  currency       String?           @default("THB")
+  
+  // Dates
+  dueDate        DateTime?
+  goodsReadyDate DateTime?
+  goodsLoadingDate DateTime?
+
+  // Status & Pipeline
+  pipelineStageId String?
+  stage          PipelineStage?     @relation(fields: [pipelineStageId], references: [id])
+  status         OpportunityStatus  @default(OPEN)
+  lossReason     String?            @db.Text
+  
+  // Extra Info
+  oemProgress    Int?               // percentage 0-100
+
+  // Relations
+  companyId      String?
+  company        Company?           @relation(fields: [companyId], references: [id])
+
+  ownerId        String
+  owner          User               @relation("OpportunityOwner", fields: [ownerId], references: [id])
+
+  teamMembers    User[]             @relation("OpportunityTeam")
+
+  quotations     Quotation[]
+  activityLogs   ActivityLog[]
+  tags           OpportunityTag[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+enum BoardType {
+  LEAD
+  TASK
 }
 
 model PipelineStage {
-  id          String   @id @default(cuid())
-  name        String   // e.g., "New Lead", "Negotiation", "Closed Won"
-  order       Int      // For Kanban sorting
-  deals       Deal[]
+  id            String         @id @default(cuid())
+  name          String         // e.g., "Doing", "Qualified", "Quoted", "Following"
+  boardType     BoardType
+  order         Int            // For Kanban sorting
+  opportunities Opportunity[]
 }
+
+enum ActivityLogType {
+  COMMENT
+  SYSTEM_UPDATE
+}
+
+model ActivityLog {
+  id            String          @id @default(cuid())
+  content       String          @db.Text
+  type          ActivityLogType @default(COMMENT)
+  
+  // Nested Replies (1-level or deep)
+  parentId      String?
+  parent        ActivityLog?    @relation("Replies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       ActivityLog[]   @relation("Replies")
+
+  // Editing state
+  isEdited      Boolean         @default(false)
+  updatedAt     DateTime        @default(now()) @updatedAt // Tracks edit time
+  
+  opportunityId String
+  opportunity   Opportunity     @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  
+  userId        String
+  user          User            @relation(fields: [userId], references: [id])
+
+  createdAt     DateTime        @default(now())
+}
+
+model Tag {
+  id            String           @id @default(cuid())
+  name          String           @unique
+  color         String?          // Hex color code
+  opportunities OpportunityTag[]
+}
+
+model OpportunityTag {
+  opportunityId String
+  tagId         String
+  
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  tag           Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([opportunityId, tagId])
+}
+
 
 // --- PRODUCTS & QUOTATION SCHEMA ---
 
@@ -135,24 +269,24 @@ model Product {
   cbm         Float?   // CBM per unit (m3)
 
   quotationItems QuotationItem[]
-  customPrices   CustomerPrice[]
+  customPrices   CompanyPrice[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
-// For customer-specific pricing
-model CustomerPrice {
+// For company-specific pricing
+model CompanyPrice {
   id          String   @id @default(cuid())
   price       Float
 
   productId   String
   product     Product  @relation(fields: [productId], references: [id])
   
-  customerId  String
-  customer    Customer @relation(fields: [customerId], references: [id])
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
 
-  @@unique([productId, customerId])
+  @@unique([productId, companyId])
 }
 
 model Quotation {
@@ -165,11 +299,11 @@ model Quotation {
   totalCBM    Float    @default(0)
 
   // Relations
-  customerId  String
-  customer    Customer @relation(fields: [customerId], references: [id])
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
 
-  dealId      String?
-  deal        Deal?    @relation(fields: [dealId], references: [id])
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
 
   creatorId   String
   creator     User     @relation("QuotationCreator", fields: [creatorId], references: [id])

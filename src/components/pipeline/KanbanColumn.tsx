@@ -2,15 +2,16 @@
 
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { KanbanCard, DealType } from "./KanbanCard";
+import { KanbanCard, OpportunityWithRelations } from "./KanbanCard";
 
 interface KanbanColumnProps {
   id: string;
   title: string;
-  deals: DealType[];
+  deals: OpportunityWithRelations[];
+  onDealClick: (deal: OpportunityWithRelations, tab?: string) => void;
 }
 
-export function KanbanColumn({ id, title, deals }: KanbanColumnProps) {
+export function KanbanColumn({ id, title, deals, onDealClick }: KanbanColumnProps) {
   const { setNodeRef } = useDroppable({
     id,
     data: {
@@ -34,7 +35,7 @@ export function KanbanColumn({ id, title, deals }: KanbanColumnProps) {
       >
         <SortableContext items={deals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
           {deals.map((deal) => (
-            <KanbanCard key={deal.id} deal={deal} />
+            <KanbanCard key={deal.id} deal={deal} onOpenPanel={(tab) => onDealClick(deal, tab)} />
           ))}
         </SortableContext>
       </div>
