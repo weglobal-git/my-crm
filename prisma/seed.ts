@@ -1,4 +1,4 @@
-import { PrismaClient, BoardType } from '@prisma/client'
+import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 async function main() {
@@ -6,23 +6,15 @@ async function main() {
   await prisma.opportunity.deleteMany()
   await prisma.pipelineStage.deleteMany()
 
-  // Create Pipeline Stages for LEAD
-  const leadStages = [
-    { name: 'Qualified', boardType: BoardType.LEAD, order: 1 },
-    { name: 'Quoted', boardType: BoardType.LEAD, order: 2 },
-    { name: 'Following', boardType: BoardType.LEAD, order: 3 },
+  // Create Generic Pipeline Stages
+  const stages = [
+    { name: 'To Do', order: 1 },
+    { name: 'In Progress', order: 2 },
+    { name: 'Review', order: 3 },
+    { name: 'Follow Up', order: 4 },
   ]
   
-  for (const stage of leadStages) {
-    await prisma.pipelineStage.create({ data: stage })
-  }
-
-  // Create Pipeline Stages for TASK
-  const taskStages = [
-    { name: 'Doing', boardType: BoardType.TASK, order: 1 },
-  ]
-  
-  for (const stage of taskStages) {
+  for (const stage of stages) {
     await prisma.pipelineStage.create({ data: stage })
   }
 

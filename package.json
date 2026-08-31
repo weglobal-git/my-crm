@@ -14,9 +14,12 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "cloudinary": "^2.11.0",
+    "date-fns": "^4.4.0",
     "lucide-react": "^1.34.0",
     "next": "16.3.3",
     "next-auth": "^4.24.15",
+    "pusher": "^5.3.4",
+    "pusher-js": "^8.6.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

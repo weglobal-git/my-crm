@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { 
   DndContext, 
   DragOverlay, 
@@ -19,15 +19,20 @@ import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCardUI, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
 import { PipelineStage } from "@prisma/client";
 import { moveOpportunity } from "@/lib/actions/opportunity";
+import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { EditDealPanel, TabType } from "./EditDealPanel";
 import { useDialog } from "@/providers/DialogProvider";
+import { pusherClient } from "@/lib/pusher";
 
 interface KanbanBoardProps {
+  currentUserId?: string;
+  currentUserRole?: string;
+  isCompletedTab?: boolean;
   initialStages: PipelineStage[];
   initialOpportunities: OpportunityWithRelations[];
 }
 
-export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoardProps) {
+export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, initialStages, initialOpportunities }: KanbanBoardProps) {
   const { toast } = useDialog();
   // Group opportunities by stageId
   const initialDeals = initialStages.reduce((acc, stage) => {
@@ -50,13 +55,19 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
   
   const router = useRouter();
 
-  // Cross-user Real-time polling
+  // Real-time updates via Pusher
   useEffect(() => {
-    const interval = setInterval(() => {
+    if (isCompletedTab) return;
+    
+    const channel = pusherClient.subscribe('pipeline');
+    channel.bind('pipeline-updated', () => {
       router.refresh();
-    }, 15000); // Poll every 15 seconds
-    return () => clearInterval(interval);
-  }, [router]);
+    });
+
+    return () => {
+      pusherClient.unsubscribe('pipeline');
+    };
+  }, [router, isCompletedTab]);
 
   // Sync state when props update (only if not dragging)
   useEffect(() => {
@@ -86,6 +97,63 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
       });
     }, 0);
   }, [initialOpportunities, initialStages, activeDeal]);
+
+  // Infinite Scroll state for completed tab
+  const [completedDeals, setCompletedDeals] = useState<OpportunityWithRelations[]>([]);
+  const [hasMoreCompleted, setHasMoreCompleted] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  
+  useEffect(() => {
+    if (isCompletedTab) {
+      const t = setTimeout(() => {
+        setCompletedDeals(initialOpportunities);
+        setHasMoreCompleted(initialOpportunities.length === 20); // assuming page size is 20
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [initialOpportunities, isCompletedTab]);
+
+  const searchParams = useSearchParams();
+  const searchQuery = searchParams.get('search') || undefined;
+
+  const loadMoreCompleted = useCallback(async () => {
+    if (isLoadingMore || !hasMoreCompleted) return;
+    setIsLoadingMore(true);
+    try {
+      // We pass the current length to skip
+      const nextBatch = await getMoreCompletedOpportunities(completedDeals.length, searchQuery);
+      if (nextBatch.length === 0) {
+        setHasMoreCompleted(false);
+      } else {
+        setCompletedDeals(prev => {
+          // avoid duplicates
+          const existingIds = new Set(prev.map(d => d.id));
+          const newUnique = nextBatch.filter(d => !existingIds.has(d.id));
+          return [...prev, ...newUnique] as OpportunityWithRelations[];
+        });
+        if (nextBatch.length < 20) setHasMoreCompleted(false);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMoreCompleted, completedDeals.length, searchQuery]);
+
+  // Intersection observer for infinite scrolling
+  useEffect(() => {
+    if (!isCompletedTab || !hasMoreCompleted) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) {
+        loadMoreCompleted();
+      }
+    }, { rootMargin: '200px' });
+    
+    const target = document.getElementById('completed-load-more');
+    if (target) observer.observe(target);
+    
+    return () => observer.disconnect();
+  }, [isCompletedTab, hasMoreCompleted, loadMoreCompleted]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -184,33 +252,79 @@ export function KanbanBoard({ initialStages, initialOpportunities }: KanbanBoard
 
   return (
     <>
-      <div className="w-full flex gap-6 overflow-x-auto pb-8 hide-scrollbar">
-        <DndContext
-          id="kanban-dnd"
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragEnd={handleDragEnd}
-        >
-          {initialStages.map(col => (
-            <KanbanColumn 
-              key={col.id} 
-              id={col.id} 
-              title={col.name} 
-              deals={deals[col.id] || []} 
-              onDealClick={(deal, tab) => setSelectedDeal({ deal, tab: tab || 'activity' })}
-            />
-          ))}
+      <div className={`flex gap-2 overflow-x-auto pb-8 hide-scrollbar mx-auto ${isCompletedTab ? 'w-full' : 'w-fit h-[calc(100vh-140px)]'}`}>
+        {isCompletedTab ? (
+          <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
+            {(() => {
+              // Group by year
+              const grouped = completedDeals.reduce((acc, deal) => {
+                // Determine completion date by goodsLoadingDate or fallback to updated/createdAt
+                const date = deal.goodsLoadingDate || deal.updatedAt || deal.createdAt;
+                const year = new Date(date).getFullYear();
+                if (!acc[year]) acc[year] = [];
+                acc[year].push(deal);
+                return acc;
+              }, {} as Record<number, OpportunityWithRelations[]>);
 
-          <DragOverlay dropAnimation={null}>
-            {activeDeal ? (
-              <div style={{ width: activeWidth || undefined }}>
-                <KanbanCardUI deal={activeDeal} />
+              const sortedYears = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+
+              return sortedYears.map(year => (
+                <div key={year} className="flex flex-col gap-4">
+                  <h3 className="font-semibold text-2xl text-slate-100">{year}</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 px-8 pt-6">
+                    {grouped[year].map(deal => (
+                      <div key={deal.id} className="cursor-pointer">
+                        <KanbanCardUI 
+                          deal={deal} 
+                          onOpenPanel={(tab) => setSelectedDeal({ deal, tab: tab || 'activity' })} 
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ));
+            })()}
+            {hasMoreCompleted && (
+              <div id="completed-load-more" className="flex justify-center py-8">
+                {isLoadingMore ? (
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#da6986]"></div>
+                ) : (
+                  <div className="h-8"></div>
+                )}
               </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
+            )}
+          </div>
+        ) : (
+          <DndContext
+            id="kanban-dnd"
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+          >
+            {initialStages.map(col => (
+              <KanbanColumn 
+                key={col.id} 
+                id={col.id} 
+                title={col.name} 
+                deals={deals[col.id] || []} 
+                onDealClick={(deal, tab) => setSelectedDeal({ deal, tab: tab || 'activity' })}
+                isScrollable={true}
+                currentUserId={currentUserId}
+                currentUserRole={currentUserRole}
+              />
+            ))}
+
+            <DragOverlay dropAnimation={null}>
+              {activeDeal ? (
+                <div style={{ width: activeWidth || undefined }}>
+                  <KanbanCardUI deal={activeDeal} />
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        )}
       </div>
 
       {selectedDeal && (

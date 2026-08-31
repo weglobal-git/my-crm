@@ -28,5 +28,10 @@ export default withAuth(
 )
 
 export const config = {
-  matcher: ["/system/:path*", "/pipeline/:path*", "/quotations/:path*", "/customers/:path*"]
+  matcher: [
+    "/system/:path*", 
+    "/pipeline/:path*", 
+    "/quotations/:path*", 
+    "/customers/:path*"
+  ]
 }

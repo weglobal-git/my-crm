@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useRef, useState } from "react";
-import { batchUpdatePermissions } from "@/lib/actions/permission";
-import { Check, Loader2, ChevronLeft, ChevronRight, Save } from "lucide-react";
+import { batchUpdatePermissions, toggleMenuLock } from "@/lib/actions/permission";
+import { Check, Loader2, ChevronLeft, ChevronRight, Save, Lock, Unlock } from "lucide-react";
 import { useDialog } from "@/providers/DialogProvider";
 
 import { Department, MenuItem, DepartmentMenuPermission } from "@prisma/client";
@@ -84,7 +84,19 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
     });
     setHasChanges(true);
   };
-
+  const handleLockToggle = async (menuId: string, currentIsLocked: boolean) => {
+    setIsSaving(true);
+    try {
+      await toggleMenuLock(menuId, !currentIsLocked);
+      toast({ title: "Success", description: "Menu lock status updated", type: "success" });
+      window.location.reload();
+    } catch (e) {
+      console.error(e);
+      toast({ title: "Error", description: "Failed to update lock status", type: "error" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -133,7 +145,7 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                 <button 
                   onClick={handleSave}
                   disabled={isSaving}
-                  className="flex items-center gap-2 px-6 py-2 bg-black hover:bg-gray-800 text-white rounded-full font-medium transition-all disabled:opacity-50 animate-in fade-in slide-in-from-right-2"
+                  className="flex items-center gap-2 px-6 py-2 bg-[#C7F33C] hover:bg-[#b5dc35] text-black rounded-full font-bold transition-all disabled:opacity-50 animate-in fade-in slide-in-from-right-2"
                 >
                   {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                   {isSaving ? "Saving..." : "Save Changes"}
@@ -141,52 +153,52 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
               )}
               <button 
                 onClick={() => scroll('left')}
-                className="p-2 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors shadow-sm"
+                className="p-2 bg-[#3A3B3C] border border-[#4E4F50] rounded-full text-slate-400 hover:text-[#C7F33C] hover:bg-[#4E4F50] transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <button 
                 onClick={() => scroll('right')}
-                className="p-2 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors shadow-sm"
+                className="p-2 bg-[#3A3B3C] border border-[#4E4F50] rounded-full text-slate-400 hover:text-[#C7F33C] hover:bg-[#4E4F50] transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
 
-          <div className="bg-white rounded-[2rem] border border-slate-200 overflow-hidden flex flex-col relative">
+          <div className="bg-[#3A3B3C] rounded-[2rem] border border-[#4E4F50] overflow-hidden flex flex-col relative">
             <div ref={scrollRef} className="overflow-hidden">
             <table className="w-full text-left border-collapse min-w-max">
             <thead>
-              <tr className="bg-white border-b-2 border-slate-200 ">
-                <th className="p-5 font-semibold text-slate-400 text-sm tracking-wider uppercase w-48 sticky left-0 bg-white z-20 border-r border-slate-200">
+              <tr className="bg-[#252728] border-b-2 border-[#4E4F50]">
+                <th className="p-5 font-semibold text-slate-400 text-sm tracking-wider uppercase w-48 sticky left-0 bg-[#252728] z-20 border-r border-[#4E4F50]">
                   Main Menu
                 </th>
-                <th className="p-5 font-semibold text-slate-400 text-sm tracking-wider uppercase w-48 sticky left-[192px] bg-white z-20 border-r border-slate-200">
+                <th className="p-5 font-semibold text-slate-400 text-sm tracking-wider uppercase w-48 sticky left-[192px] bg-[#252728] z-20 border-r border-[#4E4F50]">
                   Sub Menu
                 </th>
                 {initialDepartments.map(dept => (
-                  <th key={dept.id} className="p-5 font-semibold text-slate-800 text-center min-w-[140px] uppercase text-sm tracking-wider border-r border-slate-200">
+                  <th key={dept.id} className="p-5 font-semibold text-slate-300 text-center min-w-[140px] uppercase text-sm tracking-wider border-r border-[#4E4F50]">
                     {dept.name}
                   </th>
                 ))}
               </tr>
             </thead>
             
-            <tbody className="bg-white">
+            <tbody className="bg-[#3A3B3C]">
               {mainMenus.map(mainMenu => {
                 const mySubMenus = subMenus.filter(sub => sub.parentKey === mainMenu.key);
                 
                 if (mySubMenus.length === 0) {
                   return (
-                    <tr key={mainMenu.id} className="border-b border-slate-200 bg-white">
-                      <td className="p-4 font-bold bg-white border-r border-slate-200 align-top w-48 sticky left-0 z-10 text-xs tracking-widest uppercase text-slate-900">
+                    <tr key={mainMenu.id} className="border-b border-[#4E4F50] bg-[#3A3B3C]">
+                      <td className="p-4 font-bold bg-[#3A3B3C] border-r border-[#4E4F50] align-top w-48 sticky left-0 z-10 text-xs tracking-widest uppercase text-slate-100">
                         {mainMenu.label}
                       </td>
-                      <td className="p-4 bg-white border-r border-slate-200 text-slate-400 italic text-sm w-48 sticky left-[192px] z-10">
+                      <td className="p-4 bg-[#3A3B3C] border-r border-[#4E4F50] text-slate-400 italic text-sm w-48 sticky left-[192px] z-10">
                         No sub-menus
                       </td>
-                      <td colSpan={initialDepartments.length} className="bg-white"></td>
+                      <td colSpan={initialDepartments.length} className="bg-[#3A3B3C]"></td>
                     </tr>
                   );
                 }
@@ -197,24 +209,24 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                   return (
                     <React.Fragment key={subMenu.id}>
                       {/* Sub Menu Row */}
-                      <tr className="border-b border-slate-200 bg-white hover:bg-slate-50 transition-colors">
+                      <tr className="border-b border-[#4E4F50] bg-[#3A3B3C] hover:bg-[#252728] transition-colors">
                         {subIndex === 0 && (
-                          <td rowSpan={getMainMenuRowSpan(mainMenu.key)} className="p-4 font-bold bg-white border-r border-slate-200 align-top w-48 sticky left-0 z-10 text-xs tracking-widest uppercase text-slate-900">
+                          <td rowSpan={getMainMenuRowSpan(mainMenu.key)} className="p-4 font-bold bg-[#3A3B3C] border-r border-[#4E4F50] align-top w-48 sticky left-0 z-10 text-xs tracking-widest uppercase text-slate-100">
                             {mainMenu.label}
                           </td>
                         )}
                         
-                        <td className="p-4 font-bold bg-white border-r border-slate-200 align-middle w-48 sticky left-[192px] z-10 text-xs tracking-widest uppercase text-slate-900">
+                        <td className="p-4 font-bold bg-[#3A3B3C] border-r border-[#4E4F50] align-middle w-48 sticky left-[192px] z-10 text-xs tracking-widest uppercase text-slate-100">
                           {subMenu.label}
                         </td>
 
                         {initialDepartments.map(dept => (
-                          <td key={dept.id} className="p-4 text-center border-r border-slate-200 min-w-[140px]">
+                          <td key={dept.id} className="p-4 text-center border-r border-[#4E4F50] min-w-[140px]">
                             <button
                               onClick={() => handleToggle(dept.id, subMenu.id, isChecked(dept.id, subMenu.id))}
                               disabled={isSaving}
                               className={`w-10 h-6 rounded-full flex items-center justify-center mx-auto transition-all duration-300 relative ${
-                                isChecked(dept.id, subMenu.id) ? "bg-black" : "bg-slate-200"
+                                isChecked(dept.id, subMenu.id) ? "bg-[#C7F33C]" : "bg-[#4E4F50]"
                               }`}
                             >
                               <div className={`absolute w-4 h-4 bg-white rounded-full transition-all duration-300 ${
@@ -232,18 +244,29 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                       </tr>
                       
                       {/* Side Menu Rows */}
-                      {mySideMenus.map(sideMenu => (
-                        <tr key={sideMenu.id} className="border-b border-slate-200 bg-white hover:bg-slate-50 transition-colors">
-                          <td className="p-4 font-medium text-slate-500 text-slate-400 italic text-sm text-right bg-white border-r border-slate-200 w-48 sticky left-[192px] z-10">
+                      {mySideMenus.map(sideMenu => {
+                        const isLocked = sideMenu.isLocked;
+                        return (
+                        <tr key={sideMenu.id} className="border-b border-[#4E4F50] bg-[#3A3B3C] hover:bg-[#252728] transition-colors">
+                          <td className="p-4 font-medium text-slate-400 italic text-sm text-right bg-[#3A3B3C] border-r border-[#4E4F50] w-48 sticky left-[192px] z-10 flex items-center justify-end gap-2">
+                            {isLocked ? (
+                              <button onClick={() => handleLockToggle(sideMenu.id, true)} disabled={isSaving} className="text-red-400 hover:text-red-300 transition-colors" title="Unlock from parent">
+                                <Lock className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button onClick={() => handleLockToggle(sideMenu.id, false)} disabled={isSaving} className="text-slate-400 hover:text-slate-300 transition-colors" title="Lock to parent">
+                                <Unlock className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {sideMenu.label}
                           </td>
                           {initialDepartments.map(dept => (
-                            <td key={dept.id} className="p-4 text-center border-r border-slate-200 min-w-[140px]">
+                            <td key={dept.id} className="p-4 text-center border-r border-[#4E4F50] min-w-[140px]">
                               <button
                                 onClick={() => handleToggle(dept.id, sideMenu.id, isChecked(dept.id, sideMenu.id))}
-                                disabled={isSaving}
+                                disabled={isSaving || isLocked}
                                 className={`w-5 h-5 rounded flex items-center justify-center mx-auto transition-all border ${
-                                  isChecked(dept.id, sideMenu.id) ? 'bg-black border-black text-white' : 'bg-white border-slate-300 hover:border-slate-400'
+                                  isChecked(dept.id, sideMenu.id) ? (isLocked ? 'bg-[#4E4F50] border-[#4E4F50] text-slate-400 opacity-50 cursor-not-allowed' : 'bg-[#C7F33C] border-[#C7F33C] text-black') : (isLocked ? 'bg-[#252728] border-[#4E4F50] opacity-50 cursor-not-allowed' : 'bg-[#252728] border-[#4E4F50] hover:border-[#C7F33C]')
                                 }`}
                               >
                                 {isChecked(dept.id, sideMenu.id) && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
@@ -251,7 +274,7 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                             </td>
                           ))}
                         </tr>
-                      ))}
+                      )})}
                     </React.Fragment>
                   );
                 });

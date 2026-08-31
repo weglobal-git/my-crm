@@ -9,8 +9,9 @@ import { useEffect, useState, useRef } from "react";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { MenuDefinition } from "@/lib/menu-registry";
 
-import { pingActiveStatus, getActiveUsers } from "@/lib/actions/users";
+import { getActiveUsers } from "@/lib/actions/users";
 import { getMyNotifications, respondToNotification } from "@/lib/actions/notification";
+import { pusherClient } from "@/lib/pusher";
 import { Check, X as XIcon } from "lucide-react";
 
 export function Header() {
@@ -39,30 +40,45 @@ export function Header() {
   const notifDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (status === "authenticated") {
-      pingActiveStatus();
-      getActiveUsers().then(setActiveUsers);
+    if (status === "authenticated" && session?.user?.id) {
+      // 1. Initial fetches
       getMyNotifications().then(setNotifications);
 
-      const pingInterval = setInterval(() => {
-        pingActiveStatus();
-      }, 30 * 1000);
+      // 2. Setup Pusher Presence Channel
+      const presenceChannel = pusherClient.subscribe('presence-global');
+      
+      presenceChannel.bind('pusher:subscription_succeeded', (members: { each: (cb: (member: { id: string; info: Record<string, unknown> }) => void) => void }) => {
+        const users: Awaited<ReturnType<typeof getActiveUsers>> = [];
+        members.each((member) => {
+          users.push({ id: member.id, ...member.info } as Awaited<ReturnType<typeof getActiveUsers>>[number]);
+        });
+        setActiveUsers(users);
+      });
 
-      const fetchInterval = setInterval(() => {
-        getActiveUsers().then(setActiveUsers);
-      }, 15 * 1000);
+      presenceChannel.bind('pusher:member_added', (member: { id: string; info: Record<string, unknown> }) => {
+        setActiveUsers(prev => {
+          if (prev.find(u => u.id === member.id)) return prev;
+          return [...prev, { id: member.id, ...member.info } as Awaited<ReturnType<typeof getActiveUsers>>[number]];
+        });
+      });
 
-      const notifInterval = setInterval(() => {
-        getMyNotifications().then(setNotifications);
-      }, 15 * 1000);
+      presenceChannel.bind('pusher:member_removed', (member: { id: string }) => {
+        setActiveUsers(prev => prev.filter(u => u.id !== member.id));
+      });
+
+      // 3. Setup Pusher Private Channel for Notifications
+      const privateChannel = pusherClient.subscribe(`private-user-${session.user.id}`);
+      
+      privateChannel.bind('new-notification', (newNotif: Awaited<ReturnType<typeof getMyNotifications>>[number]) => {
+        setNotifications(prev => [newNotif, ...prev]);
+      });
 
       return () => {
-        clearInterval(pingInterval);
-        clearInterval(fetchInterval);
-        clearInterval(notifInterval);
+        pusherClient.unsubscribe('presence-global');
+        pusherClient.unsubscribe(`private-user-${session.user.id}`);
       };
     }
-  }, [status]);
+  }, [status, session]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -90,14 +106,14 @@ export function Header() {
   };
 
   return (
-    <header className="flex w-full items-center justify-between px-6 py-1 border-b border-slate-200 shrink-0">
+    <header className="flex w-full items-center justify-between px-6 py-1 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
       
       {/* Left: Quick Nav Pills */}
       <div className="flex items-center gap-4">
         {currentMainMenu && (
           <>
-            <span className="font-semibold text-slate-800">{currentMainMenu.label}</span>
-            {subMenus.length > 0 && <span className="text-slate-300">|</span>}
+            <span className="font-semibold text-slate-100">{currentMainMenu.label}</span>
+            {subMenus.length > 0 && <span className="text-slate-600">|</span>}
             <div className="flex items-center gap-2">
               {subMenus.map(sub => {
                 const isActive = sub.href && (pathname === sub.href || (sub.href !== '/' && pathname.startsWith(`${sub.href}/`)));
@@ -107,8 +123,8 @@ export function Header() {
                     href={sub.href || "#"} 
                     className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                       isActive 
-                        ? "bg-black text-white" 
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                        ? "bg-[#C7F33C] text-black" 
+                        : "bg-[#3A3B3C] text-slate-300 hover:bg-slate-600"
                     }`}
                   >
                     {sub.label}
@@ -123,17 +139,16 @@ export function Header() {
       {/* Right: Search, Team Avatars & User Profile */}
       <div className="flex items-center gap-4">
         
-        {/* Global Search Box */}
-        <div className="hidden lg:flex items-center w-64 xl:w-80 bg-slate-50 hover:bg-slate-100 rounded-full p-1.5 pl-4 border border-slate-200 focus-within:border-[#007aff] focus-within:bg-white transition-all">
+        <div className="hidden lg:flex items-center w-64 xl:w-80 bg-[#3A3B3C] hover:bg-[#4E4F50] rounded-full p-1.5 pl-4 border border-[#4E4F50] focus-within:border-[#C7F33C] focus-within:ring-1 focus-within:ring-[#C7F33C] focus-within:bg-[#252728] transition-all">
           <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
           <input 
             type="text" 
             placeholder="Search CRM..." 
-            className="flex-1 bg-transparent border-none outline-none text-sm placeholder:text-slate-400"
+            className="flex-1 bg-transparent border-none outline-none text-sm placeholder:text-slate-400 text-slate-100"
           />
         </div>
 
-        <div className="h-6 w-px bg-slate-200 hidden lg:block"></div>
+        <div className="h-6 w-px bg-slate-600 hidden lg:block"></div>
 
         {/* Team Avatars */}
         <div className="hidden md:flex items-center relative" ref={dropdownRef}>
@@ -146,7 +161,7 @@ export function Header() {
               {displayUsers.map((user, index) => (
                 <div 
                   key={user.id} 
-                  className={`w-10 h-10 rounded-full border-2 border-[#F4F5F7] bg-white flex items-center justify-center overflow-hidden z-${30 - index * 10} relative`}
+                  className={`w-10 h-10 rounded-full border-2 border-[#252728] bg-[#3A3B3C] flex items-center justify-center overflow-hidden z-${30 - index * 10} relative`}
                   style={{ zIndex: 30 - index * 10 }}
                 >
                   {user.image ? (
@@ -159,7 +174,7 @@ export function Header() {
                 </div>
               ))}
               {remainingCount > 0 && (
-                <div className="w-10 h-10 rounded-full border-2 border-[#F4F5F7] bg-[#111111] text-white flex items-center justify-center text-xs font-bold z-0 relative">
+                <div className="w-10 h-10 rounded-full border-2 border-[#252728] bg-[#C7F33C] text-black flex items-center justify-center text-xs font-bold z-0 relative">
                   +{remainingCount}
                 </div>
               )}
@@ -171,9 +186,9 @@ export function Header() {
 
           {/* Active Users Dropdown */}
           {showDropdown && (
-            <div className="absolute top-full right-0 mt-3 w-72 bg-white rounded-2xl  border border-slate-100 z-50 animate-fade-in-up">
-              <div className="p-4 border-b border-slate-50 flex justify-between items-center">
-                <h3 className="font-semibold text-slate-900">Online Team</h3>
+            <div className="absolute top-full right-0 mt-3 w-72 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up">
+              <div className="p-4 border-b border-[#4E4F50] flex justify-between items-center">
+                <h3 className="font-semibold text-slate-100">Online Team</h3>
                 <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">
                   {activeUsers.length} active
                 </span>
@@ -183,18 +198,18 @@ export function Header() {
                   <div className="p-4 text-center text-sm text-slate-500">No one is online right now.</div>
                 ) : (
                   activeUsers.map(user => (
-                    <div key={user.id} className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-xl transition-colors">
-                      <div className="w-10 h-10 rounded-full bg-slate-100 overflow-hidden relative shrink-0">
+                    <div key={user.id} className="flex items-center gap-3 p-2 hover:bg-[#4E4F50] rounded-xl transition-colors">
+                      <div className="w-10 h-10 rounded-full bg-[#252728] overflow-hidden relative shrink-0">
                         {user.image ? (
                           <Image src={user.image} alt={user.name || "User"} width={40} height={40} unoptimized className="w-full h-full object-cover" />
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center text-xs font-bold text-slate-700">
+                          <div className="w-full h-full flex items-center justify-center text-xs font-bold text-slate-300">
                             {user.name?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase() || "?"}
                           </div>
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-slate-900 truncate">
+                        <div className="text-sm font-semibold text-slate-100 truncate">
                           {user.name || "Unknown"} {session?.user?.id === user.id && "(You)"}
                         </div>
                         <div className="text-xs text-slate-500 truncate">
@@ -217,18 +232,18 @@ export function Header() {
           <div className="relative flex items-center" ref={notifDropdownRef}>
             <button 
               onClick={() => setShowNotifDropdown(!showNotifDropdown)}
-              className="w-11 h-11 flex items-center justify-center rounded-full bg-white   transition-all relative"
+              className="w-11 h-11 flex items-center justify-center rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] transition-all relative"
             >
-              <Bell className="w-5 h-5 text-slate-500" />
+              <Bell className="w-5 h-5 text-slate-300" />
               {notifications.length > 0 && (
-                <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>
+                <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-[#252728]"></span>
               )}
             </button>
             
             {showNotifDropdown && (
-              <div className="absolute top-full right-0 mt-3 w-80 bg-white rounded-2xl  border border-slate-100 z-50 animate-fade-in-up">
-                <div className="p-4 border-b border-slate-50 flex justify-between items-center">
-                  <h3 className="font-semibold text-slate-900">Notifications</h3>
+              <div className="absolute top-full right-0 mt-3 w-80 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up">
+                <div className="p-4 border-b border-[#4E4F50] flex justify-between items-center">
+                  <h3 className="font-semibold text-slate-100">Notifications</h3>
                   {notifications.length > 0 && (
                     <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full">
                       {notifications.length} new
@@ -243,13 +258,13 @@ export function Header() {
                     </div>
                   ) : (
                     notifications.map(notif => (
-                      <div key={notif.id} className="flex flex-col gap-2 p-3 hover:bg-slate-50 rounded-xl transition-colors">
+                      <div key={notif.id} className="flex flex-col gap-2 p-3 hover:bg-[#4E4F50] rounded-xl transition-colors">
                         <div className="flex gap-3">
-                          <div className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-[#252728] overflow-hidden shrink-0">
                                   <img src={notif.sender?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${notif.sender?.name || notif.senderId}`} alt="Avatar" className="w-full h-full object-cover" />
                           </div>
-                          <div className="flex-1 text-sm text-slate-700">
-                            <span className="font-bold text-slate-900">{notif.sender?.name || 'User'}</span> {notif.message}
+                          <div className="flex-1 text-sm text-slate-300">
+                            <span className="font-bold text-slate-100">{notif.sender?.name || 'User'}</span> {notif.message}
                           </div>
                         </div>
                         {['DEAL_TRANSFER_REQUEST', 'TEAM_INVITE_REQUEST'].includes(notif.type) && (
@@ -262,7 +277,7 @@ export function Header() {
                             </button>
                             <button 
                               onClick={() => handleRespond(notif.id, false)}
-                              className="flex-1 flex items-center justify-center gap-1 bg-white border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-slate-50 transition-colors"
+                              className="flex-1 flex items-center justify-center gap-1 bg-[#3A3B3C] border border-[#4E4F50] text-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#4E4F50] transition-colors"
                             >
                               <XIcon className="w-3 h-3" /> Reject
                             </button>
@@ -277,12 +292,12 @@ export function Header() {
           </div>
 
           {status === "loading" ? (
-            <div className="w-11 h-11 rounded-full bg-white animate-pulse "></div>
+            <div className="w-11 h-11 rounded-full bg-[#3A3B3C] animate-pulse"></div>
           ) : session?.user ? (
             <Link 
               href="/profile"
               title="Go to Profile"
-              className="relative w-11 h-11 rounded-full border-2 border-white overflow-hidden bg-white hover:border-[#d4ff3a] transition-colors block"
+              className="relative w-11 h-11 rounded-full border-2 border-transparent overflow-hidden bg-[#3A3B3C] hover:border-[#C7F33C] transition-colors block"
             >
               {session.user.image ? (
                 <Image 

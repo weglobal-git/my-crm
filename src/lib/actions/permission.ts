@@ -259,3 +259,37 @@ export async function batchUpdatePermissions(updates: { deptId: string, menuId: 
   );
   return { success: true };
 }
+
+export async function toggleMenuLock(menuId: string, isLocked: boolean) {
+  // Update the menu item to be locked/unlocked
+  await prisma.menuItem.update({
+    where: { id: menuId },
+    data: { isLocked }
+  });
+
+  // If locked, we need to enforce that all departments that have access to the parent menu 
+  // also get access to this menu.
+  if (isLocked) {
+    const menu = await prisma.menuItem.findUnique({ where: { id: menuId } });
+    if (menu && menu.parentKey) {
+      const parent = await prisma.menuItem.findUnique({ where: { key: menu.parentKey } });
+      if (parent) {
+        // Find all departments that have the parent menu enabled
+        const parentPermissions = await prisma.departmentMenuPermission.findMany({
+          where: { menuItemId: parent.id, visible: true }
+        });
+
+        // Grant this child menu to those same departments
+        const updates = parentPermissions.map(p => ({
+          deptId: p.departmentId,
+          menuId: menuId,
+          visible: true
+        }));
+        
+        await batchUpdatePermissions(updates);
+      }
+    }
+  }
+
+  return { success: true };
+}

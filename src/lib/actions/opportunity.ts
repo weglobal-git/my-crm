@@ -3,6 +3,15 @@
 import prisma from "@/lib/prisma";
 import { OpportunityStatus, Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
+import { pusherServer } from "@/lib/pusher";
+
+async function notifyPipelineUpdate() {
+  try {
+    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+  } catch (e) {
+    console.error("Pusher trigger error:", e);
+  }
+}
 
 export async function moveOpportunity(
   opportunityId: string, 
@@ -41,19 +50,81 @@ export async function moveOpportunity(
   }
 
   // If validation passes, perform the update
-  return await prisma.opportunity.update({
+  const result = await prisma.opportunity.update({
     where: { id: opportunityId },
     data: {
       pipelineStageId: newStageId,
       status: newStatus
     }
   });
+  await notifyPipelineUpdate();
+  return result;
 }
 
 export async function updateOpportunity(id: string, data: Prisma.OpportunityUpdateInput) {
-  return await prisma.opportunity.update({
+  const result = await prisma.opportunity.update({
     where: { id },
     data
+  });
+  await notifyPipelineUpdate();
+  return result;
+}
+
+export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string, userId: string) {
+  const result = await prisma.$transaction(async (tx) => {
+    const opp = await tx.opportunity.update({
+      where: { id: opportunityId },
+      data: { dueDate }
+    });
+    let formattedDate = 'Removed';
+    if (dueDate) {
+      const isMidnight = dueDate.getHours() === 0 && dueDate.getMinutes() === 0;
+      if (isMidnight) {
+        formattedDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(dueDate);
+      } else {
+        formattedDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(dueDate);
+      }
+    }
+    
+    // 1. Log to Activity (with special format for pill badge)
+    await tx.activityLog.create({
+      data: {
+        content: `[DUE DATE: ${formattedDate}]\nReason: ${reason}`,
+        type: "COMMENT",
+        opportunityId,
+        userId
+      }
+    });
+
+    // 2. Log to System (text only)
+    await tx.activityLog.create({
+      data: {
+        content: `Due Date changed to ${formattedDate}. Reason: ${reason}`,
+        type: "SYSTEM_UPDATE",
+        opportunityId,
+        userId
+      }
+    });
+    
+    return opp;
+  });
+  
+  await notifyPipelineUpdate();
+  revalidatePath('/pipeline');
+  return result;
+}
+
+export async function getOpportunityActivityLogs(opportunityId: string) {
+  return await prisma.activityLog.findMany({
+    where: { opportunityId },
+    include: {
+      user: true,
+      replies: {
+        include: { user: true },
+        orderBy: { createdAt: 'asc' }
+      }
+    },
+    orderBy: { createdAt: 'desc' }
   });
 }
 
@@ -146,7 +217,22 @@ export async function addSystemLog(opportunityId: string, content: string, userI
 
 export async function editActivityLog(logId: string, content: string, userId: string) {
   const log = await prisma.activityLog.findUnique({ where: { id: logId } });
-  if (!log || log.userId !== userId) throw new Error("Unauthorized to edit this log.");
+  if (!log) throw new Error("Log not found.");
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const isAdmin = user?.role === "ADMIN";
+
+  if (log.type === "SYSTEM_UPDATE" && !isAdmin) {
+    throw new Error("Only admins can edit system logs.");
+  }
+
+  if (log.content.startsWith('[DUE DATE:') && !isAdmin) {
+    throw new Error("Only admins can edit Due Date logs.");
+  }
+
+  if (log.userId !== userId && !isAdmin) {
+    throw new Error("Unauthorized to edit this log.");
+  }
 
   const result = await prisma.activityLog.update({
     where: { id: logId },
@@ -161,7 +247,22 @@ export async function editActivityLog(logId: string, content: string, userId: st
 
 export async function deleteActivityLog(logId: string, userId: string) {
   const log = await prisma.activityLog.findUnique({ where: { id: logId } });
-  if (!log || log.userId !== userId) throw new Error("Unauthorized to delete this log.");
+  if (!log) throw new Error("Log not found.");
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const isAdmin = user?.role === "ADMIN";
+
+  if (log.type === "SYSTEM_UPDATE" && !isAdmin) {
+    throw new Error("Only admins can delete system logs.");
+  }
+
+  if (log.content.startsWith('[DUE DATE:') && !isAdmin) {
+    throw new Error("Only admins can delete Due Date logs.");
+  }
+
+  if (log.userId !== userId && !isAdmin) {
+    throw new Error("Unauthorized to delete this log.");
+  }
 
   await prisma.activityLog.delete({
     where: { id: logId }

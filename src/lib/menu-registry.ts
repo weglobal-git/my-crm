@@ -44,7 +44,7 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   // ผูก parentKey กับ SUB-MENU
   { key: "pipeline.activity",    label: "Activity Log", level: 3, parentKey: "pipeline", iconName: "MessageSquare", sortOrder: 1 },
   { key: "pipeline.collaborate", label: "Collaborate",  level: 3, parentKey: "pipeline", iconName: "Users",         sortOrder: 2 },
-  { key: "pipeline.information", label: "Information",  level: 3, parentKey: "pipeline", iconName: "Building2",     sortOrder: 3 },
+  { key: "pipeline.information", label: "Customer",     level: 3, parentKey: "pipeline", iconName: "Building2",     sortOrder: 3 },
   { key: "pipeline.notes",       label: "Notes",        level: 3, parentKey: "pipeline", iconName: "FileText",      sortOrder: 4 },
   { key: "pipeline.document",    label: "Document",     level: 3, parentKey: "pipeline", iconName: "FileBadge",     sortOrder: 5 },
   { key: "pipeline.images",      label: "Images",       level: 3, parentKey: "pipeline", iconName: "ImageIcon",     sortOrder: 6 },

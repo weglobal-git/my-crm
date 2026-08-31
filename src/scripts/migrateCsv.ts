@@ -1,62 +1,40 @@
-import { parse } from 'csv-parse/sync';
 import * as fs from 'fs';
 import * as path from 'path';
-import { PrismaClient, OpportunityStatus, OpportunityType, BoardType, PipelineStage } from '@prisma/client';
+import { PrismaClient, OpportunityStatus, PipelineStage } from '@prisma/client';
 
 const prisma = new PrismaClient();
-const basePath = path.join(process.cwd(), 'backup_old_code', 'csv');
-
-function parseDate(dateStr: string) {
-  if (!dateStr) return null;
-  const parts = dateStr.split('/');
-  if (parts.length === 3) {
-    const d = new Date(`${parts[2].trim()}-${parts[1].trim()}-${parts[0].trim()}T00:00:00Z`);
-    if (!isNaN(d.getTime())) return d;
-  }
-  // Try direct parsing if not DD/MM/YYYY
-  const fallback = new Date(dateStr);
-  if (!isNaN(fallback.getTime())) return fallback;
-  return null;
-}
-
-function parseAmount(amountStr: string) {
-  if (!amountStr) return null;
-  const val = parseFloat(amountStr.replace(/,/g, ''));
-  return isNaN(val) ? null : val;
-}
+const cleanedPath = path.join(process.cwd(), 'src/scripts/cleaned');
 
 async function migrateContacts() {
-  console.log('Migrating Contacts.csv...');
-  const csvContent = fs.readFileSync(path.join(basePath, 'Contacts.csv'), 'utf8');
-  const records = parse(csvContent, { columns: true, skip_empty_lines: true }) as Record<string, string>[];
+  console.log('Migrating Contacts.json...');
+  const data = JSON.parse(fs.readFileSync(path.join(cleanedPath, 'Contacts.json'), 'utf8'));
 
-  for (const row of records) {
-    const projectName = row['Project']?.trim();
-    if (!projectName || projectName === '-' || projectName === '') continue;
-
+  for (const row of data) {
+    const projectName = row.projectName;
+    
     // Create Company
     const company = await prisma.company.upsert({
-      where: { id: projectName }, // We'll just generate CUID and findFirst by name instead
-      create: { name: projectName, address: row['Company-Address'], country: row['Country'] },
+      where: { id: projectName }, 
+      create: { name: projectName, address: row.companyAddress, country: row.country },
       update: {}
     }).catch(async () => {
        let existing = await prisma.company.findFirst({ where: { name: projectName } });
        if (!existing) {
          existing = await prisma.company.create({ 
-           data: { name: projectName, address: row['Company-Address'], country: row['Country'] }
+           data: { name: projectName, address: row.companyAddress, country: row.country }
          });
        }
        return existing;
     });
 
     // Create Contact
-    const contactName = row['Customer-Name']?.trim();
-    if (contactName && contactName !== '-' && contactName !== '') {
+    const contactName = row.customerName;
+    if (contactName) {
       await prisma.contact.create({
         data: {
           name: contactName,
-          email: row['Email'],
-          phone: row['Phone-Number'],
+          email: row.email,
+          phone: row.phone,
           companyId: company.id
         }
       });
@@ -65,15 +43,34 @@ async function migrateContacts() {
   console.log('Contacts migration done.');
 }
 
-async function migrateOpportunities(stages: PipelineStage[]) {
-  console.log('Migrating Opportunities.csv...');
-  const csvContent = fs.readFileSync(path.join(basePath, 'Opportunities.csv'), 'utf8');
-  const records = parse(csvContent, { columns: true, skip_empty_lines: true }) as Record<string, string>[];
+async function migrateProducts() {
+  console.log('Migrating Products.json...');
+  const data = JSON.parse(fs.readFileSync(path.join(cleanedPath, 'Products.json'), 'utf8'));
 
-  for (const row of records) {
-    const ownerName = row['Card-Owner']?.trim() || 'Unassigned';
+  for (const row of data) {
+    let sku = row.name || `SKU-${Math.random().toString(36).substr(2, 9)}`;
+
+    const existing = await prisma.product.findFirst({ where: { name: row.name } });
+    if (!existing) {
+       await prisma.product.create({
+         data: {
+           sku: sku,
+           name: row.name,
+           basePrice: row.price || 0,
+         }
+       });
+    }
+  }
+  console.log('Products migration done.');
+}
+
+async function migrateOpportunities(stages: PipelineStage[]) {
+  console.log('Migrating Opportunities.json...');
+  const data = JSON.parse(fs.readFileSync(path.join(cleanedPath, 'Opportunities.json'), 'utf8'));
+
+  for (const row of data) {
+    const ownerName = row.cardOwner || 'Unassigned';
     
-    // Using findFirst instead of upsert to avoid requiring unique constraints on email if it's dynamic
     let user = await prisma.user.findFirst({ where: { email: `${ownerName.toLowerCase()}@example.com` }});
     if (!user) {
        user = await prisma.user.create({
@@ -81,14 +78,14 @@ async function migrateOpportunities(stages: PipelineStage[]) {
        });
     }
 
-    const projectName = row['Project']?.trim();
+    const projectName = row.projectName;
     let companyId = null;
     if (projectName) {
       const company = await prisma.company.findFirst({ where: { name: projectName } });
       if (company) companyId = company.id;
     }
 
-    const rawStatus = row['Status']?.trim();
+    const rawStatus = row.status;
     let status: OpportunityStatus = OpportunityStatus.OPEN;
     let stageId = null;
 
@@ -96,20 +93,28 @@ async function migrateOpportunities(stages: PipelineStage[]) {
     else if (rawStatus === 'Lost' || rawStatus === 'Discarded') status = OpportunityStatus.LOST;
     else if (rawStatus === 'Completed') status = OpportunityStatus.COMPLETED;
     else {
-      const stage = stages.find(s => s.name.toLowerCase() === rawStatus?.toLowerCase());
+      let mappedStatus = rawStatus?.toLowerCase() || '';
+      if (mappedStatus === 'qualified') mappedStatus = 'to do';
+      else if (mappedStatus === 'doing') mappedStatus = 'in progress';
+      else if (mappedStatus === 'quoted') mappedStatus = 'review';
+      else if (mappedStatus === 'following') mappedStatus = 'follow up';
+
+      const stage = stages.find(s => s.name.toLowerCase() === mappedStatus);
       if (stage) stageId = stage.id;
     }
 
-    const oppType = row['Type']?.toLowerCase().includes('task') ? OpportunityType.TASK : OpportunityType.LEAD;
-
     const opp = await prisma.opportunity.create({
       data: {
-        type: oppType,
-        topic: row['Topic'] || 'Untitled',
-        value: parseAmount(row['Amount']),
-        dueDate: parseDate(row['Due-Date']),
-        goodsReadyDate: parseDate(row['Goods-Ready-Date']),
-        goodsLoadingDate: parseDate(row['Goods-Loading-Date']),
+        topic: row.topic || 'Untitled',
+        value: row.value,
+        dueDate: row.dueDate ? new Date(row.dueDate) : null,
+        goodsReadyDate: row.goodsReadyDate ? new Date(row.goodsReadyDate) : null,
+        goodsLoadingDate: row.goodsLoadingDate ? new Date(row.goodsLoadingDate) : null,
+        closedAt: row.closedAt ? new Date(row.closedAt) : null,
+        quotedAt: row.quotedAt ? new Date(row.quotedAt) : null,
+        reserveId: row.reserveId,
+        invoiceId: row.invoiceId,
+        attachmentUrl: row.attachmentUrl,
         status: status,
         pipelineStageId: stageId,
         companyId: companyId,
@@ -118,91 +123,49 @@ async function migrateOpportunities(stages: PipelineStage[]) {
     });
 
     // Parse Follow-Up-History
-    const historyText = row['Follow-Up-History'];
-    if (historyText) {
-      const logPattern = /\[([^\]]+)\]\s*(.*?)(?=\[|$)/g;
-      let match: RegExpExecArray | null;
-      while ((match = logPattern.exec(historyText)) !== null) {
-         await prisma.activityLog.create({
-           data: {
-             content: match[2].trim(),
-             opportunityId: opp.id,
-             userId: user.id,
-             createdAt: new Date(match[1])
-           }
-         }).catch(() => {
-           // Fallback if date is unparseable
-           if (match) {
-             prisma.activityLog.create({
-               data: {
-                 content: `[${match[1]}] ${match[2].trim()}`,
-                 opportunityId: opp.id,
-                 userId: user.id
-               }
+    if (row.activityLogs && row.activityLogs.length > 0) {
+      for (const log of row.activityLogs) {
+         let logUserId = user.id;
+         if (log.author && log.author !== ownerName) {
+           let logUser = await prisma.user.findFirst({ where: { name: log.author }});
+           if (!logUser) {
+             logUser = await prisma.user.create({
+               data: { name: log.author, email: `${log.author.toLowerCase().replace(/[^a-z0-9]/g, '')}@example.com` }
              });
            }
-         });
-      }
-    }
+           logUserId = logUser.id;
+         }
 
-    // Parse Tags
-    const tagsStr = row['Tags'];
-    if (tagsStr) {
-      const tags = tagsStr.split(',').map((t: string) => t.trim()).filter((t: string) => t);
-      for (const t of tags) {
-        let tag = await prisma.tag.findUnique({ where: { name: t } });
-        if (!tag) {
-          tag = await prisma.tag.create({ data: { name: t } });
-        }
-        await prisma.opportunityTag.create({
-          data: { opportunityId: opp.id, tagId: tag.id }
-        });
+         await prisma.activityLog.create({
+           data: {
+             content: log.content,
+             type: log.isSystem ? 'SYSTEM_UPDATE' : 'COMMENT',
+             opportunityId: opp.id,
+             userId: logUserId,
+             createdAt: log.date ? new Date(log.date) : new Date()
+           }
+         });
       }
     }
   }
   console.log('Opportunities migration done.');
 }
 
-async function migrateProducts() {
-  console.log('Migrating Products.csv...');
-  const csvContent = fs.readFileSync(path.join(basePath, ' Products.csv'), 'utf8');
-  // Need to handle the first column which is unnamed in CSV
-  const records = parse(csvContent, { columns: true, skip_empty_lines: true }) as Record<string, string>[];
-
-  for (const row of records) {
-    const fullProductName = row['Full-Product-Name']?.trim();
-    if (!fullProductName || fullProductName === '--- Click to Select a Product ---') continue;
-
-    // Use Product column or generate a placeholder SKU if missing
-    let sku = row['Product']?.trim() || row['HS-Code']?.trim() || `SKU-${Math.random().toString(36).substr(2, 9)}`;
-    if (sku === '-') sku = `SKU-${Math.random().toString(36).substr(2, 9)}`;
-
-    const price = parseAmount(row['Export-Price']) || parseAmount(row['General Export']) || 0;
-
-    const existing = await prisma.product.findUnique({ where: { sku } });
-    if (!existing) {
-       await prisma.product.create({
-         data: {
-           sku: sku,
-           name: fullProductName,
-           basePrice: price,
-           weight: parseAmount(row['NW']),
-           cbm: parseAmount(row['CBM']),
-         }
-       });
-    }
-  }
-  console.log('Products migration done.');
-}
-
 async function main() {
   console.log('--- Starting Migration ---');
+  
+  // Clean all previous data to prevent duplicates
+  await prisma.activityLog.deleteMany();
+  await prisma.opportunityTag.deleteMany();
+  await prisma.opportunity.deleteMany();
+  await prisma.product.deleteMany();
+  await prisma.contact.deleteMany();
+  await prisma.company.deleteMany();
 
-  // 1. Setup Stages
+  // Setup Stages
   await prisma.pipelineStage.deleteMany();
-  const leadStages = ['Qualified', 'Quoted', 'Following'].map((name, i) => ({ name, boardType: BoardType.LEAD, order: i + 1 }));
-  const taskStages = ['Doing'].map((name, i) => ({ name, boardType: BoardType.TASK, order: i + 1 }));
-  for (const s of [...leadStages, ...taskStages]) {
+  const genericStages = ['To Do', 'In Progress', 'Review', 'Follow Up'].map((name, i) => ({ name, order: i + 1 }));
+  for (const s of genericStages) {
     await prisma.pipelineStage.create({ data: s });
   }
   const stages = await prisma.pipelineStage.findMany();

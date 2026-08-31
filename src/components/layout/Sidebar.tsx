@@ -12,8 +12,8 @@ export function Sidebar() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-20 flex-col items-center bg-white py-8 shrink-0 z-20 rounded-r-3xl relative animate-pulse">
-         <div className="mb-12 h-12 w-12 rounded-xl bg-slate-200" />
+      <div className="flex h-screen w-20 flex-col items-center bg-[#252728] py-8 shrink-0 z-20 rounded-r-3xl relative animate-pulse border-r border-[#1C1C1D]">
+         <div className="mb-12 h-12 w-12 rounded-xl bg-[#3A3B3C]" />
       </div>
     );
   }
@@ -39,8 +39,8 @@ export function Sidebar() {
           className={`
             flex h-16 w-16 items-center justify-center rounded-full transition-all duration-200 cursor-pointer
             ${isActive 
-              ? "bg-[#111111] text-white" 
-              : "hover:bg-slate-50 border-transparent hover:border-slate-100"}
+              ? "bg-[#3A3B3C] text-white" 
+              : "text-slate-400 hover:bg-[#3A3B3C] hover:text-slate-100 border-transparent hover:border-[#1C1C1D]"}
           `}
         >
           <Icon className="h-5 w-5" strokeWidth={isActive ? 2.5 : 2} />
@@ -48,13 +48,13 @@ export function Sidebar() {
 
         {/* Hover Drawer for Sub-Menus */}
         {subs.length > 0 && (
-          <div className="fixed left-20 top-0 h-screen w-80 bg-white border-r border-slate-100 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40 flex flex-col pt-8 pb-8 shadow-[4px_0_24px_rgba(0,0,0,0.02)] cursor-default">
+          <div className="fixed left-20 top-0 h-screen w-80 bg-[#252728] border-r border-[#1C1C1D] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40 flex flex-col pt-8 pb-8 shadow-[4px_0_24px_rgba(0,0,0,0.2)] cursor-default">
             {/* Header */}
-            <div className="px-6 pb-6 border-b border-slate-100/50 mb-4 flex items-center gap-3">
-              <button className="p-1.5 text-slate-400 hover:text-slate-800 transition-colors bg-slate-50 hover:bg-slate-100 rounded-lg">
+            <div className="px-6 pb-6 border-b border-[#1C1C1D] mb-4 flex items-center gap-3">
+              <button className="p-1.5 text-slate-400 hover:text-slate-100 transition-colors bg-[#3A3B3C] hover:bg-slate-600 rounded-lg">
                 <ArrowLeft className="w-4 h-4" />
               </button>
-              <h2 className="text-lg font-semibold text-slate-900">{item.label}</h2>
+              <h2 className="text-lg font-semibold text-slate-100">{item.label}</h2>
             </div>
 
             <div className="px-6 mb-4">
@@ -74,16 +74,16 @@ export function Sidebar() {
                     className={`
                       flex items-start gap-4 p-4 rounded-xl transition-all border border-transparent group/item
                       ${isSubActive 
-                        ? "bg-[#d4ff3a] border-slate-100" 
-                        : "hover:bg-slate-50 border-transparent hover:border-slate-100"}
+                        ? "bg-[#C7F33C] border-transparent" 
+                        : "hover:bg-[#3A3B3C] border-transparent hover:border-[#1C1C1D]"}
                     `}
                   >
-                    <div className={`mt-0.5 p-1.5 rounded-lg transition-colors ${isSubActive ? 'bg-black text-white' : 'text-slate-400 bg-slate-50 group-hover/item:bg-white group-hover/item:text-slate-700'}`}>
+                    <div className={`mt-0.5 p-1.5 rounded-lg transition-colors ${isSubActive ? 'bg-black text-[#C7F33C]' : 'text-slate-400 bg-[#1C1C1D] group-hover/item:bg-[#252728] group-hover/item:text-slate-200'}`}>
                        <SubIcon className="w-5 h-5" />
                     </div>
                     <div className="flex flex-col">
-                       <span className="font-semibold text-slate-800 leading-tight">{sub.label}</span>
-                       <span className="text-xs text-slate-500 mt-1 leading-snug">{sub.description || `Access and manage ${sub.label.toLowerCase()} configurations.`}</span>
+                       <span className={`font-semibold leading-tight ${isSubActive ? 'text-black' : 'text-slate-200'}`}>{sub.label}</span>
+                       <span className={`text-xs mt-1 leading-snug ${isSubActive ? 'text-slate-800' : 'text-slate-500'}`}>{sub.description || `Access and manage ${sub.label.toLowerCase()} configurations.`}</span>
                     </div>
                   </Link>
                 );
@@ -96,9 +96,9 @@ export function Sidebar() {
   };
 
   return (
-    <div className="flex h-screen w-20 flex-col items-center bg-white py-8 shrink-0 z-50 rounded-r-3xl relative border-r border-slate-100">
+    <div className="flex h-screen w-20 flex-col items-center bg-[#252728] py-8 shrink-0 z-50 relative border-r border-[#1C1C1D]">
       {/* Logo */}
-      <div className="mb-12 flex h-12 w-12 items-center justify-center rounded-xl bg-black text-white">
+      <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-black text-white">
         <div className="grid grid-cols-2 gap-1 w-5 h-5">
           <div className="bg-white rounded-full"></div>
           <div className="bg-white rounded-full"></div>
@@ -118,7 +118,7 @@ export function Sidebar() {
         
         <button
           title="Support"
-          className="flex h-10 w-10 items-center justify-center rounded-full text-[#888888] hover:bg-[#F4F5F7] hover:text-[#111111] transition-colors"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-slate-400 hover:bg-[#3A3B3C] hover:text-slate-100 transition-colors"
         >
           <Headphones className="h-5 w-5" strokeWidth={2} />
         </button>

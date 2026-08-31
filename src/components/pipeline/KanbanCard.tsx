@@ -1,9 +1,10 @@
 "use client";
-
+import { useState, useEffect } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Mail, Video, ChevronDown, BellRing, Building2 } from "lucide-react";
-import { Opportunity, Company, User, Tag, OpportunityTag, ActivityLog } from "@prisma/client";
+import { BellRing } from "lucide-react";
+import { Opportunity, Company, User, Tag, OpportunityTag } from "@prisma/client";
+import { usePermissions } from "@/providers/PermissionProvider";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
@@ -14,22 +15,30 @@ export type OpportunityWithRelations = Opportunity & {
   owner: User;
   teamMembers: User[];
   tags: (OpportunityTag & { tag: Tag })[];
-  activityLogs: (ActivityLog & { 
-    user: User;
-    replies: (ActivityLog & {
-      user: User;
-    })[];
-  })[];
+  activityLogs: { 
+    id: string; 
+    createdAt: Date; 
+    content: string; 
+    type: string; 
+    user: { name: string | null; image: string | null } | null 
+  }[];
 };
 
 export function checkIsRedCard(deal: OpportunityWithRelations) {
+  if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
+    return false;
+  }
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
-    newestDate = new Date(deal.activityLogs[0].createdAt);
-    newestDate.setHours(0, 0, 0, 0);
+    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:'));
+    if (validLogs.length > 0) {
+      newestDate = new Date(validLogs[0].createdAt);
+      newestDate.setHours(0, 0, 0, 0);
+    }
   }
 
   const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
@@ -58,28 +67,103 @@ interface KanbanCardProps {
   onOpenPanel?: (tab: string) => void;
 }
 
+function getRedThreshold(deal: OpportunityWithRelations): Date | null {
+  if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
+    return null;
+  }
+
+  let newestDate: Date | null = null;
+  if (deal.activityLogs && deal.activityLogs.length > 0) {
+    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:'));
+    if (validLogs.length > 0) {
+      newestDate = new Date(validLogs[0].createdAt);
+    }
+  }
+
+  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
+  const thresholds: Date[] = [];
+
+  if (dueDate) {
+    thresholds.push(dueDate);
+  }
+  
+  if (newestDate) {
+    // 3 days threshold
+    thresholds.push(new Date(newestDate.getTime() + 3 * 24 * 60 * 60 * 1000));
+  } else if (deal.createdAt) {
+    // fallback to createdAt if no activity
+    thresholds.push(new Date(new Date(deal.createdAt).getTime() + 3 * 24 * 60 * 60 * 1000));
+  }
+
+  if (thresholds.length === 0) return null;
+
+  const earliestThreshold = new Date(Math.min(...thresholds.map(t => t.getTime())));
+  const now = new Date();
+
+  // If we are past the threshold, return it
+  if (now > earliestThreshold) {
+    return earliestThreshold;
+  }
+
+  return null;
+}
+
+function RedTimer({ threshold }: { threshold: Date }) {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const diffMs = Math.max(0, now.getTime() - threshold.getTime());
+  const diffSec = Math.floor(diffMs / 1000);
+  const days = Math.floor(diffSec / (24 * 3600));
+  const hours = Math.floor((diffSec % (24 * 3600)) / 3600);
+  const minutes = Math.floor((diffSec % 3600) / 60);
+  const seconds = diffSec % 60;
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  
+  if (days > 0) {
+    return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{days}DAY | {pad(hours)}:{pad(minutes)}:{pad(seconds)}</span>;
+  }
+  return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{pad(hours)}:{pad(minutes)}:{pad(seconds)}</span>;
+}
+
 export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: OpportunityWithRelations; isDragging?: boolean; onOpenPanel?: (tab: string) => void }) {
+  const { visibleRightMenus } = usePermissions();
+  const rightMenus = visibleRightMenus('pipeline') || [];
+  
+  const canView = (tabKey: string) => rightMenus.some(menu => menu.key === `pipeline.${tabKey}`);
+  const canViewInformation = canView('information');
+
   // Compute display values
   const customerName = deal.company?.name || "Unknown Company"; // In old CRM, Project = Company Name
-  const contactName = deal.owner.name || "Unassigned"; // Show owner or maybe contact person
-  
+  const contactName = deal.owner.name || deal.owner.email || "Unknown Contact";
   const highlight = checkIsRedCard(deal);
   
   return (
     <div
       className={`
-        w-full p-3 rounded-[2rem] flex flex-col gap-5
-        ${highlight ? "bg-[#d4ff3a]" : "bg-white"}
-        ${isDragging ? "opacity-30" : "  cursor-pointer"}
+        flex flex-col gap-4 p-2 rounded-[24px] relative overflow-visible group/card h-[220px]
+        ${highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
+        ${isDragging ? "opacity-30" : "cursor-pointer"}
       `}
+      onClick={() => onOpenPanel?.('')}
     >
+
+
       {/* Top row: Avatar, Name, Company, Arrow/Bell */}
       <div className="flex justify-between items-start">
-        <div className="flex items-center gap-3">
-          <div className="relative mr-2 flex-shrink-0">
+        <div className="flex items-center gap-2 pr-2">
+          <div className="relative flex-shrink-0">
             <div 
-              onClick={(e) => { e.stopPropagation(); onOpenPanel?.('collaborate'); }}
-              className="w-12 h-12 rounded-full bg-slate-200 overflow-hidden flex items-center justify-center shrink-0 border-2 border-white  cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all relative z-10"
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                if (canView('collaborate')) onOpenPanel?.('collaborate'); 
+              }}
+              className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer transition-all relative ${highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}
             >
               <img 
                 src={deal.owner.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
@@ -89,89 +173,109 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
             </div>
             {deal.teamMembers && deal.teamMembers.length > 0 && (
               <div 
-                className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full border-2 border-white bg-[#111111] text-white flex items-center justify-center text-[12px] font-bold z-20 cursor-pointer "
+                className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full border-2 flex items-center justify-center text-[12px] font-bold z-20 cursor-pointer ${highlight ? 'bg-black text-[#C7F33C] border-[#C7F33C]' : 'bg-slate-300 text-black border-[#3A3B3C]'}`}
                 title={`${deal.teamMembers.length} team members`}
-                onClick={(e) => { e.stopPropagation(); onOpenPanel?.('collaborate'); }}
+                onClick={(e) => { 
+                  e.stopPropagation(); 
+                  if (canView('collaborate')) onOpenPanel?.('collaborate'); 
+                }}
               >
                 {deal.teamMembers.length}
               </div>
             )}
           </div>
           <div className="flex flex-col">
-            <h4 
-              onClick={(e) => { e.stopPropagation(); onOpenPanel?.('information'); }}
-              className="font-semibold text-slate-900 text-md leading-tight line-clamp-1 cursor-pointer hover:text-blue-600 transition-colors" 
-              title={customerName}
-            >
-              {customerName}
-            </h4>
-            <div className="font-semibold text-slate-700 text-sm mt-0.5 line-clamp-1" title={deal.topic}>{deal.topic}</div>
-            <div className="flex items-center text-[11px] text-slate-500 mt-0.5">
-              <Building2 className="w-3 h-3 mr-1" />
+            <div className={`font-semibold text-[13px] leading-tight line-clamp-2 ${highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
+            <div className={`flex items-center text-[11px] mt-1 ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>
               {contactName}
             </div>
           </div>
         </div>
-        <button className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-50 text-slate-400 hover:text-black hover:bg-slate-100 transition-colors shrink-0">
-          <BellRing className={`w-4 h-4 ${highlight ? "text-red-500 animate-pulse" : ""}`} />
-        </button>
+        
+        {deal.dueDate && (
+          <div className="flex-shrink-0 ml-auto" title={`Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${highlight ? 'bg-black/20 text-red-50 hover:bg-black/40' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}>
+              <BellRing className="w-4 h-4" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Middle row: Action box & Log */}
       <div 
-        onClick={(e) => { e.stopPropagation(); onOpenPanel?.('activity'); }}
-        className="flex flex-col gap-2 cursor-pointer hover:opacity-90 transition-opacity"
+        onClick={(e) => { 
+          e.stopPropagation(); 
+          if (canView('activity')) onOpenPanel?.('activity'); 
+        }}
+        className="flex flex-col gap-2 cursor-pointer hover:opacity-90 transition-opacity flex-1 overflow-hidden"
       >
         {(() => {
-          const userLogs = deal.activityLogs?.filter(log => log.type === 'COMMENT') || [];
-          
-          if (userLogs.length === 0) {
+          const latestLog = deal.activityLogs?.find(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:'));
+          if (!latestLog) {
             return (
-              <div className={`p-4 rounded-2xl flex flex-col justify-center items-center gap-1 ${highlight ? "bg-white/40" : "bg-slate-50"}`}>
-                <p className="text-xs font-medium text-slate-400 italic">No activity yet</p>
+              <div className="flex flex-col justify-center gap-1 mt-1">
+                <p className={`text-xs font-medium italic ${highlight ? 'text-slate-600' : 'text-slate-500'}`}>No activity yet</p>
               </div>
             );
           }
           
-          const latestLog = userLogs[0];
-          const content = latestLog.content?.trim() || "(No details)";
-          const logUserSeed = latestLog.user?.name || latestLog.user?.email || "System";
-          
           return (
-            <div className={`p-3.5 rounded-2xl flex flex-col gap-2 ${highlight ? "bg-white/40" : "bg-slate-50"}`}>
-              <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded-full bg-slate-200 overflow-hidden shrink-0">
-                  <img src={latestLog.user?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${logUserSeed}`} alt="Avatar" className="w-full h-full object-cover" />
+            <div className="flex flex-col gap-2 mt-1 flex-1 overflow-hidden">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className={`pl-4 text-[10px] font-medium ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>{formatDateTime(latestLog.createdAt)}</span>
                 </div>
-                <span className="text-[11px] font-bold text-slate-900">{latestLog.user?.name || 'Unknown User'}</span>
-                <span className="text-[10px] text-slate-400">{formatDateTime(latestLog.createdAt)}</span>
-              </div>
-              <div className="pl-7">
-                <p className="text-xs font-medium text-slate-700 line-clamp-2">{content}</p>
+                <div className="flex items-start gap-2 px-2">
+                  <div className={`w-5 h-5 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${highlight ? 'bg-white/40' : 'bg-[#4E4F50]'}`}>
+                    {latestLog.user?.image ? (
+                      <img src={latestLog.user.image} alt={latestLog.user.name || ''} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className={`text-[9px] font-medium ${highlight ? 'text-slate-700' : 'text-slate-300'}`}>
+                        {latestLog.user?.name?.charAt(0).toUpperCase() || 'U'}
+                      </span>
+                    )}
+                  </div>
+                  <div className={`text-[11px] font-medium line-clamp-4 leading-tight mt-0.5 ${highlight ? 'text-slate-800' : 'text-slate-300'}`}>
+                    {latestLog.content}
+                  </div>
+                </div>
               </div>
             </div>
           );
         })()}
       </div>
 
-      {/* Bottom row: Dropdown and Icons */}
-      <div className="flex items-center gap-2 mt-auto">
-        <button className={`flex-1 flex items-center justify-between h-12 px-4 rounded-full border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors ${highlight ? "bg-white/60 border-transparent hover:bg-white/80" : "bg-white"}`}>
-          <span>${(deal.value || 0).toLocaleString()}</span>
-          <ChevronDown className="w-4 h-4 text-slate-400" />
-        </button>
-        <button className={`w-12 h-12 flex items-center justify-center rounded-full border border-slate-200 text-slate-600 hover:text-black hover:bg-slate-50 transition-colors shrink-0 ${highlight ? "bg-white/60 border-transparent" : "bg-white"}`}>
-          <Mail className="w-5 h-5" />
-        </button>
-        <button className="w-12 h-12 flex items-center justify-center rounded-full bg-black text-white hover:bg-slate-800 transition-colors shrink-0">
-          <Video className="w-5 h-5" />
-        </button>
-      </div>
+      {/* Bottom row: Customer Name & Timer */}
+      {(canViewInformation || (highlight && getRedThreshold(deal))) && (
+        <div className="flex justify-between items-end mt-auto">
+          {canViewInformation ? (
+            <div 
+              onClick={(e) => { e.stopPropagation(); onOpenPanel?.('information'); }}
+              className={`px-3 py-1.5 rounded-full text-[11px] font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[150px]
+                ${highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
+              `}
+              title={customerName}
+            >
+              <span className="truncate">{customerName}</span>
+            </div>
+          ) : (
+            <div></div> /* Empty div to push timer to the right if customer name is hidden */
+          )}
+
+          {highlight && getRedThreshold(deal) && (
+            <div className="px-3 py-1.5 rounded-full bg-black/20 flex items-center justify-center min-w-[90px] ml-auto">
+              <RedTimer threshold={getRedThreshold(deal)!} />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-export function KanbanCard({ deal, onOpenPanel }: KanbanCardProps) {
+export function KanbanCard({ deal, onOpenPanel, currentUserId, currentUserRole }: KanbanCardProps & { currentUserId?: string, currentUserRole?: string }) {
+  const canDrag = currentUserRole === 'ADMIN' || deal.ownerId === currentUserId;
+
   const {
     setNodeRef,
     attributes,
@@ -185,6 +289,7 @@ export function KanbanCard({ deal, onOpenPanel }: KanbanCardProps) {
       type: "Deal",
       deal,
     },
+    disabled: !canDrag,
   });
 
   const style: React.CSSProperties = {
@@ -197,8 +302,8 @@ export function KanbanCard({ deal, onOpenPanel }: KanbanCardProps) {
       ref={setNodeRef}
       style={style}
       {...attributes}
-      {...listeners}
-      className="touch-none cursor-grab active:cursor-grabbing"
+      {...(canDrag ? listeners : {})}
+      className={`touch-none ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
       <KanbanCardUI deal={deal} isDragging={isDragging} onOpenPanel={onOpenPanel} />
     </div>

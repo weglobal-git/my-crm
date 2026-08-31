@@ -5,6 +5,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { revalidatePath } from "next/cache";
 
+import { pusherServer } from "@/lib/pusher";
+
 // Get user's notifications
 export async function getMyNotifications() {
   const session = await getServerSession(authOptions);
@@ -24,6 +26,14 @@ export async function getMyNotifications() {
   return notifications;
 }
 
+async function triggerNotification(userId: string, notification: any) {
+  try {
+    await pusherServer.trigger(`private-user-${userId}`, 'new-notification', notification);
+  } catch (e) {
+    console.error("Pusher error:", e);
+  }
+}
+
 // Request to transfer ownership
 export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   const session = await getServerSession(authOptions);
@@ -36,7 +46,6 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   if (!deal) throw new Error("Deal not found");
   if (deal.ownerId === newOwnerId) throw new Error("Already the owner");
 
-  // Create notification
   const notification = await prisma.notification.create({
     data: {
       recipientId: newOwnerId,
@@ -45,9 +54,11 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
       title: 'Deal Transfer Request',
       message: `requests to transfer deal "${deal.topic}" to you.`,
       referenceId: dealId
-    }
+    },
+    include: { sender: true }
   });
 
+  await triggerNotification(newOwnerId, notification);
   revalidatePath('/pipeline');
   return { success: true, notification };
 }
@@ -74,9 +85,11 @@ export async function requestTeamInvite(dealId: string, userId: string) {
       title: 'Team Invite Request',
       message: `requests you to join the team for deal "${deal.topic}".`,
       referenceId: dealId
-    }
+    },
+    include: { sender: true }
   });
 
+  await triggerNotification(userId, notification);
   revalidatePath('/pipeline');
   return { success: true, notification };
 }

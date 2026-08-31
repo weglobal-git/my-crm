@@ -54,6 +54,7 @@ model User {
   teamOpportunities Opportunity[] @relation("OpportunityTeam")
   quotations    Quotation[]   @relation("QuotationCreator")
   activityLogs  ActivityLog[]
+  notes         Note[]
   
   receivedNotifications Notification[] @relation("ReceivedNotifications")
   sentNotifications     Notification[] @relation("SentNotifications")
@@ -129,6 +130,7 @@ model MenuItem {
   href        String?
   description String?  @db.Text
   sortOrder   Int      @default(0)
+  isLocked    Boolean  @default(false)
 
   permissions DepartmentMenuPermission[]
 
@@ -180,10 +182,7 @@ model Contact {
   updatedAt   DateTime @updatedAt
 }
 
-enum OpportunityType {
-  LEAD
-  TASK
-}
+
 
 enum OpportunityStatus {
   OPEN
@@ -195,7 +194,6 @@ enum OpportunityStatus {
 
 model Opportunity {
   id             String            @id @default(cuid())
-  type           OpportunityType   @default(LEAD)
   topic          String            // e.g., "Order 1/26"
   value          Float?            // Amount
   currency       String?           @default("THB")
@@ -211,6 +209,13 @@ model Opportunity {
   status         OpportunityStatus  @default(OPEN)
   lossReason     String?            @db.Text
   
+  // Custom Fields (Migrated from CSV)
+  reserveId      String?
+  invoiceId      String?
+  attachmentUrl  String?
+  closedAt       DateTime?
+  quotedAt       DateTime?
+  
   // Extra Info
   oemProgress    Int?               // percentage 0-100
 
@@ -225,21 +230,18 @@ model Opportunity {
 
   quotations     Quotation[]
   activityLogs   ActivityLog[]
+  notes          Note[]
   tags           OpportunityTag[]
 
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
 
-enum BoardType {
-  LEAD
-  TASK
-}
+
 
 model PipelineStage {
   id            String         @id @default(cuid())
-  name          String         // e.g., "Doing", "Qualified", "Quoted", "Following"
-  boardType     BoardType
+  name          String         // e.g., "In Progress", "To Do"
   order         Int            // For Kanban sorting
   opportunities Opportunity[]
 }
@@ -270,6 +272,22 @@ model ActivityLog {
   user          User            @relation(fields: [userId], references: [id])
 
   createdAt     DateTime        @default(now())
+}
+
+model Note {
+  id            String       @id @default(cuid())
+  content       String       @db.Text
+  isPinned      Boolean      @default(false)
+  color         String?      
+  
+  opportunityId String
+  opportunity   Opportunity  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  
+  authorId      String
+  author        User         @relation(fields: [authorId], references: [id])
+  
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 }
 
 model Tag {

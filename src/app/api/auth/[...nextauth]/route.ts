@@ -38,6 +38,25 @@ export const authOptions: NextAuthOptions = {
         token.picture = session.image;
       }
       
+      // Check database on every request to ensure user still exists and email matches
+      if (token.sub) {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: token.sub },
+          include: { departments: true }
+        });
+
+        // If user was deleted or email was changed by admin, invalidate session
+        if (!dbUser || (token.email && dbUser.email && token.email.toLowerCase() !== dbUser.email.toLowerCase())) {
+          return { ...token, exp: 0, sub: undefined, error: "SessionInvalidated" };
+        }
+
+        // Sync latest role, departments, and basic info
+        token.name = dbUser.name;
+        token.role = dbUser.role;
+        token.departments = dbUser.departments.map(d => d.name);
+        token.picture = dbUser.image;
+      }
+
       if (user) {
         // Auto-promote weglobal.server@gmail.com to ADMIN if needed
         if (user.email === "weglobal.server@gmail.com") {
@@ -45,28 +64,24 @@ export const authOptions: NextAuthOptions = {
              where: { id: user.id },
              data: { role: "ADMIN" }
            });
-        }
-
-        const dbUser = await prisma.user.findUnique({
-          where: { id: user.id },
-          include: { departments: true }
-        })
-        if (dbUser) {
-          token.role = dbUser.role
-          token.departments = dbUser.departments.map(d => d.name)
-          token.picture = dbUser.image
+           token.role = "ADMIN";
         }
       }
-      return token
+      return token;
     },
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.sub as string
-        session.user.role = token.role as string
-        session.user.departments = (token.departments as string[]) || []
-        session.user.image = token.picture as string | null | undefined
+      if (!token.sub || token.error === "SessionInvalidated") {
+        return { ...session, error: "SessionInvalidated" } as any; // Pass error to client to force signOut
       }
-      return session
+
+      if (session.user) {
+        session.user.id = token.sub as string;
+        session.user.name = token.name as string;
+        session.user.role = token.role as string;
+        session.user.departments = (token.departments as string[]) || [];
+        session.user.image = token.picture as string | null | undefined;
+      }
+      return session;
     }
   }
 }
