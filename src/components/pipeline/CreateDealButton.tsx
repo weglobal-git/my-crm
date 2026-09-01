@@ -5,16 +5,14 @@ import { Plus, X, AlignLeft, Briefcase, Wrench } from "lucide-react";
 import { OpportunityType, PipelineStage } from "@prisma/client";
 import { createOpportunity } from "@/lib/actions/opportunity";
 import { useDialog } from "@/providers/DialogProvider";
-import { useRouter } from "next/navigation";
 import { SearchableSelect } from "../ui/SearchableSelect";
 
 interface CreateDealButtonProps {
   stages: PipelineStage[];
   companies: { id: string; name: string }[];
-  currentUserId: string;
 }
 
-export function CreateDealButton({ stages, companies, currentUserId }: CreateDealButtonProps) {
+export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [topic, setTopic] = useState("");
@@ -22,7 +20,6 @@ export function CreateDealButton({ stages, companies, currentUserId }: CreateDea
   const [companyId, setCompanyId] = useState("");
   
   const { toast } = useDialog();
-  const router = useRouter();
 
   const handleCreate = async () => {
     if (!topic.trim()) {
@@ -47,7 +44,6 @@ export function CreateDealButton({ stages, companies, currentUserId }: CreateDea
         topic,
         type,
         companyId: companyId || undefined,
-        ownerId: currentUserId,
         pipelineStageId: firstStage.id,
       });
       toast({ title: "Created successfully", type: "success" });
@@ -55,8 +51,8 @@ export function CreateDealButton({ stages, companies, currentUserId }: CreateDea
       setTopic("");
       setType("SALES_DEAL");
       setCompanyId("");
-    } catch (e: any) {
-      toast({ title: "Failed to create", description: e.message, type: "error" });
+    } catch (e: unknown) {
+      toast({ title: "Failed to create", description: e instanceof Error ? e.message : "Unknown error", type: "error" });
     } finally {
       setIsSubmitting(false);
     }

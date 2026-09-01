@@ -1,16 +1,11 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { requireOpportunityAccess } from "@/lib/pipeline-security";
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { id: opportunityId } = await params;
+    await requireOpportunityAccess(opportunityId);
 
     const attachments = await prisma.attachment.findMany({
       where: { opportunityId },
@@ -18,8 +13,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     });
 
     return NextResponse.json({ success: true, attachments });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Failed to fetch attachments:", error);
-    return NextResponse.json({ error: "Failed to fetch attachments" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to fetch attachments";
+    const status = message === "Unauthorized" ? 401 : message === "Forbidden" ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

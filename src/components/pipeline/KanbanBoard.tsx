@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { 
   DndContext, 
   DragOverlay, 
@@ -17,8 +17,8 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
-import { PipelineStage } from "@prisma/client";
+import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
+import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
@@ -30,6 +30,17 @@ const EditDealPanel = dynamic(() => import("./EditDealPanel").then(mod => mod.Ed
 const WonLostModal = dynamic(() => import("./WonLostModal").then(mod => mod.WonLostModal), { ssr: false });
 
 const activeClass = "border-[#C7F33C] bg-[#252728] text-[#C7F33C]";
+
+type PipelineUpdateEvent = {
+  action?: string;
+  dealId?: string;
+  user?: User;
+  userId?: string;
+  activityLog?: OpportunityWithRelations['activityLogs'][number];
+  logId?: string;
+  nextLatestLog?: OpportunityWithRelations['activityLogs'][number] | null;
+  deal?: OpportunityWithRelations;
+};
 
 export function DroppablePlaceholder({ id, label }: { id: string, label: string }) {
   const { setNodeRef, isOver } = useDroppable({ id });
@@ -84,7 +95,6 @@ export function KanbanBoard({
 }: KanbanBoardProps) {
   const { toast } = useDialog();
   const searchParams = useSearchParams();
-  const router = useRouter();
   
   const tab = activeTab || searchParams.get('tab') || 'workspace';
   const searchQuery = activeSearch !== undefined ? activeSearch : (searchParams.get('search') || '');
@@ -97,12 +107,18 @@ export function KanbanBoard({
     },
     { 
       fallbackData: tab === initialTab ? initialOpportunities : undefined,
-      revalidateOnFocus: false, // Avoid excessive refetching, rely on Pusher
+      // The initial snapshot was fetched by the Server Component. Avoid an
+      // immediate duplicate Server Action after hydration.
+      revalidateOnMount: !(tab === initialTab && initialOpportunities !== undefined),
+      revalidateOnFocus: true,
+      revalidateOnReconnect: true,
+      focusThrottleInterval: 15_000,
+      dedupingInterval: 5_000,
     }
   );
 
   // Group opportunities by stageId
-  const initialDeals = initialStages.reduce((acc, stage) => {
+  const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
     const fallback = tab === initialTab ? (initialOpportunities || []) : [];
     const stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
     stageDeals.sort((a, b) => {
@@ -114,9 +130,10 @@ export function KanbanBoard({
     });
     acc[stage.id] = stageDeals;
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities]);
 
-  const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(initialDeals);
+  const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
+  const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
   const [activeDeal, setActiveDeal] = useState<OpportunityWithRelations | null>(null);
   const [activeWidth, setActiveWidth] = useState<number>(0);
   const [activePanelDeal, setActivePanelDeal] = useState<{deal: OpportunityWithRelations, tab: string} | null>(null);
@@ -143,17 +160,27 @@ export function KanbanBoard({
   useEffect(() => {
     if (isCompletedTab) return;
     
-    const channel = pusherClient.subscribe('pipeline');
-    channel.bind('pipeline-updated', (data?: any) => {
-      if (data?.action === 'MEMBER_ADDED') {
+    const channelName = `private-pipeline-${currentUserId}`;
+    const channel = pusherClient.subscribe(channelName);
+    let hasConnectedOnce = pusherClient.connection.state === 'connected';
+    const handleConnected = () => {
+      if (hasConnectedOnce) {
+        void mutate();
+      } else {
+        hasConnectedOnce = true;
+      }
+    };
+    const handlePipelineUpdate = (data?: PipelineUpdateEvent) => {
+      if (data?.action === 'MEMBER_ADDED' && data.dealId && data.user) {
+        const addedUser = data.user;
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
             return currentData.map(opp => {
               if (opp.id === data.dealId) {
-                const isExisting = (opp.teamMembers || []).some(u => u.id === data.user.id);
+                const isExisting = (opp.teamMembers || []).some(u => u.id === addedUser.id);
                 if (!isExisting) {
-                  return { ...opp, teamMembers: [...(opp.teamMembers || []), data.user] };
+                  return { ...opp, teamMembers: [...(opp.teamMembers || []), addedUser] };
                 }
               }
               return opp;
@@ -161,7 +188,7 @@ export function KanbanBoard({
           },
           { revalidate: false }
         );
-      } else if (data?.action === 'MEMBER_REMOVED') {
+      } else if (data?.action === 'MEMBER_REMOVED' && data.dealId && data.userId) {
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
@@ -174,20 +201,22 @@ export function KanbanBoard({
           },
           { revalidate: false }
         );
-      } else if (data?.action === 'ACTIVITY_ADDED' && data.activityLog) {
+      } else if (data?.action === 'ACTIVITY_ADDED' && data.dealId && data.activityLog) {
+        const addedActivityLog = data.activityLog;
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
             return currentData.map(opp => {
               if (opp.id === data.dealId) {
-                return { ...opp, activityLogs: [data.activityLog] };
+                return { ...opp, activityLogs: [addedActivityLog] };
               }
               return opp;
             });
           },
           { revalidate: false }
         );
-      } else if (data?.action === 'ACTIVITY_UPDATED' && data.activityLog) {
+      } else if (data?.action === 'ACTIVITY_UPDATED' && data.dealId && data.activityLog) {
+        const updatedActivityLog = data.activityLog;
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
@@ -195,7 +224,7 @@ export function KanbanBoard({
               if (opp.id === data.dealId) {
                 // Only replace if the currently shown log is the one being updated
                 const updatedLogs = opp.activityLogs.map(log => 
-                  log.id === data.activityLog.id ? data.activityLog : log
+                  log.id === updatedActivityLog.id ? updatedActivityLog : log
                 );
                 return { ...opp, activityLogs: updatedLogs };
               }
@@ -204,7 +233,7 @@ export function KanbanBoard({
           },
           { revalidate: false }
         );
-      } else if (data?.action === 'ACTIVITY_DELETED' && data.logId) {
+      } else if (data?.action === 'ACTIVITY_DELETED' && data.dealId && data.logId) {
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
@@ -232,30 +261,32 @@ export function KanbanBoard({
       } else if (data?.action?.startsWith('NOTE_')) {
         // Ignore note updates for the board to prevent full refetches
         return;
-      } else if (data?.action === 'OPPORTUNITY_CREATED') {
+      } else if (data?.action === 'OPPORTUNITY_CREATED' && data.deal) {
+        const createdDeal = data.deal;
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
             // Prevent duplicate creation
-            if (currentData.some(opp => opp.id === data.deal.id)) return currentData;
-            return [data.deal, ...currentData];
+            if (currentData.some(opp => opp.id === createdDeal.id)) return currentData;
+            return [createdDeal, ...currentData];
           },
           { revalidate: false }
         );
-      } else if (data?.action === 'OPPORTUNITY_UPDATED') {
+      } else if (data?.action === 'OPPORTUNITY_UPDATED' && data.deal) {
+        const updatedDeal = data.deal;
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
             return currentData.map(opp => {
-              if (opp.id === data.deal.id) {
-                return data.deal;
+              if (opp.id === updatedDeal.id) {
+                return updatedDeal;
               }
               return opp;
             });
           },
           { revalidate: false }
         );
-      } else if (data?.action === 'OPPORTUNITY_DELETED') {
+      } else if (data?.action === 'OPPORTUNITY_DELETED' && data.dealId) {
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
@@ -266,33 +297,25 @@ export function KanbanBoard({
       } else {
         mutate(); // Revalidate SWR cache entirely for unknown actions
       }
-    });
+    };
+
+    channel.bind('pipeline-updated', handlePipelineUpdate);
+    pusherClient.connection.bind('connected', handleConnected);
 
     return () => {
-      pusherClient.unsubscribe('pipeline');
+      // This channel is shared with EditDealPanel. Only remove this component's
+      // handler; unsubscribing the channel here would disconnect the panel too.
+      channel.unbind('pipeline-updated', handlePipelineUpdate);
+      pusherClient.connection.unbind('connected', handleConnected);
     };
-  }, [isCompletedTab, mutate]);
+  }, [currentUserId, isCompletedTab, mutate]);
 
   // Sync state when props update (only if not dragging)
   useEffect(() => {
     if (activeDeal) return; // Don't interrupt drag operations
 
-    const newDeals = initialStages.reduce((acc, stage) => {
-      const fallback = tab === initialTab ? (initialOpportunities || []) : [];
-      const stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
-      stageDeals.sort((a, b) => {
-        const aRed = checkIsRedCard(a);
-        const bRed = checkIsRedCard(b);
-        if (aRed && !bRed) return -1;
-        if (!aRed && bRed) return 1;
-        return 0;
-      });
-      acc[stage.id] = stageDeals;
-      return acc;
-    }, {} as Record<string, OpportunityWithRelations[]>);
-
     setTimeout(() => {
-      setDeals(newDeals);
+      setDeals(groupedDeals);
 
       if (panelOpen) {
         setActivePanelDeal(prev => {
@@ -304,7 +327,7 @@ export function KanbanBoard({
         });
       }
     }, 0);
-  }, [rawOpportunities, initialStages, activeDeal, panelOpen, tab, initialTab, initialOpportunities]);
+  }, [groupedDeals, activeDeal, panelOpen, rawOpportunities, tab, initialTab, initialOpportunities]);
 
   // Infinite Scroll state for completed tab
   const [completedDeals, setCompletedDeals] = useState<OpportunityWithRelations[]>([]);
@@ -384,6 +407,7 @@ export function KanbanBoard({
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event;
     const dealId = active.id as string;
+    dragOriginRef.current = deals;
     
     const el = active.rect.current.initial;
     if (el) setActiveWidth(el.width);
@@ -463,14 +487,34 @@ export function KanbanBoard({
     }
 
     try {
+      await mutate(
+        currentData => currentData?.map(deal =>
+          deal.id === activeId ? { ...deal, pipelineStageId: columnId } : deal
+        ),
+        { revalidate: false }
+      );
       await moveOpportunity(activeId, columnId);
     } catch (error: unknown) {
+      const originalDeals = dragOriginRef.current;
+      const originalDeal = originalDeals
+        ? Object.values(originalDeals).flat().find(deal => deal.id === activeId)
+        : undefined;
+      if (originalDeals) setDeals(originalDeals);
+      if (originalDeal) {
+        await mutate(
+          currentData => currentData?.map(deal => deal.id === activeId ? originalDeal : deal),
+          { revalidate: false }
+        );
+      } else {
+        await mutate();
+      }
       if (error instanceof Error) {
         toast({ title: "Error", description: "Error moving opportunity: " + error.message, type: "error" });
       }
-      // Ideally revert state here on failure
+    } finally {
+      dragOriginRef.current = null;
     }
-  }, [findColumnOfDeal, toast, activeDeal, deals]);
+  }, [findColumnOfDeal, toast, activeDeal, deals, mutate]);
 
   if (isLoading && !rawOpportunities && (!initialOpportunities || initialOpportunities.length === 0)) {
     return (
@@ -484,7 +528,7 @@ export function KanbanBoard({
   }
 
   return (
-    <>
+    <KanbanClockProvider>
       <div className={`flex gap-2 overflow-x-auto pb-8 hide-scrollbar mx-auto ${isCompletedTab ? 'w-full' : 'w-fit h-[calc(100vh-140px)]'}`}>
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
@@ -587,6 +631,6 @@ export function KanbanBoard({
           }}
         />
       )}
-    </>
+    </KanbanClockProvider>
   );
 }

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BellRing, CircleDollarSign, Wrench, Handshake } from "lucide-react";
@@ -109,27 +109,37 @@ function getRedThreshold(deal: OpportunityWithRelations): Date | null {
   return null;
 }
 
-function RedTimer({ threshold }: { threshold: Date }) {
-  const [now, setNow] = useState(new Date());
+const KanbanClockContext = createContext(0);
+
+export function KanbanClockProvider({ children }: { children: React.ReactNode }) {
+  const [currentMinute, setCurrentMinute] = useState(() => Math.floor(Date.now() / 60_000));
 
   useEffect(() => {
-    const interval = setInterval(() => setNow(new Date()), 1000);
+    const interval = setInterval(() => {
+      setCurrentMinute(Math.floor(Date.now() / 60_000));
+    }, 60_000);
     return () => clearInterval(interval);
   }, []);
 
-  const diffMs = Math.max(0, now.getTime() - threshold.getTime());
+  return <KanbanClockContext.Provider value={currentMinute}>{children}</KanbanClockContext.Provider>;
+}
+
+function RedTimer({ threshold }: { threshold: Date }) {
+  const currentMinute = useContext(KanbanClockContext);
+  const nowMs = currentMinute * 60_000;
+
+  const diffMs = Math.max(0, nowMs - threshold.getTime());
   const diffSec = Math.floor(diffMs / 1000);
   const days = Math.floor(diffSec / (24 * 3600));
   const hours = Math.floor((diffSec % (24 * 3600)) / 3600);
   const minutes = Math.floor((diffSec % 3600) / 60);
-  const seconds = diffSec % 60;
 
   const pad = (n: number) => n.toString().padStart(2, '0');
   
   if (days > 0) {
-    return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{days}DAY | {pad(hours)}:{pad(minutes)}:{pad(seconds)}</span>;
+    return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{days}DAY | {pad(hours)}:{pad(minutes)}</span>;
   }
-  return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{pad(hours)}:{pad(minutes)}:{pad(seconds)}</span>;
+  return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{pad(hours)}:{pad(minutes)}</span>;
 }
 
 import React from 'react';

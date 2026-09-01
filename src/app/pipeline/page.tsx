@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getUserVisibleMenuKeys } from "@/lib/actions/permission";
 import { getCompanies } from "@/lib/actions/company";
+import { getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { PipelineView } from "@/components/pipeline/PipelineView";
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,7 @@ export default async function PipelinePage({
 }) {
   const resolvedSearchParams = await searchParams;
   const tab = resolvedSearchParams?.tab === 'completed' ? 'completed' : 'workspace';
+  const search = typeof resolvedSearchParams?.search === 'string' ? resolvedSearchParams.search : '';
   const session = await getServerSession(authOptions);
   
   if (!session?.user) {
@@ -30,11 +32,14 @@ export default async function PipelinePage({
     }
   }
 
-  // Lightweight server-side queries (stages + companies are small & cacheable)
-  const [stages, companies] = await Promise.all([
+  // Fetch the first board snapshot on the server so the Kanban does not wait
+  // for hydration before starting its most important query.
+  const [stages, companies, serializedOpportunities] = await Promise.all([
     prisma.pipelineStage.findMany({ orderBy: { order: 'asc' } }),
     getCompanies(),
+    getPipelineOpportunities(tab, search || undefined),
   ]);
+  const initialOpportunities = JSON.parse(serializedOpportunities);
 
   return (
     <PipelineView 
@@ -42,6 +47,7 @@ export default async function PipelinePage({
       role={role}
       stages={stages}
       companies={companies}
+      initialOpportunities={initialOpportunities}
       initialTab={tab}
     />
   );

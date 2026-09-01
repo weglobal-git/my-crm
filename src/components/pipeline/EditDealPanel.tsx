@@ -142,7 +142,7 @@ type ActivityLogWithRelations = ActivityLog & {
   replies?: ActivityLogWithRelations[];
 };
 
-type ActivityLogResponse = { data: ActivityLogWithRelations[], nextCursor: string | null };
+type ActivityLogResponse = { data: ActivityLogWithRelations[], nextCursor?: string };
 
 function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, mutateLogs?: (data: (currentPages?: ActivityLogResponse[]) => ActivityLogResponse[] | undefined, opts?: { revalidate: boolean }) => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string) => void, searchQuery?: string }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -213,7 +213,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
 
     setIsEditing(false);
     setShowMenu(false);
-    await editActivityLog(log.id, editContent, currentUser.id);
+    await editActivityLog(log.id, editContent);
   };
 
   const handleReply = async () => {
@@ -229,7 +229,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
       parentId: log.id,
       createdAt: new Date(),
       updatedAt: new Date(),
-      user: { ...currentUser, role: "GENERAL" } as any,
+      user: { ...currentUser, role: "GENERAL" } as unknown as User,
       replies: []
     } as unknown as ActivityLogWithRelations;
 
@@ -251,7 +251,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     setIsReplying(false);
     setReplyContent("");
     setReplyingToUsername(null);
-    await addActivityLog(dealId, finalContent, currentUser.id, log.id);
+    await addActivityLog(dealId, finalContent, log.id);
     refresh();
   };
 
@@ -277,7 +277,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     // Doing so would empty the KanbanCard activity log, causing a "No activity yet" flicker 
     // until the Pusher event delivers the nextLatestLog a few ms later.
     
-    await deleteActivityLog(log.id, currentUser.id);
+    await deleteActivityLog(log.id);
   };
 
   return (
@@ -570,9 +570,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   useEffect(() => {
     if (!isOpen) return;
-    const channel = pusherClient.subscribe('pipeline');
+    if (!session?.user?.id) return;
+    const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
     
-    const handleUpdate = (data?: any) => {
+    const handleUpdate = (data?: { dealId?: string; action?: string }) => {
       if (data?.dealId === deal.id && data?.action?.startsWith('ACTIVITY_')) {
         // Debounce or directly reload activity logs for this deal when another user modifies them
         loadActivityLogs();
@@ -583,9 +584,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     
     return () => {
       channel.unbind('pipeline-updated', handleUpdate);
-      pusherClient.unsubscribe('pipeline');
+      // KanbanBoard uses the same channel. Unbinding this handler is sufficient;
+      // unsubscribing here would silently stop board updates after closing panel.
     };
-  }, [deal.id, isOpen, loadActivityLogs]);
+  }, [deal.id, isOpen, loadActivityLogs, session?.user?.id]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {
     if (!uniqueLogsMap.has(log.id)) {
@@ -734,11 +736,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       const finalLog = (currentNewLog.trim() + attachmentText).trim() || 'Updated deal';
 
       if (currentDueDate === 'REMOVE') {
-        await updateDueDateWithLog(deal.id, null, finalLog, session!.user!.id);
+        await updateDueDateWithLog(deal.id, null, finalLog);
       } else if (currentDueDate instanceof Date) {
-        await updateDueDateWithLog(deal.id, currentDueDate, finalLog, session!.user!.id);
+        await updateDueDateWithLog(deal.id, currentDueDate, finalLog);
       } else {
-        await addActivityLog(deal.id, finalLog, session!.user!.id);
+        await addActivityLog(deal.id, finalLog);
       }
       
       // 5. Revalidate with real data from server
@@ -749,6 +751,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       setPendingDueDate(currentDueDate);
       setPendingAttachments(currentAttachments);
       loadActivityLogs(); // refresh to remove fake log
+      mutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentData: OpportunityWithRelations[] | undefined) => currentData?.map(opp =>
+          opp.id === deal.id ? { ...opp, activityLogs: deal.activityLogs || [] } : opp
+        ),
+        { revalidate: false }
+      );
       if (e instanceof Error) {
         toast({ title: "Error", description: "Failed to add log: " + e.message, type: "error" });
       }
@@ -777,7 +786,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const handleDeleteSystemLog = async (logId: string) => {
     if (!session?.user?.id) return;
     try {
-      await deleteActivityLog(logId, session.user.id);
+      await deleteActivityLog(logId);
       loadActivityLogs();
       // router.refresh(); removed for Optimistic UI
     } catch (e) {
@@ -793,7 +802,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       
       const newOwner = users.find(u => u.id === newOwnerId);
       if (session?.user?.id && newOwner) {
-        await addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`, session?.user?.id || 'SYSTEM');
+        await addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`);
       }
       toast({ title: "Success", description: "Transfer request sent successfully", type: "success" });
       // router.refresh(); removed for Optimistic UI
@@ -808,6 +817,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
 
   const handleAddMember = async (userId: string) => {
+    const originalTeamMembers = deal.teamMembers || [];
     // 1. Optimistic Update (Local Panel State)
     const userToAdd = users.find(u => u.id === userId);
     if (userToAdd) {
@@ -833,20 +843,25 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
 
     try {
-      addTeamMember(deal.id, userId).catch((e) => {
-        setLocalTeamMembers(deal.teamMembers || []); // Revert
-        if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
-      });
+      await addTeamMember(deal.id, userId);
       if (session?.user?.id && userToAdd) {
-        addSystemLog(deal.id, `Invited ${userToAdd.name} to the team`, session.user.id).catch(console.error);
+        void addSystemLog(deal.id, `Invited ${userToAdd.name} to the team`).catch(console.error);
       }
     } catch (e) {
-      setLocalTeamMembers(deal.teamMembers || []); // Revert
+      setLocalTeamMembers(originalTeamMembers);
+      mutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentData: OpportunityWithRelations[] | undefined) => currentData?.map(opp =>
+          opp.id === deal.id ? { ...opp, teamMembers: originalTeamMembers } : opp
+        ),
+        { revalidate: false }
+      );
       if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
     }
   };
 
   const handleRemoveMember = async (userId: string) => {
+    const originalTeamMembers = deal.teamMembers || [];
     const userToRemove = localTeamMembers.find(u => u.id === userId) || deal.teamMembers.find(u => u.id === userId);
 
     // 1. Optimistic Update (Local Panel State)
@@ -868,15 +883,19 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     );
 
     try {
-      removeTeamMember(deal.id, userId).catch((e) => {
-        setLocalTeamMembers(deal.teamMembers || []); // Revert
-        if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
-      });
+      await removeTeamMember(deal.id, userId);
       if (session?.user?.id && userToRemove) {
-        addSystemLog(deal.id, `Removed ${userToRemove.name} from the team`, session.user.id).catch(console.error);
+        void addSystemLog(deal.id, `Removed ${userToRemove.name} from the team`).catch(console.error);
       }
     } catch (e) {
-      setLocalTeamMembers(deal.teamMembers || []); // Revert
+      setLocalTeamMembers(originalTeamMembers);
+      mutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentData: OpportunityWithRelations[] | undefined) => currentData?.map(opp =>
+          opp.id === deal.id ? { ...opp, teamMembers: originalTeamMembers } : opp
+        ),
+        { revalidate: false }
+      );
       if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
     }
   };
@@ -956,7 +975,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       try {
                         const newTopic = topic.trim();
                         await updateOpportunity(deal.id, { topic: newTopic });
-                        await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`, session?.user?.id || '');
+                        await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`);
                         toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
                         // router.refresh(); removed for Optimistic UI
                       } catch {
@@ -999,7 +1018,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       await updateOpportunity(deal.id, { type: newType });
                       const oldLabel = deal.type === 'INTERNAL_TASK' ? 'Internal Task' : (deal.type === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
                       const newLabel = newType === 'INTERNAL_TASK' ? 'Internal Task' : (newType === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
-                      await addSystemLog(deal.id, `Changed opportunity type from ${oldLabel} to ${newLabel}.`, session?.user?.id || '');
+                      await addSystemLog(deal.id, `Changed opportunity type from ${oldLabel} to ${newLabel}.`);
                       toast({ title: 'Success', description: 'Type updated', type: 'success' });
                       // router.refresh(); removed for Optimistic UI
                     } catch {

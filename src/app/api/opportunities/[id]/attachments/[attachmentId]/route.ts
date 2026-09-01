@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { v2 as cloudinary } from "cloudinary";
 import { getDriveService } from "@/lib/google";
+import { requireOpportunityAccess } from "@/lib/pipeline-security";
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -13,12 +12,8 @@ cloudinary.config({
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string, attachmentId: string }> }) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const { id: opportunityId, attachmentId } = await params;
+    await requireOpportunityAccess(opportunityId);
 
     const attachment = await prisma.attachment.findUnique({
       where: { id: attachmentId, opportunityId }
@@ -59,8 +54,10 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     });
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch (error: unknown) {
     console.error("Failed to delete attachment:", error);
-    return NextResponse.json({ error: "Failed to delete attachment" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to delete attachment";
+    const status = message === "Unauthorized" ? 401 : message === "Forbidden" ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

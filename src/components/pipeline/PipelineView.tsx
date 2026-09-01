@@ -12,7 +12,7 @@ interface PipelineViewProps {
   userId: string;
   role: string;
   stages: PipelineStage[];
-  companies: any[];
+  companies: { id: string; name: string }[];
   initialOpportunities?: OpportunityWithRelations[];
   initialTab?: string;
 }
@@ -23,11 +23,14 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
   const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || '');
   
   useEffect(() => {
-    const urlTab = searchParams.get('tab') || initialTab;
-    if (urlTab !== tab) setTab(urlTab);
-    const urlSearch = searchParams.get('search') || '';
-    if (urlSearch !== searchQuery) setSearchQuery(urlSearch);
-  }, [searchParams, initialTab]);
+    const timer = setTimeout(() => {
+      const urlTab = searchParams.get('tab') || initialTab;
+      if (urlTab !== tab) setTab(urlTab);
+      const urlSearch = searchParams.get('search') || '';
+      if (urlSearch !== searchQuery) setSearchQuery(urlSearch);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [searchParams, initialTab, tab, searchQuery]);
 
   const updateUrl = (newTab: string, newSearch: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -76,7 +79,6 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
                 <CreateDealButton 
                   stages={stages} 
                   companies={companies} 
-                  currentUserId={userId} 
                 />
               )}
             </div>

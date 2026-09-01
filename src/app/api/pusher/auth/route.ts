@@ -33,6 +33,13 @@ export async function POST(request: NextRequest) {
 
   // Private channel auth
   if (channelName.startsWith("private-")) {
+    const allowedPrivateChannels = new Set([
+      `private-user-${session.user.id}`,
+      `private-pipeline-${session.user.id}`,
+    ]);
+    if (!allowedPrivateChannels.has(channelName)) {
+      return NextResponse.json({ error: "Forbidden channel" }, { status: 403 });
+    }
     const authResponse = pusherServer.authorizeChannel(socketId, channelName);
     return NextResponse.json(authResponse);
   }
