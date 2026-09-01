@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       className={`h-full antialiased`}
     >
-      <body className="min-h-full flex h-screen overflow-hidden text-slate-900 bg-[var(--background)]">
+      <body className="min-h-full flex h-screen overflow-hidden text-slate-900 bg-[#252728]">
         <SessionProvider>
           <DialogProvider>
             <ClientShell>

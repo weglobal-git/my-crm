@@ -1,6 +1,6 @@
 import { 
   LayoutDashboard, Briefcase, Megaphone, Wrench, Settings, MousePointer2, FileText, Users, Package, MessageSquare, Building2, FileBadge, Image as ImageIcon, Paperclip,
-  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart
+  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart, HardDrive
 } from "lucide-react";
 
 export type MenuLevel = 1 | 2 | 3;
@@ -36,9 +36,9 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "setting.profile", label: "User Profile", level: 2, parentKey: "setting", iconName: "UserCircle", href: "/profile", sortOrder: 1 },
 
   // System Sub-Menus
-  { key: "system.users",       label: "Users & Departments", level: 2, parentKey: "system", iconName: "Users",    href: "/system/users",       sortOrder: 1 },
+  { key: "system.general",     label: "General",   level: 2, parentKey: "system", iconName: "HardDrive",       href: "/system/general",     sortOrder: 0 },
   { key: "system.structure",   label: "Menu Structure",      level: 2, parentKey: "system", iconName: "LayoutDashboard", href: "/system/structure",   sortOrder: 2 },
-  { key: "system.permissions", label: "Menu Permissions",    level: 2, parentKey: "system", iconName: "Settings", href: "/system/permissions", sortOrder: 3 },
+  { key: "system.permissions", label: "Menu Permissions",    level: 2, parentKey: "system", iconName: "Settings",        href: "/system/permissions", sortOrder: 3 },
 
   // === RIGHT-MENU (Level 3) ===
   // ผูก parentKey กับ SUB-MENU
@@ -46,9 +46,7 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "pipeline.collaborate", label: "Collaborate",  level: 3, parentKey: "pipeline", iconName: "Users",         sortOrder: 2 },
   { key: "pipeline.information", label: "Customer",     level: 3, parentKey: "pipeline", iconName: "Building2",     sortOrder: 3 },
   { key: "pipeline.notes",       label: "Notes",        level: 3, parentKey: "pipeline", iconName: "FileText",      sortOrder: 4 },
-  { key: "pipeline.document",    label: "Document",     level: 3, parentKey: "pipeline", iconName: "FileBadge",     sortOrder: 5 },
-  { key: "pipeline.images",      label: "Images",       level: 3, parentKey: "pipeline", iconName: "ImageIcon",     sortOrder: 6 },
-  { key: "pipeline.files",       label: "Files",        level: 3, parentKey: "pipeline", iconName: "Paperclip",     sortOrder: 7 },
+  { key: "pipeline.sharedMedia", label: "Shared Media", level: 3, parentKey: "pipeline", iconName: "Folder",       sortOrder: 5 },
 ];
 
 export function getMenuByKey(key: string): MenuDefinition | undefined {
@@ -120,5 +118,6 @@ export const IconMap: Record<string, React.ElementType> = {
   ClipboardList,
   PenTool,
   LayoutTemplate,
-  PieChart
+  PieChart,
+  HardDrive
 };

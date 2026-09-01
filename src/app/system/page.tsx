@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function SystemRedirectPage() {
-  redirect("/system/users");
+  redirect("/system/general");
 }

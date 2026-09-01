@@ -55,6 +55,7 @@ model User {
   quotations    Quotation[]   @relation("QuotationCreator")
   activityLogs  ActivityLog[]
   notes         Note[]
+  uploadedAttachments Attachment[]
   
   receivedNotifications Notification[] @relation("ReceivedNotifications")
   sentNotifications     Notification[] @relation("SentNotifications")
@@ -152,6 +153,16 @@ model DepartmentMenuPermission {
   @@unique([departmentId, menuItemId])
 }
 
+// --- SYSTEM CONFIG ---
+model SystemConfig {
+  id    String @id @default("global") // We only need one global config row
+  
+  // Google OAuth
+  googleRefreshToken String? @db.Text
+  
+  updatedAt DateTime @updatedAt
+}
+
 // --- CRM SCHEMA ---
 
 model Company {
@@ -192,8 +203,15 @@ enum OpportunityStatus {
   CANCELLED
 }
 
+enum OpportunityType {
+  SALES_DEAL
+  INTERNAL_TASK
+  PARTNERSHIP
+}
+
 model Opportunity {
   id             String            @id @default(cuid())
+  type           OpportunityType   @default(SALES_DEAL)
   topic          String            // e.g., "Order 1/26"
   value          Float?            // Amount
   currency       String?           @default("THB")
@@ -232,9 +250,37 @@ model Opportunity {
   activityLogs   ActivityLog[]
   notes          Note[]
   tags           OpportunityTag[]
+  attachments    Attachment[]
 
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([status])
+  @@index([ownerId])
+  @@index([status, updatedAt])
+  @@index([status, closedAt])
+  @@index([companyId])
+}
+
+model Attachment {
+  id                 String   @id @default(cuid())
+  fileName           String
+  fileType           String
+  size               Int
+  
+  cloudinaryUrl      String?  @db.Text
+  cloudinaryPublicId String?
+
+  googleDriveFileId  String?
+  
+  opportunityId      String
+  opportunity        Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  uploaderId         String
+  uploader           User        @relation(fields: [uploaderId], references: [id])
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 
@@ -272,6 +318,9 @@ model ActivityLog {
   user          User            @relation(fields: [userId], references: [id])
 
   createdAt     DateTime        @default(now())
+
+  @@index([opportunityId, parentId, createdAt])
+  @@index([opportunityId, type])
 }
 
 model Note {

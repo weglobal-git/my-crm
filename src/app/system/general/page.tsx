@@ -1,10 +1,11 @@
+import React from 'react';
+import SystemGeneralClient from '@/components/system/SystemGeneralClient';
 import { getUsers, getDepartments } from "@/lib/actions/user";
-import { UserManagementClient } from "@/components/user/UserManagementClient";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
-export default async function UsersPage() {
+export default async function SystemGeneralPage() {
   const session = await getServerSession(authOptions);
   
   if (!session?.user) {
@@ -26,17 +27,14 @@ export default async function UsersPage() {
   const departments = await getDepartments();
 
   return (
-    <div className="flex flex-col w-full h-full bg-[#252728]">
-      {/* 2. WORK SPACE */}
-      <main className="flex-1 overflow-y-auto hide-scrollbar p-6">
-        <div className="max-w-[1400px] mx-auto w-full flex flex-col h-full">
-          <UserManagementClient 
-            initialUsers={users}
-            initialDepartments={departments}
-            currentUserRole={session.user.role as string}
-          />
-        </div>
-      </main>
+    <div className="flex-1 overflow-y-auto hide-scrollbar p-6 bg-[#252728]">
+      <div className="max-w-[1400px] mx-auto w-full flex flex-col h-full">
+        <SystemGeneralClient 
+          initialUsers={users}
+          initialDepartments={departments}
+          currentUserRole={session.user.role as string}
+        />
+      </div>
     </div>
   );
 }

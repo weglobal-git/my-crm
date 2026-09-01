@@ -5,6 +5,7 @@ import { Search, Pin, Send, Trash2, Loader2, StickyNote } from "lucide-react";
 import { getNotes, createNote, deleteNote, togglePinNote } from "@/lib/actions/notes";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { useDialog } from "@/providers/DialogProvider";
+import { HighlightText } from "@/components/ui/HighlightText";
 
 type NoteItem = {
   id: string;
@@ -159,7 +160,7 @@ export function NotesTab({ deal }: { deal: OpportunityWithRelations }) {
                 </div>
                 
                 <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed pt-1">
-                  {note.content}
+                  <HighlightText text={note.content} highlight={searchQuery} />
                 </div>
               </div>
             );

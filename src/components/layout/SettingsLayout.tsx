@@ -51,7 +51,7 @@ export function SettingsSidebarItem({
   );
 }
 
-export function SettingsContent({ children, title, action }: { children: React.ReactNode, title?: string, action?: React.ReactNode }) {
+export function SettingsContent({ children, title, action }: { children: React.ReactNode, title?: React.ReactNode, action?: React.ReactNode }) {
   return (
     <div className="flex-1 w-full flex flex-col gap-6">
       {(title || action) && (

@@ -1,13 +1,15 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 
-export function PipelineSearch() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const [term, setTerm] = useState(searchParams.get("search") || "");
+interface PipelineSearchProps {
+  initialSearch?: string;
+  onSearch: (term: string) => void;
+}
+
+export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchProps) {
+  const [term, setTerm] = useState(initialSearch);
   const initialMount = useRef(true);
   
   useEffect(() => {
@@ -17,20 +19,11 @@ export function PipelineSearch() {
     }
 
     const delayDebounceFn = setTimeout(() => {
-      const currentSearch = searchParams.get("search") || "";
-      if (currentSearch === term) return; // Prevent infinite loop
-
-      const params = new URLSearchParams(searchParams.toString());
-      if (term) {
-        params.set("search", term);
-      } else {
-        params.delete("search");
-      }
-      router.push(`/pipeline?${params.toString()}`);
+      onSearch(term);
     }, 300);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [term, router, searchParams]);
+  }, [term, onSearch]);
 
   return (
     <div className="relative hidden lg:block w-64 xl:w-80">

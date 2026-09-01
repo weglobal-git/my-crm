@@ -1,7 +1,7 @@
 import { getPermissionMatrix } from "@/lib/actions/permission";
 import { MenuStructureBuilder } from "@/components/system/MenuStructureBuilder";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
 export default async function StructurePage() {

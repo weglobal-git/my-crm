@@ -212,7 +212,7 @@ export function Header() {
                         <div className="text-sm font-semibold text-slate-100 truncate">
                           {user.name || "Unknown"} {session?.user?.id === user.id && "(You)"}
                         </div>
-                        <div className="text-xs text-slate-500 truncate">
+                        <div className="text-xs text-slate-300 truncate">
                           {user.departments?.[0]?.name || user.role}
                         </div>
                       </div>

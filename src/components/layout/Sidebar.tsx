@@ -12,7 +12,7 @@ export function Sidebar() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen w-20 flex-col items-center bg-[#252728] py-8 shrink-0 z-20 rounded-r-3xl relative animate-pulse border-r border-[#1C1C1D]">
+      <div className="flex h-screen w-20 flex-col items-center bg-[#252728] py-8 shrink-0 z-20 relative animate-pulse border-r border-[#1C1C1D]">
          <div className="mb-12 h-12 w-12 rounded-xl bg-[#3A3B3C]" />
       </div>
     );
@@ -39,7 +39,7 @@ export function Sidebar() {
           className={`
             flex h-16 w-16 items-center justify-center rounded-full transition-all duration-200 cursor-pointer
             ${isActive 
-              ? "bg-[#3A3B3C] text-white" 
+              ? "bg-[#C7F33C] text-black" 
               : "text-slate-400 hover:bg-[#3A3B3C] hover:text-slate-100 border-transparent hover:border-[#1C1C1D]"}
           `}
         >

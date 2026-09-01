@@ -2,8 +2,9 @@
 
 import prisma from "@/lib/prisma";
 import { MENU_REGISTRY } from "../menu-registry";
+import { revalidatePath } from "next/cache";
 
-export async function syncMenuRegistry() {
+export async function syncMenuRegistry(shouldRevalidate: boolean = true) {
   // Sync the hardcoded MENU_REGISTRY with the database
   const existingMenus = await prisma.menuItem.findMany();
   const existingKeys = new Set(existingMenus.map((m) => m.key));
@@ -42,8 +43,22 @@ export async function syncMenuRegistry() {
     }
   }
 
-  // Optional: We can delete items from DB that are not in MENU_REGISTRY anymore,
-  // but it's safer to just leave them or do a soft delete.
+  // Delete items from DB that are not in MENU_REGISTRY anymore
+  const currentRegistryKeys = new Set(MENU_REGISTRY.map((m) => m.key));
+  const keysToDelete = Array.from(existingKeys).filter((key) => !currentRegistryKeys.has(key));
+  if (keysToDelete.length > 0) {
+    await prisma.menuItem.deleteMany({
+      where: { key: { in: keysToDelete } }
+    });
+  }
+
+  if (shouldRevalidate) {
+    try {
+      revalidatePath("/", "layout");
+    } catch {
+      // Ignore if called during render
+    }
+  }
   return { success: true };
 }
 

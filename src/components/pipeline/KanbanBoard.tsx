@@ -13,30 +13,95 @@ import {
   DragStartEvent,
   DragOverEvent,
   DragEndEvent,
+  useDroppable,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCardUI, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
 import { PipelineStage } from "@prisma/client";
-import { moveOpportunity } from "@/lib/actions/opportunity";
-import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
-import { EditDealPanel, TabType } from "./EditDealPanel";
+import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
+import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
+import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { pusherClient } from "@/lib/pusher";
+import useSWR from "swr";
 
-interface KanbanBoardProps {
-  currentUserId?: string;
-  currentUserRole?: string;
-  isCompletedTab?: boolean;
-  initialStages: PipelineStage[];
-  initialOpportunities: OpportunityWithRelations[];
+const EditDealPanel = dynamic(() => import("./EditDealPanel").then(mod => mod.EditDealPanel), { ssr: false });
+const WonLostModal = dynamic(() => import("./WonLostModal").then(mod => mod.WonLostModal), { ssr: false });
+
+const activeClass = "border-[#C7F33C] bg-[#252728] text-[#C7F33C]";
+
+export function DroppablePlaceholder({ id, label }: { id: string, label: string }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div 
+      ref={setNodeRef} 
+      className={`flex-1 rounded-xl border-2 border-dashed flex items-center justify-center font-bold text-lg transition-all duration-200
+        ${isOver ? activeClass : 'border-[#4E4F50] bg-[#252728]/80 backdrop-blur text-slate-400'}
+      `}
+    >
+      {label}
+    </div>
+  );
 }
 
-export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, initialStages, initialOpportunities }: KanbanBoardProps) {
+export function DropZone({ id, label, activeClass }: { id: string, label: string, activeClass: string }) {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <div 
+      ref={setNodeRef} 
+      className={`flex-1 rounded-xl border-4 border-dashed flex items-center justify-center font-bold text-3xl transition-all duration-200 backdrop-blur-md shadow-2xl
+        ${isOver ? activeClass : 'border-slate-600/50 bg-slate-800/80 text-slate-500'}
+      `}
+    >
+      {label}
+    </div>
+  );
+}
+
+import type { TabType } from "./EditDealPanel";
+
+export interface KanbanBoardProps {
+  currentUserId: string;
+  currentUserRole: string;
+  initialStages: PipelineStage[];
+  initialOpportunities?: OpportunityWithRelations[];
+  isCompletedTab?: boolean;
+  initialTab?: string;
+  activeTab?: string;
+  activeSearch?: string;
+}
+
+export function KanbanBoard({ 
+  currentUserId, 
+  currentUserRole, 
+  isCompletedTab, 
+  initialStages, 
+  initialOpportunities,
+  initialTab = 'workspace',
+  activeTab,
+  activeSearch 
+}: KanbanBoardProps) {
   const { toast } = useDialog();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  
+  const tab = activeTab || searchParams.get('tab') || 'workspace';
+  const searchQuery = activeSearch !== undefined ? activeSearch : (searchParams.get('search') || '');
+
+  const { data: rawOpportunities, mutate, isLoading } = useSWR<OpportunityWithRelations[]>(
+    ['pipeline-deals', tab, searchQuery],
+    () => getPipelineOpportunities(tab, searchQuery) as Promise<OpportunityWithRelations[]>,
+    { 
+      fallbackData: tab === initialTab ? initialOpportunities : undefined,
+      revalidateOnFocus: false, // Avoid excessive refetching, rely on Pusher
+    }
+  );
+
   // Group opportunities by stageId
   const initialDeals = initialStages.reduce((acc, stage) => {
-    const stageDeals = initialOpportunities.filter(o => o.pipelineStageId === stage.id);
+    const fallback = tab === initialTab ? (initialOpportunities || []) : [];
+    const stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
     stageDeals.sort((a, b) => {
       const aRed = checkIsRedCard(a);
       const bRed = checkIsRedCard(b);
@@ -51,9 +116,25 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(initialDeals);
   const [activeDeal, setActiveDeal] = useState<OpportunityWithRelations | null>(null);
   const [activeWidth, setActiveWidth] = useState<number>(0);
-  const [selectedDeal, setSelectedDeal] = useState<{deal: OpportunityWithRelations, tab: string} | null>(null);
-  
-  const router = useRouter();
+  const [activePanelDeal, setActivePanelDeal] = useState<{deal: OpportunityWithRelations, tab: string} | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [closingTimeout, setClosingTimeout] = useState<NodeJS.Timeout | null>(null);
+
+  const handleOpenPanel = useCallback((deal: OpportunityWithRelations, tab: string) => {
+    if (closingTimeout) clearTimeout(closingTimeout);
+    setActivePanelDeal({ deal, tab });
+    setPanelOpen(true);
+  }, [closingTimeout]);
+
+  const handleClosePanel = useCallback(() => {
+    setPanelOpen(false);
+    const t = setTimeout(() => {
+      setActivePanelDeal(null);
+    }, 300);
+    setClosingTimeout(t);
+  }, []);
+
+  const [wonLostModal, setWonLostModal] = useState<{deal: OpportunityWithRelations, status: "WON" | "LOST"} | null>(null);
 
   // Real-time updates via Pusher
   useEffect(() => {
@@ -61,20 +142,21 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
     
     const channel = pusherClient.subscribe('pipeline');
     channel.bind('pipeline-updated', () => {
-      router.refresh();
+      mutate(); // Revalidate SWR cache
     });
 
     return () => {
       pusherClient.unsubscribe('pipeline');
     };
-  }, [router, isCompletedTab]);
+  }, [isCompletedTab, mutate]);
 
   // Sync state when props update (only if not dragging)
   useEffect(() => {
     if (activeDeal) return; // Don't interrupt drag operations
 
     const newDeals = initialStages.reduce((acc, stage) => {
-      const stageDeals = initialOpportunities.filter(o => o.pipelineStageId === stage.id);
+      const fallback = tab === initialTab ? (initialOpportunities || []) : [];
+      const stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
       stageDeals.sort((a, b) => {
         const aRed = checkIsRedCard(a);
         const bRed = checkIsRedCard(b);
@@ -89,14 +171,17 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
     setTimeout(() => {
       setDeals(newDeals);
 
-      setSelectedDeal(prev => {
-        if (!prev) return prev;
-        const freshDeal = initialOpportunities.find(o => o.id === prev.deal.id);
-        if (freshDeal) return { ...prev, deal: freshDeal };
-        return prev;
-      });
+      if (panelOpen) {
+        setActivePanelDeal(prev => {
+          if (!prev) return prev;
+          const fallback = tab === initialTab ? (initialOpportunities || []) : [];
+          const freshDeal = (rawOpportunities || fallback).find(o => o.id === prev.deal.id);
+          if (freshDeal) return { ...prev, deal: freshDeal };
+          return prev;
+        });
+      }
     }, 0);
-  }, [initialOpportunities, initialStages, activeDeal]);
+  }, [rawOpportunities, initialStages, activeDeal, panelOpen, tab, initialTab, initialOpportunities]);
 
   // Infinite Scroll state for completed tab
   const [completedDeals, setCompletedDeals] = useState<OpportunityWithRelations[]>([]);
@@ -106,22 +191,28 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
   useEffect(() => {
     if (isCompletedTab) {
       const t = setTimeout(() => {
-        setCompletedDeals(initialOpportunities);
-        setHasMoreCompleted(initialOpportunities.length === 20); // assuming page size is 20
+        if (rawOpportunities) {
+          setCompletedDeals(rawOpportunities);
+          setHasMoreCompleted(rawOpportunities.length === 20);
+        } else if (tab === initialTab) {
+          setCompletedDeals(initialOpportunities || []);
+          setHasMoreCompleted((initialOpportunities || []).length === 20);
+        } else {
+          setCompletedDeals([]);
+        }
       }, 0);
       return () => clearTimeout(t);
     }
-  }, [initialOpportunities, isCompletedTab]);
+  }, [rawOpportunities, initialOpportunities, isCompletedTab, tab, initialTab]);
 
-  const searchParams = useSearchParams();
-  const searchQuery = searchParams.get('search') || undefined;
+
 
   const loadMoreCompleted = useCallback(async () => {
     if (isLoadingMore || !hasMoreCompleted) return;
     setIsLoadingMore(true);
     try {
       // We pass the current length to skip
-      const nextBatch = await getMoreCompletedOpportunities(completedDeals.length, searchQuery);
+      const nextBatch = await getMoreCompletedOpportunities(completedDeals.length, searchQuery || undefined);
       if (nextBatch.length === 0) {
         setHasMoreCompleted(false);
       } else {
@@ -223,6 +314,14 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
     const activeId = active.id as string;
     const overId = over.id as string;
 
+    if (overId === "zone-won" || overId === "zone-lost") {
+      const deal = activeDeal || deals[findColumnOfDeal(activeId) || ""]?.find(d => d.id === activeId);
+      if (deal) {
+        setWonLostModal({ deal, status: overId === "zone-won" ? "WON" : "LOST" });
+      }
+      return;
+    }
+
     const columnId = findColumnOfDeal(activeId);
     if (!columnId) return;
 
@@ -248,7 +347,18 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
       }
       // Ideally revert state here on failure
     }
-  }, [findColumnOfDeal, toast]);
+  }, [findColumnOfDeal, toast, activeDeal, deals]);
+
+  if (isLoading && !rawOpportunities && (!initialOpportunities || initialOpportunities.length === 0)) {
+    return (
+      <div className="flex w-full h-[calc(100vh-140px)] items-center justify-center">
+        <svg className="animate-spin h-8 w-8 text-[#C7F33C]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -276,7 +386,7 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
                       <div key={deal.id} className="cursor-pointer">
                         <KanbanCardUI 
                           deal={deal} 
-                          onOpenPanel={(tab) => setSelectedDeal({ deal, tab: tab || 'activity' })} 
+                          onOpenPanel={(tab) => handleOpenPanel(deal, tab || 'activity')} 
                         />
                       </div>
                     ))}
@@ -309,7 +419,7 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
                 id={col.id} 
                 title={col.name} 
                 deals={deals[col.id] || []} 
-                onDealClick={(deal, tab) => setSelectedDeal({ deal, tab: tab || 'activity' })}
+                onDealClick={(deal, tab) => handleOpenPanel(deal, tab || 'activity')}
                 isScrollable={true}
                 currentUserId={currentUserId}
                 currentUserRole={currentUserRole}
@@ -327,12 +437,31 @@ export function KanbanBoard({ currentUserId, currentUserRole, isCompletedTab, in
         )}
       </div>
 
-      {selectedDeal && (
+      {activeDeal && !isCompletedTab && (
+        <div className="fixed bottom-0 left-0 right-0 h-32 p-4 z-50 flex gap-4 animate-in slide-in-from-bottom-10 duration-200">
+          <DropZone id="zone-won" label="WON" activeClass="border-emerald-500 bg-emerald-500/20 text-emerald-400" />
+          <DropZone id="zone-lost" label="LOST" activeClass="border-rose-500 bg-rose-500/20 text-rose-400" />
+        </div>
+      )}
+
+      {activePanelDeal && (
         <EditDealPanel 
-          deal={selectedDeal.deal} 
-          initialTab={selectedDeal.tab as TabType}
-          isOpen={!!selectedDeal} 
-          onClose={() => setSelectedDeal(null)} 
+          deal={activePanelDeal.deal} 
+          initialTab={activePanelDeal.tab as TabType}
+          isOpen={panelOpen} 
+          onClose={handleClosePanel} 
+        />
+      )}
+
+      {wonLostModal && (
+        <WonLostModal
+          deal={wonLostModal.deal}
+          status={wonLostModal.status}
+          onClose={() => setWonLostModal(null)}
+          onSuccess={() => {
+            setWonLostModal(null);
+            router.refresh();
+          }}
         />
       )}
     </>

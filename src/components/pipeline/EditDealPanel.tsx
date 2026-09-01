@@ -1,27 +1,33 @@
 "use client";
 
-import { X, MessageSquare, Send, BellRing, Trash2, Search, Users, Activity } from "lucide-react";
+import { X, MoreHorizontal, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2 } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
+import imageCompression from 'browser-image-compression';
+import { useDropzone } from 'react-dropzone';
 import { useRouter } from "next/navigation";
-import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity } from "@/lib/actions/opportunity";
+import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
 import { useEffect, useState, useRef, useCallback } from "react";
+import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
 import { User } from "@prisma/client";
-import { MoreHorizontal } from "lucide-react";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
 import { useDialog } from "@/providers/DialogProvider";
 import { CustomerTab } from "./CustomerTab";
 import { NotesTab } from "./NotesTab";
+import { SharedMediaTab } from "./SharedMediaTab";
+import { ChatAttachmentButton } from "./ChatAttachmentButton";
+import { HighlightText } from "@/components/ui/HighlightText";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
 };
 
-const renderCommentContent = (text: string) => {
+const renderCommentText = (text: string, highlight: string = '') => {
   if (!text) return null;
   const parts = text.split(/(@\S+)/g);
   return parts.map((part, index) => {
@@ -32,9 +38,101 @@ const renderCommentContent = (text: string) => {
         </span>
       );
     }
-    return <span key={index}>{part}</span>;
+    return <HighlightText key={index} text={part} highlight={highlight} />;
   });
 };
+
+function ImageGrid({ images, onImageClick }: { images: {url: string, filename: string, type: string}[], onImageClick?: (url: string) => void }) {
+  if (images.length === 0) return null;
+
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    e.currentTarget.onerror = null;
+    e.currentTarget.src = "https://placehold.co/600x400/252728/4E4F50?text=Image+Unavailable";
+  };
+
+  if (images.length === 1) {
+    return (
+      <div className="mt-2 rounded-xl overflow-hidden border border-[#4E4F50] bg-[#1C1C1D]">
+        <img 
+          src={images[0].url} 
+          alt={images[0].filename} 
+          className="w-full h-auto max-h-80 object-contain cursor-pointer hover:opacity-90 transition-opacity" 
+          onClick={() => onImageClick?.(images[0].url)}
+          onError={handleImageError}
+        />
+      </div>
+    );
+  }
+
+  if (images.length === 2) {
+    return (
+      <div className="mt-2 grid grid-cols-2 gap-1 rounded-xl overflow-hidden border border-[#4E4F50] bg-[#1C1C1D]">
+        {images.map((img, idx) => (
+          <img 
+            key={idx} src={img.url} alt={img.filename}
+            className="w-full h-40 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+            onClick={() => onImageClick?.(img.url)}
+            onError={handleImageError}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  if (images.length === 3) {
+    return (
+      <div className="mt-2 grid grid-cols-2 gap-1 rounded-xl overflow-hidden border border-[#4E4F50] bg-[#1C1C1D]">
+        <img 
+          src={images[0].url} 
+          alt=""
+          className="col-span-2 w-full h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={() => onImageClick?.(images[0].url)}
+          onError={handleImageError}
+        />
+        <img 
+          src={images[1].url} 
+          alt=""
+          className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={() => onImageClick?.(images[1].url)}
+          onError={handleImageError}
+        />
+        <img 
+          src={images[2].url} 
+          alt=""
+          className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+          onClick={() => onImageClick?.(images[2].url)}
+          onError={handleImageError}
+        />
+      </div>
+    );
+  }
+
+  // 4 or more
+  return (
+    <div className="mt-2 grid grid-cols-2 gap-1 rounded-xl overflow-hidden border border-[#4E4F50] bg-[#1C1C1D]">
+      {images.slice(0, 4).map((img, idx) => {
+        if (idx === 3 && images.length > 4) {
+          return (
+            <div key={idx} className="relative cursor-pointer group" onClick={() => onImageClick?.(img.url)}>
+              <img src={img.url} alt="" className="w-full h-32 object-cover" onError={handleImageError} />
+              <div className="absolute inset-0 bg-black/60 flex items-center justify-center transition-colors group-hover:bg-black/70">
+                <span className="text-white text-2xl font-bold">+{images.length - 4}</span>
+              </div>
+            </div>
+          )
+        }
+        return (
+          <img 
+            key={idx} src={img.url} alt={img.filename}
+            className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+            onClick={() => onImageClick?.(img.url)}
+            onError={handleImageError}
+          />
+        )
+      })}
+    </div>
+  );
+}
 
 import { ActivityLog } from "@prisma/client";
 
@@ -43,7 +141,7 @@ type ActivityLogWithRelations = ActivityLog & {
   replies?: ActivityLogWithRelations[];
 };
 
-function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, onReplyClick?: (username: string) => void }) {
+function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string) => void, searchQuery?: string }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(log.content);
   const [isReplying, setIsReplying] = useState(false);
@@ -105,7 +203,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
         <div className="flex flex-col flex-1 group/comment">
           {/* Main Comment Bubble */}
           <div className="flex items-center gap-2">
-            <div className="bg-[#3A3B3C] rounded-2xl p-3 inline-block self-start relative max-w-full">
+            <div className="bg-[#3A3B3C] rounded-2xl p-3 inline-block self-start relative w-full max-w-[85%] sm:max-w-md">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-sm font-bold text-slate-100">{log.user?.name || 'Unknown User'}</span>
                 {dueDateMatch && (
@@ -116,21 +214,61 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
               </div>
               
               {isEditing ? (
-                <div className="flex flex-col gap-2 min-w-[300px]">
+                <div className="flex flex-col gap-2 min-w-[250px]">
                   <textarea 
                     value={editContent} 
                     onChange={e => setEditContent(e.target.value)} 
                     className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg p-2 text-sm min-h-[60px]"
                   />
                   <div className="flex gap-2 justify-end">
-                    <button onClick={() => setIsEditing(false)} className="text-xs text-slate-500 hover:underline">Cancel</button>
+                    <button onClick={() => setIsEditing(false)} className="text-xs text-slate-800 hover:underline">Cancel</button>
                     <button onClick={handleEdit} className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">Save</button>
                   </div>
                 </div>
               ) : (
-                <p className="text-sm text-slate-300 whitespace-pre-wrap leading-relaxed">
-                  {dueDateMatch ? renderCommentContent(dueDateMatch[2]) : renderCommentContent(log.content)}
-                </p>
+                <div className="flex flex-col w-full">
+                  {(() => {
+                    const displayContent = dueDateMatch ? dueDateMatch[2] : log.content;
+                    const images: {url: string, filename: string, type: string}[] = [];
+                    const files: {url: string, filename: string, type: string}[] = [];
+                    
+                    const cleanText = displayContent.replace(/\[ATTACHMENT:([^|]+)\|([^|]*)\|([^\]]+)\]/g, (match, url, filename, type) => {
+                      if (type.startsWith('image/') || type.startsWith('video/')) {
+                        images.push({ url, filename, type });
+                      } else {
+                        files.push({ url, filename, type });
+                      }
+                      return '';
+                    }).trim();
+
+                    return (
+                      <>
+                        {cleanText && (
+                          <div className="text-sm text-slate-300 whitespace-pre-wrap break-words leading-relaxed">
+                            {renderCommentText(cleanText, searchQuery)}
+                          </div>
+                        )}
+                        <ImageGrid images={images} onImageClick={onImageClick} />
+                        {files.length > 0 && (
+                          <div className="mt-2 flex flex-col gap-1.5 w-full">
+                            {files.map((file, idx) => (
+                              <a key={idx} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 p-3 rounded-xl bg-[#252728] border border-[#4E4F50] hover:border-slate-400 transition-colors w-full group">
+                                <div className="w-10 h-10 rounded-lg bg-[#3A3B3C] flex items-center justify-center shrink-0">
+                                  <Paperclip className="w-5 h-5 text-slate-400" />
+                                </div>
+                                <div className="flex flex-col flex-1 min-w-0">
+                                  <span className="text-sm font-semibold text-slate-200 truncate">{file.filename || "Attached file"}</span>
+                                  <span className="text-[10px] text-slate-500 uppercase">File</span>
+                                </div>
+                                <Download className="w-4 h-4 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
               )}
             </div>
           </div>
@@ -195,6 +333,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
                     setIsReplying(true);
                     setReplyingToUsername(username);
                   }} 
+                  onImageClick={onImageClick}
                 />
               ))}
             </div>
@@ -240,7 +379,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick }: { 
   );
 }
 
-export type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'document' | 'images' | 'files';
+export type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'sharedMedia';
 
 interface EditDealPanelProps {
   deal: OpportunityWithRelations;
@@ -262,12 +401,16 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const allowedInitialTab = rightMenus.find(m => m.key.endsWith(`.${initialTab}`)) ? initialTab : (rightMenus[0]?.key.split('.').pop() as TabType || 'activity');
   const [activeTab, setActiveTab] = useState<TabType>(allowedInitialTab === ('duedate' as TabType) ? 'activity' : allowedInitialTab);
   
-  const { toast } = useDialog();
+  const { toast, confirm } = useDialog();
   const [showCalendar, setShowCalendar] = useState(false);
   const [pendingDueDate, setPendingDueDate] = useState<Date | 'REMOVE' | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const [selectedPopupDate, setSelectedPopupDate] = useState<Date | null>(deal.dueDate ? new Date(deal.dueDate) : null);
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const calendarRef = useRef<HTMLDivElement>(null);
+  
+  // Lightbox Preview State
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Topic editing state
   const [isEditingTopic, setIsEditingTopic] = useState(false);
@@ -316,7 +459,52 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   // Optimistic UI State
   type TeamMember = { id: string; name: string | null; email: string | null; image: string | null; role: string; department?: { name: string } | null; [key: string]: unknown };
   const [localTeamMembers, setLocalTeamMembers] = useState<TeamMember[]>(deal.teamMembers || []);
-  const [localActivityLogs, setLocalActivityLogs] = useState<ActivityLogWithRelations[]>([]);
+  const getKey = (pageIndex: number, previousPageData: { data: ActivityLogWithRelations[], nextCursor?: string } | null) => {
+    if (!isOpen) return null;
+    if (previousPageData && !previousPageData.nextCursor) return null; // reached the end
+    return ['activity-logs', deal.id, previousPageData?.nextCursor ?? ''];
+  };
+
+  const {
+    data: rawLocalActivityPages,
+    mutate: loadActivityLogs,
+    size,
+    setSize,
+    isValidating: isLoadingLogs
+  } = useSWRInfinite<{ data: ActivityLogWithRelations[], nextCursor?: string }>(
+    getKey,
+    async ([_, id, cursor]: [string, string, string]) => {
+      const res = await getOpportunityActivityLogs(id, 10, cursor || undefined);
+      return res as { data: ActivityLogWithRelations[], nextCursor?: string };
+    }
+  );
+
+  const allLogs = rawLocalActivityPages ? rawLocalActivityPages.flatMap(page => page.data) : [];
+  const uniqueLogsMap = new Map();
+  allLogs.forEach(log => {
+    if (!uniqueLogsMap.has(log.id)) {
+      uniqueLogsMap.set(log.id, log);
+    }
+  });
+  const localActivityLogs = Array.from(uniqueLogsMap.values()) as ActivityLogWithRelations[];
+  
+  const hasMoreLogs = rawLocalActivityPages ? !!rawLocalActivityPages[rawLocalActivityPages.length - 1]?.nextCursor : false;
+  const isLoadingMore = isLoadingLogs && size > 0 && rawLocalActivityPages && typeof rawLocalActivityPages[size - 1] === "undefined";
+
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const lastLogElementRef = useCallback((node: HTMLDivElement | null) => {
+    if (observerRef.current) observerRef.current.disconnect();
+    if (isLoadingMore) return; // Disconnect before returning early
+    
+    if (node) {
+      observerRef.current = new IntersectionObserver(entries => {
+        if (entries[0].isIntersecting && hasMoreLogs) {
+          setSize(prev => prev + 1);
+        }
+      });
+      observerRef.current.observe(node);
+    }
+  }, [isLoadingMore, hasMoreLogs, setSize]);
 
   useEffect(() => {
     const t = setTimeout(() => setLocalTeamMembers(deal.teamMembers || []), 0);
@@ -329,35 +517,65 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
   }, [isOpen, activeTab, users.length]);
 
-  const loadActivityLogs = useCallback(async () => {
-    try {
-      const logs = await getOpportunityActivityLogs(deal.id);
-      setLocalActivityLogs(logs as ActivityLogWithRelations[]);
-    } catch (e) {
-      console.error(e);
-    }
-  }, [deal.id]);
-
-  useEffect(() => {
-    if (isOpen && activeTab === 'activity') {
-      const t = setTimeout(() => loadActivityLogs(), 0);
-      return () => clearTimeout(t);
-    }
-  }, [isOpen, activeTab, loadActivityLogs]);
-
   const handleAddLog = async () => {
-    if (!newLog.trim()) return;
+    if (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate) return;
     setIsSubmittingLog(true);
     try {
+      let attachmentText = "";
+      
+      // Upload pending attachments
+      if (pendingAttachments.length > 0) {
+        for (const file of pendingAttachments) {
+          const isImage = file.type.startsWith('image/');
+          let fileToUpload = file;
+          
+          if (isImage) {
+            fileToUpload = await imageCompression(file, {
+              maxSizeMB: 1,
+              maxWidthOrHeight: 1920,
+              useWebWorker: true,
+            });
+          }
+
+          const fileBase64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(fileToUpload);
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = error => reject(error);
+          });
+
+          const response = await fetch('/api/upload/opportunity', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              opportunityId: deal.id,
+              fileBase64,
+              fileName: file.name,
+              fileType: file.type,
+              size: fileToUpload.size,
+              isRaw: !isImage
+            })
+          });
+          
+          const data = await response.json();
+          if (data.success && data.attachment?.cloudinaryUrl) {
+            attachmentText += `\n[ATTACHMENT:${data.attachment.cloudinaryUrl}|${file.name}|${file.type}]`;
+          }
+        }
+      }
+
+      const finalLog = (newLog.trim() + attachmentText).trim() || 'Updated deal';
+
       if (pendingDueDate === 'REMOVE') {
-        await updateDueDateWithLog(deal.id, null, newLog.trim(), session!.user!.id);
+        await updateDueDateWithLog(deal.id, null, finalLog, session!.user!.id);
       } else if (pendingDueDate instanceof Date) {
-        await updateDueDateWithLog(deal.id, pendingDueDate, newLog.trim(), session!.user!.id);
+        await updateDueDateWithLog(deal.id, pendingDueDate, finalLog, session!.user!.id);
       } else {
-        await addActivityLog(deal.id, newLog.trim(), session!.user!.id);
+        await addActivityLog(deal.id, finalLog, session!.user!.id);
       }
       setNewLog("");
       setPendingDueDate(null);
+      setPendingAttachments([]);
       setShowCalendar(false);
       loadActivityLogs();
       router.refresh();
@@ -369,6 +587,23 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       setIsSubmittingLog(false);
     }
   };
+
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    const validFiles = acceptedFiles.filter(file => {
+      if (file.size > 4.5 * 1024 * 1024 && !file.type.startsWith('image/')) {
+        toast({ title: "File too large", description: `"${file.name}" exceeds 4.5MB limit.`, type: "warning" });
+        return false;
+      }
+      return true;
+    });
+    setPendingAttachments(prev => [...prev, ...validFiles]);
+  }, [toast, setPendingAttachments]);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
+    onDrop,
+    noClick: true,
+    noKeyboard: true
+  });
 
   const handleDeleteSystemLog = async (logId: string) => {
     if (!session?.user?.id) return;
@@ -458,19 +693,33 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     return () => clearTimeout(timeout);
   }, []);
 
+  const [internalIsOpen, setInternalIsOpen] = useState(false);
+  
+  useEffect(() => {
+    if (isOpen) {
+      const t = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setInternalIsOpen(true));
+      });
+      return () => cancelAnimationFrame(t);
+    } else {
+      const t = setTimeout(() => setInternalIsOpen(false), 0);
+      return () => clearTimeout(t);
+    }
+  }, [isOpen]);
+
   if (!isOpen && !mounted) return null;
 
   return (
     <>
       <div 
-        className={`fixed inset-0 bg-black/20 z-40 transition-opacity duration-300 ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`} 
+        className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${internalIsOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`} 
         onClick={onClose}
       />
       
-      <div className={`fixed inset-y-0 right-0 z-50 flex transform transition-transform duration-300 ease-in-out ${isOpen ? "translate-x-0" : "translate-x-full"}`}>
-        
-        {/* Tab Sidebar */}
-        <div className="w-16 bg-[#252728] border-r border-[#1C1C1D] flex flex-col items-center py-3 gap-3 z-10 rounded-l-2xl">
+      <div className={`fixed inset-y-4 right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] origin-right ${internalIsOpen ? "opacity-100 translate-x-0 scale-100" : "opacity-0 translate-x-8 scale-[0.97] pointer-events-none"}`}>
+        <div className="flex shadow-2xl h-full rounded-2xl overflow-hidden border border-[#3A3B3C]">
+          {/* Tab Sidebar */}
+          <div className="w-16 bg-[#252728] border-r border-[#1C1C1D] flex flex-col items-center py-3 gap-3 z-10">
           {rightMenus.map(menu => {
             const tabId = menu.key.split('.').pop() as TabType;
             const Icon = menu.iconName ? IconMap[menu.iconName] : MessageSquare;
@@ -495,8 +744,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         {/* Main Panel Content */}
         <div className="w-[600px] max-w-[90vw] bg-[#252728] flex flex-col">
           <div className="flex items-center justify-between p-3 border-b border-[#1C1C1D] shrink-0">
-            {isEditingTopic ? (
-              <div className="flex-1 pr-4 relative">
+            <div className="flex flex-col flex-1 pr-4">
+              {isEditingTopic ? (
+                <div className="relative">
                 <input
                   autoFocus
                   type="text"
@@ -506,7 +756,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     if (topic.trim() !== deal.topic) {
                       setIsSavingTopic(true);
                       try {
-                        await updateOpportunity(deal.id, { topic: topic.trim() });
+                        const newTopic = topic.trim();
+                        await updateOpportunity(deal.id, { topic: newTopic });
+                        await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`, session?.user?.id || '');
                         toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
                         router.refresh();
                       } catch {
@@ -531,18 +783,77 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               </div>
             ) : (
               <h2 
-                className={`text-xl font-bold text-slate-100 line-clamp-1 pr-4 ${canEditDueDate ? 'cursor-text hover:text-white' : ''}`}
+                className={`text-xl font-bold text-slate-100 line-clamp-1 ${canEditDueDate ? 'cursor-text hover:text-white' : ''}`}
                 onClick={() => canEditDueDate && setIsEditingTopic(true)}
-                title={canEditDueDate ? "Click to edit" : undefined}
+                title={canEditDueDate ? "Click to edit title" : undefined}
               >
                 {topic}
               </h2>
             )}
-            <div className="flex items-center gap-3 shrink-0">
+            
+            <div className="mt-2 flex items-center gap-2">
+              <select
+                value={deal.type}
+                onChange={async (e) => {
+                  const newType = e.target.value as typeof deal.type;
+                  if (newType !== deal.type) {
+                    try {
+                      await updateOpportunity(deal.id, { type: newType });
+                      const oldLabel = deal.type === 'INTERNAL_TASK' ? 'Internal Task' : (deal.type === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
+                      const newLabel = newType === 'INTERNAL_TASK' ? 'Internal Task' : (newType === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
+                      await addSystemLog(deal.id, `Changed opportunity type from ${oldLabel} to ${newLabel}.`, session?.user?.id || '');
+                      toast({ title: 'Success', description: 'Type updated', type: 'success' });
+                      router.refresh();
+                    } catch {
+                      toast({ title: 'Error', description: 'Failed to update type', type: 'error' });
+                    }
+                  }
+                }}
+                disabled={!canEditDueDate} // Using canEditDueDate as it checks for isOwner or isAdmin
+                className={`text-xs font-semibold px-2 py-1 rounded-md border ${
+                  deal.type === 'SALES_DEAL' ? 'bg-[#C7F33C]/20 text-[#C7F33C] border-[#C7F33C]/30' :
+                  deal.type === 'INTERNAL_TASK' ? 'bg-slate-700 text-slate-300 border-slate-600' :
+                  'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
+                } ${canEditDueDate ? 'cursor-pointer hover:opacity-80' : 'cursor-default appearance-none'} focus:outline-none`}
+              >
+                <option value="SALES_DEAL">Sales Deal</option>
+                <option value="INTERNAL_TASK">Internal Task</option>
+                <option value="PARTNERSHIP">Partnership</option>
+              </select>
+            </div>
+          </div>
+            <div className="flex items-center gap-2 shrink-0">
               {deal.dueDate && (
-                <div className="text-[11px] font-bold text-[#111111] bg-[#C7F33C] px-3 py-1 rounded-full whitespace-nowrap">
+                <div className="text-[11px] font-bold text-[#111111] bg-[#C7F33C] px-3 py-1 rounded-full whitespace-nowrap mr-2">
                   DUE: {new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}
                 </div>
+              )}
+              {((session?.user as Record<string, unknown>)?.role === "ADMIN") && (
+                <button
+                  onClick={async () => {
+                    const isConfirmed = await confirm({
+                      title: "Delete Deal",
+                      description: "Are you sure you want to permanently delete this deal? This action cannot be undone.",
+                      confirmText: "Delete",
+                      cancelText: "Cancel",
+                      variant: "danger"
+                    });
+                    if (isConfirmed) {
+                      try {
+                        await deleteOpportunity(deal.id);
+                        toast({ title: 'Deleted', description: 'Opportunity deleted permanently', type: 'success' });
+                        onClose();
+                        router.refresh();
+                      } catch {
+                        toast({ title: 'Error', description: 'Failed to delete opportunity', type: 'error' });
+                      }
+                    }
+                  }}
+                  className="p-2 hover:bg-rose-500/20 rounded-full transition-colors text-slate-400 hover:text-rose-500"
+                  title="Permanently Delete (Admin Only)"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
               )}
               <button 
                 onClick={onClose}
@@ -555,37 +866,35 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
           {/* Sticky Tabs for Activity/System */}
           {(activeTab === 'activity' || activeTab === 'system') && (
-            <div className="px-6 pt-4 bg-[#252728] shrink-0 z-10">
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-[#C7F33C]" />
-                    Activity Log
-                  </h3>
+            <div className="px-6 pt-6 pb-2 bg-[#252728] shrink-0 z-10">
+              <div className="flex items-center justify-between w-full mb-2">
+                <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-[#C7F33C]" />
+                  Activity Log
+                </h3>
+                
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setActiveTab('activity')}
+                    className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
+                      activeTab === 'activity' 
+                        ? 'bg-[#C7F33C] text-black' 
+                        : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
+                    }`}
+                  >
+                    <MessageSquare className="w-4 h-4" /> Activity
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('system')}
+                    className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
+                      activeTab === 'system' 
+                        ? 'bg-[#C7F33C] text-black' 
+                        : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
+                    }`}
+                  >
+                    <MessageSquare className="w-4 h-4" /> System
+                  </button>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-2 pb-3 mt-4">
-                <button 
-                  onClick={() => setActiveTab('activity')}
-                  className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                    activeTab === 'activity' 
-                      ? 'bg-[#C7F33C] text-black' 
-                      : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                  }`}
-                >
-                  <MessageSquare className="w-4 h-4" /> Activity
-                </button>
-                <button 
-                  onClick={() => setActiveTab('system')}
-                  className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                    activeTab === 'system' 
-                      ? 'bg-[#C7F33C] text-black' 
-                      : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                  }`}
-                >
-                  <MessageSquare className="w-4 h-4" /> System
-                </button>
               </div>
 
               {/* Search Bar */}
@@ -616,6 +925,22 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       {/* Feed */}
                       <div className="flex flex-col gap-6 mt-4">
                         {(() => {
+                          if (isLoadingLogs && !rawLocalActivityPages) {
+                            return (
+                              <div className="flex flex-col gap-6 w-full mt-4">
+                                {[1, 2, 3].map(i => (
+                                  <div key={i} className="flex gap-3 animate-pulse">
+                                    <div className="w-10 h-10 rounded-full bg-[#3A3B3C] shrink-0" />
+                                    <div className="flex flex-col gap-2 flex-1">
+                                      <div className="w-3/4 h-16 bg-[#3A3B3C] rounded-2xl rounded-tl-sm" />
+                                      <div className="w-24 h-3 bg-[#3A3B3C] rounded-full ml-2" />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          }
+
                           let comments = localActivityLogs.filter(log => log.type === 'COMMENT' && !log.parentId);
                           
                           if (activitySearchQuery.trim()) {
@@ -657,10 +982,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                   dealId={deal.id}
                                   currentUser={session?.user as unknown as { id: string; name?: string | null; image?: string | null; email?: string | null; }}
                                   refresh={() => loadActivityLogs()}
+                                  searchQuery={activitySearchQuery}
                                   onReplyClick={(username) => {
                                     setNewLog(prev => prev ? `${prev} @${username} ` : `@${username} `);
                                     if (inputRef.current) inputRef.current.focus();
                                   }}
+                                  onImageClick={(url) => setPreviewImage(url)}
                                 />
                               ))}
                             </div>
@@ -673,6 +1000,22 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   {activeTab === 'system' && (
                     <div className="flex flex-col gap-4 mt-2">
                       {(() => {
+                        if (isLoadingLogs && !rawLocalActivityPages) {
+                          return (
+                            <div className="flex flex-col gap-4 mt-4 w-full">
+                              {[1, 2, 3].map(i => (
+                                <div key={i} className="flex gap-3 animate-pulse">
+                                  <div className="w-8 h-8 rounded-full bg-[#3A3B3C] shrink-0 mt-0.5" />
+                                  <div className="flex flex-col gap-1.5 flex-1 mt-1">
+                                    <div className="w-32 h-3 bg-[#3A3B3C] rounded-full" />
+                                    <div className="w-full max-w-sm h-3 bg-[#3A3B3C] rounded-full" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+
                         let sysLogs = localActivityLogs.filter(log => log.type === 'SYSTEM_UPDATE');
                         
                         if (activitySearchQuery.trim()) {
@@ -704,8 +1047,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                               <span className="text-[11px] text-slate-500 mb-0.5 font-medium">
                                 <strong className="text-slate-300">{log.user?.name || 'System'}</strong> • {formatDateTime(log.createdAt)}
                               </span>
-                              <p className="text-[13px] text-slate-300 font-medium italic">
-                                {log.content?.trim()}
+                              <p className="text-[13px] text-slate-300 font-medium italic whitespace-pre-wrap">
+                                <HighlightText text={log.content?.trim() || ''} highlight={activitySearchQuery} />
                               </p>
                             </div>
                             {session?.user?.role === 'ADMIN' && (
@@ -720,6 +1063,16 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           </div>
                         ))
                       })()}
+                    </div>
+                  )}
+
+                  {hasMoreLogs && (
+                    <div ref={lastLogElementRef} className="py-4 flex justify-center mt-2">
+                      {isLoadingMore ? (
+                        <Loader2 className="w-6 h-6 animate-spin text-[#C7F33C]" />
+                      ) : (
+                        <span className="text-sm text-slate-400">Scroll for more</span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -786,7 +1139,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                     </div>
                                     <div className="flex flex-col">
                                       <span className="text-sm font-semibold text-slate-100">{tm.name || 'Unknown'}</span>
-                                      <span className="text-xs text-slate-500">{isRowOwner ? 'Owner' : 'Member'}</span>
+                                      <span className="text-xs text-slate-300">{isRowOwner ? 'Owner' : 'Member'}</span>
                                     </div>
                                   </div>
                                   
@@ -849,38 +1202,14 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               <NotesTab deal={deal} />
             )}
 
-            {['document', 'images', 'files'].includes(activeTab) && (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-4">
-                <div className="p-4 bg-[#3A3B3C] rounded-full">
-                  {(() => {
-                    const Icon = IconMap[rightMenus.find(m => m.key.endsWith(`.${activeTab}`))?.iconName || 'Building2'];
-                    return <Icon className="w-8 h-8" />;
-                  })()}
-                </div>
-                <h3 className="text-lg font-bold text-slate-100 capitalize">{activeTab}</h3>
-                <p className="text-slate-500 max-w-sm">
-                  {activeTab} management will be implemented here. Currently in development.
-                </p>
-              </div>
+            {['sharedMedia'].includes(activeTab) && (
+              <SharedMediaTab deal={deal} activityLogs={localActivityLogs} onImageClick={setPreviewImage} />
             )}
           </div>
 
           {/* Sticky Footer for Activity Tab */}
           {activeTab === 'activity' && (
             <div className="p-4 bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative">
-              
-              {/* Chat Tools */}
-              <div className="flex items-center gap-2 px-1">
-                {canEditDueDate && (
-                  <button 
-                    onClick={() => setShowCalendar(!showCalendar)}
-                    title="Set Due Date"
-                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${(pendingDueDate && pendingDueDate !== 'REMOVE') || (!pendingDueDate && deal.dueDate) ? 'bg-[#C7F33C] text-black' : 'hover:bg-[#3A3B3C] text-slate-100'}`}
-                  >
-                    <BellRing className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
 
               {/* Mini Calendar Popup */}
               {canEditDueDate && showCalendar && (
@@ -969,13 +1298,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 </div>
               )}
 
-              <div className="flex gap-3 bg-[#3A3B3C] p-2 rounded-2xl border border-[#4E4F50] transition-">
+              <div {...getRootProps()} className={`flex gap-3 bg-[#3A3B3C] p-2 rounded-2xl border transition-colors ${isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
+                <input {...getInputProps()} />
                 <div className="w-10 h-10 rounded-full bg-[#4E4F50] shrink-0 overflow-hidden mt-1 ml-1">
                   <img src={session?.user?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${session?.user?.name || session?.user?.email || "User"}`} alt="Avatar" className="w-full h-full object-cover" />
                 </div>
                 <div className="flex-1 flex flex-col">
-                  {pendingDueDate && (
-                    <div className="px-2 pt-1 pb-2">
+                  {/* Previews and Pending Due Date */}
+                  <div className="px-2 pt-1 pb-1 flex flex-wrap gap-2">
+                    {pendingDueDate && (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-black text-[#d4ff3a]">
                         <BellRing className="w-3 h-3" />
                         {pendingDueDate === 'REMOVE' ? 'Remove Due Date' : `Selected Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(pendingDueDate)}`}
@@ -983,23 +1314,62 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           <X className="w-3 h-3" />
                         </button>
                       </span>
-                    </div>
-                  )}
+                    )}
+                    {pendingAttachments.map((file, idx) => {
+                       const isImg = file.type.startsWith('image/');
+                       const objectUrl = isImg ? URL.createObjectURL(file) : null;
+                       return (
+                         <div key={idx} className="relative group/att rounded-lg overflow-hidden border border-[#4E4F50] bg-[#252728] flex items-center justify-center">
+                           {isImg && objectUrl ? (
+                             <img src={objectUrl} alt="preview" className="h-12 w-12 object-cover" />
+                           ) : (
+                             <div className="h-12 w-12 flex items-center justify-center text-slate-400">
+                               <Paperclip className="w-4 h-4" />
+                             </div>
+                           )}
+                           <button 
+                             onClick={() => setPendingAttachments(prev => prev.filter((_, i) => i !== idx))} 
+                             className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/att:opacity-100 transition-opacity scale-75 hover:scale-100 shadow-lg"
+                           >
+                             <X className="w-3 h-3" />
+                           </button>
+                         </div>
+                       );
+                    })}
+                  </div>
+                  
                   <textarea 
                     ref={inputRef}
                     value={newLog}
                     onChange={e => setNewLog(e.target.value)}
-                    placeholder="Write an update..." 
+                    placeholder={isDragActive ? "Drop files here..." : "Write an update..."}
                     className="w-full bg-transparent border-none rounded-xl text-white px-2 py-2 text-sm min-h-[40px] focus:outline-none resize-none custom-scrollbar"
                     rows={newLog.split('\n').length > 1 ? Math.min(newLog.split('\n').length, 12) : 1}
                   />
-                  <div className="flex justify-end mt-2 pr-1 pb-1">
+                  
+                  <div className="flex justify-between items-center mt-2 pr-1 pb-1">
+                    <div className="flex items-center gap-1">
+                      {session?.user?.id && (
+                        <ChatAttachmentButton 
+                          onFileSelect={(files) => setPendingAttachments(prev => [...prev, ...files])}
+                        />
+                      )}
+                      {canEditDueDate && (
+                        <button 
+                          onClick={() => setShowCalendar(!showCalendar)}
+                          title="Set Due Date"
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ml-1 ${(pendingDueDate && pendingDueDate !== 'REMOVE') || (!pendingDueDate && deal.dueDate) ? 'bg-[#C7F33C] text-black' : 'hover:bg-[#3A3B3C] text-slate-100'}`}
+                        >
+                          <BellRing className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                     <button 
                       onClick={handleAddLog}
-                      disabled={isSubmittingLog || !newLog.trim()}
+                      disabled={isSubmittingLog || (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate)}
                       className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-1.5 rounded-full text-xs font-bold hover:bg-[#b0d635] transition-colors disabled:opacity-50 "
                     >
-                      <Send className="w-3 h-3" />
+                      {isSubmittingLog ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                       {isSubmittingLog ? "Posting..." : "Post"}
                     </button>
                   </div>
@@ -1009,7 +1379,29 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           )}
 
         </div>
+        </div>
       </div>
+      
+      {/* Lightbox Overlay */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center p-4"
+          onClick={() => setPreviewImage(null)}
+        >
+          <button 
+            className="absolute top-6 right-6 p-2 rounded-full bg-[#1C1C1D]/50 text-white hover:bg-[#C7F33C] hover:text-black transition-colors"
+            onClick={() => setPreviewImage(null)}
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img 
+            src={previewImage} 
+            className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+            onClick={e => e.stopPropagation()} 
+            alt="Preview"
+          />
+        </div>
+      )}
     </>
   );
 }

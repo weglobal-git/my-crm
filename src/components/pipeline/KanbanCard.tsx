@@ -2,9 +2,10 @@
 import { useState, useEffect } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BellRing } from "lucide-react";
+import { BellRing, CircleDollarSign, Wrench, Handshake } from "lucide-react";
 import { Opportunity, Company, User, Tag, OpportunityTag } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
+import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
@@ -155,8 +156,8 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
 
 
       {/* Top row: Avatar, Name, Company, Arrow/Bell */}
-      <div className="flex justify-between items-start">
-        <div className="flex items-center gap-2 pr-2">
+      <div className="flex justify-between items-start gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="relative flex-shrink-0">
             <div 
               onClick={(e) => { 
@@ -166,7 +167,7 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
               className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer transition-all relative ${highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}
             >
               <img 
-                src={deal.owner.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
+                src={deal.owner.image ? getOptimizedCloudinaryUrl(deal.owner.image, 100) : `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
                 alt={contactName}
                 className="w-full h-full object-cover" 
               />
@@ -183,10 +184,30 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
                 {deal.teamMembers.length}
               </div>
             )}
+            
+            <div className={`absolute -bottom-1 -left-1 w-6 h-6 rounded-full flex items-center justify-center z-20 ${highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}>
+              {deal.type === 'SALES_DEAL' && (
+                <div className={`w-full h-full rounded-full flex items-center justify-center ${highlight ? 'bg-[#C7F33C] text-slate-800' : 'bg-[#C7F33C] text-black'}`}>
+                  <CircleDollarSign className="w-5.5 h-5.5" />
+                </div>
+              )}
+              {deal.type === 'INTERNAL_TASK' && (
+                <div className={`w-full h-full rounded-full flex items-center justify-center ${highlight ? 'bg-[#C7F33C] text-slate-800' : 'bg-slate-700 text-slate-300'}`}>
+                  <Wrench className="w-5.5 h-5.5" />
+                </div>
+              )}
+              {deal.type === 'PARTNERSHIP' && (
+                <div className={`w-full h-full rounded-full flex items-center justify-center ${highlight ? 'bg-[#C7F33C] text-slate-800' : 'bg-indigo-500 text-white'}`}>
+                  <Handshake className="w-5.5 h-5.5" />
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex flex-col">
-            <div className={`font-semibold text-[13px] leading-tight line-clamp-2 ${highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
-            <div className={`flex items-center text-[11px] mt-1 ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>
+          <div className="flex flex-col flex-1 min-w-0 pr-1 pl-1">
+            <div className="flex items-center gap-1.5 mb-1">
+              <div className={`font-semibold text-[13px] leading-tight truncate ${highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
+            </div>
+            <div className={`flex items-center text-[11px] truncate ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>
               {contactName}
             </div>
           </div>
@@ -228,7 +249,7 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
                 <div className="flex items-start gap-2 px-2">
                   <div className={`w-5 h-5 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${highlight ? 'bg-white/40' : 'bg-[#4E4F50]'}`}>
                     {latestLog.user?.image ? (
-                      <img src={latestLog.user.image} alt={latestLog.user.name || ''} className="w-full h-full object-cover" />
+                      <img src={getOptimizedCloudinaryUrl(latestLog.user.image, 100)} alt={latestLog.user.name || ''} className="w-full h-full object-cover" />
                     ) : (
                       <span className={`text-[9px] font-medium ${highlight ? 'text-slate-700' : 'text-slate-300'}`}>
                         {latestLog.user?.name?.charAt(0).toUpperCase() || 'U'}

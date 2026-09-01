@@ -1,7 +1,7 @@
 import { getPermissionMatrix, syncMenuRegistry } from "@/lib/actions/permission";
 import { PermissionMatrix } from "@/components/system/PermissionMatrix";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 
 export default async function PermissionsPage() {
@@ -22,7 +22,7 @@ export default async function PermissionsPage() {
     );
   }
 
-  await syncMenuRegistry();
+  await syncMenuRegistry(false);
   const { departments: permDepts, menus } = await getPermissionMatrix();
 
   return (

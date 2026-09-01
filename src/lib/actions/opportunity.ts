@@ -1,9 +1,106 @@
 "use server";
 
 import prisma from "@/lib/prisma";
-import { OpportunityStatus, Prisma } from "@prisma/client";
+import { OpportunityStatus, Prisma, OpportunityType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
+import { v2 as cloudinary } from "cloudinary";
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 import { pusherServer } from "@/lib/pusher";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+
+export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) throw new Error("Unauthorized");
+  const { id: userId, role, department } = session.user as { id: string; role: string; department?: unknown };
+
+  const whereClause: Prisma.OpportunityWhereInput = {
+    status: tab === 'completed' 
+      ? { in: ["WON", "LOST", "COMPLETED", "CANCELLED"] } 
+      : "OPEN"
+  };
+
+  if (role === "GENERAL") {
+    whereClause.OR = [
+      { ownerId: userId },
+      { teamMembers: { some: { id: userId } } }
+    ];
+  } else if (role === "MANAGER") {
+    if (department) {
+      whereClause.OR = [
+        { owner: { departments: { some: { name: department } } } },
+        { teamMembers: { some: { departments: { some: { name: department } } } } }
+      ];
+    } else {
+      whereClause.OR = [
+        { ownerId: userId },
+        { teamMembers: { some: { id: userId } } }
+      ];
+    }
+  }
+
+  if (searchQuery) {
+    whereClause.AND = [
+      {
+        OR: [
+          { topic: { contains: searchQuery, mode: 'insensitive' } },
+          { company: { name: { contains: searchQuery, mode: 'insensitive' } } }
+        ]
+      }
+    ];
+  }
+
+  return await prisma.opportunity.findMany({
+    where: whereClause,
+    select: {
+      id: true,
+      topic: true,
+      type: true,
+      status: true,
+      value: true,
+      currency: true,
+      dueDate: true,
+      goodsReadyDate: true,
+      goodsLoadingDate: true,
+      pipelineStageId: true,
+      ownerId: true,
+      closedAt: true,
+      oemProgress: true,
+      lossReason: true,
+      reserveId: true,
+      invoiceId: true,
+      createdAt: true,
+      updatedAt: true,
+      company: { select: { id: true, name: true } },
+      owner: { select: { id: true, name: true, email: true, image: true } },
+      teamMembers: { select: { id: true, name: true, image: true } },
+      tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
+      activityLogs: {
+        where: { 
+          parentId: null,
+          type: 'COMMENT',
+          NOT: { content: { startsWith: '[DUE DATE:' } }
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: {
+          id: true,
+          content: true,
+          type: true,
+          createdAt: true,
+          user: { select: { name: true, image: true } }
+        }
+      }
+    },
+    orderBy: tab === 'completed' ? { closedAt: 'desc' } : { updatedAt: 'desc' },
+    take: tab === 'completed' ? 20 : undefined,
+  });
+}
 
 async function notifyPipelineUpdate() {
   try {
@@ -11,6 +108,39 @@ async function notifyPipelineUpdate() {
   } catch (e) {
     console.error("Pusher trigger error:", e);
   }
+}
+
+export async function createOpportunity(data: {
+  topic: string;
+  type?: OpportunityType;
+  companyId?: string;
+  ownerId: string;
+  pipelineStageId: string;
+}) {
+  const result = await prisma.opportunity.create({
+    data: {
+      topic: data.topic,
+      type: data.type || "SALES_DEAL",
+      companyId: data.companyId || null,
+      ownerId: data.ownerId,
+      pipelineStageId: data.pipelineStageId,
+      status: "OPEN"
+    }
+  });
+
+  const typeLabel = data.type === 'INTERNAL_TASK' ? 'Internal Task' : (data.type === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
+  
+  await prisma.activityLog.create({
+    data: {
+      opportunityId: result.id,
+      userId: data.ownerId,
+      type: "SYSTEM_UPDATE",
+      content: `Created this opportunity as a ${typeLabel}.`
+    }
+  });
+  await notifyPipelineUpdate();
+  revalidatePath('/pipeline');
+  return result;
 }
 
 export async function moveOpportunity(
@@ -42,10 +172,20 @@ export async function moveOpportunity(
   }
 
   // 2. Moving to End (e.g. COMPLETED, WON, LOST, CANCELLED)
-  if (newStatus !== "OPEN") {
-    // Business Rule: Cannot end the opportunity without specifying the goods loading date
-    if (!opportunity.goodsLoadingDate) {
-      throw new Error("Cannot end the project without specifying the goods loading date (วันโหลดสินค้า).");
+  if (newStatus === "WON") {
+    if (opportunity.type === "SALES_DEAL") {
+      if (
+        opportunity.value === null || 
+        !opportunity.currency || 
+        !opportunity.goodsLoadingDate || 
+        !opportunity.invoiceId
+      ) {
+        throw new Error("Cannot mark as Won without specifying Value, Currency, Goods Loading Date, and Invoice Number.");
+      }
+    }
+  } else if (newStatus === "LOST") {
+    if (!opportunity.lossReason) {
+      throw new Error("Cannot mark as Lost without specifying a Loss Reason.");
     }
   }
 
@@ -114,9 +254,14 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
   return result;
 }
 
-export async function getOpportunityActivityLogs(opportunityId: string) {
-  return await prisma.activityLog.findMany({
-    where: { opportunityId },
+export async function getOpportunityActivityLogs(opportunityId: string, limit = 10, cursor?: string) {
+  const data = await prisma.activityLog.findMany({
+    where: { 
+      opportunityId,
+      parentId: null // Only fetch parent comments for pagination
+    },
+    take: limit + 1, // Fetch one extra to check if there are more
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // Skip the cursor itself
     include: {
       user: true,
       replies: {
@@ -126,6 +271,14 @@ export async function getOpportunityActivityLogs(opportunityId: string) {
     },
     orderBy: { createdAt: 'desc' }
   });
+
+  let nextCursor: string | undefined = undefined;
+  if (data.length > limit) {
+    const nextItem = data.pop(); // Remove the extra item
+    nextCursor = nextItem?.id;
+  }
+
+  return { data, nextCursor };
 }
 
 export async function addActivityLog(opportunityId: string, content: string, userId: string, parentId?: string) {
@@ -264,6 +417,32 @@ export async function deleteActivityLog(logId: string, userId: string) {
     throw new Error("Unauthorized to delete this log.");
   }
 
+  // Find any attachments in this log
+  const attachmentUrls: string[] = [];
+  const regex = /\[ATTACHMENT:([^|]+)\|[^\]]+\]/g;
+  let match;
+  while ((match = regex.exec(log.content)) !== null) {
+    attachmentUrls.push(match[1]);
+  }
+
+  if (attachmentUrls.length > 0) {
+    const attachments = await prisma.attachment.findMany({
+      where: { cloudinaryUrl: { in: attachmentUrls } }
+    });
+
+    for (const att of attachments) {
+      if (att.cloudinaryPublicId) {
+        const resourceType = att.fileType.startsWith('image/') ? 'image' : 'raw';
+        try {
+          await cloudinary.uploader.destroy(att.cloudinaryPublicId, { resource_type: resourceType });
+        } catch (e) {
+          console.error("Failed to delete from Cloudinary:", e);
+        }
+      }
+      await prisma.attachment.delete({ where: { id: att.id } });
+    }
+  }
+
   await prisma.activityLog.delete({
     where: { id: logId }
   });
@@ -295,6 +474,15 @@ export async function removeTeamMember(opportunityId: string, userId: string) {
       }
     }
   });
+  revalidatePath('/pipeline');
+  return result;
+}
+
+export async function deleteOpportunity(id: string) {
+  const result = await prisma.opportunity.delete({
+    where: { id }
+  });
+  await notifyPipelineUpdate();
   revalidatePath('/pipeline');
   return result;
 }
