@@ -642,7 +642,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     // 1. Optimistic Update (Local Panel State)
     const userToAdd = users.find(u => u.id === userId);
     if (userToAdd) {
-      setLocalTeamMembers(prev => [...prev, userToAdd]);
+      setLocalTeamMembers(prev => prev.some(u => u.id === userToAdd.id) ? prev : [...prev, userToAdd]);
 
       // 2. Global Optimistic Update (Kanban Card)
       mutate(
@@ -651,7 +651,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           if (!currentData) return currentData;
           return currentData.map(opp => {
             if (opp.id === deal.id) {
-              return { ...opp, teamMembers: [...opp.teamMembers, userToAdd as unknown as User] };
+              const isExisting = opp.teamMembers.some(u => u.id === userToAdd.id);
+              if (!isExisting) {
+                return { ...opp, teamMembers: [...opp.teamMembers, userToAdd as unknown as User] };
+              }
             }
             return opp;
           });

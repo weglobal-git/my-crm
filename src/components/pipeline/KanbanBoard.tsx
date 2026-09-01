@@ -141,8 +141,39 @@ export function KanbanBoard({
     if (isCompletedTab) return;
     
     const channel = pusherClient.subscribe('pipeline');
-    channel.bind('pipeline-updated', () => {
-      mutate(); // Revalidate SWR cache
+    channel.bind('pipeline-updated', (data?: any) => {
+      if (data?.action === 'MEMBER_ADDED') {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.map(opp => {
+              if (opp.id === data.dealId) {
+                const isExisting = opp.teamMembers.some(u => u.id === data.user.id);
+                if (!isExisting) {
+                  return { ...opp, teamMembers: [...opp.teamMembers, data.user] };
+                }
+              }
+              return opp;
+            });
+          },
+          { revalidate: false }
+        );
+      } else if (data?.action === 'MEMBER_REMOVED') {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.map(opp => {
+              if (opp.id === data.dealId) {
+                return { ...opp, teamMembers: opp.teamMembers.filter(u => u.id !== data.userId) };
+              }
+              return opp;
+            });
+          },
+          { revalidate: false }
+        );
+      } else {
+        mutate(); // Revalidate SWR cache entirely for unknown actions
+      }
     });
 
     return () => {

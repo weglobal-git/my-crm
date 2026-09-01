@@ -103,9 +103,9 @@ export async function getPipelineOpportunities(tab: string, searchQuery?: string
   });
 }
 
-async function notifyPipelineUpdate() {
+async function notifyPipelineUpdate(payload?: any) {
   try {
-    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+    await pusherServer.trigger('pipeline', 'pipeline-updated', payload || {});
   } catch (e) {
     console.error("Pusher trigger error:", e);
   }
@@ -485,7 +485,8 @@ export async function addTeamMember(opportunityId: string, userId: string) {
     triggerNotification(userId, notification);
   }
 
-  notifyPipelineUpdate();
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, image: true, email: true, role: true } });
+  notifyPipelineUpdate({ action: 'MEMBER_ADDED', dealId: opportunityId, user });
   revalidatePath('/pipeline');
   return result;
 }
@@ -499,7 +500,7 @@ export async function removeTeamMember(opportunityId: string, userId: string) {
       }
     }
   });
-  notifyPipelineUpdate();
+  notifyPipelineUpdate({ action: 'MEMBER_REMOVED', dealId: opportunityId, userId });
   revalidatePath('/pipeline');
   return result;
 }
