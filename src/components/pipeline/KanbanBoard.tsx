@@ -26,7 +26,8 @@ import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { pusherClient } from "@/lib/pusher";
 import useSWR from "swr";
 
-const EditDealPanel = dynamic(() => import("./EditDealPanel").then(mod => mod.EditDealPanel), { ssr: false });
+const loadEditDealPanel = () => import("./EditDealPanel");
+const EditDealPanel = dynamic(() => loadEditDealPanel().then(mod => mod.EditDealPanel), { ssr: false });
 const WonLostModal = dynamic(() => import("./WonLostModal").then(mod => mod.WonLostModal), { ssr: false });
 
 const activeClass = "border-[#C7F33C] bg-[#252728] text-[#C7F33C]";
@@ -36,7 +37,7 @@ type PipelineUpdateEvent = {
   dealId?: string;
   user?: User;
   userId?: string;
-  activityLog?: OpportunityWithRelations['activityLogs'][number];
+  activityLog?: OpportunityWithRelations['activityLogs'][number] & { parentId?: string | null };
   logId?: string;
   nextLatestLog?: OpportunityWithRelations['activityLogs'][number] | null;
   deal?: OpportunityWithRelations;
@@ -140,6 +141,18 @@ export function KanbanBoard({
   const [panelOpen, setPanelOpen] = useState(false);
   const [closingTimeout, setClosingTimeout] = useState<NodeJS.Timeout | null>(null);
 
+  // Warm the largest interaction chunk while the browser is idle so the first
+  // card click does not have to wait for a network round-trip and JS parsing.
+  useEffect(() => {
+    const warmPanel = () => { void loadEditDealPanel(); };
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(warmPanel, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timer = setTimeout(warmPanel, 500);
+    return () => clearTimeout(timer);
+  }, []);
+
   const handleOpenPanel = useCallback((deal: OpportunityWithRelations, tab: string) => {
     if (closingTimeout) clearTimeout(closingTimeout);
     setActivePanelDeal({ deal, tab });
@@ -201,7 +214,14 @@ export function KanbanBoard({
           },
           { revalidate: false }
         );
-      } else if (data?.action === 'ACTIVITY_ADDED' && data.dealId && data.activityLog) {
+      } else if (
+        data?.action === 'ACTIVITY_ADDED' &&
+        data.dealId &&
+        data.activityLog &&
+        !data.activityLog.parentId &&
+        data.activityLog.type === 'COMMENT' &&
+        !data.activityLog.content.startsWith('[DUE DATE:')
+      ) {
         const addedActivityLog = data.activityLog;
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {

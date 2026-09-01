@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+"use client";
+
+import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { format } from "date-fns";
 import { Search, Pin, Send, Trash2, Loader2, StickyNote } from "lucide-react";
@@ -6,6 +8,8 @@ import { getNotes, createNote, deleteNote, togglePinNote } from "@/lib/actions/n
 import { OpportunityWithRelations } from "./KanbanCard";
 import { useDialog } from "@/providers/DialogProvider";
 import { HighlightText } from "@/components/ui/HighlightText";
+import useSWR from "swr";
+import { pusherClient } from "@/lib/pusher";
 
 type NoteItem = {
   id: string;
@@ -19,37 +23,62 @@ export function NotesTab({ deal }: { deal: OpportunityWithRelations }) {
   const { data: session } = useSession();
   const { toast } = useDialog();
   
-  const [notes, setNotes] = useState<NoteItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { data: notes = [], mutate: mutateNotes, isLoading } = useSWR<NoteItem[]>(
+    ['deal-notes', deal.id],
+    () => getNotes(deal.id),
+    { revalidateOnFocus: true, revalidateOnReconnect: true, dedupingInterval: 5_000 },
+  );
   const [searchQuery, setSearchQuery] = useState("");
   
   const [newNote, setNewNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const fetchNotes = useCallback(async () => {
-    try {
-      const data = await getNotes(deal.id);
-      setNotes(data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [deal.id]);
-
   useEffect(() => {
-    fetchNotes();
-  }, [fetchNotes]);
+    if (!session?.user?.id) return;
+    const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
+    const handleNoteUpdate = (event?: { action?: string; dealId?: string; noteId?: string; note?: NoteItem }) => {
+      if (event?.dealId !== deal.id || !event.action?.startsWith('NOTE_')) return;
+      mutateNotes(current => {
+        const existing = current || [];
+        if (event.action === 'NOTE_DELETED' && event.noteId) {
+          return existing.filter(note => note.id !== event.noteId);
+        }
+        if (event.note) {
+          return [event.note, ...existing.filter(note => note.id !== event.note?.id)]
+            .sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        }
+        return existing;
+      }, { revalidate: false });
+    };
+    channel.bind('pipeline-updated', handleNoteUpdate);
+    return () => { channel.unbind('pipeline-updated', handleNoteUpdate); };
+  }, [deal.id, mutateNotes, session?.user?.id]);
 
   const handleCreateNote = async () => {
     if (!newNote.trim()) return;
+    const content = newNote.trim();
+    const temporaryId = `temp-note-${Date.now()}`;
+    const optimisticNote: NoteItem = {
+      id: temporaryId,
+      content,
+      isPinned: false,
+      createdAt: new Date(),
+      author: {
+        name: session?.user?.name || null,
+        image: session?.user?.image || null,
+        email: session?.user?.email || null,
+      },
+    };
+    await mutateNotes(current => [optimisticNote, ...(current || [])], { revalidate: false });
+    setNewNote("");
     setIsSubmitting(true);
     try {
-      await createNote(deal.id, newNote);
-      setNewNote("");
-      fetchNotes();
+      const persistedNote = await createNote(deal.id, content);
+      await mutateNotes(current => [persistedNote, ...(current || []).filter(note => note.id !== temporaryId && note.id !== persistedNote.id)], { revalidate: false });
       toast({ title: "Note added", type: "success" });
     } catch {
+      setNewNote(content);
+      await mutateNotes(current => (current || []).filter(note => note.id !== temporaryId), { revalidate: false });
       toast({ title: "Failed to add note", type: "error" });
     } finally {
       setIsSubmitting(false);
@@ -57,22 +86,27 @@ export function NotesTab({ deal }: { deal: OpportunityWithRelations }) {
   };
 
   const handleDelete = async (id: string) => {
+    const previousNotes = notes;
+    await mutateNotes(current => (current || []).filter(note => note.id !== id), { revalidate: false });
     try {
       await deleteNote(id);
-      setNotes(notes.filter(n => n.id !== id));
       toast({ title: "Note deleted", type: "success" });
     } catch {
+      await mutateNotes(previousNotes, { revalidate: false });
       toast({ title: "Failed to delete", type: "error" });
     }
   };
 
   const handleTogglePin = async (id: string, isPinned: boolean) => {
+    const previousNotes = notes;
     try {
-      setNotes(notes.map(n => n.id === id ? { ...n, isPinned: !isPinned } : n));
+      await mutateNotes(current => (current || [])
+        .map(note => note.id === id ? { ...note, isPinned: !isPinned } : note)
+        .sort((a, b) => Number(b.isPinned) - Number(a.isPinned) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), { revalidate: false });
       await togglePinNote(id, !isPinned);
     } catch {
       toast({ title: "Failed to pin", type: "error" });
-      fetchNotes(); // revert
+      await mutateNotes(previousNotes, { revalidate: false });
     }
   };
 

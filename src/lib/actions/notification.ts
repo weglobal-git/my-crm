@@ -6,6 +6,7 @@ import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
 import { pusherServer } from "@/lib/pusher";
+import { notifyPrivatePipelineUpdate, requireOpportunityAccess } from "@/lib/pipeline-security";
 
 // Get user's notifications
 export async function getMyNotifications() {
@@ -38,6 +39,7 @@ export async function triggerNotification(userId: string, notification: unknown)
 export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("Unauthorized");
+  await requireOpportunityAccess(dealId, { ownerOrAdmin: true });
 
   const deal = await prisma.opportunity.findUnique({
     where: { id: dealId }
@@ -67,6 +69,7 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
 export async function requestTeamInvite(dealId: string, userId: string) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("Unauthorized");
+  await requireOpportunityAccess(dealId);
 
   const deal = await prisma.opportunity.findUnique({
     where: { id: dealId },
@@ -108,47 +111,56 @@ export async function respondToNotification(notificationId: string, accept: bool
   if (!['DEAL_TRANSFER_REQUEST', 'TEAM_INVITE_REQUEST'].includes(notification.type) || !notification.referenceId) {
     throw new Error("Invalid notification type");
   }
+  if (notification.status !== 'PENDING') throw new Error("Notification already handled");
 
-  // Update notification status
-  await prisma.notification.update({
-    where: { id: notificationId },
-    data: { status: accept ? 'ACCEPTED' : 'REJECTED' }
+  const sender = notification.senderId
+    ? await prisma.user.findUnique({ where: { id: notification.senderId }, select: { name: true } })
+    : null;
+  const previousDeal = await prisma.opportunity.findUnique({
+    where: { id: notification.referenceId },
+    select: { ownerId: true },
   });
+  if (!previousDeal) throw new Error("Deal not found");
 
-  // If accepted, change the deal owner or add to team
-  if (accept) {
+  await prisma.$transaction(async tx => {
+    const claimed = await tx.notification.updateMany({
+      where: { id: notificationId, recipientId: session.user.id, status: 'PENDING' },
+      data: { status: accept ? 'ACCEPTED' : 'REJECTED' },
+    });
+    if (claimed.count !== 1) throw new Error("Notification already handled");
+    if (!accept) return;
+
     if (notification.type === 'DEAL_TRANSFER_REQUEST') {
-      await prisma.opportunity.update({
-        where: { id: notification.referenceId },
-        data: { ownerId: session.user.id }
+      await tx.opportunity.update({
+        where: { id: notification.referenceId! },
+        data: { ownerId: session.user.id },
       });
-      
-      const sender = await prisma.user.findUnique({ where: { id: notification.senderId || '' } });
-      await prisma.activityLog.create({
+      await tx.activityLog.create({
         data: {
           content: `Ownership transferred from ${sender?.name || 'Unknown'} to ${session.user.name || 'Unknown'}`,
-          type: 'SYSTEM_UPDATE',
-          opportunityId: notification.referenceId,
-          userId: session.user.id
-        }
+          type: 'SYSTEM_UPDATE', opportunityId: notification.referenceId!, userId: session.user.id,
+        },
       });
-    } else if (notification.type === 'TEAM_INVITE_REQUEST') {
-      await prisma.opportunity.update({
-        where: { id: notification.referenceId },
-        data: {
-          teamMembers: { connect: { id: session.user.id } }
-        }
+    } else {
+      await tx.opportunity.update({
+        where: { id: notification.referenceId! },
+        data: { teamMembers: { connect: { id: session.user.id } } },
       });
-      
-      await prisma.activityLog.create({
+      await tx.activityLog.create({
         data: {
           content: `${session.user.name || 'Unknown'} joined the team`,
-          type: 'SYSTEM_UPDATE',
-          opportunityId: notification.referenceId,
-          userId: session.user.id
-        }
+          type: 'SYSTEM_UPDATE', opportunityId: notification.referenceId!, userId: session.user.id,
+        },
       });
     }
+  });
+
+  if (accept) {
+    await notifyPrivatePipelineUpdate(
+      notification.referenceId,
+      { action: 'RECONCILE_OPPORTUNITY', dealId: notification.referenceId },
+      [previousDeal.ownerId, session.user.id],
+    );
   }
 
   revalidatePath('/pipeline');

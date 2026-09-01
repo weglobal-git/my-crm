@@ -23,6 +23,13 @@ import { SharedMediaTab } from "./SharedMediaTab";
 import { ChatAttachmentButton } from "./ChatAttachmentButton";
 import { HighlightText } from "@/components/ui/HighlightText";
 import { pusherClient } from "@/lib/pusher";
+import {
+  applyActivityEvent,
+  replaceOptimisticActivity,
+  type ActivityLogPage,
+  type ActivityLogWithRelations,
+  type ActivityUpdateEvent,
+} from "@/lib/pipeline-activity-cache";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
@@ -135,16 +142,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
   );
 }
 
-import { ActivityLog } from "@prisma/client";
-
-type ActivityLogWithRelations = ActivityLog & {
-  user: User;
-  replies?: ActivityLogWithRelations[];
-};
-
-type ActivityLogResponse = { data: ActivityLogWithRelations[], nextCursor?: string };
-
-function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, mutateLogs?: (data: (currentPages?: ActivityLogResponse[]) => ActivityLogResponse[] | undefined, opts?: { revalidate: boolean }) => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string) => void, searchQuery?: string }) {
+function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, mutateLogs?: (data: (currentPages?: ActivityLogPage[]) => ActivityLogPage[] | undefined, opts?: { revalidate: boolean }) => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string) => void, searchQuery?: string }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(log.content);
   const [isReplying, setIsReplying] = useState(false);
@@ -182,7 +180,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     
     if (mutateLogs) {
       mutateLogs(
-        (currentPages?: ActivityLogResponse[]) => {
+        (currentPages?: ActivityLogPage[]) => {
           if (!currentPages) return currentPages;
           return currentPages.map((page) => ({
             ...page,
@@ -213,7 +211,15 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
 
     setIsEditing(false);
     setShowMenu(false);
-    await editActivityLog(log.id, editContent);
+    try {
+      const persistedLog = await editActivityLog(log.id, editContent) as ActivityLogWithRelations;
+      mutateLogs?.(
+        pages => applyActivityEvent(pages, { action: 'ACTIVITY_UPDATED', activityLog: persistedLog }),
+        { revalidate: false },
+      );
+    } catch {
+      refresh();
+    }
   };
 
   const handleReply = async () => {
@@ -235,7 +241,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
 
     if (mutateLogs) {
       mutateLogs(
-        (currentPages?: ActivityLogResponse[]) => {
+        (currentPages?: ActivityLogPage[]) => {
           if (!currentPages) return currentPages;
           return currentPages.map((page) => ({
             ...page,
@@ -251,15 +257,22 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     setIsReplying(false);
     setReplyContent("");
     setReplyingToUsername(null);
-    await addActivityLog(dealId, finalContent, log.id);
-    refresh();
+    try {
+      const persistedReply = await addActivityLog(dealId, finalContent, log.id) as ActivityLogWithRelations;
+      mutateLogs?.(
+        pages => replaceOptimisticActivity(pages, fakeLogId, persistedReply),
+        { revalidate: false },
+      );
+    } catch {
+      refresh();
+    }
   };
 
   const handleDelete = async () => {
     // Optimistic Update for Activity Panel only
     if (mutateLogs) {
       mutateLogs(
-        (currentPages?: ActivityLogResponse[]) => {
+        (currentPages?: ActivityLogPage[]) => {
           if (!currentPages) return currentPages;
           return currentPages.map((page) => ({
             ...page,
@@ -277,7 +290,11 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     // Doing so would empty the KanbanCard activity log, causing a "No activity yet" flicker 
     // until the Pusher event delivers the nextLatestLog a few ms later.
     
-    await deleteActivityLog(log.id);
+    try {
+      await deleteActivityLog(log.id);
+    } catch {
+      refresh();
+    }
   };
 
   return (
@@ -573,10 +590,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     if (!session?.user?.id) return;
     const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
     
-    const handleUpdate = (data?: { dealId?: string; action?: string }) => {
+    const handleUpdate = (data?: ActivityUpdateEvent) => {
       if (data?.dealId === deal.id && data?.action?.startsWith('ACTIVITY_')) {
-        // Debounce or directly reload activity logs for this deal when another user modifies them
-        loadActivityLogs();
+        loadActivityLogs(pages => applyActivityEvent(pages, data), { revalidate: false });
       }
     };
     
@@ -735,16 +751,25 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
       const finalLog = (currentNewLog.trim() + attachmentText).trim() || 'Updated deal';
 
+      let persistedLog: ActivityLogWithRelations | null = null;
       if (currentDueDate === 'REMOVE') {
         await updateDueDateWithLog(deal.id, null, finalLog);
       } else if (currentDueDate instanceof Date) {
         await updateDueDateWithLog(deal.id, currentDueDate, finalLog);
       } else {
-        await addActivityLog(deal.id, finalLog);
+        persistedLog = await addActivityLog(deal.id, finalLog) as ActivityLogWithRelations;
       }
-      
-      // 5. Revalidate with real data from server
-      loadActivityLogs();
+
+      if (persistedLog) {
+        loadActivityLogs(
+          pages => replaceOptimisticActivity(pages, fakeId, persistedLog as ActivityLogWithRelations),
+          { revalidate: false },
+        );
+      } else {
+        // A due-date action creates both a comment and a system record in one
+        // transaction, so reconcile that uncommon multi-record mutation once.
+        loadActivityLogs();
+      }
     } catch (e) {
       // Revert if error
       setNewLog(currentNewLog);
@@ -787,7 +812,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     if (!session?.user?.id) return;
     try {
       await deleteActivityLog(logId);
-      loadActivityLogs();
       // router.refresh(); removed for Optimistic UI
     } catch (e) {
       if (e instanceof Error) toast({ title: "Error", description: "Failed to delete log: " + e.message, type: "error" });

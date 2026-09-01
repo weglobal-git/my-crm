@@ -45,7 +45,7 @@ export async function createNote(opportunityId: string, content: string, color?:
       },
     });
 
-    await notifyPrivatePipelineUpdate(opportunityId, { action: 'NOTE_ADDED', dealId: opportunityId });
+    await notifyPrivatePipelineUpdate(opportunityId, { action: 'NOTE_ADDED', dealId: opportunityId, note });
 
     return note;
   } catch (error) {
@@ -83,9 +83,10 @@ export async function togglePinNote(noteId: string, isPinned: boolean) {
     const note = await prisma.note.update({
       where: { id: noteId },
       data: { isPinned },
+      include: { author: { select: { name: true, image: true, email: true } } },
     });
     
-    await notifyPrivatePipelineUpdate(existingNote.opportunityId, { action: 'NOTE_UPDATED', dealId: existingNote.opportunityId, noteId });
+    await notifyPrivatePipelineUpdate(existingNote.opportunityId, { action: 'NOTE_UPDATED', dealId: existingNote.opportunityId, noteId, note });
     
     return note;
   } catch (error) {

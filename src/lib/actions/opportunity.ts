@@ -238,7 +238,7 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate)
 
 export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string) {
   const { actor } = await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
-  const result = await prisma.$transaction(async (tx) => {
+  const { opp: result, activityLog, systemLog } = await prisma.$transaction(async (tx) => {
     const opp = await tx.opportunity.update({
       where: { id: opportunityId },
       data: { dueDate }
@@ -254,7 +254,7 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     }
     
     // 1. Log to Activity (with special format for pill badge)
-    await tx.activityLog.create({
+    const activityLog = await tx.activityLog.create({
       data: {
         content: `[DUE DATE: ${formattedDate}]\nReason: ${reason}`,
         type: "COMMENT",
@@ -264,7 +264,7 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     });
 
     // 2. Log to System (text only)
-    await tx.activityLog.create({
+    const systemLog = await tx.activityLog.create({
       data: {
         content: `Due Date changed to ${formattedDate}. Reason: ${reason}`,
         type: "SYSTEM_UPDATE",
@@ -273,7 +273,12 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
       }
     });
     
-    return opp;
+    return { opp, activityLog, systemLog };
+  });
+
+  const logsWithUsers = await prisma.activityLog.findMany({
+    where: { id: { in: [activityLog.id, systemLog.id] } },
+    include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } },
   });
   
   const fullDeal = await prisma.opportunity.findUnique({
@@ -281,6 +286,9 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     select: pipelineOpportunitySelect
   });
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+  await Promise.all(logsWithUsers.map(log =>
+    notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: log })
+  ));
   revalidatePath('/pipeline');
   return result;
 }
@@ -315,14 +323,26 @@ export async function getOpportunityActivityLogs(opportunityId: string, limit = 
 
 export async function addActivityLog(opportunityId: string, content: string, parentId?: string) {
   const { actor } = await requireOpportunityAccess(opportunityId);
-  const result = await prisma.activityLog.create({
+  if (parentId) {
+    const parent = await prisma.activityLog.findFirst({
+      where: { id: parentId, opportunityId },
+      select: { id: true },
+    });
+    if (!parent) throw new Error("Reply target not found.");
+  }
+
+  const newLog = await prisma.activityLog.create({
     data: {
       content,
       opportunity: { connect: { id: opportunityId } },
       user: { connect: { id: actor.id } },
       type: "COMMENT",
       ...(parentId && { parent: { connect: { id: parentId } } })
-    }
+    },
+    include: {
+      user: true,
+      replies: { include: { user: true }, orderBy: { createdAt: 'asc' } },
+    },
   });
   
   // Notification logic
@@ -336,14 +356,15 @@ export async function addActivityLog(opportunityId: string, content: string, par
     const mentionedUsernames = Array.from(content.matchAll(/@([^\s<]+)/g)).map(m => m[1].toLowerCase());
     
     // 2. Find matching users in the DB
-    const allUsers = await prisma.user.findMany({ select: { id: true, name: true }});
     const mentionedUserIds = new Set<string>();
-    
-    allUsers.forEach(u => {
-      if (u.name && mentionedUsernames.includes(u.name.replace(/\s+/g, '').toLowerCase())) {
-        mentionedUserIds.add(u.id);
-      }
-    });
+    if (mentionedUsernames.length > 0) {
+      const allUsers = await prisma.user.findMany({ select: { id: true, name: true }});
+      allUsers.forEach(u => {
+        if (u.name && mentionedUsernames.includes(u.name.replace(/\s+/g, '').toLowerCase())) {
+          mentionedUserIds.add(u.id);
+        }
+      });
+    }
     
     mentionedUserIds.delete(actor.id); // don't notify self
 
@@ -355,49 +376,31 @@ export async function addActivityLog(opportunityId: string, content: string, par
     // Filter out people who are already getting mentioned so they don't get double notified
     const standardNotifyIds = new Set(Array.from(teamUserIds).filter(id => !mentionedUserIds.has(id)));
     
-    // 4. Send Mention Notifications
-    if (mentionedUserIds.size > 0) {
-      await prisma.notification.createMany({
-        data: Array.from(mentionedUserIds).map(recipientId => ({
-          type: "DEAL_COMMENT",
-          senderId: actor.id,
-          recipientId,
-          referenceId: deal.id,
-          title: "You were mentioned",
-          message: `Mentioned you in a comment on: ${deal.topic}`
-        }))
-      });
-    }
-
-    // 5. Send Standard Team Notifications
-    if (standardNotifyIds.size > 0) {
-      await prisma.notification.createMany({
-        data: Array.from(standardNotifyIds).map(recipientId => ({
-          type: "DEAL_COMMENT",
-          senderId: actor.id,
-          recipientId,
-          referenceId: deal.id,
-          title: "New Comment",
-          message: `Commented on deal: ${deal.topic}`
-        }))
-      });
+    const notificationInputs = [
+      ...Array.from(mentionedUserIds).map(recipientId => ({
+        type: "DEAL_COMMENT" as const, senderId: actor.id, recipientId,
+        referenceId: deal.id, title: "You were mentioned",
+        message: `Mentioned you in a comment on: ${deal.topic}`,
+      })),
+      ...Array.from(standardNotifyIds).map(recipientId => ({
+        type: "DEAL_COMMENT" as const, senderId: actor.id, recipientId,
+        referenceId: deal.id, title: "New Comment",
+        message: `Commented on deal: ${deal.topic}`,
+      })),
+    ];
+    if (notificationInputs.length > 0) {
+      const notifications = await prisma.$transaction(
+        notificationInputs.map(data => prisma.notification.create({ data, include: { sender: true } }))
+      );
+      await Promise.all(notifications.map(notification =>
+        triggerNotification(notification.recipientId, notification)
+      ));
     }
   }
 
-  const newLog = await prisma.activityLog.findUnique({
-    where: { id: result.id },
-    select: {
-      id: true,
-      content: true,
-      type: true,
-      createdAt: true,
-      user: { select: { name: true, image: true } }
-    }
-  });
-
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: newLog });
   revalidatePath('/pipeline');
-  return result;
+  return newLog;
 }
 
 export async function addSystemLog(opportunityId: string, content: string) {
@@ -408,9 +411,10 @@ export async function addSystemLog(opportunityId: string, content: string) {
       opportunity: { connect: { id: opportunityId } },
       user: { connect: { id: actor.id } },
       type: "SYSTEM_UPDATE"
-    }
+    },
+    include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } },
   });
-  await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId });
+  await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: result });
   revalidatePath('/pipeline');
   return result;
 }
@@ -440,13 +444,7 @@ export async function editActivityLog(logId: string, content: string) {
       content,
       isEdited: true
     },
-    select: {
-      id: true,
-      content: true,
-      type: true,
-      createdAt: true,
-      user: { select: { name: true, image: true } }
-    }
+    include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } }
   });
   await notifyPrivatePipelineUpdate(log.opportunityId, { action: 'ACTIVITY_UPDATED', dealId: log.opportunityId, activityLog: updatedLog });
   revalidatePath('/pipeline');
@@ -510,13 +508,7 @@ export async function deleteActivityLog(logId: string) {
       NOT: { content: { startsWith: '[DUE DATE:' } }
     },
     orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      content: true,
-      type: true,
-      createdAt: true,
-      user: { select: { name: true, image: true } }
-    }
+    include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } }
   });
 
   await notifyPrivatePipelineUpdate(log.opportunityId, { action: 'ACTIVITY_DELETED', dealId: log.opportunityId, logId, nextLatestLog });
