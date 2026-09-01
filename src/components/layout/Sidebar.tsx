@@ -5,10 +5,25 @@ import { usePathname } from "next/navigation";
 import { ArrowLeft, Headphones, Settings, LayoutDashboard } from "lucide-react";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
+import { useState, useRef } from "react";
 
 export function Sidebar() {
   const pathname = usePathname();
   const { visibleMainMenus, visibleSubMenus, isLoading } = usePermissions();
+
+  const [hoveredMenu, setHoveredMenu] = useState<string | null>(null);
+  const hoverTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  const handleMouseEnter = (key: string) => {
+    if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+    setHoveredMenu(key);
+  };
+
+  const handleMouseLeave = () => {
+    hoverTimeout.current = setTimeout(() => {
+      setHoveredMenu(null);
+    }, 150);
+  };
 
   if (isLoading) {
     return (
@@ -32,7 +47,12 @@ export function Sidebar() {
     const subs = visibleSubMenus(item.key);
     
     return (
-      <div key={item.key} className="relative group flex items-center justify-center w-full">
+      <div 
+        key={item.key} 
+        className="relative flex items-center justify-center w-full"
+        onMouseEnter={() => handleMouseEnter(item.key)}
+        onMouseLeave={handleMouseLeave}
+      >
         {/* Icon Container */}
         <Link
           href={subs.length > 0 && subs[0].href ? subs[0].href : "#"}
@@ -48,7 +68,7 @@ export function Sidebar() {
 
         {/* Hover Drawer for Sub-Menus */}
         {subs.length > 0 && (
-          <div className="fixed left-20 top-0 h-screen w-80 bg-[#252728] border-r border-[#1C1C1D] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-40 flex flex-col pt-8 pb-8 shadow-[4px_0_24px_rgba(0,0,0,0.2)] cursor-default">
+          <div className={`fixed left-20 top-0 h-screen w-80 bg-[#252728] border-r border-[#1C1C1D] transition-all duration-200 z-40 flex flex-col pt-8 pb-8 shadow-[4px_0_24px_rgba(0,0,0,0.2)] cursor-default ${hoveredMenu === item.key ? 'opacity-100 pointer-events-auto visible' : 'opacity-0 pointer-events-none invisible'}`}>
             {/* Header */}
             <div className="px-6 pb-6 border-b border-[#1C1C1D] mb-4 flex items-center gap-3">
               <button className="p-1.5 text-slate-400 hover:text-slate-100 transition-colors bg-[#3A3B3C] hover:bg-slate-600 rounded-lg">
@@ -77,6 +97,7 @@ export function Sidebar() {
                         ? "bg-[#C7F33C] border-transparent" 
                         : "hover:bg-[#3A3B3C] border-transparent hover:border-[#1C1C1D]"}
                     `}
+                    onClick={() => setHoveredMenu(null)}
                   >
                     <div className={`mt-0.5 p-1.5 rounded-lg transition-colors ${isSubActive ? 'bg-black text-[#C7F33C]' : 'text-slate-400 bg-[#1C1C1D] group-hover/item:bg-[#252728] group-hover/item:text-slate-200'}`}>
                        <SubIcon className="w-5 h-5" />

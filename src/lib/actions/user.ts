@@ -152,6 +152,9 @@ export async function updateUserDetails(userId: string, name: string, email: str
     throw new Error("This name is already used by another user.");
   }
 
+  const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+  const emailChanged = currentUser && currentUser.email !== email.toLowerCase();
+
   const user = await prisma.user.update({
     where: { id: userId },
     data: { 
@@ -160,6 +163,12 @@ export async function updateUserDetails(userId: string, name: string, email: str
     }
   });
   
+  if (emailChanged) {
+    // Unlink all OAuth accounts so the user must re-authenticate with the new email
+    await prisma.account.deleteMany({
+      where: { userId }
+    });
+  }
   
   revalidatePath("/system");
   return user;

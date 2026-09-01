@@ -13,6 +13,7 @@ cloudinary.config({
 import { pusherServer } from "@/lib/pusher";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { triggerNotification } from "@/lib/actions/notification";
 
 export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
   const session = await getServerSession(authOptions);
@@ -351,6 +352,7 @@ export async function addActivityLog(opportunityId: string, content: string, use
     }
   }
 
+  notifyPipelineUpdate();
   revalidatePath('/pipeline');
   return result;
 }
@@ -364,6 +366,7 @@ export async function addSystemLog(opportunityId: string, content: string, userI
       type: "SYSTEM_UPDATE"
     }
   });
+  notifyPipelineUpdate();
   revalidatePath('/pipeline');
   return result;
 }
@@ -394,6 +397,7 @@ export async function editActivityLog(logId: string, content: string, userId: st
       isEdited: true
     }
   });
+  notifyPipelineUpdate();
   revalidatePath('/pipeline');
   return result;
 }
@@ -446,6 +450,7 @@ export async function deleteActivityLog(logId: string, userId: string) {
   await prisma.activityLog.delete({
     where: { id: logId }
   });
+  notifyPipelineUpdate();
   revalidatePath('/pipeline');
   return { success: true };
 }
@@ -453,6 +458,8 @@ export async function deleteActivityLog(logId: string, userId: string) {
 // Reaction actions removed
 
 export async function addTeamMember(opportunityId: string, userId: string) {
+  const session = await getServerSession(authOptions);
+  
   const result = await prisma.opportunity.update({
     where: { id: opportunityId },
     data: {
@@ -461,6 +468,24 @@ export async function addTeamMember(opportunityId: string, userId: string) {
       }
     }
   });
+
+  // Create and send notification to the invited user
+  if (session?.user?.id && session.user.id !== userId) {
+    const notification = await prisma.notification.create({
+      data: {
+        type: "SYSTEM_ALERT",
+        senderId: session.user.id,
+        recipientId: userId,
+        referenceId: opportunityId,
+        title: "Added to Team",
+        message: `Added you to the team for deal: ${result.topic}`,
+      },
+      include: { sender: true }
+    });
+    triggerNotification(userId, notification);
+  }
+
+  notifyPipelineUpdate();
   revalidatePath('/pipeline');
   return result;
 }
@@ -474,6 +499,7 @@ export async function removeTeamMember(opportunityId: string, userId: string) {
       }
     }
   });
+  notifyPipelineUpdate();
   revalidatePath('/pipeline');
   return result;
 }

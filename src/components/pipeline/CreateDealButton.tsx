@@ -55,7 +55,6 @@ export function CreateDealButton({ stages, companies, currentUserId }: CreateDea
       setTopic("");
       setType("SALES_DEAL");
       setCompanyId("");
-      router.refresh();
     } catch (e: any) {
       toast({ title: "Failed to create", description: e.message, type: "error" });
     } finally {

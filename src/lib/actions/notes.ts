@@ -4,6 +4,8 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 
+import { pusherServer } from "@/lib/pusher";
+
 export async function getNotes(opportunityId: string) {
   try {
     const session = await getServerSession(authOptions);
@@ -51,6 +53,8 @@ export async function createNote(opportunityId: string, content: string, color?:
       },
     });
 
+    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+
     return note;
   } catch (error) {
     console.error("Failed to create note:", error);
@@ -74,6 +78,8 @@ export async function deleteNote(noteId: string) {
     }
 
     await prisma.note.delete({ where: { id: noteId } });
+    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+    
     return true;
   } catch (error) {
     console.error("Failed to delete note:", error);
@@ -90,6 +96,9 @@ export async function togglePinNote(noteId: string, isPinned: boolean) {
       where: { id: noteId },
       data: { isPinned },
     });
+    
+    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+    
     return note;
   } catch (error) {
     console.error("Failed to pin note:", error);

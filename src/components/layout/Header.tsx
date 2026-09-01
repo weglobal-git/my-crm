@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Bell, Search } from "lucide-react";
-import { useSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
 import { useEffect, useState, useRef } from "react";
 import { usePermissions } from "@/providers/PermissionProvider";
@@ -38,6 +38,9 @@ export function Header() {
   const [notifications, setNotifications] = useState<Awaited<ReturnType<typeof getMyNotifications>>>([]);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const notifDropdownRef = useRef<HTMLDivElement>(null);
+
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const profileDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (status === "authenticated" && session?.user?.id) {
@@ -87,6 +90,9 @@ export function Header() {
       }
       if (notifDropdownRef.current && !notifDropdownRef.current.contains(event.target as Node)) {
         setShowNotifDropdown(false);
+      }
+      if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
+        setShowProfileDropdown(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -294,25 +300,52 @@ export function Header() {
           {status === "loading" ? (
             <div className="w-11 h-11 rounded-full bg-[#3A3B3C] animate-pulse"></div>
           ) : session?.user ? (
-            <Link 
-              href="/profile"
-              title="Go to Profile"
-              className="relative w-11 h-11 rounded-full border-2 border-transparent overflow-hidden bg-[#3A3B3C] hover:border-[#C7F33C] transition-colors block"
-            >
-              {session.user.image ? (
-                <Image 
-                  src={session.user.image} 
-                  alt="Profile" 
-                  fill
-                  unoptimized
-                  className="object-cover"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-[#111111] text-white font-bold text-sm hover:text-[#d4ff3a] transition-colors">
-                  {session.user.name?.charAt(0).toUpperCase() || session.user.email?.charAt(0).toUpperCase() || "U"}
+            <div className="relative" ref={profileDropdownRef}>
+              <button 
+                onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                title="Profile Menu"
+                className="relative w-11 h-11 rounded-full border-2 border-transparent overflow-hidden bg-[#3A3B3C] hover:border-[#C7F33C] transition-colors block"
+              >
+                {session.user.image ? (
+                  <Image 
+                    src={session.user.image} 
+                    alt="Profile" 
+                    fill
+                    unoptimized
+                    className="object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-[#111111] text-white font-bold text-sm hover:text-[#d4ff3a] transition-colors">
+                    {session.user.name?.charAt(0).toUpperCase() || session.user.email?.charAt(0).toUpperCase() || "U"}
+                  </div>
+                )}
+              </button>
+
+              {showProfileDropdown && (
+                <div className="absolute top-full right-0 mt-3 w-48 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up py-2 shadow-lg">
+                  <div className="px-4 py-2 border-b border-[#4E4F50] mb-2">
+                    <p className="text-sm font-bold text-white truncate">{session.user.name}</p>
+                    <p className="text-xs text-slate-400 truncate">{session.user.email}</p>
+                  </div>
+                  <Link
+                    href="/profile"
+                    onClick={() => setShowProfileDropdown(false)}
+                    className="block px-4 py-2 text-sm text-slate-200 hover:bg-[#4E4F50] transition-colors"
+                  >
+                    My Profile
+                  </Link>
+                  <button
+                    onClick={() => {
+                      setShowProfileDropdown(false);
+                      signOut({ callbackUrl: "/" });
+                    }}
+                    className="w-full text-left block px-4 py-2 text-sm text-red-400 hover:bg-[#4E4F50] hover:text-red-300 transition-colors"
+                  >
+                    Sign Out
+                  </button>
                 </div>
               )}
-            </Link>
+            </div>
           ) : null}
         </div>
       </div>

@@ -460,7 +460,7 @@ export function KanbanBoard({
           onClose={() => setWonLostModal(null)}
           onSuccess={() => {
             setWonLostModal(null);
-            router.refresh();
+            mutate();
           }}
         />
       )}

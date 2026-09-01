@@ -21,17 +21,23 @@ export default withAuth(
     }
   },
   {
+    pages: {
+      signIn: "/",
+    },
     callbacks: {
-      authorized: ({ token }) => !!token
+      authorized: ({ req, token }) => {
+        const path = req.nextUrl.pathname;
+        if (path === "/" || path.startsWith("/dashboard/overview")) {
+          return true;
+        }
+        return !!token;
+      }
     }
   }
 )
 
 export const config = {
   matcher: [
-    "/system/:path*", 
-    "/pipeline/:path*", 
-    "/quotations/:path*", 
-    "/customers/:path*"
+    "/((?!api|_next/static|_next/image|favicon.ico).*)"
   ]
 }

@@ -578,7 +578,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       setPendingAttachments([]);
       setShowCalendar(false);
       loadActivityLogs();
-      router.refresh();
+      loadActivityLogs();
     } catch (e) {
       if (e instanceof Error) {
         toast({ title: "Error", description: "Failed to add log: " + e.message, type: "error" });
@@ -610,7 +610,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     try {
       await deleteActivityLog(logId, session.user.id);
       loadActivityLogs();
-      router.refresh();
+      // router.refresh(); removed for Optimistic UI
     } catch (e) {
       if (e instanceof Error) toast({ title: "Error", description: "Failed to delete log: " + e.message, type: "error" });
     }
@@ -627,7 +627,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         await addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`, session?.user?.id || 'SYSTEM');
       }
       toast({ title: "Success", description: "Transfer request sent successfully", type: "success" });
-      router.refresh();
+      // router.refresh(); removed for Optimistic UI
     } catch (e) {
       console.error(e);
       toast({ title: "Error", description: "Failed to transfer ownership", type: "error" });
@@ -639,8 +639,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const [isUpdatingTeam, setIsUpdatingTeam] = useState(false);
 
   const handleAddMember = async (userId: string) => {
-    setIsUpdatingTeam(true);
-    
     // Optimistic Update
     const userToAdd = users.find(u => u.id === userId);
     if (userToAdd) {
@@ -648,38 +646,36 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
 
     try {
-      await addTeamMember(deal.id, userId);
+      addTeamMember(deal.id, userId).catch((e) => {
+        setLocalTeamMembers(deal.teamMembers || []); // Revert
+        if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
+      });
       if (session?.user?.id && userToAdd) {
-        await addSystemLog(deal.id, `Invited ${userToAdd.name} to the team`, session.user.id);
+        addSystemLog(deal.id, `Invited ${userToAdd.name} to the team`, session.user.id).catch(console.error);
       }
-      router.refresh();
     } catch (e) {
       setLocalTeamMembers(deal.teamMembers || []); // Revert
       if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
-    } finally {
-      setIsUpdatingTeam(false);
     }
   };
 
   const handleRemoveMember = async (userId: string) => {
-    setIsUpdatingTeam(true);
-
     const userToRemove = localTeamMembers.find(u => u.id === userId) || deal.teamMembers.find(u => u.id === userId);
 
     // Optimistic Update
     setLocalTeamMembers(prev => prev.filter(u => u.id !== userId));
 
     try {
-      await removeTeamMember(deal.id, userId);
+      removeTeamMember(deal.id, userId).catch((e) => {
+        setLocalTeamMembers(deal.teamMembers || []); // Revert
+        if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
+      });
       if (session?.user?.id && userToRemove) {
-        await addSystemLog(deal.id, `Removed ${userToRemove.name} from the team`, session.user.id);
+        addSystemLog(deal.id, `Removed ${userToRemove.name} from the team`, session.user.id).catch(console.error);
       }
-      router.refresh();
     } catch (e) {
       setLocalTeamMembers(deal.teamMembers || []); // Revert
       if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
-    } finally {
-      setIsUpdatingTeam(false);
     }
   };
 
@@ -760,7 +756,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         await updateOpportunity(deal.id, { topic: newTopic });
                         await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`, session?.user?.id || '');
                         toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
-                        router.refresh();
+                        // router.refresh(); removed for Optimistic UI
                       } catch {
                         toast({ title: 'Error', description: 'Failed to update topic', type: 'error' });
                         setTopic(deal.topic || 'Untitled Deal');
@@ -803,7 +799,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       const newLabel = newType === 'INTERNAL_TASK' ? 'Internal Task' : (newType === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
                       await addSystemLog(deal.id, `Changed opportunity type from ${oldLabel} to ${newLabel}.`, session?.user?.id || '');
                       toast({ title: 'Success', description: 'Type updated', type: 'success' });
-                      router.refresh();
+                      // router.refresh(); removed for Optimistic UI
                     } catch {
                       toast({ title: 'Error', description: 'Failed to update type', type: 'error' });
                     }
@@ -843,7 +839,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         await deleteOpportunity(deal.id);
                         toast({ title: 'Deleted', description: 'Opportunity deleted permanently', type: 'success' });
                         onClose();
-                        router.refresh();
+                        // router.refresh(); removed for Optimistic UI
                       } catch {
                         toast({ title: 'Error', description: 'Failed to delete opportunity', type: 'error' });
                       }
