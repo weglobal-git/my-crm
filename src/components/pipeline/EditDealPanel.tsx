@@ -566,7 +566,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const getKey = (pageIndex: number, previousPageData: { data: ActivityLogWithRelations[], nextCursor?: string } | null) => {
     if (!isOpen) return null;
     if (previousPageData && !previousPageData.nextCursor) return null; // reached the end
-    return ['activity-logs', deal.id, previousPageData?.nextCursor ?? ''];
+    const typeFilter = activeTab === 'system' ? 'SYSTEM_UPDATE' : 'COMMENT';
+    return ['activity-logs', deal.id, typeFilter, previousPageData?.nextCursor ?? ''];
   };
 
   const {
@@ -577,8 +578,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     isValidating: isLoadingLogs
   } = useSWRInfinite<{ data: ActivityLogWithRelations[], nextCursor?: string }>(
     getKey,
-    async ([, id, cursor]: [string, string, string]) => {
-      const res = await getOpportunityActivityLogs(id, 10, cursor || undefined);
+    async ([, id, typeFilter, cursor]: [string, string, string, string]) => {
+      const res = await getOpportunityActivityLogs(id, 10, cursor || undefined, typeFilter as any);
       return res as { data: ActivityLogWithRelations[], nextCursor?: string };
     }
   );

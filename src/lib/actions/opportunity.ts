@@ -82,15 +82,55 @@ export async function getPipelineOpportunities(tab: string, searchQuery?: string
     ];
   }
 
-  const data = await prisma.opportunity.findMany({
-    where: whereClause,
-    select: pipelineOpportunitySelect,
-    orderBy: tab === 'completed' ? { closedAt: 'desc' } : { updatedAt: 'desc' },
-    take: tab === 'completed' ? 20 : undefined,
-  });
+  let data;
+  if (tab === 'completed' || searchQuery) {
+    data = await prisma.opportunity.findMany({
+      where: whereClause,
+      select: pipelineOpportunitySelect,
+      orderBy: tab === 'completed' ? { closedAt: 'desc' } : { updatedAt: 'desc' },
+      take: tab === 'completed' ? 20 : (searchQuery ? 50 : undefined),
+    });
+  } else {
+    // For standard workspace load without search, we fetch 4 per stage
+    const stages = await prisma.pipelineStage.findMany({ select: { id: true } });
+    const dealsPerStage = await Promise.all(stages.map(stage => 
+      prisma.opportunity.findMany({
+        where: { ...whereClause, pipelineStageId: stage.id },
+        select: pipelineOpportunitySelect,
+        orderBy: { updatedAt: 'desc' },
+        take: 4,
+      })
+    ));
+    data = dealsPerStage.flat();
+  }
   
   // Return as JSON string to bypass Next.js RSC recursive serialization overhead for arrays
   return JSON.stringify(data);
+}
+
+export async function getPipelineOpportunitiesForStage(stageId: string, limit = 10, cursor?: string) {
+  const actor = await requirePipelineActor();
+
+  const data = await prisma.opportunity.findMany({
+    where: {
+      ...getOpportunityAccessWhere(actor),
+      status: 'OPEN',
+      pipelineStageId: stageId
+    },
+    select: pipelineOpportunitySelect,
+    orderBy: { updatedAt: 'desc' },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+
+  let nextCursor: string | undefined = undefined;
+  if (data.length > limit) {
+    const nextItem = data.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  // Return as JSON string
+  return JSON.stringify({ data, nextCursor });
 }
 
 export async function createOpportunity(data: {
@@ -293,12 +333,13 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
   return result;
 }
 
-export async function getOpportunityActivityLogs(opportunityId: string, limit = 10, cursor?: string) {
+export async function getOpportunityActivityLogs(opportunityId: string, limit = 10, cursor?: string, type?: 'COMMENT' | 'SYSTEM_UPDATE') {
   await requireOpportunityAccess(opportunityId);
   const data = await prisma.activityLog.findMany({
     where: { 
       opportunityId,
-      parentId: null // Only fetch parent comments for pagination
+      parentId: null,
+      ...(type ? { type } : {})
     },
     take: limit + 1, // Fetch one extra to check if there are more
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // Skip the cursor itself

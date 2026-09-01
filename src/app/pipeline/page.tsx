@@ -32,14 +32,12 @@ export default async function PipelinePage({
     }
   }
 
-  // Fetch the first board snapshot on the server so the Kanban does not wait
+  // Fetch only small dictionary data on the server so the Kanban does not wait
   // for hydration before starting its most important query.
-  const [stages, companies, serializedOpportunities] = await Promise.all([
+  const [stages, companies] = await Promise.all([
     prisma.pipelineStage.findMany({ orderBy: { order: 'asc' } }),
     getCompanies(),
-    getPipelineOpportunities(tab, search || undefined),
   ]);
-  const initialOpportunities = JSON.parse(serializedOpportunities);
 
   return (
     <PipelineView 
@@ -47,7 +45,7 @@ export default async function PipelinePage({
       role={role}
       stages={stages}
       companies={companies}
-      initialOpportunities={initialOpportunities}
+      initialOpportunities={undefined}
       initialTab={tab}
     />
   );

@@ -6,6 +6,8 @@ import { BellRing, CircleDollarSign, Wrench, Handshake } from "lucide-react";
 import { Opportunity, Company, User, Tag, OpportunityTag } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
+import { preload } from "swr";
+import { getOpportunityActivityLogs } from "@/lib/actions/opportunity";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
@@ -156,6 +158,17 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   const contactName = deal.owner.name || deal.owner.email || "Unknown Contact";
   const highlight = checkIsRedCard(deal);
   
+  const handlePrefetch = () => {
+    if (!canView('activity')) return;
+    preload(
+      ['activity-logs', deal.id, 'COMMENT', ''],
+      async ([, id, typeFilter, cursor]: [string, string, string, string]) => {
+        const res = await getOpportunityActivityLogs(id, 10, cursor || undefined, typeFilter as any);
+        return res as any;
+      }
+    );
+  };
+
   return (
     <div
       className={`
@@ -164,6 +177,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
         ${isDragging ? "opacity-30" : "cursor-pointer"}
       `}
       onClick={() => onOpenPanel?.('')}
+      onMouseEnter={handlePrefetch}
     >
 
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { useRef, useCallback } from "react";
+
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { KanbanCard, OpportunityWithRelations } from "./KanbanCard";
@@ -13,9 +15,12 @@ interface KanbanColumnProps {
   isScrollable?: boolean;
   currentUserId?: string;
   currentUserRole?: string;
+  onLoadMore?: (stageId: string) => void;
+  isLoadingMore?: boolean;
+  hasMore?: boolean;
 }
 
-export function KanbanColumn({ id, title, deals, onDealClick, hideTitle, isScrollable, currentUserId, currentUserRole }: KanbanColumnProps) {
+export function KanbanColumn({ id, title, deals, onDealClick, hideTitle, isScrollable, currentUserId, currentUserRole, onLoadMore, isLoadingMore, hasMore }: KanbanColumnProps) {
   const { setNodeRef } = useDroppable({
     id,
     data: {
@@ -23,6 +28,21 @@ export function KanbanColumn({ id, title, deals, onDealClick, hideTitle, isScrol
       column: { id, title }
     }
   });
+
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const lastDealElementRef = useCallback((node: HTMLDivElement | null) => {
+    if (observerRef.current) observerRef.current.disconnect();
+    if (isLoadingMore) return;
+    
+    if (node) {
+      observerRef.current = new IntersectionObserver(entries => {
+        if (entries[0].isIntersecting && hasMore) {
+          onLoadMore?.(id);
+        }
+      });
+      observerRef.current.observe(node);
+    }
+  }, [isLoadingMore, hasMore, onLoadMore, id]);
 
   return (
     <div
@@ -44,6 +64,14 @@ export function KanbanColumn({ id, title, deals, onDealClick, hideTitle, isScrol
             <KanbanCard key={deal.id} deal={deal} onOpenPanel={(tab) => onDealClick?.(deal, tab)} currentUserId={currentUserId} currentUserRole={currentUserRole} />
           ))}
         </SortableContext>
+        
+        {hasMore && (
+          <div ref={lastDealElementRef} className="w-full py-4 flex justify-center">
+            {isLoadingMore && (
+              <div className="animate-spin w-4 h-4 border-2 border-[#da6986] border-t-transparent rounded-full" />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
