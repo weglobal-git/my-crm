@@ -132,7 +132,9 @@ function RedTimer({ threshold }: { threshold: Date }) {
   return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{pad(hours)}:{pad(minutes)}:{pad(seconds)}</span>;
 }
 
-export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: OpportunityWithRelations; isDragging?: boolean; onOpenPanel?: (tab: string) => void }) {
+import React from 'react';
+
+export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: OpportunityWithRelations; isDragging?: boolean; onOpenPanel?: (tab: string) => void }) {
   const { visibleRightMenus } = usePermissions();
   const rightMenus = visibleRightMenus('pipeline') || [];
   
@@ -292,9 +294,9 @@ export function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: Opportun
       )}
     </div>
   );
-}
+});
 
-export function KanbanCard({ deal, onOpenPanel, currentUserId, currentUserRole }: KanbanCardProps & { currentUserId?: string, currentUserRole?: string }) {
+export const KanbanCard = React.memo(function KanbanCard({ deal, onOpenPanel, currentUserId, currentUserRole }: KanbanCardProps & { currentUserId?: string, currentUserRole?: string }) {
   const canDrag = currentUserRole === 'ADMIN' || deal.ownerId === currentUserId;
 
   const {
@@ -329,4 +331,4 @@ export function KanbanCard({ deal, onOpenPanel, currentUserId, currentUserRole }
       <KanbanCardUI deal={deal} isDragging={isDragging} onOpenPanel={onOpenPanel} />
     </div>
   );
-}
+});

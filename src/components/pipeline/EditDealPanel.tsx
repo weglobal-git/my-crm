@@ -10,7 +10,7 @@ import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
 import { useEffect, useState, useRef, useCallback } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
 import { User } from "@prisma/client";
@@ -390,6 +390,7 @@ interface EditDealPanelProps {
 
 export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }: EditDealPanelProps) {
   const router = useRouter();
+  const { mutate } = useSWRConfig();
   const [newLog, setNewLog] = useState("");
   const [activitySearchQuery, setActivitySearchQuery] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -639,10 +640,25 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const [isUpdatingTeam, setIsUpdatingTeam] = useState(false);
 
   const handleAddMember = async (userId: string) => {
-    // Optimistic Update
+    // 1. Optimistic Update (Local Panel State)
     const userToAdd = users.find(u => u.id === userId);
     if (userToAdd) {
       setLocalTeamMembers(prev => [...prev, userToAdd]);
+
+      // 2. Global Optimistic Update (Kanban Card)
+      mutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentData: OpportunityWithRelations[] | undefined) => {
+          if (!currentData) return currentData;
+          return currentData.map(opp => {
+            if (opp.id === deal.id) {
+              return { ...opp, teamMembers: [...opp.teamMembers, userToAdd] };
+            }
+            return opp;
+          });
+        },
+        { revalidate: false } // Prevent immediate refetch before action finishes
+      );
     }
 
     try {
@@ -662,8 +678,23 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const handleRemoveMember = async (userId: string) => {
     const userToRemove = localTeamMembers.find(u => u.id === userId) || deal.teamMembers.find(u => u.id === userId);
 
-    // Optimistic Update
+    // 1. Optimistic Update (Local Panel State)
     setLocalTeamMembers(prev => prev.filter(u => u.id !== userId));
+
+    // 2. Global Optimistic Update (Kanban Card)
+    mutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (currentData: OpportunityWithRelations[] | undefined) => {
+        if (!currentData) return currentData;
+        return currentData.map(opp => {
+          if (opp.id === deal.id) {
+            return { ...opp, teamMembers: opp.teamMembers.filter(u => u.id !== userId) };
+          }
+          return opp;
+        });
+      },
+      { revalidate: false } // Prevent immediate refetch before action finishes
+    );
 
     try {
       removeTeamMember(deal.id, userId).catch((e) => {
