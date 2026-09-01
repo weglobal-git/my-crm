@@ -171,6 +171,41 @@ export function KanbanBoard({
           },
           { revalidate: false }
         );
+      } else if (data?.action?.startsWith('ACTIVITY_')) {
+        // Ignore activity log updates for the board, as they don't affect Kanban columns directly.
+        // This prevents the massive 10-second full board refetch bottleneck.
+        return;
+      } else if (data?.action === 'OPPORTUNITY_CREATED') {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            // Prevent duplicate creation
+            if (currentData.some(opp => opp.id === data.deal.id)) return currentData;
+            return [data.deal, ...currentData];
+          },
+          { revalidate: false }
+        );
+      } else if (data?.action === 'OPPORTUNITY_UPDATED') {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.map(opp => {
+              if (opp.id === data.deal.id) {
+                return data.deal;
+              }
+              return opp;
+            });
+          },
+          { revalidate: false }
+        );
+      } else if (data?.action === 'OPPORTUNITY_DELETED') {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.filter(opp => opp.id !== data.dealId);
+          },
+          { revalidate: false }
+        );
       } else {
         mutate(); // Revalidate SWR cache entirely for unknown actions
       }

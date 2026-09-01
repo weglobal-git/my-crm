@@ -15,6 +15,47 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { triggerNotification } from "@/lib/actions/notification";
 
+export const pipelineOpportunitySelect = {
+  id: true,
+  topic: true,
+  type: true,
+  status: true,
+  value: true,
+  currency: true,
+  dueDate: true,
+  goodsReadyDate: true,
+  goodsLoadingDate: true,
+  pipelineStageId: true,
+  ownerId: true,
+  closedAt: true,
+  oemProgress: true,
+  lossReason: true,
+  reserveId: true,
+  invoiceId: true,
+  createdAt: true,
+  updatedAt: true,
+  company: { select: { id: true, name: true } },
+  owner: { select: { id: true, name: true, email: true, image: true } },
+  teamMembers: { select: { id: true, name: true, image: true } },
+  tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
+  activityLogs: {
+    where: { 
+      parentId: null,
+      type: 'COMMENT' as const,
+      NOT: { content: { startsWith: '[DUE DATE:' } }
+    },
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
+    select: {
+      id: true,
+      content: true,
+      type: true,
+      createdAt: true,
+      user: { select: { name: true, image: true } }
+    }
+  }
+};
+
 export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
   const session = await getServerSession(authOptions);
   if (!session?.user) throw new Error("Unauthorized");
@@ -58,46 +99,7 @@ export async function getPipelineOpportunities(tab: string, searchQuery?: string
 
   return await prisma.opportunity.findMany({
     where: whereClause,
-    select: {
-      id: true,
-      topic: true,
-      type: true,
-      status: true,
-      value: true,
-      currency: true,
-      dueDate: true,
-      goodsReadyDate: true,
-      goodsLoadingDate: true,
-      pipelineStageId: true,
-      ownerId: true,
-      closedAt: true,
-      oemProgress: true,
-      lossReason: true,
-      reserveId: true,
-      invoiceId: true,
-      createdAt: true,
-      updatedAt: true,
-      company: { select: { id: true, name: true } },
-      owner: { select: { id: true, name: true, email: true, image: true } },
-      teamMembers: { select: { id: true, name: true, image: true } },
-      tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
-      activityLogs: {
-        where: { 
-          parentId: null,
-          type: 'COMMENT',
-          NOT: { content: { startsWith: '[DUE DATE:' } }
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-        select: {
-          id: true,
-          content: true,
-          type: true,
-          createdAt: true,
-          user: { select: { name: true, image: true } }
-        }
-      }
-    },
+    select: pipelineOpportunitySelect,
     orderBy: tab === 'completed' ? { closedAt: 'desc' } : { updatedAt: 'desc' },
     take: tab === 'completed' ? 20 : undefined,
   });
@@ -139,7 +141,11 @@ export async function createOpportunity(data: {
       content: `Created this opportunity as a ${typeLabel}.`
     }
   });
-  await notifyPipelineUpdate();
+  const fullDeal = await prisma.opportunity.findUnique({
+    where: { id: result.id },
+    select: pipelineOpportunitySelect
+  });
+  await notifyPipelineUpdate({ action: 'OPPORTUNITY_CREATED', deal: fullDeal });
   revalidatePath('/pipeline');
   return result;
 }
@@ -198,7 +204,11 @@ export async function moveOpportunity(
       status: newStatus
     }
   });
-  await notifyPipelineUpdate();
+  const fullDeal = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    select: pipelineOpportunitySelect
+  });
+  await notifyPipelineUpdate({ action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
   return result;
 }
 
@@ -207,7 +217,11 @@ export async function updateOpportunity(id: string, data: Prisma.OpportunityUpda
     where: { id },
     data
   });
-  await notifyPipelineUpdate();
+  const fullDeal = await prisma.opportunity.findUnique({
+    where: { id },
+    select: pipelineOpportunitySelect
+  });
+  await notifyPipelineUpdate({ action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
   return result;
 }
 
@@ -250,7 +264,11 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     return opp;
   });
   
-  await notifyPipelineUpdate();
+  const fullDeal = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    select: pipelineOpportunitySelect
+  });
+  await notifyPipelineUpdate({ action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
   revalidatePath('/pipeline');
   return result;
 }
@@ -352,7 +370,7 @@ export async function addActivityLog(opportunityId: string, content: string, use
     }
   }
 
-  notifyPipelineUpdate();
+  notifyPipelineUpdate({ action: 'ACTIVITY_ADDED', dealId: opportunityId });
   revalidatePath('/pipeline');
   return result;
 }
@@ -366,7 +384,7 @@ export async function addSystemLog(opportunityId: string, content: string, userI
       type: "SYSTEM_UPDATE"
     }
   });
-  notifyPipelineUpdate();
+  notifyPipelineUpdate({ action: 'ACTIVITY_ADDED', dealId: opportunityId });
   revalidatePath('/pipeline');
   return result;
 }
@@ -397,7 +415,7 @@ export async function editActivityLog(logId: string, content: string, userId: st
       isEdited: true
     }
   });
-  notifyPipelineUpdate();
+  notifyPipelineUpdate({ action: 'ACTIVITY_UPDATED', logId });
   revalidatePath('/pipeline');
   return result;
 }
@@ -450,7 +468,7 @@ export async function deleteActivityLog(logId: string, userId: string) {
   await prisma.activityLog.delete({
     where: { id: logId }
   });
-  notifyPipelineUpdate();
+  notifyPipelineUpdate({ action: 'ACTIVITY_DELETED', logId });
   revalidatePath('/pipeline');
   return { success: true };
 }
@@ -509,7 +527,7 @@ export async function deleteOpportunity(id: string) {
   const result = await prisma.opportunity.delete({
     where: { id }
   });
-  await notifyPipelineUpdate();
+  await notifyPipelineUpdate({ action: 'OPPORTUNITY_DELETED', dealId: id });
   revalidatePath('/pipeline');
   return result;
 }

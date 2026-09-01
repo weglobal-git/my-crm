@@ -519,13 +519,60 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   const handleAddLog = async () => {
     if (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate) return;
+    
+    const currentNewLog = newLog;
+    const currentAttachments = [...pendingAttachments];
+    const currentDueDate = pendingDueDate;
+    
+    // 1. Create Fake Optimistic Log
+    const fakeId = `temp-${Date.now()}`;
+    const optimisticLog = {
+      id: fakeId,
+      content: currentNewLog.trim() || (currentDueDate ? 'Updated due date' : (currentAttachments.length ? 'Uploaded attachment' : 'Updated deal')),
+      type: "COMMENT",
+      createdAt: new Date(),
+      opportunityId: deal.id,
+      userId: session?.user?.id || '',
+      user: {
+        id: session?.user?.id || '',
+        name: session?.user?.name || '',
+        image: session?.user?.image || '',
+        email: session?.user?.email || '',
+        role: "GENERAL"
+      },
+      replies: []
+    } as any;
+
+    // 2. Inject into SWR Cache instantly (0ms delay)
+    loadActivityLogs(
+      (currentPages) => {
+        if (!currentPages) return currentPages;
+        const newPages = [...currentPages];
+        if (newPages[0]) {
+          newPages[0] = {
+            ...newPages[0],
+            data: [optimisticLog, ...newPages[0].data]
+          };
+        }
+        return newPages;
+      },
+      { revalidate: false }
+    );
+
+    // 3. Clear UI instantly for snappy feel
+    setNewLog("");
+    setPendingDueDate(null);
+    setPendingAttachments([]);
+    setShowCalendar(false);
+
+    // 4. Perform heavy lifting in background
     setIsSubmittingLog(true);
     try {
       let attachmentText = "";
       
       // Upload pending attachments
-      if (pendingAttachments.length > 0) {
-        for (const file of pendingAttachments) {
+      if (currentAttachments.length > 0) {
+        for (const file of currentAttachments) {
           const isImage = file.type.startsWith('image/');
           let fileToUpload = file;
           
@@ -564,22 +611,24 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         }
       }
 
-      const finalLog = (newLog.trim() + attachmentText).trim() || 'Updated deal';
+      const finalLog = (currentNewLog.trim() + attachmentText).trim() || 'Updated deal';
 
-      if (pendingDueDate === 'REMOVE') {
+      if (currentDueDate === 'REMOVE') {
         await updateDueDateWithLog(deal.id, null, finalLog, session!.user!.id);
-      } else if (pendingDueDate instanceof Date) {
-        await updateDueDateWithLog(deal.id, pendingDueDate, finalLog, session!.user!.id);
+      } else if (currentDueDate instanceof Date) {
+        await updateDueDateWithLog(deal.id, currentDueDate, finalLog, session!.user!.id);
       } else {
         await addActivityLog(deal.id, finalLog, session!.user!.id);
       }
-      setNewLog("");
-      setPendingDueDate(null);
-      setPendingAttachments([]);
-      setShowCalendar(false);
-      loadActivityLogs();
+      
+      // 5. Revalidate with real data from server
       loadActivityLogs();
     } catch (e) {
+      // Revert if error
+      setNewLog(currentNewLog);
+      setPendingDueDate(currentDueDate);
+      setPendingAttachments(currentAttachments);
+      loadActivityLogs(); // refresh to remove fake log
       if (e instanceof Error) {
         toast({ title: "Error", description: "Failed to add log: " + e.message, type: "error" });
       }
