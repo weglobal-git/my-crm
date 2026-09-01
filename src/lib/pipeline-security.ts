@@ -12,7 +12,7 @@ export type PipelineActor = {
   departments: string[];
 };
 
-export async function requirePipelineActor(): Promise<PipelineActor> {
+async function getPipelineActorFromSession(): Promise<PipelineActor> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error('Unauthorized');
 
@@ -23,19 +23,27 @@ export async function requirePipelineActor(): Promise<PipelineActor> {
 
   if (!['ADMIN', 'MANAGEMENT', 'GENERAL'].includes(role)) throw new Error('Forbidden');
 
-  if (role !== 'ADMIN') {
-    const pipelinePermission = await prisma.departmentMenuPermission.findFirst({
-      where: {
-        visible: true,
-        menuItem: { key: 'pipeline' },
-        department: { users: { some: { id: session.user.id } } },
-      },
-      select: { id: true },
-    });
-    if (!pipelinePermission) throw new Error('Forbidden');
-  }
-
   return { id: session.user.id, role, departments };
+}
+
+async function hasPipelinePermission(actor: PipelineActor) {
+  if (actor.role === 'ADMIN') return true;
+
+  const pipelinePermission = await prisma.departmentMenuPermission.findFirst({
+    where: {
+      visible: true,
+      menuItem: { key: 'pipeline' },
+      department: { users: { some: { id: actor.id } } },
+    },
+    select: { id: true },
+  });
+  return Boolean(pipelinePermission);
+}
+
+export async function requirePipelineActor(): Promise<PipelineActor> {
+  const actor = await getPipelineActorFromSession();
+  if (!await hasPipelinePermission(actor)) throw new Error('Forbidden');
+  return actor;
 }
 
 export function getOpportunityAccessWhere(actor: PipelineActor): Prisma.OpportunityWhereInput {
@@ -62,13 +70,16 @@ export async function requireOpportunityAccess(
   opportunityId: string,
   options: { ownerOrAdmin?: boolean; adminOnly?: boolean } = {},
 ) {
-  const actor = await requirePipelineActor();
-  const opportunity = await prisma.opportunity.findFirst({
-    where: { id: opportunityId, ...getOpportunityAccessWhere(actor) },
-    select: { id: true, ownerId: true },
-  });
+  const actor = await getPipelineActorFromSession();
+  const [pipelineAllowed, opportunity] = await Promise.all([
+    hasPipelinePermission(actor),
+    prisma.opportunity.findFirst({
+      where: { id: opportunityId, ...getOpportunityAccessWhere(actor) },
+      select: { id: true, ownerId: true },
+    }),
+  ]);
 
-  if (!opportunity) throw new Error('Forbidden');
+  if (!pipelineAllowed || !opportunity) throw new Error('Forbidden');
   if (options.adminOnly && actor.role !== 'ADMIN') throw new Error('Forbidden');
   if (options.ownerOrAdmin && actor.role !== 'ADMIN' && opportunity.ownerId !== actor.id) {
     throw new Error('Forbidden');

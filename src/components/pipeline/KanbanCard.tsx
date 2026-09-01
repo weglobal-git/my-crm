@@ -68,6 +68,7 @@ export function checkIsRedCard(deal: OpportunityWithRelations) {
 interface KanbanCardProps {
   deal: OpportunityWithRelations;
   onOpenPanel?: (tab: string) => void;
+  onPanelIntent?: () => void;
 }
 
 function getRedThreshold(deal: OpportunityWithRelations): Date | null {
@@ -146,7 +147,7 @@ function RedTimer({ threshold }: { threshold: Date }) {
 
 import React from 'react';
 
-export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging, onOpenPanel }: { deal: OpportunityWithRelations; isDragging?: boolean; onOpenPanel?: (tab: string) => void }) {
+export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging, onOpenPanel, onPanelIntent }: KanbanCardProps & { isDragging?: boolean }) {
   const { visibleRightMenus } = usePermissions();
   const rightMenus = visibleRightMenus('pipeline') || [];
   
@@ -159,12 +160,17 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   const highlight = checkIsRedCard(deal);
   
   const handlePrefetch = () => {
+    onPanelIntent?.();
     if (!canView('activity')) return;
     preload(
       ['activity-logs', deal.id, 'COMMENT', ''],
       async ([, id, typeFilter, cursor]: [string, string, string, string]) => {
-        const res = await getOpportunityActivityLogs(id, 10, cursor || undefined, typeFilter as any);
-        return res as any;
+        return getOpportunityActivityLogs(
+          id,
+          10,
+          cursor || undefined,
+          typeFilter as 'COMMENT' | 'SYSTEM_UPDATE',
+        );
       }
     );
   };
@@ -320,7 +326,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   );
 });
 
-export const KanbanCard = React.memo(function KanbanCard({ deal, onOpenPanel, currentUserId, currentUserRole }: KanbanCardProps & { currentUserId?: string, currentUserRole?: string }) {
+export const KanbanCard = React.memo(function KanbanCard({ deal, onOpenPanel, onPanelIntent, currentUserId, currentUserRole }: KanbanCardProps & { currentUserId?: string, currentUserRole?: string }) {
   const canDrag = currentUserRole === 'ADMIN' || deal.ownerId === currentUserId;
 
   const {
@@ -350,9 +356,11 @@ export const KanbanCard = React.memo(function KanbanCard({ deal, onOpenPanel, cu
       style={style}
       {...attributes}
       {...(canDrag ? listeners : {})}
+      onPointerEnter={onPanelIntent}
+      onFocusCapture={onPanelIntent}
       className={`touch-none ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
-      <KanbanCardUI deal={deal} isDragging={isDragging} onOpenPanel={onOpenPanel} />
+      <KanbanCardUI deal={deal} isDragging={isDragging} onOpenPanel={onOpenPanel} onPanelIntent={onPanelIntent} />
     </div>
   );
 });

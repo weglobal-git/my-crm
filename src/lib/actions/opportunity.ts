@@ -1,7 +1,7 @@
 "use server";
 
 import prisma from "@/lib/prisma";
-import { OpportunityStatus, Prisma, OpportunityType } from "@prisma/client";
+import { OpportunityStatus, OpportunityType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { v2 as cloudinary } from "cloudinary";
 
@@ -13,124 +13,16 @@ cloudinary.config({
 import { pusherServer } from "@/lib/pusher";
 import { triggerNotification } from "@/lib/actions/notification";
 import {
-  getOpportunityAccessWhere,
   getPipelineRecipientUserIds,
   notifyPrivatePipelineUpdate,
   requireOpportunityAccess,
   requirePipelineActor,
 } from "@/lib/pipeline-security";
-
-const pipelineOpportunitySelect = {
-  id: true,
-  topic: true,
-  type: true,
-  status: true,
-  value: true,
-  currency: true,
-  dueDate: true,
-  goodsReadyDate: true,
-  goodsLoadingDate: true,
-  pipelineStageId: true,
-  ownerId: true,
-  closedAt: true,
-  oemProgress: true,
-  lossReason: true,
-  reserveId: true,
-  invoiceId: true,
-  createdAt: true,
-  updatedAt: true,
-  company: { select: { id: true, name: true } },
-  owner: { select: { id: true, name: true, email: true, image: true } },
-  teamMembers: { select: { id: true, name: true, image: true } },
-  tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
-  activityLogs: {
-    where: { 
-      parentId: null,
-      type: 'COMMENT' as const,
-      NOT: { content: { startsWith: '[DUE DATE:' } }
-    },
-    orderBy: { createdAt: 'desc' as const },
-    take: 1,
-    select: {
-      id: true,
-      content: true,
-      type: true,
-      createdAt: true,
-      user: { select: { name: true, image: true } }
-    }
-  }
-};
+import { getPipelineOpportunitiesForActor, pipelineOpportunitySelect } from '@/lib/pipeline-opportunities';
 
 export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
   const actor = await requirePipelineActor();
-
-  const whereClause: Prisma.OpportunityWhereInput = {
-    ...getOpportunityAccessWhere(actor),
-    status: tab === 'completed' 
-      ? { in: ["WON", "LOST", "COMPLETED", "CANCELLED"] } 
-      : "OPEN"
-  };
-
-  if (searchQuery) {
-    whereClause.AND = [
-      {
-        OR: [
-          { topic: { contains: searchQuery, mode: 'insensitive' } },
-          { company: { name: { contains: searchQuery, mode: 'insensitive' } } }
-        ]
-      }
-    ];
-  }
-
-  let data;
-  if (tab === 'completed' || searchQuery) {
-    data = await prisma.opportunity.findMany({
-      where: whereClause,
-      select: pipelineOpportunitySelect,
-      orderBy: tab === 'completed' ? { closedAt: 'desc' } : { updatedAt: 'desc' },
-      take: tab === 'completed' ? 20 : (searchQuery ? 50 : undefined),
-    });
-  } else {
-    // For standard workspace load without search, we fetch 4 per stage
-    const stages = await prisma.pipelineStage.findMany({ select: { id: true } });
-    const dealsPerStage = await Promise.all(stages.map(stage => 
-      prisma.opportunity.findMany({
-        where: { ...whereClause, pipelineStageId: stage.id },
-        select: pipelineOpportunitySelect,
-        orderBy: { updatedAt: 'desc' },
-        take: 4,
-      })
-    ));
-    data = dealsPerStage.flat();
-  }
-  
-  // Return as JSON string to bypass Next.js RSC recursive serialization overhead for arrays
-  return JSON.stringify(data);
-}
-
-export async function getPipelineOpportunitiesForStage(stageId: string, limit = 10, cursor?: string) {
-  const actor = await requirePipelineActor();
-
-  const data = await prisma.opportunity.findMany({
-    where: {
-      ...getOpportunityAccessWhere(actor),
-      status: 'OPEN',
-      pipelineStageId: stageId
-    },
-    select: pipelineOpportunitySelect,
-    orderBy: { updatedAt: 'desc' },
-    take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-  });
-
-  let nextCursor: string | undefined = undefined;
-  if (data.length > limit) {
-    const nextItem = data.pop();
-    nextCursor = nextItem?.id;
-  }
-
-  // Return as JSON string
-  return JSON.stringify({ data, nextCursor });
+  return getPipelineOpportunitiesForActor(actor, tab, searchQuery);
 }
 
 export async function createOpportunity(data: {

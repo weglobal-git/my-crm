@@ -126,7 +126,8 @@ export function Header() {
                 return (
                   <Link 
                     key={sub.key}
-                    href={sub.href || "#"} 
+                    href={sub.href || "#"}
+                    prefetch={false}
                     className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                       isActive 
                         ? "bg-[#C7F33C] text-black" 
@@ -329,6 +330,7 @@ export function Header() {
                   </div>
                   <Link
                     href="/profile"
+                    prefetch={false}
                     onClick={() => setShowProfileDropdown(false)}
                     className="block px-4 py-2 text-sm text-slate-200 hover:bg-[#4E4F50] transition-colors"
                   >

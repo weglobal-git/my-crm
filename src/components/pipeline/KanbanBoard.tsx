@@ -21,7 +21,7 @@ import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRed
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
-import { moveOpportunity, getPipelineOpportunities, getPipelineOpportunitiesForStage } from "@/lib/actions/opportunity";
+import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { pusherClient } from "@/lib/pusher";
 import useSWR from "swr";
@@ -118,51 +118,20 @@ export function KanbanBoard({
     }
   );
 
-  const [loadedMoreDeals, setLoadedMoreDeals] = useState<Record<string, OpportunityWithRelations[]>>({});
-  const [hasMoreStages, setHasMoreStages] = useState<Record<string, boolean>>({});
-  const [loadingMoreStages, setLoadingMoreStages] = useState<Record<string, boolean>>({});
-
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
     const fallback = tab === initialTab ? (initialOpportunities || []) : [];
-    const baseDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
-    const extraDeals = loadedMoreDeals[stage.id] || [];
-    
-    // Merge and deduplicate by ID
-    const merged = [...baseDeals, ...extraDeals];
-    const uniqueDeals = Array.from(new Map(merged.map(d => [d.id, d])).values());
-
-    uniqueDeals.sort((a, b) => {
+    const stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
+    stageDeals.sort((a, b) => {
       const aRed = checkIsRedCard(a);
       const bRed = checkIsRedCard(b);
       if (aRed && !bRed) return -1;
       if (!aRed && bRed) return 1;
-      // If neither or both are red, sort by updatedAt
-      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      return 0;
     });
-    
-    acc[stage.id] = uniqueDeals;
+    acc[stage.id] = stageDeals;
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, loadedMoreDeals]);
-
-  // Initialize hasMoreStages when rawOpportunities arrives
-  useEffect(() => {
-    if (!rawOpportunities && !initialOpportunities) return;
-    
-    setHasMoreStages(prev => {
-      const next = { ...prev };
-      let changed = false;
-      initialStages.forEach(stage => {
-        if (next[stage.id] === undefined) {
-          const fallback = tab === initialTab ? (initialOpportunities || []) : [];
-          const baseDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
-          next[stage.id] = baseDeals.length === 4;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [rawOpportunities, initialOpportunities, initialStages, tab, initialTab]);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
   const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
@@ -172,20 +141,13 @@ export function KanbanBoard({
   const [panelOpen, setPanelOpen] = useState(false);
   const [closingTimeout, setClosingTimeout] = useState<NodeJS.Timeout | null>(null);
 
-  // Warm the largest interaction chunk while the browser is idle so the first
-  // card click does not have to wait for a network round-trip and JS parsing.
-  useEffect(() => {
-    const warmPanel = () => { void loadEditDealPanel(); };
-    if ('requestIdleCallback' in window) {
-      const idleId = window.requestIdleCallback(warmPanel, { timeout: 2_000 });
-      return () => window.cancelIdleCallback(idleId);
-    }
-    const timer = setTimeout(warmPanel, 500);
-    return () => clearTimeout(timer);
+  const preloadEditDealPanel = useCallback(() => {
+    void loadEditDealPanel();
   }, []);
 
-  const handleOpenPanel = useCallback((deal: OpportunityWithRelations, tab: string) => {
+  const handleOpenPanel = useCallback(async (deal: OpportunityWithRelations, tab: string) => {
     if (closingTimeout) clearTimeout(closingTimeout);
+    await loadEditDealPanel();
     setActivePanelDeal({ deal, tab });
     setPanelOpen(true);
   }, [closingTimeout]);
@@ -197,34 +159,6 @@ export function KanbanBoard({
     }, 300);
     setClosingTimeout(t);
   }, []);
-
-  const handleLoadMoreStage = async (stageId: string) => {
-    const stageDeals = deals[stageId] || [];
-    if (stageDeals.length === 0) return;
-    
-    // Sort deals by updatedAt to find the correct cursor
-    const sortedDeals = [...stageDeals].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    const cursor = sortedDeals[sortedDeals.length - 1].id;
-
-    setLoadingMoreStages(prev => ({ ...prev, [stageId]: true }));
-    try {
-      const res = await getPipelineOpportunitiesForStage(stageId, 4, cursor);
-      const { data, nextCursor } = JSON.parse(res);
-      
-      setLoadedMoreDeals(prev => ({
-        ...prev,
-        [stageId]: [...(prev[stageId] || []), ...data]
-      }));
-
-      if (!nextCursor) {
-        setHasMoreStages(prev => ({ ...prev, [stageId]: false }));
-      }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setLoadingMoreStages(prev => ({ ...prev, [stageId]: false }));
-    }
-  };
 
   const [wonLostModal, setWonLostModal] = useState<{deal: OpportunityWithRelations, status: "WON" | "LOST"} | null>(null);
 
@@ -633,6 +567,7 @@ export function KanbanBoard({
                         <KanbanCardUI 
                           deal={deal} 
                           onOpenPanel={(tab) => handleOpenPanel(deal, tab || 'activity')} 
+                          onPanelIntent={preloadEditDealPanel}
                         />
                       </div>
                     ))}
@@ -669,9 +604,7 @@ export function KanbanBoard({
                 isScrollable={true}
                 currentUserId={currentUserId}
                 currentUserRole={currentUserRole}
-                onLoadMore={handleLoadMoreStage}
-                isLoadingMore={loadingMoreStages[col.id]}
-                hasMore={hasMoreStages[col.id]}
+                onDealIntent={preloadEditDealPanel}
               />
             ))}
 
@@ -694,11 +627,11 @@ export function KanbanBoard({
       )}
 
       {activePanelDeal && (
-        <EditDealPanel 
-          deal={activePanelDeal.deal} 
+        <EditDealPanel
+          deal={activePanelDeal.deal}
           initialTab={activePanelDeal.tab as TabType}
-          isOpen={panelOpen} 
-          onClose={handleClosePanel} 
+          isOpen={panelOpen}
+          onClose={handleClosePanel}
         />
       )}
 

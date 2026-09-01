@@ -536,13 +536,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   // Auto-focus the activity textarea when the panel opens to the activity tab
   useEffect(() => {
     if (isOpen && activeTab === 'activity') {
-      // Small timeout to ensure the textarea is rendered
-      const timer = setTimeout(() => {
-        if (inputRef.current) {
-          inputRef.current.focus();
-        }
-      }, 100);
-      return () => clearTimeout(timer);
+      inputRef.current?.focus();
     }
   }, [isOpen, activeTab]);
 
@@ -579,7 +573,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   } = useSWRInfinite<{ data: ActivityLogWithRelations[], nextCursor?: string }>(
     getKey,
     async ([, id, typeFilter, cursor]: [string, string, string, string]) => {
-      const res = await getOpportunityActivityLogs(id, 10, cursor || undefined, typeFilter as any);
+      const res = await getOpportunityActivityLogs(
+        id,
+        10,
+        cursor || undefined,
+        typeFilter as 'COMMENT' | 'SYSTEM_UPDATE',
+      );
       return res as { data: ActivityLogWithRelations[], nextCursor?: string };
     }
   );
