@@ -321,6 +321,7 @@ model ActivityLog {
 
   @@index([opportunityId, parentId, createdAt])
   @@index([opportunityId, type])
+  @@index([parentId])
 }
 
 model Note {

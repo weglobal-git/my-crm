@@ -303,9 +303,9 @@ export async function getOpportunityActivityLogs(opportunityId: string, limit = 
     take: limit + 1, // Fetch one extra to check if there are more
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // Skip the cursor itself
     include: {
-      user: true,
+      user: { select: { id: true, name: true, email: true, image: true, role: true } },
       replies: {
-        include: { user: true },
+        include: { user: { select: { id: true, name: true, email: true, image: true, role: true } } },
         orderBy: { createdAt: 'asc' }
       }
     },
