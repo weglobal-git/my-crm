@@ -26,7 +26,7 @@ export async function getMyNotifications() {
   return notifications;
 }
 
-export async function triggerNotification(userId: string, notification: any) {
+export async function triggerNotification(userId: string, notification: unknown) {
   try {
     await pusherServer.trigger(`private-user-${userId}`, 'new-notification', notification);
   } catch (e) {

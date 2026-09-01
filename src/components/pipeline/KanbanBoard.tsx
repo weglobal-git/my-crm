@@ -91,7 +91,10 @@ export function KanbanBoard({
 
   const { data: rawOpportunities, mutate, isLoading } = useSWR<OpportunityWithRelations[]>(
     ['pipeline-deals', tab, searchQuery],
-    () => getPipelineOpportunities(tab, searchQuery) as Promise<OpportunityWithRelations[]>,
+    async () => {
+      const res = await getPipelineOpportunities(tab, searchQuery);
+      return (typeof res === 'string' ? JSON.parse(res) : res) as OpportunityWithRelations[];
+    },
     { 
       fallbackData: tab === initialTab ? initialOpportunities : undefined,
       revalidateOnFocus: false, // Avoid excessive refetching, rely on Pusher
@@ -148,9 +151,9 @@ export function KanbanBoard({
             if (!currentData) return currentData;
             return currentData.map(opp => {
               if (opp.id === data.dealId) {
-                const isExisting = opp.teamMembers.some(u => u.id === data.user.id);
+                const isExisting = (opp.teamMembers || []).some(u => u.id === data.user.id);
                 if (!isExisting) {
-                  return { ...opp, teamMembers: [...opp.teamMembers, data.user] };
+                  return { ...opp, teamMembers: [...(opp.teamMembers || []), data.user] };
                 }
               }
               return opp;
@@ -164,7 +167,58 @@ export function KanbanBoard({
             if (!currentData) return currentData;
             return currentData.map(opp => {
               if (opp.id === data.dealId) {
-                return { ...opp, teamMembers: opp.teamMembers.filter(u => u.id !== data.userId) };
+                return { ...opp, teamMembers: (opp.teamMembers || []).filter(u => u.id !== data.userId) };
+              }
+              return opp;
+            });
+          },
+          { revalidate: false }
+        );
+      } else if (data?.action === 'ACTIVITY_ADDED' && data.activityLog) {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.map(opp => {
+              if (opp.id === data.dealId) {
+                return { ...opp, activityLogs: [data.activityLog] };
+              }
+              return opp;
+            });
+          },
+          { revalidate: false }
+        );
+      } else if (data?.action === 'ACTIVITY_UPDATED' && data.activityLog) {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.map(opp => {
+              if (opp.id === data.dealId) {
+                // Only replace if the currently shown log is the one being updated
+                const updatedLogs = opp.activityLogs.map(log => 
+                  log.id === data.activityLog.id ? data.activityLog : log
+                );
+                return { ...opp, activityLogs: updatedLogs };
+              }
+              return opp;
+            });
+          },
+          { revalidate: false }
+        );
+      } else if (data?.action === 'ACTIVITY_DELETED' && data.logId) {
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.map(opp => {
+              if (opp.id === data.dealId) {
+                // If we deleted the log currently shown (or if it was just cleared by Optimistic UI),
+                // replace with the nextLatestLog (if provided) or empty array
+                const isCurrentlyShown = opp.activityLogs.some(log => log.id === data.logId);
+                const isEmpty = opp.activityLogs.length === 0;
+                
+                if (isCurrentlyShown || isEmpty) {
+                  return { ...opp, activityLogs: data.nextLatestLog ? [data.nextLatestLog] : [] };
+                }
+                return opp;
               }
               return opp;
             });
@@ -174,6 +228,9 @@ export function KanbanBoard({
       } else if (data?.action?.startsWith('ACTIVITY_')) {
         // Ignore activity log updates for the board, as they don't affect Kanban columns directly.
         // This prevents the massive 10-second full board refetch bottleneck.
+        return;
+      } else if (data?.action?.startsWith('NOTE_')) {
+        // Ignore note updates for the board to prevent full refetches
         return;
       } else if (data?.action === 'OPPORTUNITY_CREATED') {
         mutate(

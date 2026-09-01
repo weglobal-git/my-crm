@@ -53,7 +53,7 @@ export async function createNote(opportunityId: string, content: string, color?:
       },
     });
 
-    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+    await pusherServer.trigger('pipeline', 'pipeline-updated', { action: 'NOTE_ADDED', dealId: opportunityId });
 
     return note;
   } catch (error) {
@@ -78,7 +78,7 @@ export async function deleteNote(noteId: string) {
     }
 
     await prisma.note.delete({ where: { id: noteId } });
-    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+    await pusherServer.trigger('pipeline', 'pipeline-updated', { action: 'NOTE_DELETED', noteId });
     
     return true;
   } catch (error) {
@@ -97,7 +97,7 @@ export async function togglePinNote(noteId: string, isPinned: boolean) {
       data: { isPinned },
     });
     
-    await pusherServer.trigger('pipeline', 'pipeline-updated', {});
+    await pusherServer.trigger('pipeline', 'pipeline-updated', { action: 'NOTE_UPDATED', noteId });
     
     return note;
   } catch (error) {

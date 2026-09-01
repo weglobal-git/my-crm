@@ -15,7 +15,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { triggerNotification } from "@/lib/actions/notification";
 
-export const pipelineOpportunitySelect = {
+const pipelineOpportunitySelect = {
   id: true,
   topic: true,
   type: true,
@@ -97,15 +97,18 @@ export async function getPipelineOpportunities(tab: string, searchQuery?: string
     ];
   }
 
-  return await prisma.opportunity.findMany({
+  const data = await prisma.opportunity.findMany({
     where: whereClause,
     select: pipelineOpportunitySelect,
     orderBy: tab === 'completed' ? { closedAt: 'desc' } : { updatedAt: 'desc' },
     take: tab === 'completed' ? 20 : undefined,
   });
+  
+  // Return as JSON string to bypass Next.js RSC recursive serialization overhead for arrays
+  return JSON.stringify(data);
 }
 
-async function notifyPipelineUpdate(payload?: any) {
+async function notifyPipelineUpdate(payload?: unknown) {
   try {
     await pusherServer.trigger('pipeline', 'pipeline-updated', payload || {});
   } catch (e) {
@@ -370,7 +373,18 @@ export async function addActivityLog(opportunityId: string, content: string, use
     }
   }
 
-  notifyPipelineUpdate({ action: 'ACTIVITY_ADDED', dealId: opportunityId });
+  const newLog = await prisma.activityLog.findUnique({
+    where: { id: result.id },
+    select: {
+      id: true,
+      content: true,
+      type: true,
+      createdAt: true,
+      user: { select: { name: true, image: true } }
+    }
+  });
+
+  notifyPipelineUpdate({ action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: newLog });
   revalidatePath('/pipeline');
   return result;
 }
@@ -408,16 +422,23 @@ export async function editActivityLog(logId: string, content: string, userId: st
     throw new Error("Unauthorized to edit this log.");
   }
 
-  const result = await prisma.activityLog.update({
+  const updatedLog = await prisma.activityLog.update({
     where: { id: logId },
     data: {
       content,
       isEdited: true
+    },
+    select: {
+      id: true,
+      content: true,
+      type: true,
+      createdAt: true,
+      user: { select: { name: true, image: true } }
     }
   });
-  notifyPipelineUpdate({ action: 'ACTIVITY_UPDATED', logId });
+  notifyPipelineUpdate({ action: 'ACTIVITY_UPDATED', dealId: log.opportunityId, activityLog: updatedLog });
   revalidatePath('/pipeline');
-  return result;
+  return updatedLog;
 }
 
 export async function deleteActivityLog(logId: string, userId: string) {
@@ -468,7 +489,25 @@ export async function deleteActivityLog(logId: string, userId: string) {
   await prisma.activityLog.delete({
     where: { id: logId }
   });
-  notifyPipelineUpdate({ action: 'ACTIVITY_DELETED', logId });
+  
+  const nextLatestLog = await prisma.activityLog.findFirst({
+    where: { 
+      opportunityId: log.opportunityId,
+      parentId: null,
+      type: 'COMMENT',
+      NOT: { content: { startsWith: '[DUE DATE:' } }
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      content: true,
+      type: true,
+      createdAt: true,
+      user: { select: { name: true, image: true } }
+    }
+  });
+
+  notifyPipelineUpdate({ action: 'ACTIVITY_DELETED', dealId: log.opportunityId, logId, nextLatestLog });
   revalidatePath('/pipeline');
   return { success: true };
 }

@@ -4,13 +4,13 @@ import { X, MoreHorizontal, Activity, MessageSquare, Trash2, Search, Users, Bell
 import { OpportunityWithRelations } from "./KanbanCard";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
-import { useRouter } from "next/navigation";
+
 import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useSWRConfig } from "swr";
+import { useSWRConfig, mutate } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
 import { User } from "@prisma/client";
@@ -22,6 +22,7 @@ import { NotesTab } from "./NotesTab";
 import { SharedMediaTab } from "./SharedMediaTab";
 import { ChatAttachmentButton } from "./ChatAttachmentButton";
 import { HighlightText } from "@/components/ui/HighlightText";
+import { pusherClient } from "@/lib/pusher";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
@@ -141,7 +142,9 @@ type ActivityLogWithRelations = ActivityLog & {
   replies?: ActivityLogWithRelations[];
 };
 
-function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string) => void, searchQuery?: string }) {
+type ActivityLogResponse = { data: ActivityLogWithRelations[], nextCursor: string | null };
+
+function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, mutateLogs?: (data: (currentPages?: ActivityLogResponse[]) => ActivityLogResponse[] | undefined, opts?: { revalidate: boolean }) => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string) => void, searchQuery?: string }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(log.content);
   const [isReplying, setIsReplying] = useState(false);
@@ -173,25 +176,108 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick, onIm
 
   const handleEdit = async () => {
     if (!editContent.trim()) return;
-    await editActivityLog(log.id, editContent, currentUser.id);
+    
+    // Optimistic Update
+    const tempUpdatedLog = { ...log, content: editContent, isEdited: true };
+    
+    if (mutateLogs) {
+      mutateLogs(
+        (currentPages?: ActivityLogResponse[]) => {
+          if (!currentPages) return currentPages;
+          return currentPages.map((page) => ({
+            ...page,
+            data: page.data.map((l) => l.id === log.id ? tempUpdatedLog : {
+              ...l,
+              replies: l.replies?.map(r => r.id === log.id ? tempUpdatedLog as unknown as ActivityLogWithRelations : r)
+            })
+          }));
+        },
+        { revalidate: false }
+      );
+    }
+    
+    mutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (currentData: OpportunityWithRelations[] | undefined) => {
+        if (!currentData) return currentData;
+        return currentData.map((opp: OpportunityWithRelations) => {
+          if (opp.id === dealId) {
+            const updatedLogs = opp.activityLogs.map(l => l.id === log.id ? tempUpdatedLog : l);
+            return { ...opp, activityLogs: updatedLogs };
+          }
+          return opp;
+        });
+      },
+      { revalidate: false }
+    );
+
     setIsEditing(false);
     setShowMenu(false);
-    refresh();
+    await editActivityLog(log.id, editContent, currentUser.id);
   };
 
   const handleReply = async () => {
     if (!replyContent.trim() && !replyingToUsername) return;
     const finalContent = replyingToUsername ? `@${replyingToUsername} ${replyContent}` : replyContent;
-    await addActivityLog(dealId, finalContent, currentUser.id, log.id);
+    const fakeLogId = `temp-${Date.now()}`;
+    const tempReply = {
+      id: fakeLogId,
+      content: finalContent,
+      type: "COMMENT",
+      opportunityId: dealId,
+      userId: currentUser.id,
+      parentId: log.id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      user: { ...currentUser, role: "GENERAL" } as any,
+      replies: []
+    } as unknown as ActivityLogWithRelations;
+
+    if (mutateLogs) {
+      mutateLogs(
+        (currentPages?: ActivityLogResponse[]) => {
+          if (!currentPages) return currentPages;
+          return currentPages.map((page) => ({
+            ...page,
+            data: page.data.map(l => 
+              l.id === log.id ? { ...l, replies: [...(l.replies || []), tempReply] } : l
+            )
+          }));
+        },
+        { revalidate: false }
+      );
+    }
+    
     setIsReplying(false);
     setReplyContent("");
     setReplyingToUsername(null);
+    await addActivityLog(dealId, finalContent, currentUser.id, log.id);
     refresh();
   };
 
   const handleDelete = async () => {
+    // Optimistic Update for Activity Panel only
+    if (mutateLogs) {
+      mutateLogs(
+        (currentPages?: ActivityLogResponse[]) => {
+          if (!currentPages) return currentPages;
+          return currentPages.map((page) => ({
+            ...page,
+            data: page.data.map(l => ({
+              ...l,
+              replies: l.replies?.filter(r => r.id !== log.id)
+            })).filter((l) => l.id !== log.id)
+          }));
+        },
+        { revalidate: false }
+      );
+    }
+    
+    // Note: We deliberately do NOT optimistic update pipeline-deals here.
+    // Doing so would empty the KanbanCard activity log, causing a "No activity yet" flicker 
+    // until the Pusher event delivers the nextLatestLog a few ms later.
+    
     await deleteActivityLog(log.id, currentUser.id);
-    refresh();
   };
 
   return (
@@ -221,7 +307,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick, onIm
                     className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg p-2 text-sm min-h-[60px]"
                   />
                   <div className="flex gap-2 justify-end">
-                    <button onClick={() => setIsEditing(false)} className="text-xs text-slate-800 hover:underline">Cancel</button>
+                    <button onClick={() => setIsEditing(false)} className="text-xs text-slate-300 hover:underline">Cancel</button>
                     <button onClick={handleEdit} className="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">Save</button>
                   </div>
                 </div>
@@ -329,6 +415,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, onReplyClick, onIm
                   dealId={dealId} 
                   currentUser={currentUser} 
                   refresh={refresh}
+                  mutateLogs={mutateLogs}
                   onReplyClick={(username) => {
                     setIsReplying(true);
                     setReplyingToUsername(username);
@@ -480,6 +567,25 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   );
 
   const allLogs = rawLocalActivityPages ? rawLocalActivityPages.flatMap(page => page.data) : [];
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const channel = pusherClient.subscribe('pipeline');
+    
+    const handleUpdate = (data?: any) => {
+      if (data?.dealId === deal.id && data?.action?.startsWith('ACTIVITY_')) {
+        // Debounce or directly reload activity logs for this deal when another user modifies them
+        loadActivityLogs();
+      }
+    };
+    
+    channel.bind('pipeline-updated', handleUpdate);
+    
+    return () => {
+      channel.unbind('pipeline-updated', handleUpdate);
+      pusherClient.unsubscribe('pipeline');
+    };
+  }, [deal.id, isOpen, loadActivityLogs]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {
     if (!uniqueLogsMap.has(log.id)) {
@@ -541,7 +647,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         role: "GENERAL"
       },
       replies: []
-    } as any;
+    } as unknown as ActivityLogWithRelations;
 
     // 2. Inject into SWR Cache instantly (0ms delay)
     loadActivityLogs(
@@ -555,6 +661,20 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           };
         }
         return newPages;
+      },
+      { revalidate: false }
+    );
+    
+    mutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (currentData: OpportunityWithRelations[] | undefined) => {
+        if (!currentData) return currentData;
+        return currentData.map(opp => {
+          if (opp.id === deal.id) {
+            return { ...opp, activityLogs: [optimisticLog] };
+          }
+          return opp;
+        });
       },
       { revalidate: false }
     );
@@ -1060,6 +1180,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                   dealId={deal.id}
                                   currentUser={session?.user as unknown as { id: string; name?: string | null; image?: string | null; email?: string | null; }}
                                   refresh={() => loadActivityLogs()}
+                                  mutateLogs={loadActivityLogs}
                                   searchQuery={activitySearchQuery}
                                   onReplyClick={(username) => {
                                     setNewLog(prev => prev ? `${prev} @${username} ` : `@${username} `);
