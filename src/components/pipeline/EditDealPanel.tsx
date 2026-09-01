@@ -10,7 +10,7 @@ import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
 import { useEffect, useState, useRef, useCallback } from "react";
-import useSWR, { useSWRConfig } from "swr";
+import { useSWRConfig } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
 import { User } from "@prisma/client";
@@ -389,7 +389,6 @@ interface EditDealPanelProps {
 }
 
 export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }: EditDealPanelProps) {
-  const router = useRouter();
   const { mutate } = useSWRConfig();
   const [newLog, setNewLog] = useState("");
   const [activitySearchQuery, setActivitySearchQuery] = useState("");
@@ -474,7 +473,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     isValidating: isLoadingLogs
   } = useSWRInfinite<{ data: ActivityLogWithRelations[], nextCursor?: string }>(
     getKey,
-    async ([_, id, cursor]: [string, string, string]) => {
+    async ([, id, cursor]: [string, string, string]) => {
       const res = await getOpportunityActivityLogs(id, 10, cursor || undefined);
       return res as { data: ActivityLogWithRelations[], nextCursor?: string };
     }
@@ -637,7 +636,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
   };
 
-  const [isUpdatingTeam, setIsUpdatingTeam] = useState(false);
+
 
   const handleAddMember = async (userId: string) => {
     // 1. Optimistic Update (Local Panel State)
@@ -652,7 +651,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           if (!currentData) return currentData;
           return currentData.map(opp => {
             if (opp.id === deal.id) {
-              return { ...opp, teamMembers: [...opp.teamMembers, userToAdd as any] };
+              return { ...opp, teamMembers: [...opp.teamMembers, userToAdd as User] };
             }
             return opp;
           });
@@ -1134,7 +1133,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           onClose={() => setShowInviteDropdown(false)}
                           onSelect={handleAddMember}
                           actionLabel="Invite"
-                          isLoading={isUpdatingTeam}
                           excludeUserIds={[deal.ownerId, ...(localTeamMembers?.map(tm => tm.id) || [])]}
                           align="right"
                         />
@@ -1199,7 +1197,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       (isOwner || tm.email === session?.user?.email) && (
                                         <button 
                                           onClick={() => handleRemoveMember(tm.id)}
-                                          disabled={isUpdatingTeam}
                                           className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-50"
                                           title={isOwner ? "Remove from team" : "Leave team"}
                                         >
