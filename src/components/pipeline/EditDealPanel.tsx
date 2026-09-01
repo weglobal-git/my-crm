@@ -651,7 +651,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           if (!currentData) return currentData;
           return currentData.map(opp => {
             if (opp.id === deal.id) {
-              return { ...opp, teamMembers: [...opp.teamMembers, userToAdd as User] };
+              return { ...opp, teamMembers: [...opp.teamMembers, userToAdd as unknown as User] };
             }
             return opp;
           });
