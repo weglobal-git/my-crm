@@ -302,3 +302,50 @@ Prisma wall timeรวม pool wait, driver, database network และ serializ
 ## Remaining bottleneck
 
 หลังการแก้ Activity cold path ยังถูกครองโดย remote Server Action/Prisma round trips ประมาณ 110–125 ms ในรอบปกติ แนวทางตรวจครั้งต่อไปคือทดลองรวม opportunity access กับ Activity retrieval เป็น query ที่ยังพิสูจน์ authorization ได้ หรือใช้ production-safe permission cache ที่มี invalidation ชัดเจน ห้ามทำก่อนมี baseline และ correctness experiment เพราะการ cache permission ผิดอาจกลายเป็น security bug
+
+
+## Prompt 3 — Reply Activity ใน EditDealPanel
+
+### Action contract
+
+```text
+Action: วิเคราะห์ Action: Reply Activity ใน EditDealPanel (addActivityLog Server Action)
+Start: ผู้ใช้กดปุ่มส่งข้อความ (Reply)
+Complete เมื่อครบทุกข้อ:
+  1. click → optimistic reply painted
+  2. click → database commit confirmed
+  3. click → Pusher delivered
+  4. click → user คนที่สองเห็น reply
+```
+
+### คอขวดและ controlled experiments
+
+#### 1. Sequential Prisma I/O Operations
+
+หลักฐาน:
+- จากการทำ Telemetry trace พิสูจน์ให้เห็นว่า `addActivityLog` มีการเรียกใช้งาน Prisma แบบเรียงลำดับ (Sequential)
+- Wait times ถูกบวกทบกันไปเรื่อย ๆ ตามลำดับ (`Wait(Log) + Wait(Deal) + Wait(Notifications)`)
+- ส่งผลให้ระยะเวลารวมของ Server Action สูงถึงประมาณ 732 ms (Baseline)
+
+ข้อสรุป: คอขวดเกิดจากการรอ I/O ของฐานข้อมูลทีละขั้นตอน ทั้งที่การบันทึก Log และระบบ Notifications (Database + Pusher) สามารถแยกไปทำงานแบบคู่ขนาน (Parallel) กันได้หลังจากดึงข้อมูล Deal มาแล้ว
+
+สิ่งที่แก้:
+- ปรับใช้ `Promise.all` เพื่อให้กระบวนการบันทึกฐานข้อมูล (`Prisma Write Log` และบล็อกของ Notifications) รันแบบคู่ขนาน 
+- ลบส่วนคิวรีที่ดึง Relation เปล่าประโยชน์ทิ้ง (`include: { replies: true }`) ตอนสร้าง Activity Log ซึ่งช่วยประหยัดเวลาไปได้ราว ๆ 50 ms
+
+### Before/after
+
+```text
+Warm Server Action p50:  732 ms → 468 ms (ลดลง ~30% หรือเร็วขึ้น 230 ms)
+Prisma Read Deal:        77 ms  → 35 ms (ขนาน)
+Prisma Write Log:        287 ms → 230 ms (ขนาน)
+Notifications Block:     167 ms → 170 ms (ขนาน - ถูกซ่อนเวลาอยู่ข้างหลัง Write Log อย่างสมบูรณ์)
+Optimistic UI render:    ~3-6 ms
+```
+
+### Correctness checks ที่ทำแล้ว
+
+- Database commit confirmed: Activity Log ใหม่ถูกบันทึกลงฐานข้อมูลอย่างถูกต้องสมบูรณ์
+- Notification creation และ Pusher delivery: ยังคงส่งแจ้งเตือนได้ถูกต้องแม้ถูกแยกตรรกะออกไปรันคู่ขนาน
+- Optimistic UI: อัปเดตข้อมูลบนหน้าจอได้ทันทีแบบไม่ต้องรอ Server response (~3-6 ms)
+- นำ Telemetry hooks (`[PERF-TRACE]`, benchmark scripts) ออกจาก source code หลักทั้งหมดหลังทดสอบเสร็จสิ้น

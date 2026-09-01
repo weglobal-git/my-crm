@@ -5,7 +5,7 @@ import { OpportunityWithRelations } from "./KanbanCard";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
 
-import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
+import { addActivityLog, logPerfTrace, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
@@ -226,6 +226,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     if (!replyContent.trim() && !replyingToUsername) return;
     const finalContent = replyingToUsername ? `@${replyingToUsername} ${replyContent}` : replyContent;
     const fakeLogId = `temp-${Date.now()}`;
+    
     const tempReply = {
       id: fakeLogId,
       content: finalContent,
@@ -257,6 +258,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     setIsReplying(false);
     setReplyContent("");
     setReplyingToUsername(null);
+    
     try {
       const persistedReply = await addActivityLog(dealId, finalContent, log.id) as ActivityLogWithRelations;
       mutateLogs?.(

@@ -56,7 +56,7 @@ export function Sidebar() {
         {/* Icon Container */}
         <Link
           href={subs.length > 0 && subs[0].href ? subs[0].href : "#"}
-          prefetch={false}
+          onClick={() => setHoveredMenu(null)}
           className={`
             flex h-16 w-16 items-center justify-center rounded-full transition-all duration-200 cursor-pointer
             ${isActive 
@@ -92,7 +92,6 @@ export function Sidebar() {
                   <Link
                     key={sub.key}
                     href={sub.href || "#"}
-                    prefetch={false}
                     className={`
                       flex items-start gap-4 p-4 rounded-xl transition-all border border-transparent group/item
                       ${isSubActive 

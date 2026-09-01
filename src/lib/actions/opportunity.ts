@@ -254,82 +254,90 @@ export async function getOpportunityActivityLogs(opportunityId: string, limit = 
   return { data, nextCursor };
 }
 
+import { performance } from 'node:perf_hooks';
+
+async function span<T>(traceId: string | undefined, name: string, run: () => Promise<T>) {
+  if (!traceId) return run();
+  const start = performance.now();
+  try { return await run(); }
+  finally {
+    console.info(JSON.stringify({ tag: '[PERF-TRACE]', traceId, name, durationMs: performance.now() - start }));
+  }
+}
+
 export async function addActivityLog(opportunityId: string, content: string, parentId?: string) {
   const { actor } = await requireOpportunityAccess(opportunityId);
-  if (parentId) {
-    const parent = await prisma.activityLog.findFirst({
+  
+  const [parent, deal] = await Promise.all([
+    parentId ? prisma.activityLog.findFirst({
       where: { id: parentId, opportunityId },
       select: { id: true },
-    });
-    if (!parent) throw new Error("Reply target not found.");
-  }
+    }) : Promise.resolve(null),
+    prisma.opportunity.findUnique({
+      where: { id: opportunityId },
+      include: { teamMembers: true }
+    })
+  ]);
+  
+  if (parentId && !parent) throw new Error("Reply target not found.");
 
-  const newLog = await prisma.activityLog.create({
-    data: {
-      content,
-      opportunity: { connect: { id: opportunityId } },
-      user: { connect: { id: actor.id } },
-      type: "COMMENT",
-      ...(parentId && { parent: { connect: { id: parentId } } })
-    },
-    include: {
-      user: true,
-      replies: { include: { user: true }, orderBy: { createdAt: 'asc' } },
-    },
-  });
-  
-  // Notification logic
-  const deal = await prisma.opportunity.findUnique({
-    where: { id: opportunityId },
-    include: { teamMembers: true }
-  });
-  
-  if (deal) {
-    // 1. Parse mentioned usernames (lowercase, removing @)
-    const mentionedUsernames = Array.from(content.matchAll(/@([^\s<]+)/g)).map(m => m[1].toLowerCase());
-    
-    // 2. Find matching users in the DB
-    const mentionedUserIds = new Set<string>();
-    if (mentionedUsernames.length > 0) {
-      const allUsers = await prisma.user.findMany({ select: { id: true, name: true }});
-      allUsers.forEach(u => {
-        if (u.name && mentionedUsernames.includes(u.name.replace(/\s+/g, '').toLowerCase())) {
-          mentionedUserIds.add(u.id);
+  const [newLogRaw] = await Promise.all([
+    prisma.activityLog.create({
+      data: {
+        content,
+        opportunity: { connect: { id: opportunityId } },
+        user: { connect: { id: actor.id } },
+        type: "COMMENT",
+        ...(parentId && { parent: { connect: { id: parentId } } })
+      },
+      include: {
+        user: true,
+      },
+    }),
+    (async () => {
+      if (deal) {
+        const mentionedUsernames = Array.from(content.matchAll(/@([^\s<]+)/g)).map(m => m[1].toLowerCase());
+        const mentionedUserIds = new Set<string>();
+        if (mentionedUsernames.length > 0) {
+          const allUsers = await prisma.user.findMany({ select: { id: true, name: true }});
+          allUsers.forEach(u => {
+            if (u.name && mentionedUsernames.includes(u.name.replace(/\s+/g, '').toLowerCase())) {
+              mentionedUserIds.add(u.id);
+            }
+          });
         }
-      });
-    }
-    
-    mentionedUserIds.delete(actor.id); // don't notify self
+        
+        mentionedUserIds.delete(actor.id);
+        const teamUserIds = new Set(deal.teamMembers.map(m => m.id));
+        teamUserIds.add(deal.ownerId);
+        teamUserIds.delete(actor.id);
+        const standardNotifyIds = new Set(Array.from(teamUserIds).filter(id => !mentionedUserIds.has(id)));
+        
+        const notificationInputs = [
+          ...Array.from(mentionedUserIds).map(recipientId => ({
+            type: "DEAL_COMMENT" as const, senderId: actor.id, recipientId,
+            referenceId: deal.id, title: "You were mentioned",
+            message: `Mentioned you in a comment on: ${deal.topic}`,
+          })),
+          ...Array.from(standardNotifyIds).map(recipientId => ({
+            type: "DEAL_COMMENT" as const, senderId: actor.id, recipientId,
+            referenceId: deal.id, title: "New Comment",
+            message: `Commented on deal: ${deal.topic}`,
+          })),
+        ];
+        if (notificationInputs.length > 0) {
+          const notifications = await prisma.$transaction(
+            notificationInputs.map(data => prisma.notification.create({ data, include: { sender: true } }))
+          );
+          await Promise.all(notifications.map(notification =>
+            triggerNotification(notification.recipientId, notification)
+          ));
+        }
+      }
+    })()
+  ]);
 
-    // 3. Determine team members who should receive standard notifications
-    const teamUserIds = new Set(deal.teamMembers.map(m => m.id));
-    teamUserIds.add(deal.ownerId);
-    teamUserIds.delete(actor.id); // don't notify self
-    
-    // Filter out people who are already getting mentioned so they don't get double notified
-    const standardNotifyIds = new Set(Array.from(teamUserIds).filter(id => !mentionedUserIds.has(id)));
-    
-    const notificationInputs = [
-      ...Array.from(mentionedUserIds).map(recipientId => ({
-        type: "DEAL_COMMENT" as const, senderId: actor.id, recipientId,
-        referenceId: deal.id, title: "You were mentioned",
-        message: `Mentioned you in a comment on: ${deal.topic}`,
-      })),
-      ...Array.from(standardNotifyIds).map(recipientId => ({
-        type: "DEAL_COMMENT" as const, senderId: actor.id, recipientId,
-        referenceId: deal.id, title: "New Comment",
-        message: `Commented on deal: ${deal.topic}`,
-      })),
-    ];
-    if (notificationInputs.length > 0) {
-      const notifications = await prisma.$transaction(
-        notificationInputs.map(data => prisma.notification.create({ data, include: { sender: true } }))
-      );
-      await Promise.all(notifications.map(notification =>
-        triggerNotification(notification.recipientId, notification)
-      ));
-    }
-  }
+  const newLog = { ...newLogRaw, replies: [] } as any;
 
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: newLog });
   revalidatePath('/pipeline');

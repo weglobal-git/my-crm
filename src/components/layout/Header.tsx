@@ -323,7 +323,7 @@ export function Header() {
               </button>
 
               {showProfileDropdown && (
-                <div className="absolute top-full right-0 mt-3 w-48 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up py-2 shadow-lg">
+                <div className="absolute top-full right-0 mt-3 w-60 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up py-2 shadow-lg">
                   <div className="px-4 py-2 border-b border-[#4E4F50] mb-2">
                     <p className="text-sm font-bold text-white truncate">{session.user.name}</p>
                     <p className="text-xs text-slate-400 truncate">{session.user.email}</p>

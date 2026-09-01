@@ -179,6 +179,15 @@ export function KanbanBoard({
     const handlePipelineUpdate = (data?: PipelineUpdateEvent) => {
       if (data?.action === 'MEMBER_ADDED' && data.dealId && data.user) {
         const addedUser = data.user;
+
+        // If the deal is not in our current data, we probably just got added to it.
+        // We need to fetch it to show it on the board.
+        const dealExists = rawOpportunities?.some(opp => opp.id === data.dealId);
+        if (!dealExists) {
+          mutate();
+          return;
+        }
+
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;

@@ -118,7 +118,7 @@ export async function respondToNotification(notificationId: string, accept: bool
     : null;
   const previousDeal = await prisma.opportunity.findUnique({
     where: { id: notification.referenceId },
-    select: { ownerId: true },
+    select: { ownerId: true, teamMembers: { select: { id: true } } },
   });
   if (!previousDeal) throw new Error("Deal not found");
 
@@ -131,9 +131,20 @@ export async function respondToNotification(notificationId: string, accept: bool
     if (!accept) return;
 
     if (notification.type === 'DEAL_TRANSFER_REQUEST') {
+      const teamMembersUpdate: any = {};
+      if (!previousDeal.teamMembers.some(tm => tm.id === previousDeal.ownerId)) {
+        teamMembersUpdate.connect = { id: previousDeal.ownerId };
+      }
+      if (previousDeal.teamMembers.some(tm => tm.id === session.user.id)) {
+        teamMembersUpdate.disconnect = { id: session.user.id };
+      }
+
       await tx.opportunity.update({
         where: { id: notification.referenceId! },
-        data: { ownerId: session.user.id },
+        data: { 
+          ownerId: session.user.id,
+          ...(Object.keys(teamMembersUpdate).length > 0 && { teamMembers: teamMembersUpdate })
+        },
       });
       await tx.activityLog.create({
         data: {

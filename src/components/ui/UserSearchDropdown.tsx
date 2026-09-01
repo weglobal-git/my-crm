@@ -78,7 +78,7 @@ export function UserSearchDropdown({
         {filteredUsers.map(u => (
           <div key={u.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-[#4E4F50] cursor-pointer transition-colors">
             <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-              <img src={u.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${u.name || u.email || u.id}`} alt="Avatar" className="w-8 h-8 rounded-full shrink-0 bg-[#252728]" />
+              <img src={u.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${u.name || u.email || u.id}`} alt="Avatar" className="w-8 h-8 rounded-full shrink-0 bg-[#4E4F50]" />
               <div className="flex flex-col min-w-0 flex-1">
                 <span className="text-sm font-medium text-slate-100 truncate">{u.name}</span>
                 {u.department?.name && (
