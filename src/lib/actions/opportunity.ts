@@ -1,7 +1,7 @@
 "use server";
 
 import prisma from "@/lib/prisma";
-import { OpportunityStatus, OpportunityType } from "@prisma/client";
+import { OpportunityStatus, OpportunityType, DealAIFactStatus, FactRelationType, DealAIEventStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { v2 as cloudinary } from "cloudinary";
 
@@ -17,9 +17,13 @@ import {
   notifyPrivatePipelineUpdate,
   requireOpportunityAccess,
   requirePipelineActor,
+  type PipelineActor,
 } from "@/lib/pipeline-security";
 import { getPipelineOpportunitiesForActor, pipelineOpportunitySelect } from '@/lib/pipeline-opportunities';
-
+import { createActivityCommand, type ActivityLedgerTransaction } from '../event-ledger/activity-commands';
+import { getEventLedgerFeatureFlags } from '../event-ledger/feature-flags';
+import { scheduleEventSummaryProcessing } from '../ai/dispatch';
+import crypto from 'crypto';
 export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
   const actor = await requirePipelineActor();
   return getPipelineOpportunitiesForActor(actor, tab, searchQuery);
@@ -254,17 +258,6 @@ export async function getOpportunityActivityLogs(opportunityId: string, limit = 
   return { data, nextCursor };
 }
 
-import { performance } from 'node:perf_hooks';
-
-async function span<T>(traceId: string | undefined, name: string, run: () => Promise<T>) {
-  if (!traceId) return run();
-  const start = performance.now();
-  try { return await run(); }
-  finally {
-    console.info(JSON.stringify({ tag: '[PERF-TRACE]', traceId, name, durationMs: performance.now() - start }));
-  }
-}
-
 export async function addActivityLog(opportunityId: string, content: string, parentId?: string) {
   const { actor } = await requireOpportunityAccess(opportunityId);
   
@@ -281,18 +274,33 @@ export async function addActivityLog(opportunityId: string, content: string, par
   
   if (parentId && !parent) throw new Error("Reply target not found.");
 
+  const commandId = crypto.randomUUID();
+
   const [newLogRaw] = await Promise.all([
-    prisma.activityLog.create({
-      data: {
-        content,
-        opportunity: { connect: { id: opportunityId } },
-        user: { connect: { id: actor.id } },
-        type: "COMMENT",
-        ...(parentId && { parent: { connect: { id: parentId } } })
-      },
-      include: {
-        user: true,
-      },
+    prisma.$transaction(async (tx) => {
+      const result = await createActivityCommand(
+        tx as unknown as ActivityLedgerTransaction,
+        {
+          actorId: actor.id,
+          commandId,
+          correlationId: commandId,
+          traceId: commandId,
+          occurredAt: new Date(),
+          timezone: "Asia/Bangkok"
+        },
+        { dealId: opportunityId, content, parentId, activityType: 'COMMENT' },
+        getEventLedgerFeatureFlags(),
+        { promptVersion: "v1", schemaVersion: "v1", maxAttempts: 2 }
+      );
+
+      if (result.kind !== "APPLIED") {
+        throw new Error("Failed to create activity via Event Ledger.");
+      }
+
+      return tx.activityLog.findUnique({
+        where: { id: result.activityId },
+        include: { user: true }
+      });
     }),
     (async () => {
       if (deal) {
@@ -337,9 +345,11 @@ export async function addActivityLog(opportunityId: string, content: string, par
     })()
   ]);
 
-  const newLog = { ...newLogRaw, replies: [] } as any;
+  if (!newLogRaw) throw new Error("Activity was created but could not be loaded.");
+  const newLog = { ...newLogRaw, replies: [] };
 
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: newLog });
+  scheduleEventSummaryProcessing();
   revalidatePath('/pipeline');
   return newLog;
 }
@@ -392,11 +402,11 @@ export async function editActivityLog(logId: string, content: string) {
   return updatedLog;
 }
 
-export async function deleteActivityLog(logId: string) {
+export async function deleteActivityLog(logId: string, actorOverride?: PipelineActor) {
   const log = await prisma.activityLog.findUnique({ where: { id: logId } });
   if (!log) throw new Error("Log not found.");
 
-  const { actor } = await requireOpportunityAccess(log.opportunityId);
+  const { actor } = await requireOpportunityAccess(log.opportunityId, { actor: actorOverride });
   const isAdmin = actor.role === "ADMIN";
 
   if (log.type === "SYSTEM_UPDATE" && !isAdmin) {
@@ -437,6 +447,32 @@ export async function deleteActivityLog(logId: string) {
     }
   }
 
+  // Retract downstream AI events and facts
+  const domainEvents = await prisma.dealDomainEvent.findMany({
+    where: { sourceEntityId: logId },
+    select: { id: true },
+  });
+
+  if (domainEvents.length > 0) {
+    const domainEventIds = domainEvents.map((d) => d.id);
+    await prisma.dealAIFact.updateMany({
+      where: { sourceDomainEventId: { in: domainEventIds } },
+      data: {
+        status: DealAIFactStatus.RETRACTED,
+        retractedAt: new Date(),
+        retractedById: actor.id,
+        supersessionReason: FactRelationType.SOURCE_DELETED,
+      },
+    });
+
+    await prisma.dealAIEvent.updateMany({
+      where: { domainEventId: { in: domainEventIds } },
+      data: {
+        status: DealAIEventStatus.RETRACTED,
+      },
+    });
+  }
+
   await prisma.activityLog.delete({
     where: { id: logId }
   });
@@ -453,7 +489,9 @@ export async function deleteActivityLog(logId: string) {
   });
 
   await notifyPrivatePipelineUpdate(log.opportunityId, { action: 'ACTIVITY_DELETED', dealId: log.opportunityId, logId, nextLatestLog });
-  revalidatePath('/pipeline');
+  try {
+    revalidatePath('/pipeline');
+  } catch {}
   return { success: true };
 }
 

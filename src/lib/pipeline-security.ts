@@ -40,8 +40,8 @@ async function hasPipelinePermission(actor: PipelineActor) {
   return Boolean(pipelinePermission);
 }
 
-export async function requirePipelineActor(): Promise<PipelineActor> {
-  const actor = await getPipelineActorFromSession();
+export async function requirePipelineActor(actorOverride?: PipelineActor): Promise<PipelineActor> {
+  const actor = actorOverride ?? await getPipelineActorFromSession();
   if (!await hasPipelinePermission(actor)) throw new Error('Forbidden');
   return actor;
 }
@@ -68,9 +68,9 @@ export function getOpportunityAccessWhere(actor: PipelineActor): Prisma.Opportun
 
 export async function requireOpportunityAccess(
   opportunityId: string,
-  options: { ownerOrAdmin?: boolean; adminOnly?: boolean } = {},
+  options: { ownerOrAdmin?: boolean; adminOnly?: boolean; actor?: PipelineActor } = {},
 ) {
-  const actor = await getPipelineActorFromSession();
+  const actor = options.actor ?? await getPipelineActorFromSession();
   const [pipelineAllowed, opportunity] = await Promise.all([
     hasPipelinePermission(actor),
     prisma.opportunity.findFirst({

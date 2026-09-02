@@ -2,9 +2,9 @@
 
 import React, { useState } from 'react';
 import { User, Department, Role } from "@prisma/client";
-import { 
-  updateUserRole, 
-  createDepartment, 
+import {
+  updateUserRole,
+  createDepartment,
   deleteDepartment,
   createUser,
   updateDepartmentName,
@@ -12,13 +12,14 @@ import {
   updateUserDetails
 } from "@/lib/actions/user";
 import { SettingsLayout, SettingsSidebar, SettingsSidebarItem, SettingsContent, SettingsGroup, SettingsRow } from '@/components/layout/SettingsLayout';
-import { HardDrive, Cloud, Link2, Archive, Activity, CheckCircle2, Edit2, Shield, User as UserIcon, Briefcase, Plus, Check, X, Trash2, Mail } from 'lucide-react';
+import { HardDrive, Cloud, Link2, Archive, Activity, CheckCircle2, Edit2, Shield, User as UserIcon, Briefcase, Plus, Check, X, Trash2, Mail, BrainCircuit } from 'lucide-react';
 import { useDialog } from '@/providers/DialogProvider';
 import Image from "next/image";
+import AIControlCenter from "./AIControlCenter";
 
 type UserWithDepts = User & { departments: Department[] };
 
-type Tab = 'dashboard' | 'integrations' | 'archiving' | 'users_all' | string;
+type Tab = 'dashboard' | 'integrations' | 'archiving' | 'users_all' | 'ai_control' | string;
 
 interface Props {
   initialUsers?: UserWithDepts[];
@@ -29,11 +30,11 @@ interface Props {
 export default function SystemGeneralClient({ initialUsers = [], initialDepartments = [], currentUserRole = "GENERAL" }: Props) {
   const { toast, confirm } = useDialog();
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
-  
+
   // Storage State
   const [cloudinaryStorage, setCloudinaryStorage] = useState({ percent: 0, usageStr: '0 B', limitStr: '25 GB' });
   const [cloudinaryBandwidth, setCloudinaryBandwidth] = useState({ percent: 0, usageStr: '0 B', limitStr: '25 GB' });
-  
+
   const [gdriveUsage, setGdriveUsage] = useState({ percent: 0, usageStr: '0 B', limitStr: '15 GB' });
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [connectedGoogleEmail, setConnectedGoogleEmail] = useState<string | null>(null);
@@ -219,7 +220,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
         console.error("Failed to load GDrive status", error);
       }
     }
-    
+
     if (activeTab === 'dashboard') {
       fetchStorage();
       fetchGDriveStatus();
@@ -282,10 +283,10 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                 <div className="flex flex-col gap-1.5 w-[320px] bg-[#252728] border border-[#4E4F50] rounded-xl p-1.5 shadow-sm">
                   <div className="flex items-center gap-2 px-2 bg-[#3A3B3C] border border-transparent rounded-lg focus-within:border-[#C7F33C] focus-within:ring-1 focus-within:ring-[#C7F33C] transition-all">
                     <UserIcon className="w-4 h-4 text-slate-300 shrink-0" />
-                    <input 
-                      type="text" 
-                      value={editUserName} 
-                      onChange={e => setEditUserName(e.target.value)} 
+                    <input
+                      type="text"
+                      value={editUserName}
+                      onChange={e => setEditUserName(e.target.value)}
                       className="w-full bg-transparent py-1.5 text-[14px] font-medium text-slate-100 outline-none placeholder:text-slate-300"
                       placeholder="User Name"
                       autoFocus
@@ -293,24 +294,24 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                   </div>
                   <div className="flex items-center gap-2 px-2 bg-[#3A3B3C] border border-transparent rounded-lg focus-within:border-[#C7F33C] focus-within:ring-1 focus-within:ring-[#C7F33C] transition-all">
                     <Mail className="w-4 h-4 text-slate-300 shrink-0" />
-                    <input 
-                      type="email" 
-                      value={editUserEmail} 
-                      onChange={e => setEditUserEmail(e.target.value)} 
+                    <input
+                      type="email"
+                      value={editUserEmail}
+                      onChange={e => setEditUserEmail(e.target.value)}
                       className="w-full bg-transparent py-1.5 text-[13px] text-slate-300 outline-none placeholder:text-slate-300"
                       placeholder="Email Address"
                     />
                   </div>
                   <div className="flex items-center justify-end gap-1 mt-1 px-1">
-                    <button 
-                      onClick={() => setEditingUserId(null)} 
+                    <button
+                      onClick={() => setEditingUserId(null)}
                       disabled={isSavingUser}
                       className="px-3 py-1.5 text-[12px] font-medium text-slate-300 hover:text-white transition-colors"
                     >
                       Cancel
                     </button>
-                    <button 
-                      onClick={() => saveUser(user.id)} 
+                    <button
+                      onClick={() => saveUser(user.id)}
                       disabled={isSavingUser}
                       className="px-3 py-1.5 text-[12px] font-bold bg-[#C7F33C] text-black rounded-lg hover:bg-[#b5dc35] transition-colors disabled:opacity-50 flex items-center gap-1"
                     >
@@ -325,7 +326,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                     <span className="text-slate-300 text-[13px]">{user.email}</span>
                   </div>
                   {isAdmin && (
-                    <button 
+                    <button
                       onClick={() => startEditingUser(user)}
                       className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-300 hover:text-white hover:bg-[#4E4F50] rounded-md transition-all ml-1"
                       title="Edit User"
@@ -337,13 +338,13 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
               )}
             </div>
           </div>
-          
+
           <div className="flex items-center gap-8">
             <div className="flex flex-col min-w-[120px]">
               <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Role</span>
               <div className="relative group">
-                <select 
-                  value={user.role} 
+                <select
+                  value={user.role}
                   onChange={e => handleRoleChange(user.id, e.target.value as Role)}
                   disabled={!isAdmin || user.email === "weglobal.server@gmail.com"}
                   className="appearance-none bg-transparent text-sm font-medium text-slate-300 hover:text-slate-100 cursor-pointer outline-none w-full border-b border-transparent hover:border-slate-500 focus:border-[#C7F33C] transition-all pb-1 disabled:opacity-70 disabled:cursor-not-allowed"
@@ -360,8 +361,8 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
               <div className="flex flex-col min-w-[140px]">
                 <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Department</span>
                 <div className="relative group">
-                  <select 
-                    value={user.departments[0]?.id || ""} 
+                  <select
+                    value={user.departments[0]?.id || ""}
                     onChange={e => handleDepartmentChange(user.id, e.target.value)}
                     disabled={!isAdmin || user.role === "ADMIN"}
                     className="appearance-none bg-transparent text-sm font-medium text-slate-300 hover:text-slate-100 cursor-pointer outline-none w-full border-b border-transparent hover:border-slate-500 focus:border-[#C7F33C] transition-all pb-1 disabled:opacity-70 disabled:cursor-not-allowed"
@@ -385,31 +386,38 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
     <div className="flex flex-col gap-6 w-full max-w-6xl mx-auto">
       <SettingsLayout>
         {/* Left Sidebar - Navigation */}
-        <SettingsSidebar 
+        <SettingsSidebar
           title="General Settings"
         >
           <div className="mb-6 mt-4">
             <h3 className="px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Storage & System</h3>
-            <SettingsSidebarItem 
-              icon={<HardDrive />} 
-              label="Storage Dashboard" 
-              isActive={activeTab === 'dashboard'} 
+            <SettingsSidebarItem
+              icon={<HardDrive />}
+              label="Storage Dashboard"
+              isActive={activeTab === 'dashboard'}
               onClick={() => setActiveTab('dashboard')}
               iconBgColor="bg-slate-800"
             />
-            <SettingsSidebarItem 
-              icon={<Link2 />} 
-              label="Integrations" 
-              isActive={activeTab === 'integrations'} 
+            <SettingsSidebarItem
+              icon={<Link2 />}
+              label="Integrations"
+              isActive={activeTab === 'integrations'}
               onClick={() => setActiveTab('integrations')}
               iconBgColor="bg-indigo-500"
             />
-            <SettingsSidebarItem 
-              icon={<Archive />} 
-              label="Archiving Policy" 
-              isActive={activeTab === 'archiving'} 
+            <SettingsSidebarItem
+              icon={<Archive />}
+              label="Archiving Policy"
+              isActive={activeTab === 'archiving'}
               onClick={() => setActiveTab('archiving')}
               iconBgColor="bg-rose-500"
+            />
+            <SettingsSidebarItem
+              icon={<BrainCircuit />}
+              label="AI Control Center"
+              isActive={activeTab === 'ai_control'}
+              onClick={() => setActiveTab('ai_control')}
+              iconBgColor="bg-fuchsia-500"
             />
           </div>
 
@@ -424,8 +432,8 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
             </div>
             {isCreatingDept && (
               <div className="px-4 py-2 mb-2 flex flex-col gap-2 bg-[#1C1C1D] rounded-xl border border-[#3A3B3C]">
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={newDeptName}
                   onChange={e => setNewDeptName(e.target.value)}
                   className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors placeholder:text-slate-500"
@@ -438,22 +446,22 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                 </div>
               </div>
             )}
-            <SettingsSidebarItem 
-              icon={<UserIcon size={18} />} 
-              label="All Users" 
+            <SettingsSidebarItem
+              icon={<UserIcon size={18} />}
+              label="All Users"
               isActive={activeTab === 'users_all'}
               onClick={() => setActiveTab('users_all')}
             />
             {departments.map(dept => (
               <div key={dept.id} className="relative group">
-                <SettingsSidebarItem 
-                  icon={<Briefcase size={18} />} 
-                  label={dept.name} 
+                <SettingsSidebarItem
+                  icon={<Briefcase size={18} />}
+                  label={dept.name}
                   isActive={activeTab === `users_${dept.id}`}
                   onClick={() => setActiveTab(`users_${dept.id}`)}
                 />
                 {isAdmin && (
-                  <button 
+                  <button
                     onClick={() => handleDeleteDept(dept.id)}
                     className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-md transition-all"
                   >
@@ -466,6 +474,11 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
         </SettingsSidebar>
 
         {/* Right Content Area */}
+        {activeTab === 'ai_control' && (
+          <SettingsContent title="AI Control Center">
+            <AIControlCenter />
+          </SettingsContent>
+        )}
         {activeTab === 'dashboard' && (
           <SettingsContent title="Storage & Bandwidth Dashboard">
             <SettingsGroup label="Cloudinary (Image CDN)">
@@ -544,19 +557,19 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       Google Drive
                     </span>
                     <span className="text-sm text-slate-400">
-                      {isGoogleConnected && connectedGoogleEmail 
-                        ? `Connected as ${connectedGoogleEmail}` 
+                      {isGoogleConnected && connectedGoogleEmail
+                        ? `Connected as ${connectedGoogleEmail}`
                         : "Connect to enable automated file archiving."}
                     </span>
                   </div>
                   {isGoogleConnected ? (
-                    <button 
+                    <button
                       onClick={handleDisconnectDrive}
                       className="px-4 py-2 bg-rose-500/10 text-rose-500 font-medium rounded-lg border border-rose-500/20 hover:bg-rose-500/20 transition-all flex items-center gap-2 text-sm">
                       Disconnect
                     </button>
                   ) : (
-                    <button 
+                    <button
                       onClick={handleConnectDrive}
                       className="px-4 py-2 bg-white text-black font-medium rounded-lg hover:bg-slate-200 transition-all text-sm"
                     >
@@ -587,7 +600,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <div className="w-11 h-6 bg-[#3A3B3C] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#C7F33C]"></div>
                     </label>
                   </div>
-                  
+
                   <div className="bg-[#1C1C1D] border border-[#3A3B3C] rounded-lg p-4 mt-2">
                     <p className="text-sm text-slate-300">
                       <strong>Policy:</strong> Move images and files to Google Drive, then permanently delete them from Cloudinary if the Opportunity is marked as WON or LOST and has been inactive for more than <strong className="text-white">30 days</strong>.
@@ -600,8 +613,8 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
         )}
 
         {activeTab === 'users_all' && (
-          <SettingsContent 
-            title="All Users & Administrators" 
+          <SettingsContent
+            title="All Users & Administrators"
             action={isAdmin && (
               <button onClick={() => { setIsCreatingUser(true); setAddingUserToDeptId(null); }} className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold text-sm hover:bg-[#b5dc35] transition-colors">
                 <Plus size={16} /> New User
@@ -657,7 +670,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                 {renderUserGroup(adminUsers, true)}
               </div>
             )}
-            
+
             <div className="mb-8">
               <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2">
                 <UserIcon className="w-4 h-4" /> General Users
@@ -668,14 +681,14 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
         )}
 
         {departments.map(dept => activeTab === `users_${dept.id}` && (
-          <SettingsContent 
-            key={dept.id} 
+          <SettingsContent
+            key={dept.id}
             title={
               <div className="flex items-center gap-3">
                 {editingDeptId === dept.id ? (
                   <div className="flex items-center gap-2">
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={editDeptName}
                       onChange={e => setEditDeptName(e.target.value)}
                       className="bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-1.5 text-lg font-bold text-slate-100 outline-none focus:border-[#C7F33C] transition-colors"

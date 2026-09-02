@@ -1,6 +1,6 @@
 import { 
   LayoutDashboard, Briefcase, Megaphone, Wrench, Settings, MousePointer2, FileText, Users, Package, MessageSquare, Building2, FileBadge, Image as ImageIcon, Paperclip,
-  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart, HardDrive
+  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart, HardDrive, Wand2
 } from "lucide-react";
 
 export type MenuLevel = 1 | 2 | 3;
@@ -47,6 +47,7 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "pipeline.information", label: "Customer",     level: 3, parentKey: "pipeline", iconName: "Building2",     sortOrder: 3 },
   { key: "pipeline.notes",       label: "Notes",        level: 3, parentKey: "pipeline", iconName: "FileText",      sortOrder: 4 },
   { key: "pipeline.sharedMedia", label: "Shared Media", level: 3, parentKey: "pipeline", iconName: "Folder",       sortOrder: 5 },
+  { key: "pipeline.summary",     label: "AI Summary",   level: 3, parentKey: "pipeline", iconName: "Wand2",     sortOrder: 6 },
 ];
 
 export function getMenuByKey(key: string): MenuDefinition | undefined {
@@ -119,5 +120,7 @@ export const IconMap: Record<string, React.ElementType> = {
   PenTool,
   LayoutTemplate,
   PieChart,
-  HardDrive
+  HardDrive,
+  Wand2,
+  Sparkles: Wand2
 };

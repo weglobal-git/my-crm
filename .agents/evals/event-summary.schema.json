@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://my-crm.local/schemas/event-summary-v1.json",
+  "title": "Deal Event Summary v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "eventType",
+    "importance",
+    "confidence",
+    "needsContext",
+    "nextActions",
+    "blockers",
+    "uncertainties",
+    "mentionedEffectiveDate"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "CUSTOMER_INTEREST",
+        "FOLLOW_UP",
+        "QUOTATION",
+        "PRICE_OR_COMMERCIAL",
+        "OBJECTION_OR_RISK",
+        "DECISION_OR_APPROVAL",
+        "DEADLINE_OR_SCHEDULE",
+        "LOGISTICS",
+        "PAYMENT_OR_INVOICE",
+        "DEAL_STAGE_OR_STATUS",
+        "OWNERSHIP_OR_RESPONSIBILITY",
+        "INTERNAL_COORDINATION",
+        "GENERAL_UPDATE",
+        "UNKNOWN"
+      ]
+    },
+    "importance": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "needsContext": {
+      "type": "boolean"
+    },
+    "nextActions": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "ownerHint", "dueDate"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 240 },
+          "ownerHint": { "type": ["string", "null"], "maxLength": 120 },
+          "dueDate": { "type": ["string", "null"], "format": "date-time" }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+    },
+    "uncertainties": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+    },
+    "mentionedEffectiveDate": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

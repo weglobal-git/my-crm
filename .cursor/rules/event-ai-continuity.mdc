@@ -1,0 +1,17 @@
+---
+description: Preserve resumable Event AI work across agents, context loss, and quota exhaustion
+alwaysApply: true
+---
+
+# Event AI Continuity
+
+- Before Event AI work, read `.agents/plans/event-ai-agent-roadmap.md`, `event-ai-agent-execution.md`, and `event-ai-agent-decisions.md`.
+- The execution file is the source of current phase, checkpoint, tests, blockers, and next action.
+- Work in the smallest independently testable slice; avoid mixing phases in one unverified change.
+- Update the checkpoint before stopping, handing off, switching tasks, or when quota/context is at risk.
+- Record changed files, migrations, commands, test results, assumptions, unresolved risks, and the exact resume action.
+- Mark unverified work explicitly; never let a new agent infer that partial work is complete.
+- Add architecture/product choices to the append-only decision log; supersede decisions instead of deleting history.
+- Preserve user changes and inspect the dirty worktree before editing.
+- Never commit Event AI changes without explicit user authorization.
+- A replacement agent must validate the checkpoint against `git status` and the referenced files before continuing.

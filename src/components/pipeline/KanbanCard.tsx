@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BellRing, CircleDollarSign, Wrench, Handshake } from "lucide-react";
+import { BellRing, CircleDollarSign, Wrench, Handshake, Wand2 } from "lucide-react";
 import { Opportunity, Company, User, Tag, OpportunityTag } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
@@ -238,6 +238,11 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
           <div className="flex flex-col flex-1 min-w-0 pr-1 pl-1">
             <div className="flex items-center gap-1.5 mb-1">
               <div className={`font-semibold text-[13px] leading-tight truncate ${highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
+              {deal.activityLogs?.some(log => log.type === 'SYSTEM_UPDATE' && (log as any).sourceDomainEventId) && (
+                <div title="AI Summary Available" className="w-4 h-4 rounded flex items-center justify-center bg-[#C7F33C]/20 border border-[#C7F33C]/30 shrink-0">
+                  <Wand2 className="w-2.5 h-2.5 text-[#C7F33C]" />
+                </div>
+              )}
             </div>
             <div className={`flex items-center text-[11px] truncate ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>
               {contactName}

@@ -1,21 +1,23 @@
 "use client";
 
-import { X, MoreHorizontal, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2 } from "lucide-react";
+import { X, MoreHorizontal, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2, Wand2 } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
 
 import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
+import { correctDealAISummary, getDealAISummaries } from "@/lib/actions/ai-events";
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useSWRConfig, mutate } from "swr";
+import useSWR, { useSWRConfig, mutate } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
 import { User } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
+import { AISummaryCard } from "@/components/pipeline/AISummaryCard";
 import { useDialog } from "@/providers/DialogProvider";
 import { CustomerTab } from "./CustomerTab";
 import { NotesTab } from "./NotesTab";
@@ -61,10 +63,10 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
   if (images.length === 1) {
     return (
       <div className="mt-2 rounded-xl overflow-hidden border border-[#4E4F50] bg-[#1C1C1D]">
-        <img 
-          src={images[0].url} 
-          alt={images[0].filename} 
-          className="w-full h-auto max-h-80 object-contain cursor-pointer hover:opacity-90 transition-opacity" 
+        <img
+          src={images[0].url}
+          alt={images[0].filename}
+          className="w-full h-auto max-h-80 object-contain cursor-pointer hover:opacity-90 transition-opacity"
           onClick={() => onImageClick?.(images[0].url)}
           onError={handleImageError}
         />
@@ -76,7 +78,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
     return (
       <div className="mt-2 grid grid-cols-2 gap-1 rounded-xl overflow-hidden border border-[#4E4F50] bg-[#1C1C1D]">
         {images.map((img, idx) => (
-          <img 
+          <img
             key={idx} src={img.url} alt={img.filename}
             className="w-full h-40 object-cover cursor-pointer hover:opacity-90 transition-opacity"
             onClick={() => onImageClick?.(img.url)}
@@ -90,22 +92,22 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
   if (images.length === 3) {
     return (
       <div className="mt-2 grid grid-cols-2 gap-1 rounded-xl overflow-hidden border border-[#4E4F50] bg-[#1C1C1D]">
-        <img 
-          src={images[0].url} 
+        <img
+          src={images[0].url}
           alt=""
           className="col-span-2 w-full h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity"
           onClick={() => onImageClick?.(images[0].url)}
           onError={handleImageError}
         />
-        <img 
-          src={images[1].url} 
+        <img
+          src={images[1].url}
           alt=""
           className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
           onClick={() => onImageClick?.(images[1].url)}
           onError={handleImageError}
         />
-        <img 
-          src={images[2].url} 
+        <img
+          src={images[2].url}
           alt=""
           className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
           onClick={() => onImageClick?.(images[2].url)}
@@ -130,7 +132,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
           )
         }
         return (
-          <img 
+          <img
             key={idx} src={img.url} alt={img.filename}
             className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
             onClick={() => onImageClick?.(img.url)}
@@ -149,7 +151,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
   const [replyContent, setReplyContent] = useState("");
   const [replyingToUsername, setReplyingToUsername] = useState<string | null>(null);
   const [showMenu, setShowMenu] = useState(false);
-  
+
   // Close menu if click outside could be added, but a simple hover or blur works for now.
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -174,10 +176,10 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
 
   const handleEdit = async () => {
     if (!editContent.trim()) return;
-    
+
     // Optimistic Update
     const tempUpdatedLog = { ...log, content: editContent, isEdited: true };
-    
+
     if (mutateLogs) {
       mutateLogs(
         (currentPages?: ActivityLogPage[]) => {
@@ -193,7 +195,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
         { revalidate: false }
       );
     }
-    
+
     mutate(
       (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
       (currentData: OpportunityWithRelations[] | undefined) => {
@@ -226,7 +228,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     if (!replyContent.trim() && !replyingToUsername) return;
     const finalContent = replyingToUsername ? `@${replyingToUsername} ${replyContent}` : replyContent;
     const fakeLogId = `temp-${Date.now()}`;
-    
+
     const tempReply = {
       id: fakeLogId,
       content: finalContent,
@@ -246,7 +248,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
           if (!currentPages) return currentPages;
           return currentPages.map((page) => ({
             ...page,
-            data: page.data.map(l => 
+            data: page.data.map(l =>
               l.id === log.id ? { ...l, replies: [...(l.replies || []), tempReply] } : l
             )
           }));
@@ -254,11 +256,11 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
         { revalidate: false }
       );
     }
-    
+
     setIsReplying(false);
     setReplyContent("");
     setReplyingToUsername(null);
-    
+
     try {
       const persistedReply = await addActivityLog(dealId, finalContent, log.id) as ActivityLogWithRelations;
       mutateLogs?.(
@@ -287,11 +289,11 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
         { revalidate: false }
       );
     }
-    
+
     // Note: We deliberately do NOT optimistic update pipeline-deals here.
-    // Doing so would empty the KanbanCard activity log, causing a "No activity yet" flicker 
+    // Doing so would empty the KanbanCard activity log, causing a "No activity yet" flicker
     // until the Pusher event delivers the nextLatestLog a few ms later.
-    
+
     try {
       await deleteActivityLog(log.id);
     } catch {
@@ -317,12 +319,12 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                   </span>
                 )}
               </div>
-              
+
               {isEditing ? (
                 <div className="flex flex-col gap-2 min-w-[250px]">
-                  <textarea 
-                    value={editContent} 
-                    onChange={e => setEditContent(e.target.value)} 
+                  <textarea
+                    value={editContent}
+                    onChange={e => setEditContent(e.target.value)}
                     className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg p-2 text-sm min-h-[60px]"
                   />
                   <div className="flex gap-2 justify-end">
@@ -336,7 +338,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                     const displayContent = dueDateMatch ? dueDateMatch[2] : log.content;
                     const images: {url: string, filename: string, type: string}[] = [];
                     const files: {url: string, filename: string, type: string}[] = [];
-                    
+
                     const cleanText = displayContent.replace(/\[ATTACHMENT:([^|]+)\|([^|]*)\|([^\]]+)\]/g, (match, url, filename, type) => {
                       if (type.startsWith('image/') || type.startsWith('video/')) {
                         images.push({ url, filename, type });
@@ -381,14 +383,14 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
           {/* Action Row */}
           <div className="flex items-center gap-4 mt-1 pl-2 text-xs font-semibold text-slate-500 relative">
             <span className="font-normal text-slate-500">{formatDateTime(log.createdAt)}{log.isEdited && " (edited)"}</span>
-            <button 
+            <button
               onClick={() => {
                 if (log.parentId && onReplyClick) {
                   onReplyClick(log.user?.name?.replace(/\s+/g, '') || 'Unknown');
                 } else {
                   setIsReplying(true);
                 }
-              }} 
+              }}
               className="hover:underline cursor-pointer"
             >
               Reply
@@ -397,23 +399,23 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
             {/* Edit / Delete Menu (3 Dots) */}
             {canEdit && (
               <div className="relative opacity-0 group-hover/comment:opacity-100 transition-opacity flex items-center" ref={menuRef}>
-                <button 
-                  onClick={() => setShowMenu(!showMenu)} 
+                <button
+                  onClick={() => setShowMenu(!showMenu)}
                   className="p-1 hover:bg-[#4E4F50] rounded-full transition-colors flex items-center justify-center -ml-2"
                 >
                   <MoreHorizontal className="w-3 h-3 text-slate-500" />
                 </button>
-                
+
                 {showMenu && (
                   <div className="absolute top-full left-0 mt-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-lg shadow-sm flex flex-col py-1 w-24 z-10">
-                    <button 
-                      onClick={() => { setIsEditing(true); setShowMenu(false); }} 
+                    <button
+                      onClick={() => { setIsEditing(true); setShowMenu(false); }}
                       className="text-left px-3 py-1.5 hover:bg-[#4E4F50] text-slate-300 text-xs font-normal"
                     >
                       Edit
                     </button>
-                    <button 
-                      onClick={handleDelete} 
+                    <button
+                      onClick={handleDelete}
                       className="text-left px-3 py-1.5 hover:bg-[#4E4F50] text-red-400 text-xs font-normal"
                     >
                       Delete
@@ -428,17 +430,17 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
           {log.replies && log.replies.length > 0 && (
             <div className="flex flex-col gap-4 mt-4 border-l-2 border-[#1C1C1D] pl-4">
               {log.replies.map((reply) => (
-                <ActivityComment 
-                  key={reply.id} 
-                  log={reply} 
-                  dealId={dealId} 
-                  currentUser={currentUser} 
+                <ActivityComment
+                  key={reply.id}
+                  log={reply}
+                  dealId={dealId}
+                  currentUser={currentUser}
                   refresh={refresh}
                   mutateLogs={mutateLogs}
                   onReplyClick={(username) => {
                     setIsReplying(true);
                     setReplyingToUsername(username);
-                  }} 
+                  }}
                   onImageClick={onImageClick}
                 />
               ))}
@@ -463,10 +465,10 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                       </span>
                     </div>
                   )}
-                  <textarea 
+                  <textarea
                     value={replyContent}
                     onChange={e => setReplyContent(e.target.value)}
-                    placeholder="Write a reply..." 
+                    placeholder="Write a reply..."
                     autoFocus
                     className="w-full bg-transparent text-sm text-slate-100 focus:outline-none resize-none"
                     rows={2}
@@ -485,7 +487,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
   );
 }
 
-export type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'sharedMedia';
+export type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'sharedMedia' | 'summary';
 
 interface EditDealPanelProps {
   deal: OpportunityWithRelations;
@@ -502,11 +504,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
   const { visibleRightMenus } = usePermissions();
   const rightMenus = visibleRightMenus("pipeline");
-  
+
   // Try to find the initial tab matching a visible right menu, fallback to the first one available
   const allowedInitialTab = rightMenus.find(m => m.key.endsWith(`.${initialTab}`)) ? initialTab : (rightMenus[0]?.key.split('.').pop() as TabType || 'activity');
   const [activeTab, setActiveTab] = useState<TabType>(allowedInitialTab === ('duedate' as TabType) ? 'activity' : allowedInitialTab);
-  
+
   const { toast, confirm } = useDialog();
   const [showCalendar, setShowCalendar] = useState(false);
   const [pendingDueDate, setPendingDueDate] = useState<Date | 'REMOVE' | null>(null);
@@ -514,7 +516,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const [selectedPopupDate, setSelectedPopupDate] = useState<Date | null>(deal.dueDate ? new Date(deal.dueDate) : null);
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const calendarRef = useRef<HTMLDivElement>(null);
-  
+
   // Lightbox Preview State
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
@@ -562,7 +564,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const getKey = (pageIndex: number, previousPageData: { data: ActivityLogWithRelations[], nextCursor?: string } | null) => {
     if (!isOpen) return null;
     if (previousPageData && !previousPageData.nextCursor) return null; // reached the end
-    const typeFilter = activeTab === 'system' ? 'SYSTEM_UPDATE' : 'COMMENT';
+    const typeFilter = activeTab === 'system' ? 'SYSTEM_UPDATE' :
+                       activeTab === 'summary' ? 'SYSTEM_UPDATE' : 'COMMENT';
     return ['activity-logs', deal.id, typeFilter, previousPageData?.nextCursor ?? ''];
   };
 
@@ -586,26 +589,38 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   );
 
   const allLogs = rawLocalActivityPages ? rawLocalActivityPages.flatMap(page => page.data) : [];
+  const {
+    data: aiSummaries = [],
+    mutate: loadAISummaries,
+    isLoading: isLoadingAISummaries,
+  } = useSWR(
+    isOpen && activeTab === 'summary' ? ['deal-ai-summaries', deal.id] : null,
+    ([, id]) => getDealAISummaries(id),
+  );
 
   useEffect(() => {
     if (!isOpen) return;
     if (!session?.user?.id) return;
     const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
-    
+
     const handleUpdate = (data?: ActivityUpdateEvent) => {
+      if (data?.dealId === deal.id && data?.action === 'AI_EVENT_READY') {
+        loadAISummaries();
+        return;
+      }
       if (data?.dealId === deal.id && data?.action?.startsWith('ACTIVITY_')) {
         loadActivityLogs(pages => applyActivityEvent(pages, data), { revalidate: false });
       }
     };
-    
+
     channel.bind('pipeline-updated', handleUpdate);
-    
+
     return () => {
       channel.unbind('pipeline-updated', handleUpdate);
       // KanbanBoard uses the same channel. Unbinding this handler is sufficient;
       // unsubscribing here would silently stop board updates after closing panel.
     };
-  }, [deal.id, isOpen, loadActivityLogs, session?.user?.id]);
+  }, [deal.id, isOpen, loadActivityLogs, loadAISummaries, session?.user?.id]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {
     if (!uniqueLogsMap.has(log.id)) {
@@ -613,7 +628,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
   });
   const localActivityLogs = Array.from(uniqueLogsMap.values()) as ActivityLogWithRelations[];
-  
+
   const hasMoreLogs = rawLocalActivityPages ? !!rawLocalActivityPages[rawLocalActivityPages.length - 1]?.nextCursor : false;
   const isLoadingMore = isLoadingLogs && size > 0 && rawLocalActivityPages && typeof rawLocalActivityPages[size - 1] === "undefined";
 
@@ -621,7 +636,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const lastLogElementRef = useCallback((node: HTMLDivElement | null) => {
     if (observerRef.current) observerRef.current.disconnect();
     if (isLoadingMore) return; // Disconnect before returning early
-    
+
     if (node) {
       observerRef.current = new IntersectionObserver(entries => {
         if (entries[0].isIntersecting && hasMoreLogs) {
@@ -645,11 +660,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   const handleAddLog = async () => {
     if (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate) return;
-    
+
     const currentNewLog = newLog;
     const currentAttachments = [...pendingAttachments];
     const currentDueDate = pendingDueDate;
-    
+
     // 1. Create Fake Optimistic Log
     const fakeId = `temp-${Date.now()}`;
     const optimisticLog = {
@@ -684,7 +699,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       },
       { revalidate: false }
     );
-    
+
     mutate(
       (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
       (currentData: OpportunityWithRelations[] | undefined) => {
@@ -709,13 +724,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     setIsSubmittingLog(true);
     try {
       let attachmentText = "";
-      
+
       // Upload pending attachments
       if (currentAttachments.length > 0) {
         for (const file of currentAttachments) {
           const isImage = file.type.startsWith('image/');
           let fileToUpload = file;
-          
+
           if (isImage) {
             fileToUpload = await imageCompression(file, {
               maxSizeMB: 1,
@@ -743,7 +758,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               isRaw: !isImage
             })
           });
-          
+
           const data = await response.json();
           if (data.success && data.attachment?.cloudinaryUrl) {
             attachmentText += `\n[ATTACHMENT:${data.attachment.cloudinaryUrl}|${file.name}|${file.type}]`;
@@ -804,7 +819,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     setPendingAttachments(prev => [...prev, ...validFiles]);
   }, [toast, setPendingAttachments]);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     noClick: true,
     noKeyboard: true
@@ -825,7 +840,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     setIsTransferring(true);
     try {
       await requestDealTransfer(deal.id, newOwnerId);
-      
+
       const newOwner = users.find(u => u.id === newOwnerId);
       if (session?.user?.id && newOwner) {
         await addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`);
@@ -927,7 +942,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   };
 
   const [mounted, setMounted] = useState(false);
-  
+
   const [showTransferDropdown, setShowTransferDropdown] = useState(false);
   const [showInviteDropdown, setShowInviteDropdown] = useState(false);
 
@@ -937,7 +952,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   }, []);
 
   const [internalIsOpen, setInternalIsOpen] = useState(false);
-  
+
   useEffect(() => {
     if (isOpen) {
       const t = requestAnimationFrame(() => {
@@ -954,11 +969,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   return (
     <>
-      <div 
-        className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${internalIsOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`} 
+      <div
+        className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${internalIsOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}
         onClick={onClose}
       />
-      
+
       <div className={`fixed inset-y-4 right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] origin-right ${internalIsOpen ? "opacity-100 translate-x-0 scale-100" : "opacity-0 translate-x-8 scale-[0.97] pointer-events-none"}`}>
         <div className="flex shadow-2xl h-full rounded-2xl overflow-hidden border border-[#3A3B3C]">
           {/* Tab Sidebar */}
@@ -974,7 +989,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 className={`
                   flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200
                   ${activeTab === tabId || (activeTab === 'system' && tabId === 'activity')
-                    ? "bg-[#3A3B3C] text-white " 
+                    ? "bg-[#3A3B3C] text-white "
                     : "text-slate-400 hover:bg-[#C7F33C] hover:text-[#111111]"}
                 `}
               >
@@ -1025,7 +1040,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 />
               </div>
             ) : (
-              <h2 
+              <h2
                 className={`text-xl font-bold text-slate-100 line-clamp-1 ${canEditDueDate ? 'cursor-text hover:text-white' : ''}`}
                 onClick={() => canEditDueDate && setIsEditingTopic(true)}
                 title={canEditDueDate ? "Click to edit title" : undefined}
@@ -1033,7 +1048,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 {topic}
               </h2>
             )}
-            
+
             <div className="mt-2 flex items-center gap-2">
               <select
                 value={deal.type}
@@ -1098,7 +1113,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   <Trash2 className="w-5 h-5" />
                 </button>
               )}
-              <button 
+              <button
                 onClick={onClose}
                 className="p-2 hover:bg-[#3A3B3C] rounded-full transition-colors text-slate-400"
               >
@@ -1107,35 +1122,55 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             </div>
           </div>
 
-          {/* Sticky Tabs for Activity/System */}
-          {(activeTab === 'activity' || activeTab === 'system') && (
+          {/* Sticky Tabs for Activity/System/Summary */}
+          {(activeTab === 'activity' || activeTab === 'system' || activeTab === 'summary') && (
             <div className="px-6 pt-6 pb-2 bg-[#252728] shrink-0 z-10">
               <div className="flex items-center justify-between w-full mb-2">
                 <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-[#C7F33C]" />
-                  Activity Log
+                  {activeTab === 'summary' ? (
+                    <Wand2 className="w-5 h-5 text-[#C7F33C]" />
+                  ) : (
+                    <Activity className="w-5 h-5 text-[#C7F33C]" />
+                  )}
+                  {activeTab === 'summary' ? 'AI Summary' : 'Activity Log'}
                 </h3>
-                
-                <div className="flex items-center gap-2">
-                  <button 
+
+                <div className="flex items-center gap-2 overflow-x-auto" role="tablist" aria-label="Deal activity views">
+                  <button
                     onClick={() => setActiveTab('activity')}
+                    role="tab"
+                    aria-selected={activeTab === 'activity'}
                     className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                      activeTab === 'activity' 
-                        ? 'bg-[#C7F33C] text-black' 
+                      activeTab === 'activity'
+                        ? 'bg-[#C7F33C] text-black'
                         : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
                     }`}
                   >
                     <MessageSquare className="w-4 h-4" /> Activity
                   </button>
-                  <button 
+                  <button
                     onClick={() => setActiveTab('system')}
+                    role="tab"
+                    aria-selected={activeTab === 'system'}
                     className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                      activeTab === 'system' 
-                        ? 'bg-[#C7F33C] text-black' 
+                      activeTab === 'system'
+                        ? 'bg-[#C7F33C] text-black'
                         : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
                     }`}
                   >
                     <MessageSquare className="w-4 h-4" /> System
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('summary')}
+                    role="tab"
+                    aria-selected={activeTab === 'summary'}
+                    className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
+                      activeTab === 'summary'
+                        ? 'bg-[#C7F33C] text-black'
+                        : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
+                    }`}
+                  >
+                    <Wand2 className="w-4 h-4" /> AI Summary
                   </button>
                 </div>
               </div>
@@ -1143,9 +1178,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               {/* Search Bar */}
               <div className="relative mt-3 mb-2">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                <input 
+                <input
                   type="text"
-                  placeholder="Search updates..."
+                  placeholder={activeTab === 'summary' ? 'Search AI summaries...' : 'Search updates...'}
                   value={activitySearchQuery}
                   onChange={(e) => setActivitySearchQuery(e.target.value)}
                   className="w-full bg-[#3A3B3C] hover:bg-[#4E4F50] border border-[#4E4F50] rounded-full pl-10 pr-4 py-2 text-sm text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors placeholder:text-slate-400"
@@ -1155,12 +1190,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           )}
 
           <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 flex flex-col gap-8 custom-scrollbar">
-            
-            {(activeTab === 'activity' || activeTab === 'system') && (
+
+            {(activeTab === 'activity' || activeTab === 'system' || activeTab === 'summary') && (
               <>
                 {/* Activity Logs (Facebook Style) */}
                 <div className="flex flex-col gap-4 flex-1 pb-10">
-                  
+
                   {activeTab === 'activity' && (
                     <div className="flex flex-col gap-6">
 
@@ -1185,11 +1220,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           }
 
                           let comments = localActivityLogs.filter(log => log.type === 'COMMENT' && !log.parentId);
-                          
+
                           if (activitySearchQuery.trim()) {
                             const query = activitySearchQuery.toLowerCase();
-                            comments = comments.filter(log => 
-                              log.content?.toLowerCase().includes(query) || 
+                            comments = comments.filter(log =>
+                              log.content?.toLowerCase().includes(query) ||
                               log.user?.name?.toLowerCase().includes(query)
                             );
                           }
@@ -1218,26 +1253,83 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                 <h3 className="font-semibold text-xl text-slate-100">{year}</h3>
                                 <div className="h-px bg-[#4E4F50] flex-1"></div>
                               </div>
-                              {groupedComments[year].map(log => (
-                                <ActivityComment 
-                                  key={log.id} 
-                                  log={log} 
-                                  dealId={deal.id}
-                                  currentUser={session?.user as unknown as { id: string; name?: string | null; image?: string | null; email?: string | null; }}
-                                  refresh={() => loadActivityLogs()}
-                                  mutateLogs={loadActivityLogs}
-                                  searchQuery={activitySearchQuery}
-                                  onReplyClick={(username) => {
-                                    setNewLog(prev => prev ? `${prev} @${username} ` : `@${username} `);
-                                    if (inputRef.current) inputRef.current.focus();
-                                  }}
-                                  onImageClick={(url) => setPreviewImage(url)}
-                                />
-                              ))}
+                              {groupedComments[year].map(log => {
+
+                                return (
+                                  <ActivityComment
+                                    key={log.id}
+                                    log={log}
+                                    dealId={deal.id}
+                                    currentUser={session?.user as unknown as { id: string; name?: string | null; image?: string | null; email?: string | null; }}
+                                    refresh={() => loadActivityLogs()}
+                                    mutateLogs={loadActivityLogs}
+                                    searchQuery={activitySearchQuery}
+                                    onReplyClick={(username) => {
+                                      setNewLog(prev => prev ? `${prev} @${username} ` : `@${username} `);
+                                      if (inputRef.current) inputRef.current.focus();
+                                    }}
+                                    onImageClick={(url) => setPreviewImage(url)}
+                                  />
+                                );
+                              })}
                             </div>
                           ));
                         })()}
                       </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'summary' && (
+                    <div className="flex flex-col gap-4 mt-2">
+                      {(() => {
+                        if (isLoadingAISummaries) {
+                          return (
+                            <div className="flex flex-col gap-4 mt-4 w-full">
+                              {[1, 2, 3].map(i => (
+                                <div key={i} className="flex gap-3 animate-pulse">
+                                  <div className="w-10 h-10 rounded-full bg-[#3A3B3C] shrink-0" />
+                                  <div className="flex flex-col gap-2 flex-1">
+                                    <div className="w-3/4 h-16 bg-[#3A3B3C] rounded-2xl rounded-tl-sm" />
+                                    <div className="w-24 h-3 bg-[#3A3B3C] rounded-full ml-2" />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+
+                        let summaries = aiSummaries;
+
+                        if (activitySearchQuery.trim()) {
+                          const query = activitySearchQuery.toLowerCase();
+                          summaries = summaries.filter(event => {
+                            const revision = event.currentRevision;
+                            return revision?.summary.toLowerCase().includes(query) ||
+                              revision?.eventType.toLowerCase().includes(query);
+                          });
+                        }
+
+                        if (summaries.length === 0) {
+                          return (
+                            <div className="text-center py-10 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
+                              <p className="text-sm text-slate-300 font-medium">{activitySearchQuery.trim() ? "No AI summaries found." : "No AI summaries yet."}</p>
+                              <p className="text-xs text-slate-400 mt-1">{activitySearchQuery.trim() ? "Try searching for something else." : "AI will automatically summarize events here."}</p>
+                            </div>
+                          );
+                        }
+
+                        return summaries.map(event => (
+                          <div key={event.id} className="mb-4">
+                            <AISummaryCard
+                              event={event}
+                              onSave={async (eventId, expectedRevisionId, summary) => {
+                                await correctDealAISummary({ dealId: deal.id, eventId, expectedRevisionId, summary });
+                                await loadAISummaries();
+                              }}
+                            />
+                          </div>
+                        ));
+                      })()}
                     </div>
                   )}
 
@@ -1260,12 +1352,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           );
                         }
 
-                        let sysLogs = localActivityLogs.filter(log => log.type === 'SYSTEM_UPDATE');
-                        
+                        let sysLogs = localActivityLogs.filter(log => log.type === 'SYSTEM_UPDATE' && !log.sourceDomainEventId);
+
                         if (activitySearchQuery.trim()) {
                           const query = activitySearchQuery.toLowerCase();
-                          sysLogs = sysLogs.filter(log => 
-                            log.content?.toLowerCase().includes(query) || 
+                          sysLogs = sysLogs.filter(log =>
+                            log.content?.toLowerCase().includes(query) ||
                             log.user?.name?.toLowerCase().includes(query)
                           );
                         }
@@ -1296,8 +1388,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                               </p>
                             </div>
                             {session?.user?.role === 'ADMIN' && (
-                              <button 
-                                onClick={() => handleDeleteSystemLog(log.id)} 
+                              <button
+                                onClick={() => handleDeleteSystemLog(log.id)}
                                 className="opacity-0 group-hover/sys:opacity-100 p-1.5 text-slate-300 hover:text-red-500 transition-colors"
                                 title="Delete System Log"
                               >
@@ -1325,7 +1417,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
             {activeTab === 'collaborate' && (
               <div className="flex flex-col gap-8">
-                
+
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center justify-between mb-2">
                     <div>
@@ -1336,7 +1428,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     </div>
                     {canInvite && (
                       <div className="relative">
-                        <button 
+                        <button
                           onClick={() => {
                             setShowInviteDropdown(!showInviteDropdown);
                             setShowTransferDropdown(false);
@@ -1357,7 +1449,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       </div>
                     )}
                   </div>
-                  
+
                   <div className="flex flex-col gap-6">
                     {(() => {
                       const allMembers = [deal.owner, ...(localTeamMembers || []).filter(tm => tm.id !== deal.ownerId)];
@@ -1385,7 +1477,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       <span className="text-xs text-slate-300">{isRowOwner ? 'Owner' : 'Member'}</span>
                                     </div>
                                   </div>
-                                  
+
                                   <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                     {isRowOwner ? (
                                       isOwner && (
@@ -1413,7 +1505,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       )
                                     ) : (
                                       (isOwner || tm.email === session?.user?.email) && (
-                                        <button 
+                                        <button
                                           onClick={() => handleRemoveMember(tm.id)}
                                           className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-50"
                                           title={isOwner ? "Remove from team" : "Leave team"}
@@ -1457,7 +1549,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               {canEditDueDate && showCalendar && (
                 <div ref={calendarRef} className="absolute bottom-[100%] left-4 mb-2 bg-[#3A3B3C] border border-[#4E4F50] rounded-2xl shadow-xl p-4 z-50 w-[280px]">
                   <div className="flex items-center justify-between mb-4">
-                    <button 
+                    <button
                       onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
                       className="p-1 hover:bg-[#4E4F50] rounded-full text-slate-400"
                     >
@@ -1466,7 +1558,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     <span className="font-bold text-slate-100">
                       {calendarMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
                     </span>
-                    <button 
+                    <button
                       onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
                       className="p-1 hover:bg-[#4E4F50] rounded-full text-slate-400"
                     >
@@ -1487,11 +1579,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       const cellDate = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), date);
                       const today = new Date();
                       today.setHours(0, 0, 0, 0);
-                      
+
                       const isToday = date === new Date().getDate() && calendarMonth.getMonth() === new Date().getMonth() && calendarMonth.getFullYear() === new Date().getFullYear();
                       const isPast = cellDate < today;
                       const isSelected = selectedPopupDate?.getDate() === date && selectedPopupDate?.getMonth() === calendarMonth.getMonth() && selectedPopupDate?.getFullYear() === calendarMonth.getFullYear();
-                      
+
                       return (
                         <button
                           key={date}
@@ -1516,7 +1608,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   </div>
                   <div className="flex gap-2 mt-4">
                     {deal.dueDate && (
-                      <button 
+                      <button
                         onClick={() => {
                           setPendingDueDate('REMOVE');
                           setShowCalendar(false);
@@ -1526,7 +1618,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         Remove
                       </button>
                     )}
-                    <button 
+                    <button
                       onClick={() => {
                         setPendingDueDate(selectedPopupDate);
                         setShowCalendar(false);
@@ -1569,8 +1661,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                <Paperclip className="w-4 h-4" />
                              </div>
                            )}
-                           <button 
-                             onClick={() => setPendingAttachments(prev => prev.filter((_, i) => i !== idx))} 
+                           <button
+                             onClick={() => setPendingAttachments(prev => prev.filter((_, i) => i !== idx))}
                              className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/att:opacity-100 transition-opacity scale-75 hover:scale-100 shadow-lg"
                            >
                              <X className="w-3 h-3" />
@@ -1579,8 +1671,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                        );
                     })}
                   </div>
-                  
-                  <textarea 
+
+                  <textarea
                     ref={inputRef}
                     value={newLog}
                     onChange={e => setNewLog(e.target.value)}
@@ -1588,16 +1680,16 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     className="w-full bg-transparent border-none rounded-xl text-white px-2 py-2 text-sm min-h-[40px] focus:outline-none resize-none custom-scrollbar"
                     rows={newLog.split('\n').length > 1 ? Math.min(newLog.split('\n').length, 12) : 1}
                   />
-                  
+
                   <div className="flex justify-between items-center mt-2 pr-1 pb-1">
                     <div className="flex items-center gap-1">
                       {session?.user?.id && (
-                        <ChatAttachmentButton 
+                        <ChatAttachmentButton
                           onFileSelect={(files) => setPendingAttachments(prev => [...prev, ...files])}
                         />
                       )}
                       {canEditDueDate && (
-                        <button 
+                        <button
                           onClick={() => setShowCalendar(!showCalendar)}
                           title="Set Due Date"
                           className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ml-1 ${(pendingDueDate && pendingDueDate !== 'REMOVE') || (!pendingDueDate && deal.dueDate) ? 'bg-[#C7F33C] text-black' : 'hover:bg-[#3A3B3C] text-slate-100'}`}
@@ -1606,7 +1698,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         </button>
                       )}
                     </div>
-                    <button 
+                    <button
                       onClick={handleAddLog}
                       disabled={isSubmittingLog || (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate)}
                       className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-1.5 rounded-full text-xs font-bold hover:bg-[#b0d635] transition-colors disabled:opacity-50 "
@@ -1623,23 +1715,23 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         </div>
         </div>
       </div>
-      
+
       {/* Lightbox Overlay */}
       {previewImage && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center p-4"
           onClick={() => setPreviewImage(null)}
         >
-          <button 
+          <button
             className="absolute top-6 right-6 p-2 rounded-full bg-[#1C1C1D]/50 text-white hover:bg-[#C7F33C] hover:text-black transition-colors"
             onClick={() => setPreviewImage(null)}
           >
             <X className="w-6 h-6" />
           </button>
-          <img 
-            src={previewImage} 
+          <img
+            src={previewImage}
             className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
-            onClick={e => e.stopPropagation()} 
+            onClick={e => e.stopPropagation()}
             alt="Preview"
           />
         </div>
