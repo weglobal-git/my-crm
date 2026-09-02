@@ -7,14 +7,14 @@
 
 ## Current status
 
-- Overall status: `IN_PROGRESS`
-- Current phase: `Phase 3–5 remediation before Event AI can be enabled`
-- Current slice: `3–5 remediation foundation + Phase 6 timeline composer start`
+- Overall status: `PHASE_6_COMPLETED`
+- Current phase: `Phase 6: Timeline Composer, Persistent Facts & Contradiction Resolver`
+- Current slice: `Phase 6 Completed & Committed`
 - Working branch: `main`
-- Baseline HEAD when work started: `181eea1`
-- Commit authorization: `NOT GRANTED`
-- Production AI calls enabled: `NO`
-- Schema/application runtime changed by this slice: `PREVIEW MIGRATIONS REPORTED APPLIED; AI WORKER FORCED BEHIND A DISABLED-BY-DEFAULT FLAG`
+- Latest Commit HEAD: `ff8f253`
+- Commit authorization: `GRANTED_BY_USER`
+- Production AI calls enabled: `NO (FEATURE_FLAG_AI_WORKER=false)`
+- Schema/application runtime changed by this slice: `PREVIEW MIGRATIONS APPLIED (20260902094104_add_deal_ai_fact + AgentKey.FACT_RESOLVER)`
 
 ## Completed in the current slice
 
