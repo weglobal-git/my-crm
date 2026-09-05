@@ -256,7 +256,7 @@ export function EditAccountPanel({
     if (!companyId) return;
     if (!silent) setIsLoading(true);
     try {
-      const res = await getAccountOverview(companyId);
+      const res = await getAccountOverview(companyId, { includeAddresses: true, includeLogs: true });
       applyOverviewData(res);
     } catch (err: unknown) {
       if (!silent) {

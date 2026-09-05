@@ -748,7 +748,11 @@ export function ContactView({
                     key={company.id}
                     company={company}
                     isSelected={selectedCompanyId === company.id}
-                    onClick={() => setSelectedCompanyId(company.id)}
+                    onClick={() => {
+                      if (selectedCompanyId !== company.id) {
+                        setSelectedCompanyId(company.id);
+                      }
+                    }}
                     onPointerEnter={() => {
                       void preload(["account-overview", company.id], fetchAccountOverview);
                     }}

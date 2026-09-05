@@ -77,7 +77,7 @@ export function EditAccountModal({
     if (!companyId) return;
     setIsLoading(true);
     try {
-      const res = await getAccountOverview(companyId);
+      const res = await getAccountOverview(companyId, { includeAddresses: true, includeLogs: true });
       setDisplayName(res.company.displayName || res.company.name || "");
       setName(res.company.name || "");
       setCountry(res.company.country || "");

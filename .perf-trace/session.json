@@ -2,74 +2,74 @@
   "targetUrl": "http://localhost:3003/contact",
   "currentPhase": 5,
   "selectedAction": {
-    "id": "ACT-01",
-    "name": "Initial Page Load (SSR to Table Ready)",
-    "completionSignal": "First batch of Company cards in left column and Account Analytics + Person table in right column painted on screen"
+    "id": "ACT-02",
+    "name": "Company Card Click (Select Company to Table & Profile Context Ready)",
+    "completionSignal": "Right column PersonTable rows and AccountAnalyticsCard businessSummary populated and active without loading skeletons"
   },
   "phaseGates": {
     "0": {
       "status": "PASSED",
-      "at": "2026-09-05T13:27:17.044Z",
-      "note": "Selected single golden action: ACT-01"
+      "at": "2026-09-05T14:33:34.431Z",
+      "note": "Selected single golden action: ACT-02"
     },
     "1": {
       "status": "PASSED",
-      "at": "2026-09-05T13:33:00.993Z",
-      "note": "Probes active and verified with >=90% trace coverage"
+      "at": "2026-09-05T14:38:59.421Z",
+      "note": "Probes active across client and server with 99.8% trace coverage"
     },
     "2": {
       "status": "PASSED",
-      "at": "2026-09-05T13:46:02.847Z",
-      "note": "Baseline measured across 5 runs (p50=529ms, p95=881ms, 24 requests, 412580 bytes)"
+      "at": "2026-09-05T14:46:55.487Z",
+      "note": "Baseline measured across 5 runs (p50=338ms, p95=430ms)"
     },
     "3": {
       "status": "PASSED",
-      "at": "2026-09-05T13:50:44.629Z",
-      "note": "Causally confirmed: eliminating sequential getAccountOverview and duplicate auth in SSR reduces wall time by ~210ms (from ~529ms to ~345ms)"
+      "at": "2026-09-05T14:51:21.445Z",
+      "note": "Causally confirmed: bypassing log groupBys reduces click-to-ready duration by ~133ms (from 354ms to 220ms)"
     },
     "4": {
       "status": "PASSED",
-      "at": "2026-09-05T13:57:54.963Z",
-      "note": "Optimizations compiled cleanly and functional checks verified"
+      "at": "2026-09-05T14:59:11.977Z",
+      "note": "Optimizations compiled cleanly (actor caching + selective query pruning + log deferral) and functional checks verified via browser"
     },
     "5": {
       "status": "PASSED",
-      "at": "2026-09-05T14:04:30.533Z",
-      "note": "Post-fix benchmark confirmed improvement (p50: 529ms -> 442ms, p95: 881ms -> 514ms); all [PERF-TRACE] probes removed"
+      "at": "2026-09-05T15:05:42.243Z",
+      "note": "Post-fix benchmark confirmed improvement (p50: 338ms -> 98.5ms, -70.9%); all [PERF-TRACE] probes removed"
     }
   },
   "baseline": {
     "rawRuns": [
-      881,
-      529,
-      536,
-      461,
-      381
+      338,
+      299,
+      255,
+      430,
+      356
     ],
-    "p50": 529,
-    "p95": 881,
-    "min": 381,
-    "max": 881,
-    "bytes": 412580,
-    "requests": 24,
-    "recordedAt": "2026-09-05T13:45:14.938Z"
+    "p50": 338,
+    "p95": 430,
+    "min": 255,
+    "max": 430,
+    "bytes": 4200,
+    "requests": 1,
+    "recordedAt": "2026-09-05T14:46:26.665Z"
   },
   "causalProof": null,
   "postFix": {
     "rawRuns": [
-      514,
-      426,
-      442,
-      488,
-      423
+      227.7,
+      3.2,
+      126.4,
+      98.5,
+      84.7
     ],
-    "p50": 442,
-    "p95": 514,
-    "min": 423,
-    "max": 514,
-    "bytes": 412580,
-    "requests": 24,
-    "recordedAt": "2026-09-05T14:03:09.934Z"
+    "p50": 98.5,
+    "p95": 227.7,
+    "min": 3.2,
+    "max": 227.7,
+    "bytes": 2400,
+    "requests": 1,
+    "recordedAt": "2026-09-05T15:02:53.546Z"
   },
-  "updatedAt": "2026-09-05T14:04:30.534Z"
+  "updatedAt": "2026-09-05T15:05:42.244Z"
 }

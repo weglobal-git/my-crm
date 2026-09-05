@@ -17,10 +17,19 @@ export type ContactActor = {
   departmentIds: string[];
 };
 
+const ACTOR_CACHE_TTL_MS = 60 * 1000;
+const actorCache = new Map<string, { actor: ContactActor; expires: number }>();
+
 export async function getContactActor(): Promise<ContactActor> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id && !session?.user?.email) {
     throw new Error("Unauthorized");
+  }
+
+  const cacheKey = session.user.id || session.user.email || "";
+  const cached = actorCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    return cached.actor;
   }
 
   const dbUser = await prisma.user.findFirst({
@@ -39,7 +48,7 @@ export async function getContactActor(): Promise<ContactActor> {
     throw new Error("Unauthorized user not found");
   }
 
-  return {
+  const actor: ContactActor = {
     id: dbUser.id,
     name: dbUser.name || "Unknown User",
     email: dbUser.email || "",
@@ -47,6 +56,9 @@ export async function getContactActor(): Promise<ContactActor> {
     departments: dbUser.departments.map((d: { name: string }) => d.name),
     departmentIds: dbUser.departments.map((d: { id: string }) => d.id),
   };
+
+  actorCache.set(cacheKey, { actor, expires: Date.now() + ACTOR_CACHE_TTL_MS });
+  return actor;
 }
 
 export interface GetContactsParams {
@@ -1285,10 +1297,18 @@ export type OverviewCompanyLog = {
   user?: OverviewUserSummary | null;
 };
 
+export interface GetAccountOverviewOptions {
+  includeAddresses?: boolean;
+  includeLogs?: boolean;
+  actor?: ContactActor;
+}
+
 export async function getAccountOverview(
   companyId: string,
-  _options?: { includeLogs?: boolean; actor?: ContactActor }
+  _options?: GetAccountOverviewOptions
 ) {
+  const includeAddresses = _options?.includeAddresses ?? false;
+  const includeLogs = _options?.includeLogs ?? false;
   const actor = _options?.actor || (await getContactActor());
 
   // Parallel Phase 1: Company data + AI Config + Company-level Logs run concurrently
@@ -1326,9 +1346,11 @@ export async function getAccountOverview(
           },
           orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
         },
-        addresses: {
-          orderBy: { createdAt: "asc" },
-        },
+        ...(includeAddresses ? {
+          addresses: {
+            orderBy: { createdAt: "asc" as const },
+          },
+        } : {}),
         opportunities: {
           select: {
             id: true,
@@ -1339,20 +1361,22 @@ export async function getAccountOverview(
             dueDate: true,
             createdAt: true,
             ownerId: true,
-            stage: {
-              select: {
-                id: true,
-                name: true,
+            ...(includeAddresses || includeLogs ? {
+              stage: {
+                select: {
+                  id: true,
+                  name: true,
+                },
               },
-            },
-            owner: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
+              owner: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                },
               },
-            },
+            } : {}),
           },
         },
       },
@@ -1361,11 +1385,13 @@ export async function getAccountOverview(
       where: { id: `account_ai_${companyId}` },
       select: { googleRefreshToken: true },
     }).catch(() => null),
-    prisma.companyLog.groupBy({
-      by: ["userId"],
-      where: { companyId },
-      _count: { id: true },
-    }).catch(() => []),
+    includeLogs
+      ? prisma.companyLog.groupBy({
+          by: ["userId"],
+          where: { companyId },
+          _count: { id: true },
+        }).catch(() => [])
+      : Promise.resolve([]),
   ]);
 
   if (!company) {
@@ -1428,26 +1454,29 @@ export async function getAccountOverview(
   const activePersonsCount = sanitizedContacts.filter((c) => c.isActive).length;
   const inactivePersonsCount = sanitizedContacts.length - activePersonsCount;
 
-  // Parallel Phase 2: Opportunities & Contacts Logs
+  // Parallel Phase 2: Opportunities & Contacts Logs (run only when includeLogs is explicitly true)
   const companyOppIds = company.opportunities.map((o) => o.id);
   const companyContactIds = company.contacts.map((c) => c.id);
 
-  const [oppLogs, contactLogs] = await Promise.all([
-    companyOppIds.length > 0
-      ? prisma.activityLog.groupBy({
-          by: ["userId"],
-          where: { opportunityId: { in: companyOppIds } },
-          _count: { id: true },
-        }).catch(() => [])
-      : Promise.resolve([]),
-    companyContactIds.length > 0
-      ? prisma.contactLog.groupBy({
-          by: ["userId"],
-          where: { contactId: { in: companyContactIds } },
-          _count: { id: true },
-        }).catch(() => [])
-      : Promise.resolve([]),
-  ]);
+  type LogSummary = { userId: string; _count: { id: number } };
+  const [oppLogs, contactLogs]: [LogSummary[], LogSummary[]] = includeLogs
+    ? await Promise.all([
+        companyOppIds.length > 0
+          ? prisma.activityLog.groupBy({
+              by: ["userId"],
+              where: { opportunityId: { in: companyOppIds } },
+              _count: { id: true },
+            }).catch(() => [])
+          : Promise.resolve([]),
+        companyContactIds.length > 0
+          ? prisma.contactLog.groupBy({
+              by: ["userId"],
+              where: { contactId: { in: companyContactIds } },
+              _count: { id: true },
+            }).catch(() => [])
+          : Promise.resolve([]),
+      ])
+    : [[], []];
 
   const userContributions = new Map<string, number>();
   const addContribution = (userId: string | null | undefined, weight = 1) => {
@@ -1521,7 +1550,7 @@ export async function getAccountOverview(
       createdAt: new Date(),
       logs: [] as OverviewCompanyLog[],
     },
-    addresses: company.addresses,
+    addresses: ((company as unknown as { addresses?: typeof company.addresses }).addresses || []) as NonNullable<typeof company.addresses>,
     contacts: sanitizedContacts,
     deals: company.opportunities,
     topContributors,
