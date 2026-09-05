@@ -163,9 +163,19 @@ export interface GetCompaniesParams {
   search?: string;
   page?: number;
   pageSize?: number;
+  traceId?: string;
+  actor?: ContactActor;
 }
 
+let cachedCountries: { country: string; count: number }[] | null = null;
+let lastCountriesFetch = 0;
+const COUNTRIES_CACHE_TTL_MS = 5 * 60 * 1000; // 5-minute memory cache
+
 export async function getCompanyCountries(): Promise<{ country: string; count: number }[]> {
+  const now = Date.now();
+  if (cachedCountries && now - lastCountriesFetch < COUNTRIES_CACHE_TTL_MS) {
+    return cachedCountries;
+  }
   try {
     const raw = await prisma.company.groupBy({
       by: ["country"],
@@ -182,15 +192,18 @@ export async function getCompanyCountries(): Promise<{ country: string; count: n
       },
     });
 
-    return raw
+    const result = raw
       .filter((r): r is typeof r & { country: string } => Boolean(r.country && r.country.trim()))
       .map((r) => ({
         country: r.country.trim(),
         count: r._count.id,
       }));
+    cachedCountries = result;
+    lastCountriesFetch = now;
+    return result;
   } catch (err) {
     console.error("Failed to fetch company countries:", err);
-    return [];
+    return cachedCountries || [];
   }
 }
 
@@ -201,8 +214,9 @@ export async function getCompaniesWithContacts({
   search = "",
   page = 1,
   pageSize = 20,
+  actor: providedActor,
 }: GetCompaniesParams = {}) {
-  await getContactActor();
+  const actor = providedActor || (await getContactActor());
 
   const where: Prisma.CompanyWhereInput = {};
 
@@ -237,7 +251,13 @@ export async function getCompaniesWithContacts({
     ];
   }
 
-  const [total, rawCompanies] = await Promise.all([
+  const [
+    total,
+    rawCompanies,
+    qualifiedCount,
+    unqualifiedCount,
+    totalCount,
+  ] = await Promise.all([
     prisma.company.count({ where }),
     prisma.company.findMany({
       where,
@@ -261,10 +281,6 @@ export async function getCompaniesWithContacts({
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
-  ]);
-
-  // Overall quick stats based on Company qualification
-  const [qualifiedCount, unqualifiedCount, totalCount] = await Promise.all([
     prisma.company.count({ where: { status: "QUALIFIED" } }),
     prisma.company.count({ where: { status: "UNQUALIFIED" } }),
     prisma.company.count(),
@@ -1271,79 +1287,100 @@ export type OverviewCompanyLog = {
 
 export async function getAccountOverview(
   companyId: string,
-  _options?: { includeLogs?: boolean }
+  _options?: { includeLogs?: boolean; actor?: ContactActor }
 ) {
-  void _options;
-  const actor = await getContactActor();
+  const actor = _options?.actor || (await getContactActor());
 
-  // Lean select: Only retrieve fields required by AccountAnalyticsCard and PersonTable
-  const company = await prisma.company.findUnique({
-    where: { id: companyId },
-    select: {
-      id: true,
-      name: true,
-      displayName: true,
-      type: true,
-      status: true,
-      starRating: true,
-      country: true,
-      notes: true,
-      contacts: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          emails: true,
-          phone: true,
-          phones: true,
-          role: true,
-          contactDepartment: true,
-          isEmailVerified: true,
-          isPhoneVerified: true,
-          image: true,
-          isActive: true,
-          status: true,
-          type: true,
-          departmentId: true,
-          department: { select: { id: true, name: true } },
-          createdAt: true,
+  // Parallel Phase 1: Company data + AI Config + Company-level Logs run concurrently
+  const [company, aiCache, companyLogs] = await Promise.all([
+    prisma.company.findUnique({
+      where: { id: companyId },
+      select: {
+        id: true,
+        name: true,
+        displayName: true,
+        type: true,
+        status: true,
+        starRating: true,
+        country: true,
+        notes: true,
+        contacts: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            emails: true,
+            phone: true,
+            phones: true,
+            role: true,
+            contactDepartment: true,
+            isEmailVerified: true,
+            isPhoneVerified: true,
+            image: true,
+            isActive: true,
+            status: true,
+            type: true,
+            departmentId: true,
+            department: { select: { id: true, name: true } },
+            createdAt: true,
+          },
+          orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
         },
-        orderBy: [{ isActive: "desc" }, { createdAt: "desc" }],
-      },
-      addresses: {
-        orderBy: { createdAt: "asc" },
-      },
-      opportunities: {
-        select: {
-          id: true,
-          topic: true,
-          status: true,
-          value: true,
-          currency: true,
-          dueDate: true,
-          createdAt: true,
-          ownerId: true,
-          stage: {
-            select: {
-              id: true,
-              name: true,
+        addresses: {
+          orderBy: { createdAt: "asc" },
+        },
+        opportunities: {
+          select: {
+            id: true,
+            topic: true,
+            status: true,
+            value: true,
+            currency: true,
+            dueDate: true,
+            createdAt: true,
+            ownerId: true,
+            stage: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            owner: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+              },
             },
           },
-          owner: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-            },
-          },
         },
       },
-    },
-  });
+    }),
+    prisma.systemConfig.findUnique({
+      where: { id: `account_ai_${companyId}` },
+      select: { googleRefreshToken: true },
+    }).catch(() => null),
+    prisma.companyLog.groupBy({
+      by: ["userId"],
+      where: { companyId },
+      _count: { id: true },
+    }).catch(() => []),
+  ]);
 
   if (!company) {
     throw new Error("Account not found");
+  }
+
+  // Load cached AI analysis / business profile if present
+  let businessSummary: string | null = null;
+  if (aiCache?.googleRefreshToken) {
+    try {
+      const parsed = JSON.parse(aiCache.googleRefreshToken);
+      businessSummary = parsed.companyProfile?.businessSummary || null;
+    } catch {
+      // ignore JSON parse error
+    }
   }
 
   const isSameDept = (cDeptName?: string | null) =>
@@ -1391,9 +1428,26 @@ export async function getAccountOverview(
   const activePersonsCount = sanitizedContacts.filter((c) => c.isActive).length;
   const inactivePersonsCount = sanitizedContacts.length - activePersonsCount;
 
-  // Top contributors across all touchpoints with this account (Deals, Activities, CompanyLogs, ContactLogs)
+  // Parallel Phase 2: Opportunities & Contacts Logs
   const companyOppIds = company.opportunities.map((o) => o.id);
   const companyContactIds = company.contacts.map((c) => c.id);
+
+  const [oppLogs, contactLogs] = await Promise.all([
+    companyOppIds.length > 0
+      ? prisma.activityLog.groupBy({
+          by: ["userId"],
+          where: { opportunityId: { in: companyOppIds } },
+          _count: { id: true },
+        }).catch(() => [])
+      : Promise.resolve([]),
+    companyContactIds.length > 0
+      ? prisma.contactLog.groupBy({
+          by: ["userId"],
+          where: { contactId: { in: companyContactIds } },
+          _count: { id: true },
+        }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
 
   const userContributions = new Map<string, number>();
   const addContribution = (userId: string | null | undefined, weight = 1) => {
@@ -1407,29 +1461,6 @@ export async function getAccountOverview(
       addContribution(opp.ownerId, 1);
     }
   }
-
-  // B, C, D: Run groupBys in parallel for maximum concurrency speed
-  const [oppLogs, companyLogs, contactLogs] = await Promise.all([
-    companyOppIds.length > 0
-      ? prisma.activityLog.groupBy({
-          by: ["userId"],
-          where: { opportunityId: { in: companyOppIds } },
-          _count: { id: true },
-        })
-      : Promise.resolve([]),
-    prisma.companyLog.groupBy({
-      by: ["userId"],
-      where: { companyId: company.id },
-      _count: { id: true },
-    }),
-    companyContactIds.length > 0
-      ? prisma.contactLog.groupBy({
-          by: ["userId"],
-          where: { contactId: { in: companyContactIds } },
-          _count: { id: true },
-        })
-      : Promise.resolve([]),
-  ]);
 
   for (const log of oppLogs) {
     addContribution(log.userId, log._count.id);
@@ -1460,7 +1491,7 @@ export async function getAccountOverview(
     const users = await prisma.user.findMany({
       where: { id: { in: userIds } },
       select: { id: true, name: true, email: true, image: true },
-    });
+    }).catch(() => []);
     const userMap = new Map(users.map((u) => [u.id, u]));
 
     topContributors = sortedEntries.map(([userId, count]) => {
@@ -1474,21 +1505,6 @@ export async function getAccountOverview(
         share: `${pct}%`,
       };
     });
-  }
-
-  // Load cached AI analysis / business profile if present
-  let businessSummary: string | null = null;
-  try {
-    const aiCache = await prisma.systemConfig.findUnique({
-      where: { id: `account_ai_${companyId}` },
-      select: { googleRefreshToken: true },
-    });
-    if (aiCache?.googleRefreshToken) {
-      const parsed = JSON.parse(aiCache.googleRefreshToken);
-      businessSummary = parsed.companyProfile?.businessSummary || null;
-    }
-  } catch {
-    // ignore
   }
 
   return {

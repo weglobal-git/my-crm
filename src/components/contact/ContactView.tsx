@@ -43,6 +43,9 @@ const loadCreateAccountPanel = () =>
   import("./CreateAccountPanel").then((mod) => mod.CreateAccountPanel);
 const CreateAccountPanel = dynamic(loadCreateAccountPanel, { ssr: false });
 
+// Canonical fetcher shared across SWR hooks and hover preload
+const fetchAccountOverview = ([, compId]: [string, string]) => getAccountOverview(compId);
+
 const ACCOUNT_TYPES: { label: string; value: ContactType }[] = [
   { label: "Customer", value: "CUSTOMER" },
   { label: "Trader", value: "TRADER" },
@@ -140,17 +143,15 @@ export function ContactView({
   );
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
 
-  // SWR-Managed Account Overview Cache
+  // SWR-Managed Account Overview Cache with Canonical Shared Fetcher
   const {
     data: accountOverview,
     isLoading: isOverviewLoading,
+    isValidating: isOverviewValidating,
     mutate: mutateOverview,
   } = useSWR<AccountOverviewResult | null>(
     selectedCompanyId ? ["account-overview", selectedCompanyId] : null,
-    async () => {
-      if (!selectedCompanyId) return null;
-      return await getAccountOverview(selectedCompanyId);
-    },
+    fetchAccountOverview,
     {
       fallbackData: (selectedCompanyId && initialOverview?.company?.id === selectedCompanyId) ? initialOverview : undefined,
       dedupingInterval: 10_000,
@@ -160,7 +161,8 @@ export function ContactView({
     }
   );
 
-  const isSwitchingAccount = isOverviewLoading || (Boolean(selectedCompanyId) && accountOverview?.company?.id !== selectedCompanyId);
+  const isCurrentAccountLoaded = Boolean(accountOverview && accountOverview.company?.id === selectedCompanyId);
+  const isOverviewTransitioning = isOverviewLoading || isOverviewValidating || !isCurrentAccountLoaded;
 
   // Modals state
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
@@ -748,9 +750,7 @@ export function ContactView({
                     isSelected={selectedCompanyId === company.id}
                     onClick={() => setSelectedCompanyId(company.id)}
                     onPointerEnter={() => {
-                      void preload(["account-overview", company.id], () =>
-                        getAccountOverview(company.id)
-                      );
+                      void preload(["account-overview", company.id], fetchAccountOverview);
                     }}
                   />
                 ))}
@@ -934,7 +934,8 @@ export function ContactView({
                 {/* Upper Section: Account Analytics Dashboard */}
                 <AccountAnalyticsCard
                   overview={accountOverview || null}
-                  isLoading={isSwitchingAccount}
+                  isLoading={!accountOverview && isOverviewLoading}
+                  isTransitioning={isOverviewTransitioning}
                   companyId={selectedCompany.id}
                   companyType={selectedCompany.type}
                   country={selectedCompany.country}
@@ -951,10 +952,10 @@ export function ContactView({
 
                 {/* Lower Section: Person Table */}
                 <PersonTable
-                  contacts={isSwitchingAccount ? [] : (accountOverview?.contacts || [])}
+                  contacts={accountOverview?.contacts || []}
                   companyName={selectedCompany.name}
                   selectedContactId={selectedContactId}
-                  isLoading={isSwitchingAccount}
+                  isLoading={isOverviewTransitioning}
                   onSelectContact={(contactId) => {
                     setSelectedContactId(contactId);
                     handleOpenEditModal("contact", contactId);

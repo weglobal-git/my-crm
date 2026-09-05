@@ -13,6 +13,7 @@ import { updateCompanyBusinessProfile } from "@/lib/actions/account-ai";
 interface AccountAnalyticsCardProps {
   overview: AccountOverviewResult | null;
   isLoading?: boolean;
+  isTransitioning?: boolean;
   companyId?: string | null;
   companyType?: string;
   country?: string | null;
@@ -39,6 +40,7 @@ function getInitials(name: string): string {
 export function AccountAnalyticsCard({ 
   overview, 
   isLoading,
+  isTransitioning,
   companyId,
   companyType: _companyType = "CUSTOMER",
   onBusinessSummaryUpdated,
@@ -110,7 +112,7 @@ export function AccountAnalyticsCard({
     void saveContent(businessSummary);
   };
 
-  const isDataReady = !isLoading && !!overview && (!companyId || overview.company?.id === companyId);
+  const isDataReady = !isLoading && !!overview;
 
   const winRate = isDataReady ? (metrics?.winRate ?? 0) : 0;
   const wonCount = isDataReady ? (metrics?.wonDealsCount ?? 0) : 0;
@@ -127,7 +129,7 @@ export function AccountAnalyticsCard({
     : circumference;
 
   return (
-    <div className="mb-4 shrink-0 transition-all border-0">
+    <div className={`mb-4 shrink-0 border-0 transition-opacity duration-200 ${isTransitioning ? "opacity-75" : "opacity-100"}`}>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         
         {/* COLUMN 1: Enlarged Project Success Rate Donut (4 cols) */}

@@ -87,8 +87,8 @@ export function PersonTable({
               <th className="py-3 pl-3 pr-5 w-[17%]">Phone Number</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#28292A]">
-            {isLoading ? (
+          <tbody className={`divide-y divide-[#28292A] transition-opacity duration-150 ${isLoading && contacts.length > 0 ? "opacity-60" : "opacity-100"}`}>
+            {isLoading && contacts.length === 0 ? (
               // 4 Skeleton Rows with exact matching column widths
               [1, 2, 3, 4].map((i) => (
                 <tr key={`skeleton-${i}`} className="animate-pulse">

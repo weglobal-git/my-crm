@@ -1,58 +1,100 @@
 ---
 name: trace-performance-bottleneck
-description: Find the real end-to-end bottleneck of a slow web action by reproducing it, correlating browser, Server Action, Prisma/Neon, and external-service timings, fixing the measured cause, and benchmarking before/after. Use for slow interactions, performance regressions, unexplained latency, or requests for a timing breakdown.
+description: Find the real end-to-end bottleneck of a slow web action via a disciplined, chained multi-phase workflow. Guarantees measurement before change, causal proof, and verified before/after benchmarks.
 ---
 
-# Trace Performance Bottleneck
+# Trace Performance Bottleneck (Chained Workflow)
 
-Measure before changing code. The deliverable is a correlated trace and a before/after benchmark, not a list of plausible optimizations.
+Find the real end-to-end bottleneck of a slow web action by reproducing it, correlating browser, Server Action, Prisma/Neon, and external-service timings, fixing the measured cause, and benchmarking before/after.
 
-## Required workflow
+> [!IMPORTANT]
+> **STRICT CHAIN ENFORCEMENT**: You MUST NOT improvise or jump between phases. You MUST inspect the session state, read ONLY the current active phase file, and satisfy its programmatic Exit Gate before moving forward.
 
-1. Define one action and one observable completion signal.
-2. Build a repeatable red-capable reproduction. Record environment, dataset, cache state, and concurrency.
-3. Establish a baseline with warm-up runs followed by at least 5 measured runs. Report median and p95; never present one run as representative.
-4. Assign one `traceId` at interaction start and propagate it through every layer.
-5. Measure browser input-to-optimistic-paint, request/response, React commit, Server Action, database, and external calls.
-6. Rank frontend versus backend from evidence, then drill into the dominant side only.
-7. Instrument boundaries with monotonic clocks. Do not scatter uncorrelated `console.log` calls.
-8. Identify the largest causal span by wall time and verify it with a falsifiable experiment.
-9. Fix only the measured bottleneck. Preserve correctness, authorization, rollback, and server-authoritative state.
-10. Repeat the same benchmark under the same conditions and report before/after, delta, p50, and p95.
-11. Remove temporary instrumentation unless the user asks to retain production-safe telemetry.
+---
 
-For the detailed procedure and stopping conditions, read [references/workflow.md](references/workflow.md).
+## The 6-Phase Chained Progression
 
-When profiling this CRM's Pipeline page, EditDealPanel, or a similar Next.js + Prisma/Neon + Pusher interaction, read [references/pipeline-case-study.md](references/pipeline-case-study.md). It records measured bottlenecks, failed hypotheses, cache pitfalls, and fixes from two completed investigations.
-
-For real-world CRM performance problem logs and verified solutions collected across modules, consult the [problem-cases/](problem-cases/README.md) registry. Every agent encountering a newly solved bottleneck should document their case using [problem-cases/TEMPLATE.md](problem-cases/TEMPLATE.md).
-
-## Measurement rules
-
-- Use `performance.now()` in browser and Node; use database-reported execution time for SQL.
-- A duration is valid only when start/end use the same clock. Never subtract browser time from server time.
-- Correlate clocks with `traceId`, not timestamps.
-- Separate wall time, CPU time, query execution, connection wait, serialization, and network transfer.
-- Measure cold and warm paths separately.
-- Do not label a span as the bottleneck solely because it is the largest child; confirm that reducing or bypassing it reduces total latency.
-- If spans overlap, report the overlap. Do not sum parallel spans as though they were sequential.
-- If trace coverage is below 90% of total wall time, report `INCOMPLETE TRACE` and instrument the missing interval before recommending a fix.
-- Never log secrets, cookies, tokens, full request bodies, personal data, or connection strings. Use IDs only when safe; otherwise hash or redact them.
-
-Read [references/instrumentation.md](references/instrumentation.md) before adding probes. It contains browser, Server Action, Prisma/Neon, and Pusher patterns.
-
-## Mandatory report
-
-Every completed investigation must include the action/completion signal, environment/cache/dataset/sample count/coverage, baseline and post-fix p50/p95, one representative timing tree, transferred bytes/request count, causal evidence, code change, correctness checks, regression test, and remaining uncertainty.
-
-Use [references/report-format.md](references/report-format.md) exactly. Generate the timing tree with:
-
-```bash
-node .agents/skills/trace-performance-bottleneck/scripts/render-trace.mjs trace.json
+```mermaid
+graph LR
+    P0["Phase 0<br/>Scope Down"] --> G0{Gate 0}
+    G0 -->|1 Action| P1["Phase 1<br/>Instrumentation"]
+    P1 --> G1{Gate 1}
+    G1 -->|>=90% Coverage| P2["Phase 2<br/>Baseline (5x)"]
+    P2 --> G2{Gate 2}
+    G2 -->|p50/p95 Set| P3["Phase 3<br/>Causal Proof"]
+    P3 --> G3{Gate 3}
+    G3 -->|Proven Cause| P4["Phase 4<br/>Targeted Fix"]
+    P4 --> G4{Gate 4}
+    G4 -->|Build Clean| P5["Phase 5<br/>Post-Fix & Cleanup"]
 ```
 
-The script rejects inconsistent totals instead of producing false precision.
+1. **[Phase 0: Scope Down](phases/phase-0-scope.md)** ➔ Survey actions, narrow down to **exactly 1 primary load-bearing action**, and define an observable completion signal.
+2. **[Phase 1: Instrumentation](phases/phase-1-instrumentation.md)** ➔ Inject monotonic probes tagged `[PERF-TRACE]` across Browser, Server, Neon DB, and Pusher using a single `traceId`.
+3. **[Phase 2: Baseline Benchmark](phases/phase-2-baseline.md)** ➔ Run local production build, warm up, and capture at least 5 measured runs (p50/p95, requests, transfer bytes).
+4. **[Phase 3: Causal Proof](phases/phase-3-causality.md)** ➔ Perform controlled experiments to scientifically prove the bottleneck is causal, not merely correlated.
+5. **[Phase 4: Targeted Fix](phases/phase-4-optimization.md)** ➔ Implement surgical optimization for the proven cause while preserving security, authorization, and rollback.
+6. **[Phase 5: Verification & Cleanup](phases/phase-5-verification.md)** ➔ Re-benchmark under identical conditions, verify delta, remove all `[PERF-TRACE]` probes, and produce the final report.
 
-## Completion gate
+---
 
-Do not call the work complete unless the original action was reproduced, trace coverage is sufficient or explicitly incomplete, the bottleneck was causally verified, the same benchmark improves after the fix, database/client state remains consistent, and temporary probes/test data are removed.
+## State Machine & Checkpoint Controller
+
+The session state is tracked in `.perf-trace/session.json`. Use the universal CLI tool to inspect and advance phases:
+
+### Common Commands:
+
+- **Check Current Phase & Gates:**
+  ```bash
+  node .agents/skills/trace-performance-bottleneck/scripts/perf-chain.mjs status
+  ```
+
+- **Initialize Session (Phase 0 ➔ Phase 1):**
+  ```bash
+  node .agents/skills/trace-performance-bottleneck/scripts/perf-chain.mjs init <url> <actionId> <actionName> "<completionSignal>"
+  ```
+
+- **Record Baseline Runs (Phase 2):**
+  ```bash
+  node .agents/skills/trace-performance-bottleneck/scripts/perf-chain.mjs record baseline --runs 120,115,118,122,119 --bytes 45200 --requests 8
+  ```
+
+- **Pass Exit Gate and Unlock Next Phase:**
+  ```bash
+  node .agents/skills/trace-performance-bottleneck/scripts/perf-chain.mjs pass-gate <phaseNumber> "<EvidenceSummary>"
+  ```
+
+- **Record Post-Fix Runs (Phase 5):**
+  ```bash
+  node .agents/skills/trace-performance-bottleneck/scripts/perf-chain.mjs record postfix --runs 35,32,34,36,33 --bytes 12100 --requests 2
+  ```
+
+---
+
+## Strict Operating Rules
+
+1. **Step-by-Step Isolation:**
+   - Always run `perf-chain.mjs status` first.
+   - Read **ONLY** the instructions for the active phase (`phases/phase-<currentPhase>-*.md`).
+2. **Never Optimize in Phase 0–3:**
+   - Modifying production code to optimize performance before Phase 4 is a critical violation.
+3. **80/20 Scope Rule:**
+   - If an inventory yields 50+ actions, Phase 0 **MUST** select only the single highest-impact action. Never attempt to optimize an entire page in one unmeasured pass.
+4. **Local Production Build Only:**
+   - Benchmarks in Phase 2 and Phase 5 must run on `next build && next start` (or `npm run build && npm run start`). Never report numbers from `next dev`.
+5. **Trace Coverage Requirement:**
+   - If accounted sub-spans make up $<90\%$ of total wall time, report `INCOMPLETE TRACE` and instrument the missing span before forming a hypothesis.
+6. **Mandatory Cleanup:**
+   - Every `[PERF-TRACE]` probe MUST be completely removed in Phase 5 before calling the task complete.
+
+---
+
+## Supporting References
+
+- Monotonic probe patterns: [references/instrumentation.md](references/instrumentation.md)
+- Pipeline case study & prior solutions: [references/pipeline-case-study.md](references/pipeline-case-study.md)
+- Problem registry: [problem-cases/](problem-cases/README.md)
+- Report format: [references/report-format.md](references/report-format.md)
+- Trace visualization script:
+  ```bash
+  node .agents/skills/trace-performance-bottleneck/scripts/render-trace.mjs trace.json
+  ```
