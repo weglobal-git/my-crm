@@ -12,7 +12,7 @@ export default withAuth(
     }
     
     // Protect CRM pages - require ADMIN OR a valid department
-    const isCrmPage = path.startsWith("/pipeline") || path.startsWith("/quotations") || path.startsWith("/customers") || path.startsWith("/sale") || path.startsWith("/marketing") || path.startsWith("/maintenance");
+    const isCrmPage = path.startsWith("/pipeline") || path.startsWith("/quotations") || path.startsWith("/contact") || path.startsWith("/customers") || path.startsWith("/sale") || path.startsWith("/marketing") || path.startsWith("/maintenance");
     if (isCrmPage) {
        const departments = token?.departments as string[] | undefined;
        if (token?.role !== "ADMIN" && (!departments || departments.length === 0)) {

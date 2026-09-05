@@ -93,6 +93,10 @@ export async function createUser(data: { name: string, email: string, role: Role
     throw new Error("Name, Email, and Role are required.");
   }
   
+  if (!data.departmentIds || data.departmentIds.length === 0) {
+    throw new Error("At least one department must be assigned to the user.");
+  }
+  
   const existingEmail = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
   if (existingEmail) {
     throw new Error("This email is already registered in the system.");

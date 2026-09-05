@@ -17,7 +17,8 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
+import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext } from "./KanbanCard";
+import { getPendingAcceleratorsMap } from "@/lib/actions/ai-accelerator";
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
@@ -82,6 +83,7 @@ export interface KanbanBoardProps {
   initialTab?: string;
   activeTab?: string;
   activeSearch?: string;
+  cardTypeFilter?: string;
 }
 
 export function KanbanBoard({ 
@@ -92,7 +94,8 @@ export function KanbanBoard({
   initialOpportunities,
   initialTab = 'workspace',
   activeTab,
-  activeSearch 
+  activeSearch,
+  cardTypeFilter = 'ALL',
 }: KanbanBoardProps) {
   const { toast } = useDialog();
   const searchParams = useSearchParams();
@@ -121,7 +124,10 @@ export function KanbanBoard({
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
     const fallback = tab === initialTab ? (initialOpportunities || []) : [];
-    const stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
+    let stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
+    if (cardTypeFilter && cardTypeFilter !== 'ALL') {
+      stageDeals = stageDeals.filter(o => o.type === cardTypeFilter);
+    }
     stageDeals.sort((a, b) => {
       const aRed = checkIsRedCard(a);
       const bRed = checkIsRedCard(b);
@@ -131,21 +137,25 @@ export function KanbanBoard({
     });
     acc[stage.id] = stageDeals;
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities]);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
   const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
   const [activeDeal, setActiveDeal] = useState<OpportunityWithRelations | null>(null);
   const [activeWidth, setActiveWidth] = useState<number>(0);
-  const [activePanelDeal, setActivePanelDeal] = useState<{deal: OpportunityWithRelations, tab: string} | null>(null);
+  const [activePanelDeal, setActivePanelDeal] = useState<{deal: OpportunityWithRelations, tab: TabType} | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [closingTimeout, setClosingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const rawOpportunitiesRef = useRef(rawOpportunities);
+  useEffect(() => {
+    rawOpportunitiesRef.current = rawOpportunities;
+  }, [rawOpportunities]);
 
   const preloadEditDealPanel = useCallback(() => {
     void loadEditDealPanel();
   }, []);
 
-  const handleOpenPanel = useCallback(async (deal: OpportunityWithRelations, tab: string) => {
+  const handleOpenPanel = useCallback(async (deal: OpportunityWithRelations, tab: TabType) => {
     if (closingTimeout) clearTimeout(closingTimeout);
     await loadEditDealPanel();
     setActivePanelDeal({ deal, tab });
@@ -182,7 +192,7 @@ export function KanbanBoard({
 
         // If the deal is not in our current data, we probably just got added to it.
         // We need to fetch it to show it on the board.
-        const dealExists = rawOpportunities?.some(opp => opp.id === data.dealId);
+        const dealExists = rawOpportunitiesRef.current?.some(opp => opp.id === data.dealId);
         if (!dealExists) {
           mutate();
           return;
@@ -299,6 +309,10 @@ export function KanbanBoard({
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
+            // If on workspace tab and the updated deal is no longer OPEN, remove it immediately
+            if (!isCompletedTab && updatedDeal.status !== 'OPEN') {
+              return currentData.filter(opp => opp.id !== updatedDeal.id);
+            }
             return currentData.map(opp => {
               if (opp.id === updatedDeal.id) {
                 return updatedDeal;
@@ -355,6 +369,23 @@ export function KanbanBoard({
   const [completedDeals, setCompletedDeals] = useState<OpportunityWithRelations[]>([]);
   const [hasMoreCompleted, setHasMoreCompleted] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  const allDealIds = useMemo(() => {
+    const ids: string[] = [];
+    Object.values(deals).forEach(list => {
+      list.forEach(d => ids.push(d.id));
+    });
+    if (isCompletedTab) {
+      completedDeals.forEach(d => ids.push(d.id));
+    }
+    return ids;
+  }, [deals, isCompletedTab, completedDeals]);
+
+  const { data: pendingAcceleratorsMap = {} } = useSWR(
+    allDealIds.length > 0 ? ['pending-accelerators', allDealIds.slice(0, 100).sort().join(',')] : null,
+    () => getPendingAcceleratorsMap(allDealIds),
+    { revalidateOnFocus: true, dedupingInterval: 10000 }
+  );
   
   useEffect(() => {
     if (isCompletedTab) {
@@ -386,8 +417,8 @@ export function KanbanBoard({
       } else {
         setCompletedDeals(prev => {
           // avoid duplicates
-          const existingIds = new Set(prev.map(d => d.id));
-          const newUnique = nextBatch.filter(d => !existingIds.has(d.id));
+          const existingIds = new Set(prev.map((d: OpportunityWithRelations) => d.id));
+          const newUnique = nextBatch.filter((d: OpportunityWithRelations) => !existingIds.has(d.id));
           return [...prev, ...newUnique] as OpportunityWithRelations[];
         });
         if (nextBatch.length < 20) setHasMoreCompleted(false);
@@ -550,13 +581,16 @@ export function KanbanBoard({
   }
 
   return (
-    <KanbanClockProvider>
-      <div className={`flex gap-2 overflow-x-auto pb-8 hide-scrollbar mx-auto ${isCompletedTab ? 'w-full' : 'w-fit h-[calc(100vh-140px)]'}`}>
+    <PendingAcceleratorsContext.Provider value={pendingAcceleratorsMap}>
+      <KanbanClockProvider>
+        <div className={`flex gap-2 overflow-x-auto pb-8 hide-scrollbar mx-auto ${isCompletedTab ? 'w-full' : 'w-fit h-[calc(100vh-140px)]'}`}>
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
             {(() => {
-              // Group by year
-              const grouped = completedDeals.reduce((acc, deal) => {
+              const dealsToDisplay = cardTypeFilter && cardTypeFilter !== 'ALL'
+                ? completedDeals.filter(d => d.type === cardTypeFilter)
+                : completedDeals;
+              const grouped = dealsToDisplay.reduce((acc, deal) => {
                 // Determine completion date by goodsLoadingDate or fallback to updated/createdAt
                 const date = deal.goodsLoadingDate || deal.updatedAt || deal.createdAt;
                 const year = new Date(date).getFullYear();
@@ -575,7 +609,7 @@ export function KanbanBoard({
                       <div key={deal.id} className="cursor-pointer">
                         <KanbanCardUI 
                           deal={deal} 
-                          onOpenPanel={(tab) => handleOpenPanel(deal, tab || 'activity')} 
+                          onOpenPanel={(tab) => handleOpenPanel(deal, (tab || 'activity') as TabType)} 
                           onPanelIntent={preloadEditDealPanel}
                         />
                       </div>
@@ -609,7 +643,7 @@ export function KanbanBoard({
                 id={col.id} 
                 title={col.name} 
                 deals={deals[col.id] || []} 
-                onDealClick={(deal, tab) => handleOpenPanel(deal, tab || 'activity')}
+                onDealClick={(deal, tab) => handleOpenPanel(deal, (tab || 'activity') as TabType)}
                 isScrollable={true}
                 currentUserId={currentUserId}
                 currentUserRole={currentUserRole}
@@ -638,7 +672,7 @@ export function KanbanBoard({
       {activePanelDeal && (
         <EditDealPanel
           deal={activePanelDeal.deal}
-          initialTab={activePanelDeal.tab as TabType}
+          initialTab={activePanelDeal.tab}
           isOpen={panelOpen}
           onClose={handleClosePanel}
         />
@@ -650,11 +684,16 @@ export function KanbanBoard({
           status={wonLostModal.status}
           onClose={() => setWonLostModal(null)}
           onSuccess={() => {
+            const dealId = wonLostModal.deal.id;
             setWonLostModal(null);
-            mutate();
+            mutate(
+              (currentData: OpportunityWithRelations[] | undefined) => currentData?.filter(d => d.id !== dealId),
+              { revalidate: true }
+            );
           }}
         />
       )}
-    </KanbanClockProvider>
+      </KanbanClockProvider>
+    </PendingAcceleratorsContext.Provider>
   );
 }

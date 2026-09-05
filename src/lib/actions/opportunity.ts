@@ -1,7 +1,7 @@
 "use server";
 
+import { OpportunityStatus, OpportunityType, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { OpportunityStatus, OpportunityType, DealAIFactStatus, FactRelationType, DealAIEventStatus } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { v2 as cloudinary } from "cloudinary";
 
@@ -10,6 +10,7 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
 import { pusherServer } from "@/lib/pusher";
 import { triggerNotification } from "@/lib/actions/notification";
 import {
@@ -20,10 +21,7 @@ import {
   type PipelineActor,
 } from "@/lib/pipeline-security";
 import { getPipelineOpportunitiesForActor, pipelineOpportunitySelect } from '@/lib/pipeline-opportunities';
-import { createActivityCommand, type ActivityLedgerTransaction } from '../event-ledger/activity-commands';
-import { getEventLedgerFeatureFlags } from '../event-ledger/feature-flags';
-import { scheduleEventSummaryProcessing } from '../ai/dispatch';
-import crypto from 'crypto';
+
 export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
   const actor = await requirePipelineActor();
   return getPipelineOpportunitiesForActor(actor, tab, searchQuery);
@@ -79,7 +77,7 @@ export async function moveOpportunity(
   newStageId: string | null, // null if moving out of the board to an end status
   newStatus: OpportunityStatus = "OPEN"
 ) {
-  await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
+  const { actor } = await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
   // Fetch the opportunity to check current state
   const opportunity = await prisma.opportunity.findUnique({
     where: { id: opportunityId }
@@ -103,7 +101,7 @@ export async function moveOpportunity(
     }
   }
 
-  // 2. Moving to End (e.g. COMPLETED, WON, LOST, CANCELLED)
+  // 2. Moving to End (e.g. WON, LOST)
   if (newStatus === "WON") {
     if (opportunity.type === "SALES_DEAL") {
       if (
@@ -121,14 +119,38 @@ export async function moveOpportunity(
     }
   }
 
+  const isClosing = newStatus === "WON" || newStatus === "LOST";
+
   // If validation passes, perform the update
   const result = await prisma.opportunity.update({
     where: { id: opportunityId },
     data: {
       pipelineStageId: newStageId,
-      status: newStatus
+      status: newStatus,
+      closedAt: isClosing ? new Date() : null,
     }
   });
+
+  // Record a system audit log if status changed
+  if (newStatus !== opportunity.status) {
+    const systemMessage = newStatus === "WON"
+      ? (opportunity.type === "SALES_DEAL" 
+          ? `Deal marked as Won.`
+          : `Task completed successfully (Won).`)
+      : (newStatus === "LOST"
+          ? `Deal marked as Lost. Reason: ${opportunity.lossReason || 'Not specified'}.`
+          : `Deal reopened and moved back to active pipeline.`);
+
+    await prisma.activityLog.create({
+      data: {
+        opportunityId,
+        userId: actor.id,
+        type: "SYSTEM_UPDATE",
+        content: systemMessage,
+      }
+    });
+  }
+
   const fullDeal = await prisma.opportunity.findUnique({
     where: { id: opportunityId },
     select: pipelineOpportunitySelect
@@ -160,6 +182,15 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate)
   if (data.value !== undefined && data.value !== null && (!Number.isFinite(data.value) || data.value < 0)) {
     throw new Error('Invalid value');
   }
+  if (data.type === 'INTERNAL_TASK') {
+    const current = await prisma.opportunity.findUnique({
+      where: { id },
+      select: { type: true }
+    });
+    if (current?.type === 'SALES_DEAL') {
+      throw new Error('Cannot downgrade a Sales Deal to an Internal Task.');
+    }
+  }
   const result = await prisma.opportunity.update({
     where: { id },
     data
@@ -174,7 +205,7 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate)
 
 export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string) {
   const { actor } = await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
-  const { opp: result, activityLog, systemLog } = await prisma.$transaction(async (tx) => {
+  const { opp: result, activityLog, systemLog } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const opp = await tx.opportunity.update({
       where: { id: opportunityId },
       data: { dueDate }
@@ -222,7 +253,7 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     select: pipelineOpportunitySelect
   });
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
-  await Promise.all(logsWithUsers.map(log =>
+  await Promise.all(logsWithUsers.map((log: (typeof logsWithUsers)[number]) =>
     notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: log })
   ));
   revalidatePath('/pipeline');
@@ -274,41 +305,26 @@ export async function addActivityLog(opportunityId: string, content: string, par
   
   if (parentId && !parent) throw new Error("Reply target not found.");
 
-  const commandId = crypto.randomUUID();
-
   const [newLogRaw] = await Promise.all([
-    prisma.$transaction(async (tx) => {
-      const result = await createActivityCommand(
-        tx as unknown as ActivityLedgerTransaction,
-        {
-          actorId: actor.id,
-          commandId,
-          correlationId: commandId,
-          traceId: commandId,
-          occurredAt: new Date(),
-          timezone: "Asia/Bangkok"
-        },
-        { dealId: opportunityId, content, parentId, activityType: 'COMMENT' },
-        getEventLedgerFeatureFlags(),
-        { promptVersion: "v1", schemaVersion: "v1", maxAttempts: 2 }
-      );
-
-      if (result.kind !== "APPLIED") {
-        throw new Error("Failed to create activity via Event Ledger.");
-      }
-
-      return tx.activityLog.findUnique({
-        where: { id: result.activityId },
-        include: { user: true }
-      });
+    prisma.activityLog.create({
+      data: {
+        content,
+        opportunity: { connect: { id: opportunityId } },
+        user: { connect: { id: actor.id } },
+        type: "COMMENT",
+        ...(parentId && { parent: { connect: { id: parentId } } }),
+      },
+      include: {
+        user: true,
+      },
     }),
     (async () => {
       if (deal) {
-        const mentionedUsernames = Array.from(content.matchAll(/@([^\s<]+)/g)).map(m => m[1].toLowerCase());
+        const mentionedUsernames = Array.from(content.matchAll(/@([^\s<]+)/g)).map((m: RegExpMatchArray) => m[1].toLowerCase());
         const mentionedUserIds = new Set<string>();
         if (mentionedUsernames.length > 0) {
           const allUsers = await prisma.user.findMany({ select: { id: true, name: true }});
-          allUsers.forEach(u => {
+          allUsers.forEach((u: { id: string; name: string | null }) => {
             if (u.name && mentionedUsernames.includes(u.name.replace(/\s+/g, '').toLowerCase())) {
               mentionedUserIds.add(u.id);
             }
@@ -316,10 +332,10 @@ export async function addActivityLog(opportunityId: string, content: string, par
         }
         
         mentionedUserIds.delete(actor.id);
-        const teamUserIds = new Set(deal.teamMembers.map(m => m.id));
+        const teamUserIds = new Set<string>(deal.teamMembers.map((m: { id: string }) => m.id));
         teamUserIds.add(deal.ownerId);
         teamUserIds.delete(actor.id);
-        const standardNotifyIds = new Set(Array.from(teamUserIds).filter(id => !mentionedUserIds.has(id)));
+        const standardNotifyIds = new Set<string>(Array.from(teamUserIds).filter((id: string) => !mentionedUserIds.has(id)));
         
         const notificationInputs = [
           ...Array.from(mentionedUserIds).map(recipientId => ({
@@ -337,7 +353,7 @@ export async function addActivityLog(opportunityId: string, content: string, par
           const notifications = await prisma.$transaction(
             notificationInputs.map(data => prisma.notification.create({ data, include: { sender: true } }))
           );
-          await Promise.all(notifications.map(notification =>
+          await Promise.all(notifications.map((notification: { recipientId: string }) =>
             triggerNotification(notification.recipientId, notification)
           ));
         }
@@ -349,8 +365,6 @@ export async function addActivityLog(opportunityId: string, content: string, par
   const newLog = { ...newLogRaw, replies: [] };
 
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: newLog });
-  scheduleEventSummaryProcessing();
-  revalidatePath('/pipeline');
   return newLog;
 }
 
@@ -365,8 +379,8 @@ export async function addSystemLog(opportunityId: string, content: string) {
     },
     include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } },
   });
+  
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: result });
-  revalidatePath('/pipeline');
   return result;
 }
 
@@ -398,12 +412,11 @@ export async function editActivityLog(logId: string, content: string) {
     include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } }
   });
   await notifyPrivatePipelineUpdate(log.opportunityId, { action: 'ACTIVITY_UPDATED', dealId: log.opportunityId, activityLog: updatedLog });
-  revalidatePath('/pipeline');
   return updatedLog;
 }
 
 export async function deleteActivityLog(logId: string, actorOverride?: PipelineActor) {
-  const log = await prisma.activityLog.findUnique({ where: { id: logId } });
+  const log = await prisma.activityLog.findFirst({ where: { id: logId } });
   if (!log) throw new Error("Log not found.");
 
   const { actor } = await requireOpportunityAccess(log.opportunityId, { actor: actorOverride });
@@ -423,60 +436,38 @@ export async function deleteActivityLog(logId: string, actorOverride?: PipelineA
 
   // Find any attachments in this log
   const attachmentUrls: string[] = [];
-  const regex = /\[ATTACHMENT:([^|]+)\|[^\]]+\]/g;
+  const regex = /\[ATTACHMENT:([^\]|]+)\|[^\]]+\]/g;
   let match;
   while ((match = regex.exec(log.content)) !== null) {
     attachmentUrls.push(match[1]);
   }
 
+  const attachmentCleanup: Array<{ id: string; fileType: string; cloudinaryPublicId: string | null }> = [];
   if (attachmentUrls.length > 0) {
     const attachments = await prisma.attachment.findMany({
       where: { cloudinaryUrl: { in: attachmentUrls } }
     });
-
-    for (const att of attachments) {
-      if (att.cloudinaryPublicId) {
-        const resourceType = att.fileType.startsWith('image/') ? 'image' : 'raw';
-        try {
-          await cloudinary.uploader.destroy(att.cloudinaryPublicId, { resource_type: resourceType });
-        } catch (e) {
-          console.error("Failed to delete from Cloudinary:", e);
-        }
-      }
-      await prisma.attachment.delete({ where: { id: att.id } });
-    }
+    attachmentCleanup.push(...attachments);
   }
 
-  // Retract downstream AI events and facts
-  const domainEvents = await prisma.dealDomainEvent.findMany({
-    where: { sourceEntityId: logId },
-    select: { id: true },
-  });
-
-  if (domainEvents.length > 0) {
-    const domainEventIds = domainEvents.map((d) => d.id);
-    await prisma.dealAIFact.updateMany({
-      where: { sourceDomainEventId: { in: domainEventIds } },
-      data: {
-        status: DealAIFactStatus.RETRACTED,
-        retractedAt: new Date(),
-        retractedById: actor.id,
-        supersessionReason: FactRelationType.SOURCE_DELETED,
-      },
-    });
-
-    await prisma.dealAIEvent.updateMany({
-      where: { domainEventId: { in: domainEventIds } },
-      data: {
-        status: DealAIEventStatus.RETRACTED,
-      },
-    });
+  if (attachmentCleanup.length > 0) {
+    await prisma.attachment.deleteMany({ where: { id: { in: attachmentCleanup.map(item => item.id) } } });
   }
 
   await prisma.activityLog.delete({
     where: { id: logId }
   });
-  
+
+  await Promise.all(attachmentCleanup.map(async att => {
+    if (!att.cloudinaryPublicId) return;
+    const resourceType = att.fileType.startsWith('image/') ? 'image' : 'raw';
+    try {
+      await cloudinary.uploader.destroy(att.cloudinaryPublicId, { resource_type: resourceType });
+    } catch (error) {
+      console.error("Failed to delete from Cloudinary after Activity deletion:", error);
+    }
+  }));
+
   const nextLatestLog = await prisma.activityLog.findFirst({
     where: { 
       opportunityId: log.opportunityId,
@@ -489,9 +480,6 @@ export async function deleteActivityLog(logId: string, actorOverride?: PipelineA
   });
 
   await notifyPrivatePipelineUpdate(log.opportunityId, { action: 'ACTIVITY_DELETED', dealId: log.opportunityId, logId, nextLatestLog });
-  try {
-    revalidatePath('/pipeline');
-  } catch {}
   return { success: true };
 }
 

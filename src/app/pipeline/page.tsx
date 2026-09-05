@@ -1,6 +1,5 @@
 import prisma from "@/lib/prisma";
 import { redirect } from "next/navigation";
-import { getCompanies } from "@/lib/actions/company";
 import { PipelineView } from "@/components/pipeline/PipelineView";
 import { requirePipelineActor } from '@/lib/pipeline-security';
 import { getPipelineOpportunitiesForActor } from '@/lib/pipeline-opportunities';
@@ -24,9 +23,9 @@ export default async function PipelinePage({
 
   // Fetch the first board snapshot on the server so the Kanban does not wait
   // for hydration before starting its most important query.
-  const [stages, companies, serializedOpportunities] = await Promise.all([
+  // getCompanies is loaded on demand when user opens CreateDealButton.
+  const [stages, serializedOpportunities] = await Promise.all([
     prisma.pipelineStage.findMany({ orderBy: { order: 'asc' } }),
-    getCompanies(),
     getPipelineOpportunitiesForActor(actor, tab, search || undefined),
   ]);
   const initialOpportunities = JSON.parse(serializedOpportunities);
@@ -36,7 +35,6 @@ export default async function PipelinePage({
       userId={actor.id}
       role={actor.role}
       stages={stages}
-      companies={companies}
       initialOpportunities={initialOpportunities}
       initialTab={tab}
     />

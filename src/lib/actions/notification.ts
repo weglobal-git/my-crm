@@ -4,27 +4,32 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { Prisma } from "@prisma/client";
 
 import { pusherServer } from "@/lib/pusher";
 import { notifyPrivatePipelineUpdate, requireOpportunityAccess } from "@/lib/pipeline-security";
 
-// Get user's notifications
 export async function getMyNotifications() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) throw new Error("Unauthorized");
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) return [];
 
-  const notifications = await prisma.notification.findMany({
-    where: { 
-      recipientId: session.user.id,
-      status: 'PENDING'
-    },
-    include: {
-      sender: true
-    },
-    orderBy: { createdAt: 'desc' }
-  });
-  
-  return notifications;
+    const notifications = await prisma.notification.findMany({
+      where: { 
+        recipientId: session.user.id,
+        status: 'PENDING'
+      },
+      include: {
+        sender: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    return notifications;
+  } catch (err) {
+    console.error("[getMyNotifications] Error:", err);
+    return [];
+  }
 }
 
 export async function triggerNotification(userId: string, notification: unknown) {
@@ -78,7 +83,7 @@ export async function requestTeamInvite(dealId: string, userId: string) {
   
   if (!deal) throw new Error("Deal not found");
   if (deal.ownerId === userId) throw new Error("User is already the owner");
-  if (deal.teamMembers.some(tm => tm.id === userId)) throw new Error("User is already a team member");
+  if (deal.teamMembers.some((tm: { id: string }) => tm.id === userId)) throw new Error("User is already a team member");
 
   const notification = await prisma.notification.create({
     data: {
@@ -122,7 +127,7 @@ export async function respondToNotification(notificationId: string, accept: bool
   });
   if (!previousDeal) throw new Error("Deal not found");
 
-  await prisma.$transaction(async tx => {
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const claimed = await tx.notification.updateMany({
       where: { id: notificationId, recipientId: session.user.id, status: 'PENDING' },
       data: { status: accept ? 'ACCEPTED' : 'REJECTED' },
@@ -131,12 +136,12 @@ export async function respondToNotification(notificationId: string, accept: bool
     if (!accept) return;
 
     if (notification.type === 'DEAL_TRANSFER_REQUEST') {
-      const teamMembersUpdate: any = {};
-      if (!previousDeal.teamMembers.some(tm => tm.id === previousDeal.ownerId)) {
-        teamMembersUpdate.connect = { id: previousDeal.ownerId };
+      const teamMembersUpdate: Prisma.OpportunityUpdateInput['teamMembers'] = {};
+      if (!previousDeal.teamMembers.some((tm: { id: string }) => tm.id === previousDeal.ownerId)) {
+        teamMembersUpdate.connect = [{ id: previousDeal.ownerId }];
       }
-      if (previousDeal.teamMembers.some(tm => tm.id === session.user.id)) {
-        teamMembersUpdate.disconnect = { id: session.user.id };
+      if (previousDeal.teamMembers.some((tm: { id: string }) => tm.id === session.user.id)) {
+        teamMembersUpdate.disconnect = [{ id: session.user.id }];
       }
 
       await tx.opportunity.update({

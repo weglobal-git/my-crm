@@ -17,8 +17,17 @@ export function ChatAttachmentButton({ onFileSelect }: ChatAttachmentButtonProps
     
     const selectedFiles = Array.from(e.target.files);
     
-    // Validate size
+    // Validate: Prohibit videos and validate size
     const validFiles = selectedFiles.filter(file => {
+      const isVideo = file.type.startsWith('video/') || Boolean(file.name.match(/\.(mp4|mov|avi|mkv|webm|wmv|flv|m4v|3gp)$/i));
+      if (isVideo) {
+        toast({
+          title: "ไม่อนุญาตให้อัปโหลดวิดีโอ",
+          description: `"${file.name}" เป็นไฟล์วิดีโอ กรุณาอัปโหลดเข้า Google Drive หรือ YouTube แล้วนำลิงก์มาแนบแทนครับ`,
+          type: "warning"
+        });
+        return false;
+      }
       if (file.size > 4.5 * 1024 * 1024 && !file.type.startsWith('image/')) {
         toast({ title: "File too large", description: `"${file.name}" exceeds 4.5MB limit.`, type: "warning" });
         return false;
@@ -44,7 +53,7 @@ export function ChatAttachmentButton({ onFileSelect }: ChatAttachmentButtonProps
         ref={fileInputRef}
         onChange={handleFileChange}
         className="hidden"
-        accept="*/*"
+        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
       />
       <button
         onClick={() => fileInputRef.current?.click()}

@@ -1,23 +1,62 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, X, AlignLeft, Briefcase, Wrench } from "lucide-react";
+import { useState, useMemo } from "react";
+import { Plus, X, AlignLeft, Info } from "lucide-react";
 import { OpportunityType, PipelineStage } from "@prisma/client";
 import { createOpportunity } from "@/lib/actions/opportunity";
+import { getCompanies } from "@/lib/actions/company";
 import { useDialog } from "@/providers/DialogProvider";
+import { usePermissions } from "@/providers/PermissionProvider";
 import { SearchableSelect } from "../ui/SearchableSelect";
+import { DealTypeIcon } from "./DealTypeBadge";
+import useSWR, { preload } from "swr";
+
+interface CompanyOptionItem {
+  id: string;
+  name: string;
+  displayName?: string | null;
+  contacts?: { id: string; name: string }[];
+}
 
 interface CreateDealButtonProps {
   stages: PipelineStage[];
-  companies: { id: string; name: string }[];
+  companies?: CompanyOptionItem[];
 }
 
 export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
+  const { canSee } = usePermissions();
+  const canUseSalesDeal = canSee("pipeline.information");
+
   const [isOpen, setIsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [topic, setTopic] = useState("");
-  const [type, setType] = useState<OpportunityType>("SALES_DEAL");
+  const [selectedType, setSelectedType] = useState<OpportunityType>("SALES_DEAL");
+  const type: OpportunityType = canUseSalesDeal ? selectedType : "INTERNAL_TASK";
   const [companyId, setCompanyId] = useState("");
+
+  const { data: fetchedCompanies } = useSWR<CompanyOptionItem[]>(
+    isOpen ? 'pipeline-companies' : null,
+    getCompanies,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+  const companyList = useMemo(
+    () => companies || fetchedCompanies || [],
+    [companies, fetchedCompanies]
+  );
+
+  const companyOptions = useMemo(() => {
+    return companyList.map((c) => {
+      const displayName = (c.displayName || c.name || "").trim();
+      const contactNames = c.contacts?.map((contact) => contact.name).filter(Boolean).join(" ") || "";
+      const searchTerms = `${displayName} ${c.name || ""} ${contactNames}`.trim();
+
+      return {
+        label: displayName,
+        value: c.id,
+        searchTerms,
+      };
+    });
+  }, [companyList]);
   
   const { toast } = useDialog();
 
@@ -28,7 +67,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
     }
 
     if (type === "SALES_DEAL" && !companyId) {
-      toast({ title: "Customer is required for Sales Deals", type: "error" });
+      toast({ title: "Account is required for Sales Deals", type: "error" });
       return;
     }
 
@@ -49,7 +88,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
       toast({ title: "Created successfully", type: "success" });
       setIsOpen(false);
       setTopic("");
-      setType("SALES_DEAL");
+      setSelectedType("SALES_DEAL");
       setCompanyId("");
     } catch (e: unknown) {
       toast({ title: "Failed to create", description: e instanceof Error ? e.message : "Unknown error", type: "error" });
@@ -62,10 +101,11 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
     <>
       <button
         onClick={() => setIsOpen(true)}
+        onMouseEnter={() => preload('pipeline-companies', getCompanies)}
         className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold hover:bg-[#b0d932] transition-colors text-sm"
       >
         <Plus className="w-4 h-4" />
-        New Card
+        New
       </button>
 
       <div 
@@ -93,30 +133,49 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
               {/* Type Selection */}
               <div>
                 <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider pl-1">Opportunity Type</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setType("SALES_DEAL")}
-                    className={`flex items-center gap-2 p-3 rounded-xl border text-sm transition-all font-semibold ${
-                      type === "SALES_DEAL" 
-                        ? "border-[#C7F33C] bg-[#C7F33C]/10 text-[#C7F33C]" 
-                        : "border-[#3A3B3C] bg-[#1E1F20] text-slate-300 hover:border-[#4E4F50]"
-                    }`}
-                  >
-                    <Briefcase className="w-4 h-4" />
-                    Sales Deal
-                  </button>
-                  <button
-                    onClick={() => setType("INTERNAL_TASK")}
-                    className={`flex items-center gap-2 p-3 rounded-xl border text-sm transition-all font-semibold ${
-                      type === "INTERNAL_TASK" 
-                        ? "border-slate-300 bg-slate-800 text-slate-100" 
-                        : "border-[#3A3B3C] bg-[#1E1F20] text-slate-300 hover:border-[#4E4F50]"
-                    }`}
-                  >
-                    <Wrench className="w-4 h-4" />
+                {canUseSalesDeal ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedType("SALES_DEAL")}
+                        className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-sm transition-all font-semibold ${
+                          type === "SALES_DEAL" 
+                            ? "border-[#C7F33C] bg-[#C7F33C]/10 text-[#C7F33C]" 
+                            : "border-[#3A3B3C] bg-[#1E1F20] text-slate-300 hover:border-[#4E4F50]"
+                        }`}
+                      >
+                        <DealTypeIcon type="SALES_DEAL" size="sm" />
+                        <span>Sales Deal</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedType("INTERNAL_TASK")}
+                        className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-sm transition-all font-semibold ${
+                          type === "INTERNAL_TASK" 
+                            ? "border-[#C7F33C] bg-[#C7F33C]/10 text-[#C7F33C]" 
+                            : "border-[#3A3B3C] bg-[#1E1F20] text-slate-300 hover:border-[#4E4F50]"
+                        }`}
+                      >
+                        <DealTypeIcon type="INTERNAL_TASK" size="sm" />
+                        <span>Internal Task</span>
+                      </button>
+                    </div>
+                    {type === "SALES_DEAL" && (
+                      <div className="mt-2.5 flex items-start gap-2 text-[11px] text-slate-400 bg-[#1E1F20] border border-[#3A3B3C] rounded-lg px-3 py-2 leading-relaxed">
+                        <Info className="w-3.5 h-3.5 text-[#C7F33C] shrink-0 mt-0.5" />
+                        <span>
+                          Note: Sales Deals require <strong>Total Value</strong>, <strong>Currency</strong>, <strong>Goods Loading Date</strong>, and <strong>Invoice Number</strong> to be marked as Won.
+                        </span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 p-3 rounded-xl border border-slate-700 bg-[#1E1F20] text-slate-200 text-sm font-semibold">
+                    <DealTypeIcon type="INTERNAL_TASK" size="sm" />
                     Internal Task
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
 
               {/* Topic Input */}
@@ -134,20 +193,29 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                 </div>
               </div>
 
-              {/* Customer Linking - Only required/shown for Sales Deal */}
-              {type === "SALES_DEAL" && (
-                <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-                  <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider pl-1">
-                    Link Customer <span className="text-rose-500">*</span>
-                  </label>
-                  <SearchableSelect
-                    options={companies.map(c => ({ label: c.name, value: c.id }))}
-                    value={companyId}
-                    onChange={setCompanyId}
-                    placeholder="Select a customer..."
-                  />
-                </div>
-              )}
+              {/* Account Linking */}
+              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider pl-1">
+                  Link Account {type === "SALES_DEAL" ? (
+                    <span className="text-rose-500">*</span>
+                  ) : (
+                    <span className="text-slate-500 text-[11px] font-normal lowercase tracking-normal ml-1">(optional)</span>
+                  )}
+                </label>
+                <SearchableSelect
+                  options={companyOptions}
+                  value={companyId}
+                  onChange={setCompanyId}
+                  isClearable={true}
+                  placeholder={
+                    companyList.length === 0
+                      ? "Loading accounts..."
+                      : type === "SALES_DEAL"
+                      ? "Select an account..."
+                      : "Select an account (optional)..."
+                  }
+                />
+              </div>
             </div>
           </div>
 

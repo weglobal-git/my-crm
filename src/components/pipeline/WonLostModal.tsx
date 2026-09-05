@@ -53,8 +53,9 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
       
       toast({ title: "Success", type: "success", description: `Deal marked as ${status}.` });
       onSuccess();
-    } catch (e: any) {
-      toast({ title: "Error", type: "error", description: e.message });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "An error occurred";
+      toast({ title: "Error", type: "error", description: msg });
     } finally {
       setIsSubmitting(false);
     }

@@ -1,4 +1,4 @@
-import { getPermissionMatrix, syncMenuRegistry } from "@/lib/actions/permission";
+import { getPermissionMatrix } from "@/lib/actions/permission";
 import { PermissionMatrix } from "@/components/system/PermissionMatrix";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -22,11 +22,10 @@ export default async function PermissionsPage() {
     );
   }
 
-  await syncMenuRegistry(false);
   const { departments: permDepts, menus } = await getPermissionMatrix();
 
   return (
-    <div className="flex flex-col w-full h-full bg-[#252728]">
+    <div className="flex flex-col w-full h-full bg-[#252728] min-h-0">
       <PermissionMatrix 
         initialDepartments={permDepts} 
         menus={menus} 

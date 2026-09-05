@@ -77,7 +77,7 @@ export class EncryptionService {
       let decrypted = decipher.update(encryptedBase64, 'base64', 'utf8');
       decrypted += decipher.final('utf8');
       return decrypted;
-    } catch (error) {
+    } catch {
       throw new Error('Decryption failed: payload may be tampered or key is incorrect');
     }
   }

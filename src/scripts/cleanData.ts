@@ -102,11 +102,10 @@ function cleanOpportunities() {
       let match;
       while ((match = logPattern.exec(historyText)) !== null) {
         const dateStr = match[1];
-        let rawContent = match[2].trim();
+        const rawContent = match[2].trim();
         
         // Extract tag like [YUI] or ['YUI' added due date to 20/08/2026]
         const tagMatch = rawContent.match(/^\[([^\]]+)\]\s*/);
-        let author = null;
         
         if (tagMatch) {
           const innerTag = tagMatch[1];

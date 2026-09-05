@@ -23,6 +23,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // Schema updated: ContactType on Company
 };
 
 export default nextConfig;

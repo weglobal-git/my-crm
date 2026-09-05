@@ -175,3 +175,117 @@
 - Status: Accepted
 - Decision: User-visible summaries are stored as `DealAIEvent` logical records with append-only `DealAIEventRevision` generations/corrections. `ActivityLog` and System Logs are not AI summary storage. Current revision changes use compare-and-swap, and timeline composition reads accepted current revisions with source provenance.
 - Reason: Editing a JSON System Log destroyed the original AI output, conflated display projections with memory, and could not guarantee that human corrections survive regeneration.
+
+## D-025 — AI Manager authorization fails closed at field and memory boundaries
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Phase 7 begins with read-only server tools. Every tool composes Deal row authorization with department menu-derived field capabilities. Existing unclassified AI Summary/Fact text is readable only by actors authorized for every source category it may contain; future visibility metadata may safely narrow that restriction.
+- Reason: Deal-level access alone does not imply permission to view customer, product, commercial, activity, or AI-derived text. Filtering after an LLM call is too late because unauthorized data has already entered the prompt.
+
+## D-026 — AI visibility is immutable source metadata
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Every AI revision and derived fact stores a versioned list of required capabilities. Activity-derived summaries require Activity access; source types without an approved field classifier use the restrictive unclassified scope. Corrections and facts inherit their source revision scope.
+- Reason: Recomputing visibility from current roles can expose historical text after a permission-model change. A source-time snapshot is auditable, and per-record checks allow safe sharing without granting access to unrelated customer or commercial content.
+
+## D-027 — AI Manager starts with deterministic read-only board tools
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Board risk begins as deterministic code over already-authorized basic Deal fields, with bounded rows/tokens and source citations. `AI_MANAGER` has a separate AgentKey, but no LLM orchestration or mutating tools are enabled until tool auditing and security evaluations pass.
+- Reason: Rule-based overdue/stale detection is cheaper, explainable, and resistant to prompt injection. Separating the Agent key permits independent budgets and emergency pause controls later.
+
+## D-028 — Manager tool audit stores hashes, not CRM payloads
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Every Manager tool execution is audited as allowed or denied using a canonical input hash, granted capability snapshot, result count, latency, and normalized error category. Ordinary audit rows never store raw tool input, prompts, summaries, or customer content.
+- Reason: Operations need traceability and anomaly monitoring, but duplicating sensitive CRM text into logs would expand the permission and retention surface.
+
+## D-029 — Tool output is untrusted and every Manager claim is cited
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Tool payloads are serialized inside an explicit untrusted-data boundary. Manager output uses a strict schema where each factual claim has one or more citation IDs that must exist in the server-built citation manifest.
+- Reason: CRM activities can contain prompt-injection text. The model cannot gain tools or permissions from data, and invented evidence must be rejected before user display.
+
+## D-030 — Manager orchestration is server-selected and display output is claim-derived
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: The AI Manager receives context from a fixed server-side read-only registry selected by Deal/board scope; it cannot request arbitrary tools. Before display, every claim must reference a server-issued citation, and displayed answer text is reconstructed only from those validated claims. Manager runs use a distinct active policy, budget, circuit breaker, trace, and nullable interactive `AgentRun` provenance.
+- Reason: Allowing model-selected tools or uncited narrative creates prompt-injection and authorization bypass paths. Reusing mandatory Event Summarizer provenance would require fake event IDs and corrupt operational audit history.
+
+## D-031 — ADMIN may review the Manager shell before provider activation
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Show the AI Manager entry and disabled preview dialog to ADMIN even when the Manager feature flag is off. Keep submission disabled and explain the missing activation gates. Non-ADMIN users do not receive the entry point in this initial UX slice; server authorization remains mandatory regardless of UI visibility.
+- Reason: Product can review placement, language, and safety disclosure without spending tokens or exposing CRM data. Hiding the entire surface until activation would mix UX approval with provider/privacy rollout and encourage unsafe flag changes merely to inspect the interface.
+
+## D-032 — Provider pricing is policy-versioned and thinking is disabled for bounded extraction
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Store input/output USD-per-million-token pricing as integer micros on each model policy and reconcile each run from provider-reported tokens. Count Gemini thinking tokens as output and request a zero thinking budget for Event Summary/AI Manager structured extraction.
+- Reason: A hard-coded zero cost defeats budget enforcement, while global mutable pricing makes historical run costs irreproducible. The synthetic canary showed that a low output cap can be exhausted entirely by hidden thinking before structured JSON is emitted.
+
+## D-033 — Event Summarizer policy v2 and runtime cost reconciliation
+
+- Date: 2026-09-02
+- Status: Accepted
+- Decision: Version the active Event Summarizer policy to v2 on Preview with $0.30 input / $2.50 output per million tokens and increase per-run reservation to $0.0025 (2,500 micros) to safely exceed worst-case token cap cost ($0.00185). Update `processor.ts` to compute actual cost from reported usage and policy pricing rather than hardcoding zero.
+- Reason: The legacy v1 policy had zero pricing and a $0.001 limit, which caused budget reservations to fall short of token-cap worst case and prevented accurate usage ledger recording.
+
+## D-034 — Editable Manager instructions are policy-versioned, not permission controls
+
+- Date: 2026-09-03
+- Status: Implemented; ADMIN UI acceptance pending the disabled admin flag
+- Decision: Store every Manager instruction block in nullable `AIModelPolicy.managerPrompt`. ADMIN publishing creates a new policy snapshot plus audit, with stale-policy protection. Existing model, prices and budget are preserved. Null policies use documented defaults. Read-only registry, authorization, source validation and cost admission remain enforced in code.
+- Reason: Product needs direct prompt iteration without code deployment, but prompt editing must not grant database access or rewrite historical run configuration.
+
+## D-035 — Citations open the canonical card without navigating away
+
+- Date: 2026-09-03
+- Status: Implemented and browser verified
+- Decision: Server-built citations include the canonical Deal ID. Client calls an authorized single-card read and opens the existing Kanban panel. Chat is a nonmodal bottom-left widget, lazy-loaded on first open and retained only in memory while mounted.
+- Reason: Search-by-label/new-tab links are ambiguous and interrupt the workflow. Rechecking current access prevents old chat citations from bypassing revoked Deal permissions.
+
+## D-036 — Retire AI Manager; retain Summary pending product review
+
+- Date: 2026-09-03
+- Status: Manager removal implemented at explicit user request; Summary redesign proposed only
+- Decision: Remove Manager-specific runtime/UI/admin prompt code and tests. Preserve Summary/shared services, DB usage/provenance history and applied migrations. Extract shared permissions/visibility/pricing into `src/lib/ai/` so Summary has no dependency on Manager. Remove local Manager flag; no DB mutation, deployment or commit in this slice.
+- Reason: Current board-wide Manager does not demonstrate enough value over deterministic filters/sorts for the user's workflow. Prefer evaluating on-demand per-card synthesis with citations rather than extending Manager by default. Raw activity should remain durable regardless of LLM invocation frequency.
+- Supersedes: D-030/D-031/D-034/D-035 as active Manager rollout instructions; preserves them as historical decisions. D-032/D-033 pricing principles remain relevant to Summary.
+- Next authorization: Summary trigger changes/on-demand implementation require a new approved scope. Security/lifecycle findings and evaluation plan are recorded in `ai-summary-product-review-2026-09-03.md`; no claim of complete Summary safety audit.
+
+## D-037 — Card Bot is a Summary shortcut, not a generation trigger
+
+- Date: 2026-09-03
+- Status: Implemented at user request
+- Decision: Place the Bot above the due-date bell on each authorized card. It opens the standalone Summary right-menu section. Activity retains only Activity/System sub-tabs. Check for updates reloads saved Summary records; generation frequency remains unchanged.
+- Reason: Summary is separate from human Activity and System Logs. A visible Bot must not imply an up-to-date summary exists or incur a provider call when clicked. Source event time and revision creation time are labeled separately to prevent misleading freshness claims.
+
+## D-038 — Complete Elimination of 1-to-1 Event Ledger & Outbox Over-Engineering
+
+- Date: 2026-09-03
+- Status: Approved by User and Implemented (7,351 lines eliminated)
+- Decision: Completely remove the complex Event Ledger (`src/lib/event-ledger/`), Fact Graph (`fact-lifecycle.ts`, `fact-resolver.ts`, `circuit-breaker.ts`), and worker processor loops. Revert `opportunity.ts` mutations back to instant, direct Prisma CRUD (`prisma.activityLog.create`, `prisma.activityLog.delete`). Delete all obsolete Phase 0/1 plan files and maintain `current-ai-architecture.md` as the single source of truth.
+- Reason: Logging every comment/update into duplicate event ledgers and running background event processors caused excessive complexity, potential database strain, and dead code without user benefit. The user requested pure 1-click on-demand AI summarization directly from existing database records.
+
+## D-039 — Removal of Obsolete AI Control Center and Dashboard Optimization
+
+- Date: 2026-09-03
+- Status: Approved by User and Implemented
+- Decision: Remove the redundant `AI Control Center` tab from `/system/general` and delete `AIControlCenter.tsx`. Retain the AI Usage & Budget card inside the unified System Dashboard. Optimize System Dashboard by implementing 3-minute in-memory caching for Cloudinary and Google Drive APIs and decoupling card loading states into independent skeletons so they do not block sidebar navigation or page rendering.
+- Reason: The prompt settings are now managed directly in context within `EditDealPanel`, making a separate AI Control Center page redundant and confusing. Heavy third-party API calls caused navigation lag when clicking sidebar items.
+
+## D-040 — Native In-Panel Tab for AI Prompt Settings (Exposing Task Instruction)
+
+- Date: 2026-09-03
+- Status: Approved by User and Implemented
+- Decision: Replace the floating popup modal with a native sub-tab pill switcher (`[ ✨ Summary ]` vs `[ ⚙️ Prompt Settings ]` for Admin) inside `EditDealPanel`. Expose both the **System Instruction** (AI Persona and Tone) and the **Task Instruction** (Analysis Topics & Guidelines: Overview, Key Highlights, Blockers & Risks, Next Steps) along with optional Custom Instructions. Persist configurations into `AIConfigAuditLog` via Server Actions.
+- Reason: Floating modal overlays violated the application's clean design system. Users need full control not just over the AI's persona, but specifically over *what topics and questions the AI is instructed to summarize* without having to edit backend source code.

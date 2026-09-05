@@ -14,16 +14,30 @@ export type PipelineActor = {
 
 async function getPipelineActorFromSession(): Promise<PipelineActor> {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) throw new Error('Unauthorized');
+  if (!session?.user) throw new Error('Unauthorized');
 
-  const role = session.user.role as Role;
-  const departments = Array.isArray(session.user.departments)
+  let userId = session.user.id;
+  let role = session.user.role as Role;
+  let departments = Array.isArray(session.user.departments)
     ? session.user.departments.filter((name): name is string => typeof name === 'string')
     : [];
 
+  if (!userId && session.user.email) {
+    const dbUser = await prisma.user.findUnique({
+      where: { email: session.user.email },
+      include: { departments: true }
+    });
+    if (dbUser) {
+      userId = dbUser.id;
+      role = dbUser.role;
+      departments = dbUser.departments.map((d: { name: string }) => d.name);
+    }
+  }
+
+  if (!userId) throw new Error('Unauthorized');
   if (!['ADMIN', 'MANAGEMENT', 'GENERAL'].includes(role)) throw new Error('Forbidden');
 
-  return { id: session.user.id, role, departments };
+  return { id: userId, role, departments };
 }
 
 async function hasPipelinePermission(actor: PipelineActor) {
@@ -101,12 +115,12 @@ export async function getPipelineRecipientUserIds(opportunityId: string): Promis
   });
   if (!opportunity) return [];
 
-  const departmentIds = new Set(opportunity.owner.departments.map(department => department.id));
+  const departmentIds = new Set(opportunity.owner.departments.map((department: { id: string }) => department.id));
   for (const member of opportunity.teamMembers) {
     for (const department of member.departments) departmentIds.add(department.id);
   }
 
-  const directUserIds = [opportunity.ownerId, ...opportunity.teamMembers.map(member => member.id)];
+  const directUserIds = [opportunity.ownerId, ...opportunity.teamMembers.map((member: { id: string }) => member.id)];
   const users = await prisma.user.findMany({
     where: {
       OR: [
@@ -120,7 +134,7 @@ export async function getPipelineRecipientUserIds(opportunityId: string): Promis
     select: { id: true },
   });
 
-  return users.map(user => user.id);
+  return users.map((user: { id: string }) => user.id);
 }
 
 export async function notifyPrivatePipelineUpdate(

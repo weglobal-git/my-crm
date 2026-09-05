@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
@@ -43,6 +44,7 @@ interface MenuStructureBuilderProps {
 }
 
 export function MenuStructureBuilder({ menus: initialMenus }: MenuStructureBuilderProps) {
+  const router = useRouter();
   const { toast, confirm } = useDialog();
   const [menus, setMenus] = useState(initialMenus);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -190,14 +192,17 @@ export function MenuStructureBuilder({ menus: initialMenus }: MenuStructureBuild
     try {
       if (editModal.id) {
         await updateMenuDetails(editModal.id, editModal.label, editModal.icon, editModal.description);
+        setMenus(prev => prev.map(m => m.id === editModal.id ? { ...m, label: editModal.label, icon: editModal.icon, description: editModal.description } : m));
         toast({ title: "Updated", description: "Menu updated successfully", type: "success" });
       } else {
-        await createMainMenu(editModal.label, editModal.icon);
+        const res = await createMainMenu(editModal.label, editModal.icon);
+        if (res.success && res.menu) {
+          setMenus(prev => [...prev, res.menu as MenuItemType]);
+        }
         toast({ title: "Created", description: "Menu created successfully", type: "success" });
       }
       setEditModal({ isOpen: false, label: '', icon: 'Settings', description: '', isSubMenu: false });
-      // In a real app we'd refresh data here, but page will reload or we can trigger server action refresh
-      window.location.reload();
+      router.refresh();
     } catch {
       toast({ title: "Error", description: "Operation failed", type: "error" });
     } finally {
@@ -220,8 +225,9 @@ export function MenuStructureBuilder({ menus: initialMenus }: MenuStructureBuild
       if (res.error) {
         toast({ title: "Cannot Delete", description: res.error, type: "error" });
       } else {
+        setMenus(prev => prev.filter(m => m.id !== id));
         toast({ title: "Deleted", description: "Menu deleted successfully", type: "success" });
-        window.location.reload();
+        router.refresh();
       }
     } catch {
       toast({ title: "Error", description: "Delete failed", type: "error" });

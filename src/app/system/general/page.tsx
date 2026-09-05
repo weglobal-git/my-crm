@@ -23,8 +23,10 @@ export default async function SystemGeneralPage() {
     );
   }
 
-  const users = await getUsers();
-  const departments = await getDepartments();
+  const [users, departments] = await Promise.all([
+    getUsers(),
+    getDepartments(),
+  ]);
 
   return (
     <div className="flex-1 overflow-y-auto hide-scrollbar p-6 bg-[#252728]">

@@ -9,10 +9,13 @@ import { useEffect, useState, useRef } from "react";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { MenuDefinition } from "@/lib/menu-registry";
 
-import { getActiveUsers } from "@/lib/actions/users";
+import { getActiveUsers, pingActiveStatus } from "@/lib/actions/users";
 import { getMyNotifications, respondToNotification } from "@/lib/actions/notification";
 import { pusherClient } from "@/lib/pusher";
 import { Check, X as XIcon } from "lucide-react";
+
+type ActiveUser = Awaited<ReturnType<typeof getActiveUsers>>[number];
+type NotificationItem = Awaited<ReturnType<typeof getMyNotifications>>[number];
 
 export function Header() {
   const pathname = usePathname();
@@ -44,41 +47,84 @@ export function Header() {
 
   useEffect(() => {
     if (status === "authenticated" && session?.user?.id) {
-      // 1. Initial fetches
+      // 1. Initial self active user so list is never empty
+      const currentUserData = {
+        id: session.user.id,
+        name: session.user.name || "User",
+        email: session.user.email || "",
+        image: session.user.image || null,
+        role: ((session.user as Record<string, unknown>)?.role as string) || "USER",
+        departments: Array.isArray((session.user as Record<string, unknown>)?.departments)
+          ? ((session.user as Record<string, unknown>)?.departments as string[]).map((d: string) => ({ name: d }))
+          : [],
+        lastActive: new Date(),
+      };
+      queueMicrotask(() => {
+        setActiveUsers([currentUserData as unknown as ActiveUser]);
+      });
+
+      // 2. Initial fetches & ping
+      pingActiveStatus();
+      getActiveUsers().then(users => {
+        if (users && users.length > 0) {
+          setActiveUsers(users);
+        }
+      });
       getMyNotifications().then(setNotifications);
 
-      // 2. Setup Pusher Presence Channel
-      const presenceChannel = pusherClient.subscribe('presence-global');
-      
-      presenceChannel.bind('pusher:subscription_succeeded', (members: { each: (cb: (member: { id: string; info: Record<string, unknown> }) => void) => void }) => {
-        const users: Awaited<ReturnType<typeof getActiveUsers>> = [];
-        members.each((member) => {
-          users.push({ id: member.id, ...member.info } as Awaited<ReturnType<typeof getActiveUsers>>[number]);
+      // Heartbeat ping every 45s
+      const pingInterval = setInterval(() => {
+        pingActiveStatus();
+        getActiveUsers().then(users => {
+          if (users && users.length > 0) {
+            setActiveUsers(users);
+          }
         });
-        setActiveUsers(users);
-      });
+      }, 45000);
 
-      presenceChannel.bind('pusher:member_added', (member: { id: string; info: Record<string, unknown> }) => {
-        setActiveUsers(prev => {
-          if (prev.find(u => u.id === member.id)) return prev;
-          return [...prev, { id: member.id, ...member.info } as Awaited<ReturnType<typeof getActiveUsers>>[number]];
+      // 3. Setup Pusher Presence Channel
+      try {
+        const presenceChannel = pusherClient.subscribe('presence-global');
+        
+        presenceChannel.bind('pusher:subscription_succeeded', (members: { each: (cb: (member: { id: string; info: Record<string, unknown> }) => void) => void }) => {
+          const users: ActiveUser[] = [];
+          members.each((member) => {
+            users.push({ id: member.id, ...member.info } as ActiveUser);
+          });
+          if (users.length > 0) setActiveUsers(users);
         });
-      });
 
-      presenceChannel.bind('pusher:member_removed', (member: { id: string }) => {
-        setActiveUsers(prev => prev.filter(u => u.id !== member.id));
-      });
+        presenceChannel.bind('pusher:member_added', (member: { id: string; info: Record<string, unknown> }) => {
+          setActiveUsers((prev: ActiveUser[]) => {
+            if (prev.find((u: ActiveUser) => u.id === member.id)) return prev;
+            return [...prev, { id: member.id, ...member.info } as ActiveUser];
+          });
+        });
 
-      // 3. Setup Pusher Private Channel for Notifications
-      const privateChannel = pusherClient.subscribe(`private-user-${session.user.id}`);
-      
-      privateChannel.bind('new-notification', (newNotif: Awaited<ReturnType<typeof getMyNotifications>>[number]) => {
-        setNotifications(prev => [newNotif, ...prev]);
-      });
+        presenceChannel.bind('pusher:member_removed', (member: { id: string }) => {
+          setActiveUsers((prev: ActiveUser[]) => prev.filter((u: ActiveUser) => u.id !== member.id));
+        });
+      } catch (err) {
+        console.warn("[Header] Pusher presence error:", err);
+      }
+
+      // 4. Setup Pusher Private Channel for Notifications
+      try {
+        const privateChannel = pusherClient.subscribe(`private-user-${session.user.id}`);
+        
+        privateChannel.bind('new-notification', (newNotif: NotificationItem) => {
+          setNotifications((prev: NotificationItem[]) => [newNotif, ...prev]);
+        });
+      } catch (err) {
+        console.warn("[Header] Pusher notification error:", err);
+      }
 
       return () => {
-        pusherClient.unsubscribe('presence-global');
-        pusherClient.unsubscribe(`private-user-${session.user.id}`);
+        clearInterval(pingInterval);
+        try {
+          pusherClient.unsubscribe('presence-global');
+          pusherClient.unsubscribe(`private-user-${session.user.id}`);
+        } catch {}
       };
     }
   }, [status, session]);
@@ -105,7 +151,7 @@ export function Header() {
   const handleRespond = async (id: string, accept: boolean) => {
     try {
       await respondToNotification(id, accept);
-      setNotifications(prev => prev.filter(n => n.id !== id));
+      setNotifications((prev: NotificationItem[]) => prev.filter((n: NotificationItem) => n.id !== id));
     } catch (e) {
       console.error(e);
     }
@@ -165,7 +211,7 @@ export function Header() {
             title="View Online Users"
           >
             <div className="flex -space-x-3 mr-4">
-              {displayUsers.map((user, index) => (
+              {displayUsers.map((user: ActiveUser, index: number) => (
                 <div 
                   key={user.id} 
                   className={`w-10 h-10 rounded-full border-2 border-[#252728] bg-[#3A3B3C] flex items-center justify-center overflow-hidden z-${30 - index * 10} relative`}
@@ -204,7 +250,7 @@ export function Header() {
                 {activeUsers.length === 0 ? (
                   <div className="p-4 text-center text-sm text-slate-500">No one is online right now.</div>
                 ) : (
-                  activeUsers.map(user => (
+                  activeUsers.map((user: ActiveUser) => (
                     <div key={user.id} className="flex items-center gap-3 p-2 hover:bg-[#4E4F50] rounded-xl transition-colors">
                       <div className="w-10 h-10 rounded-full bg-[#252728] overflow-hidden relative shrink-0">
                         {user.image ? (
@@ -264,7 +310,7 @@ export function Header() {
                       <p>No new notifications</p>
                     </div>
                   ) : (
-                    notifications.map(notif => (
+                    notifications.map((notif: NotificationItem) => (
                       <div key={notif.id} className="flex flex-col gap-2 p-3 hover:bg-[#4E4F50] rounded-xl transition-colors">
                         <div className="flex gap-3">
                           <div className="w-8 h-8 rounded-full bg-[#252728] overflow-hidden shrink-0">

@@ -7,11 +7,14 @@ export class GoogleGeminiAdapter implements AIGatewayAdapter {
     const baseUrl = this.defaultBaseUrl; // For testing we rely on Google's default endpoint
     const url = `${baseUrl}/${request.modelId}:generateContent?key=${request.secretKey}`;
 
-    const body: any = {
+    const body: Record<string, unknown> & { generationConfig: Record<string, unknown> } = {
       contents: [{ role: 'user', parts: [{ text: request.prompt }] }],
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: request.schema,
+        // Manager/Event Summary are bounded extraction tasks. Disabling model
+        // thinking avoids invisible output-token spikes and MAX_TOKENS before JSON.
+        thinkingConfig: { thinkingBudget: 0 },
       }
     };
 
@@ -44,15 +47,22 @@ export class GoogleGeminiAdapter implements AIGatewayAdapter {
 
       const data = await response.json();
       
-      const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const candidate = data.candidates?.[0];
+      const textResponse = candidate?.content?.parts?.[0]?.text;
       if (!textResponse) {
+        if (candidate?.finishReason === 'SAFETY') {
+          throw new Error('AI_RESPONSE_BLOCKED_BY_SAFETY');
+        }
         throw new Error('Gemini API returned empty or malformed response');
       }
 
       let parsedData: T;
       try {
         parsedData = JSON.parse(textResponse) as T;
-      } catch (e) {
+      } catch {
+        if (candidate?.finishReason === 'MAX_TOKENS') {
+          throw new Error('AI_RESPONSE_LENGTH_EXCEEDED');
+        }
         throw new Error('Failed to parse Gemini response as JSON');
       }
 
@@ -62,14 +72,14 @@ export class GoogleGeminiAdapter implements AIGatewayAdapter {
         data: parsedData,
         usage: {
           inputTokens: usageMetadata.promptTokenCount || 0,
-          outputTokens: usageMetadata.candidatesTokenCount || 0,
+          outputTokens: (usageMetadata.candidatesTokenCount || 0) + (usageMetadata.thoughtsTokenCount || 0),
           totalTokens: usageMetadata.totalTokenCount || 0,
         },
         rawResponse: data
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error instanceof Error && error.name === 'AbortError') {
         throw new Error(`Provider timeout after ${request.timeoutMs}ms`);
       }
       throw error;
@@ -96,10 +106,10 @@ export class GoogleGeminiAdapter implements AIGatewayAdapter {
         const errData = await response.json().catch(() => ({}));
         return { isHealthy: false, statusMessage: `HTTP ${response.status}: ${JSON.stringify(errData)}`, latencyMs };
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       return { 
         isHealthy: false, 
-        statusMessage: error.name === 'AbortError' ? 'Timeout' : (error.message || 'Unknown error'), 
+        statusMessage: error instanceof Error && error.name === 'AbortError' ? 'Timeout' : (error instanceof Error ? error.message : 'Unknown error'),
         latencyMs: Date.now() - start 
       };
     }
@@ -120,8 +130,9 @@ export class GoogleGeminiAdapter implements AIGatewayAdapter {
 
       const data = await response.json();
       
-      // Gemini 1.5 Pro and Flash support structured JSON output
-      const supportsJson = modelId.includes('gemini-1.5') || modelId.includes('gemini-2.0');
+      const supportsJson = Array.isArray(data.supportedGenerationMethods)
+        ? data.supportedGenerationMethods.includes('generateContent')
+        : false;
 
       return {
         isValid: true,
@@ -129,11 +140,11 @@ export class GoogleGeminiAdapter implements AIGatewayAdapter {
         maxInputTokens: data.inputTokenLimit || undefined,
         maxOutputTokens: data.outputTokenLimit || undefined,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       return {
         isValid: false,
         supportsStructuredOutput: false,
-        error: error.message || 'Failed to validate model'
+        error: error instanceof Error ? error.message : 'Failed to validate model'
       };
     }
   }

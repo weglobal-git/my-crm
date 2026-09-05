@@ -30,17 +30,30 @@ This is the top-most navigation bar. It is divided into two columns:
 
 This is the primary area below the Main-Navbar where the actual application content is rendered (e.g., Kanban boards, Data Tables, Permission Matrices, Dashboards).
 
+- **Standard Component**: All pages MUST use `@/components/layout/WorkspaceLayout` to guarantee identical horizontal alignment and container widths (`max-w-[1400px] mx-auto w-full`).
 - **Constraints**:
-  - Must handle its own scrolling (e.g., `overflow-y-auto hide-scrollbar`).
-  - Should span the remaining height of the screen to maximize usable area.
-  - Must adhere to the strict no-shadow, flat design rules unless explicitly excepted.
+  - Must handle its own scrolling: use `scrollMode="hidden"` for multi-column / kanban / master-detail layouts where internal elements scroll, or `scrollMode="auto"` for regular scrolling pages.
+  - Spacing: Standard `p-6` padding with `hide-scrollbar`.
+  - Content width: Uniform `max-w-[1400px] mx-auto w-full flex flex-col h-full gap-4 min-h-0`.
 - **Page-Specific Tools**: Any controls specific to the page (e.g., "Save Changes" buttons, "Add Widget" buttons, table horizontal scroll arrows) MUST be placed inside the Work Space, typically in a toolbar right above the main content (e.g., above a table or grid). Do NOT place them in the Main-Navbar.
 
 ---
 
-## Example Implementation Skeleton
+## Standard Workspace Implementation
 
-When building a new page or layout wrapper, use the following structural pattern:
+Every page or view should wrap its content with `WorkspaceLayout`:
+
+```tsx
+import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
+
+export default function MyPageView() {
+  return (
+    <WorkspaceLayout scrollMode="hidden">
+      {/* Page content here */}
+    </WorkspaceLayout>
+  );
+}
+```
 
 ```tsx
 export default function StandardPageLayout({ children }) {

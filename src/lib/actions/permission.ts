@@ -7,13 +7,13 @@ import { revalidatePath } from "next/cache";
 export async function syncMenuRegistry(shouldRevalidate: boolean = true) {
   // Sync the hardcoded MENU_REGISTRY with the database
   const existingMenus = await prisma.menuItem.findMany();
-  const existingKeys = new Set(existingMenus.map((m) => m.key));
+  const existingKeys = new Set<string>(existingMenus.map((m: { key: string }) => m.key));
 
   for (const menu of MENU_REGISTRY) {
     if (existingKeys.has(menu.key)) {
       // Update existing, but DO NOT overwrite parentKey and sortOrder for Level 2 menus
       // because they are now controlled by the Drag-and-Drop UI in the database.
-      const existingItem = existingMenus.find(m => m.key === menu.key);
+      const existingItem = existingMenus.find((m: { key: string }) => m.key === menu.key);
       const isLevel2 = menu.level === 2;
       
       await prisma.menuItem.update({
@@ -23,6 +23,7 @@ export async function syncMenuRegistry(shouldRevalidate: boolean = true) {
           level: menu.level,
           icon: menu.iconName,
           href: menu.href,
+          description: menu.description ?? null,
           parentKey: isLevel2 && existingItem?.parentKey ? existingItem.parentKey : menu.parentKey,
           sortOrder: isLevel2 ? existingItem!.sortOrder : menu.sortOrder,
         },
@@ -37,19 +38,54 @@ export async function syncMenuRegistry(shouldRevalidate: boolean = true) {
           parentKey: menu.parentKey,
           icon: menu.iconName,
           href: menu.href,
+          description: menu.description ?? null,
           sortOrder: menu.sortOrder,
+          isLocked: menu.isLocked ?? false,
         },
       });
     }
   }
 
   // Delete items from DB that are not in MENU_REGISTRY anymore
-  const currentRegistryKeys = new Set(MENU_REGISTRY.map((m) => m.key));
-  const keysToDelete = Array.from(existingKeys).filter((key) => !currentRegistryKeys.has(key));
+  const currentRegistryKeys = new Set<string>(MENU_REGISTRY.map((m: { key: string }) => m.key));
+  const keysToDelete = Array.from(existingKeys).filter((key: string) => !currentRegistryKeys.has(key));
   if (keysToDelete.length > 0) {
     await prisma.menuItem.deleteMany({
       where: { key: { in: keysToDelete } }
     });
+  }
+
+  // Synchronize permissions for locked menus:
+  // Any child menu that is locked MUST mirror its parent's visibility across all departments
+  const lockedMenus = await prisma.menuItem.findMany({
+    where: { level: 3, isLocked: true }
+  });
+
+  for (const lockedMenu of lockedMenus) {
+    if (!lockedMenu.parentKey) continue;
+    const parent = await prisma.menuItem.findUnique({ where: { key: lockedMenu.parentKey } });
+    if (!parent) continue;
+
+    const parentPermissions = await prisma.departmentMenuPermission.findMany({
+      where: { menuItemId: parent.id }
+    });
+
+    for (const p of parentPermissions) {
+      await prisma.departmentMenuPermission.upsert({
+        where: {
+          departmentId_menuItemId: {
+            departmentId: p.departmentId,
+            menuItemId: lockedMenu.id
+          }
+        },
+        update: { visible: p.visible },
+        create: {
+          departmentId: p.departmentId,
+          menuItemId: lockedMenu.id,
+          visible: p.visible
+        }
+      });
+    }
   }
 
   if (shouldRevalidate) {
@@ -101,7 +137,8 @@ export async function updatePermission(departmentId: string, menuItemId: string,
   if (!targetMenu) return { success: true };
 
   const allMenus = await prisma.menuItem.findMany();
-  const menuMap = new Map(allMenus.map(m => [m.key, m]));
+  type MenuItemRecord = { id: string; key: string; parentKey: string | null; label: string; level: number; sortOrder: number; icon: string | null; href: string | null };
+  const menuMap = new Map<string, MenuItemRecord>(allMenus.map((m: MenuItemRecord) => [m.key, m]));
 
   if (visible) {
     // If checking a child, we MUST check its parent (and grandparent)
@@ -125,7 +162,7 @@ export async function updatePermission(departmentId: string, menuItemId: string,
     
     // Recursive function to find all children
     const findChildren = (parentKey: string) => {
-      allMenus.forEach(m => {
+      allMenus.forEach((m: { id: string; key: string; parentKey: string | null }) => {
         if (m.parentKey === parentKey) {
           keysToUncheck.add(m.id);
           findChildren(m.key); // search deeper
@@ -152,7 +189,13 @@ export async function updatePermission(departmentId: string, menuItemId: string,
 export async function getUserVisibleMenuKeys(userId: string): Promise<string[]> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { departments: true }
+    select: {
+      id: true,
+      role: true,
+      departments: {
+        select: { id: true }
+      }
+    }
   });
 
   if (!user) return [];
@@ -169,14 +212,35 @@ export async function getUserVisibleMenuKeys(userId: string): Promise<string[]> 
   // Get permissions for all user's departments
   const permissions = await prisma.departmentMenuPermission.findMany({
     where: {
-      departmentId: { in: user.departments.map(d => d.id) },
+      departmentId: { in: user.departments.map((d: { id: string }) => d.id) },
       visible: true
     },
-    include: { menuItem: true }
+    select: {
+      menuItem: {
+        select: { key: true }
+      }
+    }
   });
 
   // A user can see a menu if ANY of their departments has it visible
-  const visibleKeys = new Set(permissions.map(p => p.menuItem.key));
+  const visibleKeys = new Set<string>(permissions.map((p: { menuItem: { key: string } }) => p.menuItem.key));
+
+  // If a parent sub-menu is visible, any of its children that are isLocked MUST be visible
+  const allMenus = await prisma.menuItem.findMany({
+    select: {
+      level: true,
+      isLocked: true,
+      parentKey: true,
+      key: true
+    }
+  });
+  allMenus.forEach((m: { level: number; isLocked: boolean; parentKey: string | null; key: string }) => {
+    if (m.level === 3 && m.isLocked && m.parentKey) {
+      if (visibleKeys.has(m.parentKey)) {
+        visibleKeys.add(m.key);
+      }
+    }
+  });
 
   return Array.from(visibleKeys);
 }
@@ -193,19 +257,24 @@ export async function updateMenuStructure(menuId: string, newParentKey: string, 
 }
 
 export async function getDbMenus() {
-  return await prisma.menuItem.findMany({
-    orderBy: [{ level: 'asc' }, { sortOrder: 'asc' }]
-  });
+  try {
+    return await prisma.menuItem.findMany({
+      orderBy: [{ level: 'asc' }, { sortOrder: 'asc' }]
+    });
+  } catch (err) {
+    console.error("[getDbMenus] Error:", err);
+    return [];
+  }
 }
 
 export async function createMainMenu(label: string, icon: string) {
   // Find highest sortOrder among level 1
   const existing = await prisma.menuItem.findMany({ where: { level: 1 } });
-  const maxSort = existing.length > 0 ? Math.max(...existing.map(m => m.sortOrder)) : 0;
+  const maxSort = existing.length > 0 ? Math.max(...existing.map((m: { sortOrder: number }) => m.sortOrder)) : 0;
   
   const key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
   
-  await prisma.menuItem.create({
+  const created = await prisma.menuItem.create({
     data: {
       key: `custom_${key}_${Date.now()}`,
       label,
@@ -214,7 +283,7 @@ export async function createMainMenu(label: string, icon: string) {
       sortOrder: maxSort + 1,
     }
   });
-  return { success: true };
+  return { success: true, menu: created };
 }
 
 export async function updateMenuDetails(id: string, label: string, icon: string, description?: string) {
@@ -272,6 +341,43 @@ export async function batchUpdatePermissions(updates: { deptId: string, menuId: 
       })
     )
   );
+
+  // Auto-sync locked children if a parent sub-menu (level 2) visibility changed
+  const allMenus = await prisma.menuItem.findMany();
+  const menuMap = new Map(allMenus.map(m => [m.id, m]));
+
+  const lockedUpdates: { deptId: string; menuId: string; visible: boolean }[] = [];
+  for (const update of updates) {
+    const menu = menuMap.get(update.menuId);
+    if (menu && menu.level === 2) {
+      const lockedChildren = allMenus.filter(m => m.parentKey === menu.key && m.isLocked);
+      for (const child of lockedChildren) {
+        lockedUpdates.push({
+          deptId: update.deptId,
+          menuId: child.id,
+          visible: update.visible,
+        });
+      }
+    }
+  }
+
+  if (lockedUpdates.length > 0) {
+    await prisma.$transaction(
+      lockedUpdates.map(u =>
+        prisma.departmentMenuPermission.upsert({
+          where: { departmentId_menuItemId: { departmentId: u.deptId, menuItemId: u.menuId } },
+          update: { visible: u.visible },
+          create: { departmentId: u.deptId, menuItemId: u.menuId, visible: u.visible }
+        })
+      )
+    );
+  }
+
+  try {
+    revalidatePath("/", "layout");
+  } catch {
+    // Ignore if during render
+  }
   return { success: true };
 }
 
@@ -282,29 +388,36 @@ export async function toggleMenuLock(menuId: string, isLocked: boolean) {
     data: { isLocked }
   });
 
-  // If locked, we need to enforce that all departments that have access to the parent menu 
-  // also get access to this menu.
-  if (isLocked) {
-    const menu = await prisma.menuItem.findUnique({ where: { id: menuId } });
-    if (menu && menu.parentKey) {
-      const parent = await prisma.menuItem.findUnique({ where: { key: menu.parentKey } });
-      if (parent) {
-        // Find all departments that have the parent menu enabled
-        const parentPermissions = await prisma.departmentMenuPermission.findMany({
-          where: { menuItemId: parent.id, visible: true }
+  const menu = await prisma.menuItem.findUnique({ where: { id: menuId } });
+  if (menu && menu.parentKey) {
+    const parent = await prisma.menuItem.findUnique({ where: { key: menu.parentKey } });
+    if (parent) {
+      if (isLocked) {
+        // Enforce that all departments have this child menu match the parent menu's visibility
+        const departments = await prisma.department.findMany({
+          include: {
+            permissions: { where: { menuItemId: parent.id } }
+          }
         });
 
-        // Grant this child menu to those same departments
-        const updates = parentPermissions.map(p => ({
-          deptId: p.departmentId,
-          menuId: menuId,
-          visible: true
-        }));
+        const updates = departments.map((d) => {
+          const parentPerm = d.permissions.find(p => p.menuItemId === parent.id);
+          return {
+            deptId: d.id,
+            menuId: menuId,
+            visible: parentPerm ? parentPerm.visible : false
+          };
+        });
         
         await batchUpdatePermissions(updates);
       }
     }
   }
 
+  try {
+    revalidatePath("/", "layout");
+  } catch {
+    // Ignore if during render
+  }
   return { success: true };
 }

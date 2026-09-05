@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { getUserVisibleMenuKeys, getDbMenus } from "@/lib/actions/permission";
 import { MenuDefinition } from "@/lib/menu-registry";
@@ -35,7 +35,7 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
         getDbMenus(),
         isAdmin ? Promise.resolve(null) : getUserVisibleMenuKeys(session.user.id)
       ]).then(([menus, keys]) => {
-        const mappedMenus: MenuDefinition[] = menus.map(m => ({
+        const mappedMenus: MenuDefinition[] = menus.map((m: { key: string; label: string; level: number; parentKey: string | null; icon: string | null; href: string | null; sortOrder: number }) => ({
           key: m.key,
           label: m.label,
           level: m.level as 1 | 2 | 3,
@@ -65,37 +65,39 @@ export function PermissionProvider({ children }: { children: React.ReactNode }) 
 
   const canSee = useCallback((menuKey: string) => visibleKeys.has(menuKey), [visibleKeys]);
 
-  const visibleMainMenus = dbMenus
-    .filter(m => m.level === 1 && (isAdmin || dbMenus.some(sub => sub.level === 2 && sub.parentKey === m.key && canSee(sub.key))))
-    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const visibleMainMenus = useMemo(() => {
+    return dbMenus
+      .filter(m => m.level === 1 && (isAdmin || dbMenus.some(sub => sub.level === 2 && sub.parentKey === m.key && canSee(sub.key))))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+  }, [dbMenus, isAdmin, canSee]);
 
-  const visibleSubMenus = (mainMenuKey?: string) => {
+  const visibleSubMenus = useCallback((mainMenuKey?: string) => {
     const keyToUse = mainMenuKey || activeMainMenu;
     // We only show sub-menus that are allowed AND belong to the active (or specified) main menu
     return dbMenus
       .filter(m => m.level === 2 && canSee(m.key) && m.parentKey === keyToUse)
       .sort((a, b) => a.sortOrder - b.sortOrder);
-  };
+  }, [dbMenus, canSee, activeMainMenu]);
 
-  const visibleRightMenus = (subKey: string) => {
+  const visibleRightMenus = useCallback((subKey: string) => {
     return dbMenus
       .filter(m => m.level === 3 && m.parentKey === subKey && canSee(m.key))
       .sort((a, b) => a.sortOrder - b.sortOrder);
-  };
+  }, [dbMenus, canSee]);
+
+  const contextValue = useMemo(() => ({ 
+    canSee, 
+    visibleMainMenus, 
+    visibleSubMenus, 
+    visibleRightMenus, 
+    isAdmin, 
+    isLoading,
+    activeMainMenu,
+    setActiveMainMenu
+  }), [canSee, visibleMainMenus, visibleSubMenus, visibleRightMenus, isAdmin, isLoading, activeMainMenu]);
 
   return (
-    <PermissionContext.Provider 
-      value={{ 
-        canSee, 
-        visibleMainMenus, 
-        visibleSubMenus, 
-        visibleRightMenus, 
-        isAdmin, 
-        isLoading,
-        activeMainMenu,
-        setActiveMainMenu
-      }}
-    >
+    <PermissionContext.Provider value={contextValue}>
       {children}
     </PermissionContext.Provider>
   );

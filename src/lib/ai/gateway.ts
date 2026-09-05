@@ -1,4 +1,4 @@
-export interface StructuredAIRequest<T = any> {
+export interface StructuredAIRequest<T = unknown> {
   providerKey: string;
   modelId: string;
   secretKey: string;
@@ -8,6 +8,7 @@ export interface StructuredAIRequest<T = any> {
   maxOutputTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  _returnType?: T;
 }
 
 export interface AIUsage {
@@ -16,11 +17,11 @@ export interface AIUsage {
   totalTokens: number;
 }
 
-export interface AIResult<T = any> {
+export interface AIResult<T = unknown> {
   data: T;
   usage: AIUsage;
   providerRequestId?: string;
-  rawResponse?: any;
+  rawResponse?: unknown;
 }
 
 export interface ProviderConfig {

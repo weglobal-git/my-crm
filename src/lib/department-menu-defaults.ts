@@ -3,10 +3,10 @@ export const DEPARTMENT_MENU_DEFAULTS: Record<string, {
   rightMenuOverrides?: Record<string, string[]>;
 }> = {
   sale: {
-    subMenus: ["pipeline", "quotation", "customers", "product"],
+    subMenus: ["pipeline", "quotation", "contact", "product"],
   },
   marketing: {
-    subMenus: ["pipeline", "customers"],
+    subMenus: ["pipeline", "contact"],
     rightMenuOverrides: {
       pipeline: ["pipeline.activity", "pipeline.collaborate", "pipeline.images"],
     },

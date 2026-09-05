@@ -17,6 +17,15 @@ export async function POST(req: Request) {
     if (!fileBase64 || !opportunityId) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
+
+    // Server-side Video Policy: Reject any video uploads to preserve Cloudinary credits
+    if (fileType?.startsWith("video/") || Boolean(fileName?.match(/\.(mp4|mov|avi|mkv|webm|wmv|flv|m4v|3gp)$/i))) {
+      return NextResponse.json(
+        { error: "ไม่อนุญาตให้อัปโหลดไฟล์วิดีโอ กรุณาอัปโหลดเข้า Google Drive หรือ YouTube แล้วนำลิงก์มาแนบแทนครับ" },
+        { status: 400 }
+      );
+    }
+
     const { actor } = await requireOpportunityAccess(opportunityId);
 
     // Use auto to let Cloudinary determine the best resource type (treats PDF as image)

@@ -23,10 +23,9 @@ export const pipelineOpportunitySelect = {
   invoiceId: true,
   createdAt: true,
   updatedAt: true,
-  company: { select: { id: true, name: true } },
+  company: { select: { id: true, name: true, displayName: true } },
   owner: { select: { id: true, name: true, email: true, image: true } },
   teamMembers: { select: { id: true, name: true, image: true } },
-  tags: { select: { tag: { select: { id: true, name: true, color: true } } } },
   activityLogs: {
     where: {
       parentId: null,
@@ -50,11 +49,13 @@ export async function getPipelineOpportunitiesForActor(
   tab: string,
   searchQuery?: string,
 ) {
+  const isCompleted = tab === 'completed';
   const where: Prisma.OpportunityWhereInput = {
     ...getOpportunityAccessWhere(actor),
-    status: tab === 'completed'
+    status: isCompleted
       ? { in: ['WON', 'LOST', 'COMPLETED', 'CANCELLED'] }
       : 'OPEN',
+    ...(isCompleted ? {} : { pipelineStageId: { not: null } }),
   };
 
   if (searchQuery) {

@@ -10,6 +10,18 @@ export type ActivityLogPage = {
   nextCursor?: string;
 };
 
+/** Summary and other right-menu views own their data; never fetch hidden logs. */
+export function activityFeedKey(
+  dealId: string,
+  view: string,
+  isOpen: boolean,
+  previousPage: { nextCursor?: string } | null,
+): [string, string, 'COMMENT' | 'SYSTEM_UPDATE', string] | null {
+  if (!isOpen || (view !== 'activity' && view !== 'system')) return null;
+  if (previousPage && !previousPage.nextCursor) return null;
+  return ['activity-logs', dealId, view === 'system' ? 'SYSTEM_UPDATE' : 'COMMENT', previousPage?.nextCursor ?? ''];
+}
+
 export type ActivityUpdateEvent = {
   dealId?: string;
   action?: string;

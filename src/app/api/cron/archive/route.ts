@@ -34,7 +34,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, message: 'No old opportunities to archive.' });
     }
 
-    const oldOppIds = oldOpportunities.map(o => o.id);
+    const oldOppIds = oldOpportunities.map((o: { id: string }) => o.id);
 
     // 3. Fetch attachments that are still in Cloudinary (googleDriveFileId is null)
     const attachments = await prisma.attachment.findMany({

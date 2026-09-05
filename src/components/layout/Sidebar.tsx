@@ -46,6 +46,10 @@ export function Sidebar() {
     const isActive = isMainMenuActive(item.key);
     const subs = visibleSubMenus(item.key);
     
+    const targetHref = (subs.length > 0 && subs[0].href) 
+      ? subs[0].href 
+      : (item.href || (item.key === 'system' ? '/system/general' : '#'));
+
     return (
       <div 
         key={item.key} 
@@ -55,10 +59,14 @@ export function Sidebar() {
       >
         {/* Icon Container */}
         <Link
-          href={subs.length > 0 && subs[0].href ? subs[0].href : "#"}
-          onClick={() => setHoveredMenu(null)}
+          href={targetHref}
+          prefetch={false}
+          onClick={() => {
+            if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+            setHoveredMenu(null);
+          }}
           className={`
-            flex h-16 w-16 items-center justify-center rounded-full transition-all duration-200 cursor-pointer
+            flex h-16 w-16 items-center justify-center rounded-full transition-all duration-150 cursor-pointer active:scale-95 active:opacity-80
             ${isActive 
               ? "bg-[#C7F33C] text-black" 
               : "text-slate-400 hover:bg-[#3A3B3C] hover:text-slate-100 border-transparent hover:border-[#1C1C1D]"}
@@ -72,7 +80,10 @@ export function Sidebar() {
           <div className={`fixed left-20 top-0 h-screen w-80 bg-[#252728] border-r border-[#1C1C1D] transition-all duration-200 z-40 flex flex-col pt-8 pb-8 shadow-[4px_0_24px_rgba(0,0,0,0.2)] cursor-default ${hoveredMenu === item.key ? 'opacity-100 pointer-events-auto visible' : 'opacity-0 pointer-events-none invisible'}`}>
             {/* Header */}
             <div className="px-6 pb-6 border-b border-[#1C1C1D] mb-4 flex items-center gap-3">
-              <button className="p-1.5 text-slate-400 hover:text-slate-100 transition-colors bg-[#3A3B3C] hover:bg-slate-600 rounded-lg">
+              <button 
+                onClick={() => setHoveredMenu(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-100 transition-colors bg-[#3A3B3C] hover:bg-slate-600 rounded-lg"
+              >
                 <ArrowLeft className="w-4 h-4" />
               </button>
               <h2 className="text-lg font-semibold text-slate-100">{item.label}</h2>
@@ -92,13 +103,17 @@ export function Sidebar() {
                   <Link
                     key={sub.key}
                     href={sub.href || "#"}
+                    prefetch={false}
                     className={`
-                      flex items-start gap-4 p-4 rounded-xl transition-all border border-transparent group/item
+                      flex items-start gap-4 p-4 rounded-xl transition-all border border-transparent group/item active:scale-[0.98]
                       ${isSubActive 
                         ? "bg-[#C7F33C] border-transparent" 
                         : "hover:bg-[#3A3B3C] border-transparent hover:border-[#1C1C1D]"}
                     `}
-                    onClick={() => setHoveredMenu(null)}
+                    onClick={() => {
+                      if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+                      setHoveredMenu(null);
+                    }}
                   >
                     <div className={`mt-0.5 p-1.5 rounded-lg transition-colors ${isSubActive ? 'bg-black text-[#C7F33C]' : 'text-slate-400 bg-[#1C1C1D] group-hover/item:bg-[#252728] group-hover/item:text-slate-200'}`}>
                        <SubIcon className="w-5 h-5" />

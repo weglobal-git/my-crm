@@ -1,6 +1,6 @@
 import { 
   LayoutDashboard, Briefcase, Megaphone, Wrench, Settings, MousePointer2, FileText, Users, Package, MessageSquare, Building2, FileBadge, Image as ImageIcon, Paperclip,
-  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart, HardDrive, Wand2
+  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart, HardDrive, Wand2, Bot
 } from "lucide-react";
 
 export type MenuLevel = 1 | 2 | 3;
@@ -14,6 +14,7 @@ export interface MenuDefinition {
   href?: string;
   description?: string;
   sortOrder: number;
+  isLocked?: boolean;
 }
 
 export const MENU_REGISTRY: MenuDefinition[] = [
@@ -29,7 +30,7 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "crm_overview", label: "CRM Overview", level: 2, parentKey: "dashboard", iconName: "LayoutDashboard", href: "/dashboard/overview", sortOrder: 1 },
   { key: "pipeline",    label: "Pipeline",     level: 2, parentKey: "sales_ops", iconName: "MousePointer2",   href: "/pipeline",   sortOrder: 1 },
   { key: "quotation",   label: "Quotation",    level: 2, parentKey: "sales_ops", iconName: "FileText",        href: "/quotations", sortOrder: 2 },
-  { key: "customers",   label: "Customers",    level: 2, parentKey: "sales_ops", iconName: "Users",           href: "/customers",  sortOrder: 3 },
+  { key: "contact",     label: "Accounts & Persons", level: 2, parentKey: "sales_ops", iconName: "Users",           href: "/contact",    sortOrder: 3 },
   { key: "product",     label: "Product",      level: 2, parentKey: "marketing", iconName: "Package",         href: "/product",    sortOrder: 4 },
 
   // User Setting Sub-Menus
@@ -41,13 +42,21 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "system.permissions", label: "Menu Permissions",    level: 2, parentKey: "system", iconName: "Settings",        href: "/system/permissions", sortOrder: 3 },
 
   // === RIGHT-MENU (Level 3) ===
-  // ผูก parentKey กับ SUB-MENU
-  { key: "pipeline.activity",    label: "Activity Log", level: 3, parentKey: "pipeline", iconName: "MessageSquare", sortOrder: 1 },
-  { key: "pipeline.collaborate", label: "Collaborate",  level: 3, parentKey: "pipeline", iconName: "Users",         sortOrder: 2 },
-  { key: "pipeline.information", label: "Customer",     level: 3, parentKey: "pipeline", iconName: "Building2",     sortOrder: 3 },
-  { key: "pipeline.notes",       label: "Notes",        level: 3, parentKey: "pipeline", iconName: "FileText",      sortOrder: 4 },
+  // Pipeline
+  { key: "pipeline.activity",    label: "Activity Log", level: 3, parentKey: "pipeline", iconName: "MessageSquare", sortOrder: 1, isLocked: true },
+  { key: "pipeline.collaborate", label: "Collaborate",  level: 3, parentKey: "pipeline", iconName: "Users",         sortOrder: 2, isLocked: true },
+  { key: "pipeline.information", label: "Sale Deal", description: "Sale Deal card allowed", level: 3, parentKey: "pipeline", iconName: "Briefcase", sortOrder: 3 },
+  { key: "pipeline.notes",       label: "Notes",        level: 3, parentKey: "pipeline", iconName: "FileText",      sortOrder: 4, isLocked: true },
   { key: "pipeline.sharedMedia", label: "Shared Media", level: 3, parentKey: "pipeline", iconName: "Folder",       sortOrder: 5 },
-  { key: "pipeline.summary",     label: "AI Summary",   level: 3, parentKey: "pipeline", iconName: "Wand2",     sortOrder: 6 },
+  { key: "pipeline.summary",     label: "AI Summary",   level: 3, parentKey: "pipeline", iconName: "Bot",          sortOrder: 6 },
+
+  // Contact
+  { key: "contact.account",     label: "Account",      level: 3, parentKey: "contact",  iconName: "Building2",     sortOrder: 1, isLocked: true },
+  { key: "contact.contact",     label: "Contact",      level: 3, parentKey: "contact",  iconName: "Users",         sortOrder: 2, isLocked: true },
+  { key: "contact.projects",    label: "Projects",     level: 3, parentKey: "contact",  iconName: "Briefcase",     sortOrder: 3 },
+  { key: "contact.email",       label: "Email",        level: 3, parentKey: "contact",  iconName: "Mail",          sortOrder: 4 },
+  { key: "contact.ai_analysis", label: "Account AI Analysis", level: 3, parentKey: "contact", iconName: "Bot",     sortOrder: 5 },
+  { key: "contact.sharedMedia", label: "Shared Media",        level: 3, parentKey: "contact", iconName: "Folder",  sortOrder: 6 },
 ];
 
 export function getMenuByKey(key: string): MenuDefinition | undefined {
@@ -122,5 +131,6 @@ export const IconMap: Record<string, React.ElementType> = {
   PieChart,
   HardDrive,
   Wand2,
+  Bot,
   Sparkles: Wand2
 };

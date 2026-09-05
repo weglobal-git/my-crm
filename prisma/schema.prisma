@@ -8,22 +8,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- NEXTAUTH SCHEMA ---
 model Account {
   id                String  @id @default(cuid())
   userId            String
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -37,49 +35,28 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
-  emailVerified DateTime?
-  image         String?
-
-  // RBAC Fields
-  role Role @default(GENERAL)
-
-  accounts    Account[]
-  sessions    Session[]
-  departments Department[]
-
-  // CRM Relations
-  opportunities       Opportunity[] @relation("OpportunityOwner")
-  teamOpportunities   Opportunity[] @relation("OpportunityTeam")
-  quotations          Quotation[]   @relation("QuotationCreator")
-  activityLogs        ActivityLog[]
-  notes               Note[]
-  uploadedAttachments Attachment[]
-
-  changedActivityRevisions ActivityRevision[] @relation("ActivityRevisionChangedBy")
-  deletedActivities        ActivityLog[]      @relation("ActivityDeletedBy")
-  deletedOpportunities     Opportunity[]      @relation("OpportunityDeletedBy")
-  actedDealDomainEvents    DealDomainEvent[]  @relation("DealDomainEventActor")
-
+  id                    String         @id @default(cuid())
+  name                  String?
+  email                 String?        @unique
+  emailVerified         DateTime?
+  image                 String?
+  role                  Role           @default(GENERAL)
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  lastActive            DateTime       @default(now())
+  accounts              Account[]
+  activityLogs          ActivityLog[]
+  uploadedAttachments   Attachment[]
+  notes                 Note[]
   receivedNotifications Notification[] @relation("ReceivedNotifications")
   sentNotifications     Notification[] @relation("SentNotifications")
-
-  // AI System Relations
-  createdProviderConfigs    AIProviderConfig[]    @relation("ProviderConfigCreator")
-  updatedProviderConfigs    AIProviderConfig[]    @relation("ProviderConfigUpdater")
-  createdModelPolicies      AIModelPolicy[]       @relation("PolicyCreator")
-  resolvedAIAlerts          AIAlert[]             @relation("AlertResolver")
-  aiConfigAuditLogs         AIConfigAuditLog[]    @relation("ConfigAuditor")
-  correctedAIEventRevisions DealAIEventRevision[] @relation("AIEventRevisionAuthor")
-
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  lastActive DateTime @default(now())
-
-  factsCreated   DealAIFact[] @relation("FactCreatedBy")
-  factsRetracted DealAIFact[] @relation("FactRetractedBy")
+  opportunities         Opportunity[]  @relation("OpportunityOwner")
+  quotations            Quotation[]    @relation("QuotationCreator")
+  sessions              Session[]
+  departments           Department[]   @relation("DepartmentToUser")
+  teamOpportunities     Opportunity[]  @relation("OpportunityTeam")
+  contactLogs           ContactLog[]
+  companyLogs           CompanyLog[]
 }
 
 model VerificationToken {
@@ -90,35 +67,357 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
+model Notification {
+  id          String             @id @default(cuid())
+  recipientId String
+  senderId    String?
+  type        NotificationType
+  title       String
+  message     String?
+  referenceId String?
+  status      NotificationStatus @default(PENDING)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  recipient   User               @relation("ReceivedNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
+  sender      User?              @relation("SentNotifications", fields: [senderId], references: [id])
+}
+
+model Department {
+  id          String                     @id @default(cuid())
+  name        String                     @unique
+  permissions DepartmentMenuPermission[]
+  users       User[]                     @relation("DepartmentToUser")
+  contacts    Contact[]
+}
+
+model MenuItem {
+  id          String                     @id @default(cuid())
+  key         String                     @unique
+  label       String
+  level       Int
+  parentKey   String?
+  icon        String?
+  href        String?
+  sortOrder   Int                        @default(0)
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+  description String?
+  isLocked    Boolean                    @default(false)
+  permissions DepartmentMenuPermission[]
+}
+
+model DepartmentMenuPermission {
+  id           String     @id @default(cuid())
+  departmentId String
+  menuItemId   String
+  visible      Boolean    @default(false)
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  menuItem     MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+
+  @@unique([departmentId, menuItemId])
+}
+
+model SystemConfig {
+  id                 String   @id @default("global")
+  googleRefreshToken String?
+  updatedAt          DateTime @updatedAt
+}
+
+model Company {
+  id            String           @id @default(cuid())
+  displayName   String?
+  name          String
+  address       String?
+  notes         String?
+  country       String?
+  type          ContactType      @default(CUSTOMER)
+  status        ContactStatus    @default(QUALIFIED)
+  starRating    Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  customPrices  CompanyPrice[]
+  contacts      Contact[]
+  opportunities Opportunity[]
+  quotations    Quotation[]
+  addresses     CompanyAddress[]
+  logs          CompanyLog[]
+
+  @@index([status])
+  @@index([starRating])
+  @@index([type])
+  @@index([status, type, starRating(sort: Desc), createdAt(sort: Desc)])
+}
+
+model CompanyAddress {
+  id               String       @id @default(cuid())
+  companyId        String
+  title            String?
+  type             AddressType  @default(BILLING)
+  isDefault        Boolean      @default(false)
+  taxId            String?
+  branchNumber     String?
+  addressLine1     String
+  addressLine2     String?
+  subdistrict      String?
+  district         String?
+  province         String?
+  postalCode       String?
+  country          String?      @default("Thailand")
+  formattedAddress String?
+  googleMapsUrl    String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  company          Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+model Contact {
+  id                String        @id @default(cuid())
+  name              String
+  email             String?
+  phone             String?
+  role              String?
+  contactDepartment String?
+  emails            String[]      @default([])
+  phones            String[]      @default([])
+  isEmailVerified   Boolean       @default(false)
+  isPhoneVerified   Boolean       @default(false)
+  image             String?
+  isActive          Boolean       @default(true)
+  type              ContactType   @default(CUSTOMER)
+  status            ContactStatus @default(UNQUALIFIED)
+  companyId         String
+  departmentId      String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  company           Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  department        Department?   @relation(fields: [departmentId], references: [id])
+  logs         ContactLog[]
+
+  @@index([companyId])
+  @@index([departmentId])
+  @@index([status])
+  @@index([type])
+  @@index([isActive])
+}
+
+model ContactLog {
+  id        String   @id @default(cuid())
+  contactId String
+  userId    String
+  action    String   @default("UPDATE")
+  fieldName String?
+  oldValue  String?
+  newValue  String?
+  summary   String
+  createdAt DateTime @default(now())
+
+  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([contactId, createdAt])
+  @@index([userId])
+}
+
+model CompanyLog {
+  id        String   @id @default(cuid())
+  companyId String
+  userId    String
+  action    String   @default("UPDATE")
+  fieldName String?
+  oldValue  String?
+  newValue  String?
+  summary   String
+  createdAt DateTime @default(now())
+
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([companyId, createdAt])
+  @@index([userId])
+}
+
+model Opportunity {
+  id               String            @id @default(cuid())
+  topic            String
+  value            Float?
+  currency         String?           @default("THB")
+  dueDate          DateTime?
+  goodsReadyDate   DateTime?
+  goodsLoadingDate DateTime?
+  pipelineStageId  String?
+  status           OpportunityStatus @default(OPEN)
+  lossReason       String?
+  oemProgress      Int?
+  companyId        String?
+  ownerId          String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  attachmentUrl    String?
+  closedAt         DateTime?
+  invoiceId        String?
+  quotedAt         DateTime?
+  reserveId        String?
+  type             OpportunityType   @default(SALES_DEAL)
+  activityLogs     ActivityLog[]
+  attachments      Attachment[]
+  notes            Note[]
+  company          Company?          @relation(fields: [companyId], references: [id])
+  owner            User              @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  stage            PipelineStage?    @relation(fields: [pipelineStageId], references: [id])
+  tags             OpportunityTag[]
+  quotations       Quotation[]
+  teamMembers      User[]            @relation("OpportunityTeam")
+
+  @@index([status])
+  @@index([ownerId])
+  @@index([status, updatedAt])
+  @@index([status, closedAt])
+  @@index([companyId])
+}
+
+model Attachment {
+  id                 String      @id @default(cuid())
+  fileName           String
+  fileType           String
+  size               Int
+  cloudinaryUrl      String?
+  cloudinaryPublicId String?
+  googleDriveFileId  String?
+  opportunityId      String
+  uploaderId         String
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  opportunity        Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  uploader           User        @relation(fields: [uploaderId], references: [id])
+}
+
+model PipelineStage {
+  id            String        @id @default(cuid())
+  name          String
+  order         Int
+  opportunities Opportunity[]
+}
+
+model ActivityLog {
+  id            String          @id @default(cuid())
+  content       String
+  type          ActivityLogType @default(COMMENT)
+  opportunityId String
+  userId        String
+  createdAt     DateTime        @default(now())
+  isEdited      Boolean         @default(false)
+  parentId      String?
+  updatedAt     DateTime        @default(now()) @updatedAt
+  opportunity   Opportunity     @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  parent        ActivityLog?    @relation("Replies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       ActivityLog[]   @relation("Replies")
+  user          User            @relation(fields: [userId], references: [id])
+
+  @@index([opportunityId, parentId, createdAt])
+  @@index([opportunityId, type])
+  @@index([parentId])
+}
+
+model Note {
+  id            String      @id @default(cuid())
+  content       String
+  isPinned      Boolean     @default(false)
+  color         String?
+  opportunityId String
+  authorId      String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  author        User        @relation(fields: [authorId], references: [id])
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+}
+
+model Tag {
+  id            String           @id @default(cuid())
+  name          String           @unique
+  color         String?
+  opportunities OpportunityTag[]
+}
+
+model OpportunityTag {
+  opportunityId String
+  tagId         String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  tag           Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([opportunityId, tagId])
+}
+
+model Product {
+  id             String          @id @default(cuid())
+  sku            String          @unique
+  name           String
+  description    String?
+  basePrice      Float
+  weight         Float?
+  cbm            Float?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  customPrices   CompanyPrice[]
+  quotationItems QuotationItem[]
+}
+
+model CompanyPrice {
+  id        String  @id @default(cuid())
+  price     Float
+  productId String
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@unique([productId, companyId])
+}
+
+model Quotation {
+  id            String          @id @default(cuid())
+  quoteNumber   String          @unique
+  status        QuoteStatus     @default(DRAFT)
+  totalAmount   Float           @default(0)
+  totalWeight   Float           @default(0)
+  totalCBM      Float           @default(0)
+  companyId     String
+  opportunityId String?
+  creatorId     String
+  validUntil    DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  company       Company         @relation(fields: [companyId], references: [id])
+  creator       User            @relation("QuotationCreator", fields: [creatorId], references: [id])
+  opportunity   Opportunity?    @relation(fields: [opportunityId], references: [id])
+  items         QuotationItem[]
+}
+
+model QuotationItem {
+  id          String    @id @default(cuid())
+  quantity    Int
+  unitPrice   Float
+  discount    Float     @default(0)
+  totalPrice  Float
+  totalWeight Float?
+  totalCBM    Float?
+  quotationId String
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
 enum Role {
   ADMIN
   MANAGEMENT
   GENERAL
 }
 
-model Notification {
-  id          String @id @default(cuid())
-  recipientId String
-  recipient   User   @relation("ReceivedNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
-
-  senderId String?
-  sender   User?   @relation("SentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
-
-  type    NotificationType
-  title   String
-  message String?          @db.Text
-
-  referenceId String?
-  status      NotificationStatus @default(PENDING)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
 enum NotificationType {
   DEAL_TRANSFER_REQUEST
-  TEAM_INVITE_REQUEST
   SYSTEM_ALERT
+  TEAM_INVITE_REQUEST
   DEAL_COMMENT
 }
 
@@ -127,87 +426,6 @@ enum NotificationStatus {
   ACCEPTED
   REJECTED
   READ
-}
-
-model Department {
-  id          String                     @id @default(cuid())
-  name        String                     @unique
-  users       User[]
-  permissions DepartmentMenuPermission[]
-}
-
-// ====== Menu System ======
-
-model MenuItem {
-  id          String  @id @default(cuid())
-  key         String  @unique
-  label       String
-  level       Int
-  parentKey   String?
-  icon        String?
-  href        String?
-  description String? @db.Text
-  sortOrder   Int     @default(0)
-  isLocked    Boolean @default(false)
-
-  permissions DepartmentMenuPermission[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model DepartmentMenuPermission {
-  id String @id @default(cuid())
-
-  departmentId String
-  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-
-  menuItemId String
-  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
-
-  visible Boolean @default(false)
-
-  @@unique([departmentId, menuItemId])
-}
-
-// --- SYSTEM CONFIG ---
-model SystemConfig {
-  id String @id @default("global") // We only need one global config row
-
-  // Google OAuth
-  googleRefreshToken String? @db.Text
-
-  updatedAt DateTime @updatedAt
-}
-
-// --- CRM SCHEMA ---
-
-model Company {
-  id      String  @id @default(cuid())
-  name    String // Company Name
-  address String? @db.Text
-  country String?
-
-  contacts      Contact[]
-  opportunities Opportunity[]
-  quotations    Quotation[]
-  customPrices  CompanyPrice[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Contact {
-  id    String  @id @default(cuid())
-  name  String
-  email String?
-  phone String?
-
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 }
 
 enum OpportunityStatus {
@@ -224,451 +442,9 @@ enum OpportunityType {
   PARTNERSHIP
 }
 
-model Opportunity {
-  id       String          @id @default(cuid())
-  type     OpportunityType @default(SALES_DEAL)
-  topic    String // e.g., "Order 1/26"
-  value    Float? // Amount
-  currency String?         @default("THB")
-
-  // Dates
-  dueDate          DateTime?
-  goodsReadyDate   DateTime?
-  goodsLoadingDate DateTime?
-
-  // Status & Pipeline
-  pipelineStageId String?
-  stage           PipelineStage?    @relation(fields: [pipelineStageId], references: [id])
-  status          OpportunityStatus @default(OPEN)
-  lossReason      String?           @db.Text
-
-  // Custom Fields (Migrated from CSV)
-  reserveId     String?
-  invoiceId     String?
-  attachmentUrl String?
-  closedAt      DateTime?
-  quotedAt      DateTime?
-
-  // Extra Info
-  oemProgress Int? // percentage 0-100
-
-  // Relations
-  companyId String?
-  company   Company? @relation(fields: [companyId], references: [id])
-
-  ownerId String
-  owner   User   @relation("OpportunityOwner", fields: [ownerId], references: [id])
-
-  teamMembers User[] @relation("OpportunityTeam")
-
-  quotations   Quotation[]
-  activityLogs ActivityLog[]
-  notes        Note[]
-  tags         OpportunityTag[]
-  attachments  Attachment[]
-  domainEvents DealDomainEvent[]
-  aiEvents     DealAIEvent[]
-
-  // Additive concurrency and soft-delete fields. Runtime cutover happens later.
-  version     Int       @default(1)
-  deletedAt   DateTime?
-  deletedById String?
-  deletedBy   User?     @relation("OpportunityDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  aiFacts   DealAIFact[]
-
-  @@index([status])
-  @@index([ownerId])
-  @@index([status, updatedAt])
-  @@index([status, closedAt])
-  @@index([companyId])
-  @@index([deletedAt, status, updatedAt])
-}
-
-model Attachment {
-  id       String @id @default(cuid())
-  fileName String
-  fileType String
-  size     Int
-
-  cloudinaryUrl      String? @db.Text
-  cloudinaryPublicId String?
-
-  googleDriveFileId String?
-
-  opportunityId String
-  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-
-  uploaderId String
-  uploader   User   @relation(fields: [uploaderId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model PipelineStage {
-  id            String        @id @default(cuid())
-  name          String // e.g., "In Progress", "To Do"
-  order         Int // For Kanban sorting
-  opportunities Opportunity[]
-}
-
 enum ActivityLogType {
   COMMENT
   SYSTEM_UPDATE
-}
-
-enum ActivityRevisionChangeType {
-  CREATED
-  EDITED
-  DELETED
-}
-
-enum DealDomainEventClass {
-  AI_SUMMARY
-  AUDIT_ONLY
-}
-
-enum DealDomainEventType {
-  DEAL_CREATED
-  DEAL_STAGE_CHANGED
-  DEAL_STATUS_CHANGED
-  DEAL_WON
-  DEAL_LOST
-  DEAL_TOPIC_CHANGED
-  DEAL_TYPE_CHANGED
-  DEAL_VALUE_CHANGED
-  DEAL_FIELDS_UPDATED
-  DEAL_LOGISTICS_DATES_CHANGED
-  DEAL_REFERENCE_CHANGED
-  DEAL_DUE_DATE_CHANGED
-  DEAL_DELETED
-  ACTIVITY_CREATED
-  ACTIVITY_EDITED
-  ACTIVITY_DELETED
-  REPLY_CREATED
-  REPLY_EDITED
-  REPLY_DELETED
-  SYSTEM_ACTIVITY_CREATED
-  OWNERSHIP_TRANSFER_REQUESTED
-  OWNERSHIP_TRANSFER_REJECTED
-  DEAL_OWNER_CHANGED
-  TEAM_INVITE_REQUESTED
-  TEAM_INVITE_REJECTED
-  DEAL_MEMBER_ADDED
-  DEAL_MEMBER_REMOVED
-  NOTE_CREATED
-  NOTE_DELETED
-  NOTE_PIN_CHANGED
-  ATTACHMENT_ADDED
-  ATTACHMENT_DELETED
-  ATTACHMENT_ARCHIVED
-}
-
-enum DealDomainSourceType {
-  OPPORTUNITY
-  ACTIVITY
-  NOTE
-  ATTACHMENT
-  NOTIFICATION
-}
-
-enum AgentKey {
-  EVENT_SUMMARIZER
-  FACT_RESOLVER
-}
-
-enum AgentOutboxStatus {
-  PENDING
-  PROCESSING
-  COMPLETED
-  FAILED
-  DEAD
-  CANCELLED
-}
-
-model ActivityLog {
-  id      String          @id @default(cuid())
-  content String          @db.Text
-  type    ActivityLogType @default(COMMENT)
-
-  // Nested Replies (1-level or deep)
-  parentId String?
-  parent   ActivityLog?  @relation("Replies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies  ActivityLog[] @relation("Replies")
-
-  // Editing state
-  isEdited  Boolean  @default(false)
-  updatedAt DateTime @default(now()) @updatedAt // Tracks edit time
-
-  opportunityId String
-  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id])
-
-  // Additive event-ledger fields. Existing reads/writes remain compatible.
-  version             Int                @default(1)
-  deletedAt           DateTime?
-  deletedById         String?
-  deletedBy           User?              @relation("ActivityDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
-  sourceDomainEventId String?
-  sourceDomainEvent   DealDomainEvent?   @relation("ActivityLogProjection", fields: [sourceDomainEventId], references: [id], onDelete: SetNull)
-  revisions           ActivityRevision[]
-
-  createdAt DateTime @default(now())
-
-  @@index([opportunityId, parentId, createdAt])
-  @@index([opportunityId, type])
-  @@index([parentId])
-  @@index([opportunityId, deletedAt, parentId, createdAt])
-  @@index([sourceDomainEventId])
-}
-
-model ActivityRevision {
-  id           String                     @id @default(cuid())
-  activityId   String
-  activity     ActivityLog                @relation(fields: [activityId], references: [id], onDelete: Cascade)
-  version      Int
-  changeType   ActivityRevisionChangeType
-  content      String                     @db.Text
-  contentHash  String
-  activityType ActivityLogType
-  parentId     String?
-  changedById  String?
-  changedBy    User?                      @relation("ActivityRevisionChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
-  createdAt    DateTime                   @default(now())
-
-  domainEvent DealDomainEvent?
-
-  @@unique([activityId, version])
-  @@index([activityId, createdAt])
-  @@index([contentHash])
-}
-
-model DealDomainEvent {
-  id                 String               @id @default(cuid())
-  dealId             String
-  deal               Opportunity          @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  eventType          DealDomainEventType
-  processingClass    DealDomainEventClass
-  sourceType         DealDomainSourceType
-  sourceEntityId     String
-  sourceVersion      Int
-  activityRevisionId String?              @unique
-  activityRevision   ActivityRevision?    @relation(fields: [activityRevisionId], references: [id], onDelete: Cascade)
-  actorId            String?
-  actor              User?                @relation("DealDomainEventActor", fields: [actorId], references: [id], onDelete: SetNull)
-  commandId          String               @unique
-  correlationId      String
-  traceId            String
-  payloadVersion     Int                  @default(1)
-  payload            Json
-  resultRef          Json?
-  occurredAt         DateTime             @default(now())
-  localEventDate     DateTime             @db.Date
-  timezone           String
-  createdAt          DateTime             @default(now())
-
-  projections ActivityLog[] @relation("ActivityLogProjection")
-  outbox      AgentOutbox[]
-  aiEvents    DealAIEvent[]
-  aiFacts     DealAIFact[]
-
-  @@index([dealId, occurredAt])
-  @@index([dealId, localEventDate, occurredAt])
-  @@index([sourceType, sourceEntityId, sourceVersion])
-  @@index([correlationId])
-  @@index([traceId])
-}
-
-model AgentOutbox {
-  id            String            @id @default(cuid())
-  domainEventId String
-  domainEvent   DealDomainEvent   @relation(fields: [domainEventId], references: [id], onDelete: Cascade)
-  dealId        String
-  agentKey      AgentKey
-  promptVersion String
-  schemaVersion String
-  dedupeKey     String            @unique
-  status        AgentOutboxStatus @default(PENDING)
-  priority      Int               @default(0)
-  availableAt   DateTime          @default(now())
-  leaseUntil    DateTime?
-  lockedBy      String?
-  attempts      Int               @default(0)
-  maxAttempts   Int               @default(2)
-  lastErrorCode String?
-  traceId       String
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  completedAt   DateTime?
-
-  @@unique([domainEventId, agentKey, promptVersion, schemaVersion])
-  @@index([status, availableAt, priority])
-  @@index([leaseUntil])
-  @@index([dealId, createdAt])
-  @@index([traceId])
-}
-
-enum DealAIEventStatus {
-  PENDING
-  READY
-  NEEDS_REVIEW
-  RETRACTED
-  FAILED
-}
-
-enum DealAIEventAuthorType {
-  AI
-  USER
-  SYSTEM
-}
-
-model DealAIEvent {
-  id                String                @id @default(cuid())
-  dealId            String
-  deal              Opportunity           @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  domainEventId     String
-  domainEvent       DealDomainEvent       @relation(fields: [domainEventId], references: [id], onDelete: Restrict)
-  agentKey          AgentKey              @default(EVENT_SUMMARIZER)
-  occurredAt        DateTime
-  localEventDate    DateTime              @db.Date
-  status            DealAIEventStatus     @default(PENDING)
-  currentRevisionId String?               @unique
-  currentRevision   DealAIEventRevision?  @relation("CurrentAIEventRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
-  revisions         DealAIEventRevision[] @relation("AIEventRevisions")
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
-
-  aiFacts DealAIFact[]
-
-  @@unique([domainEventId, agentKey])
-  @@index([dealId, localEventDate, occurredAt])
-  @@index([dealId, status, occurredAt])
-}
-
-model DealAIEventRevision {
-  id                   String                @id @default(cuid())
-  eventId              String
-  event                DealAIEvent           @relation("AIEventRevisions", fields: [eventId], references: [id], onDelete: Cascade)
-  currentFor           DealAIEvent?          @relation("CurrentAIEventRevision")
-  revision             Int
-  authorType           DealAIEventAuthorType
-  summary              String                @db.Text
-  structuredData       Json
-  eventType            String
-  importance           Int
-  confidence           Float?
-  needsContext         Boolean               @default(false)
-  providerKey          String?
-  modelId              String?
-  promptVersion        String
-  schemaVersion        String
-  sourceContentHash    String
-  createdById          String?
-  createdBy            User?                 @relation("AIEventRevisionAuthor", fields: [createdById], references: [id], onDelete: SetNull)
-  supersedesRevisionId String?
-  createdAt            DateTime              @default(now())
-
-  aiFactsCreated DealAIFact[]
-
-  @@unique([eventId, revision])
-  @@index([eventId, createdAt])
-  @@index([sourceContentHash])
-}
-
-model Note {
-  id       String  @id @default(cuid())
-  content  String  @db.Text
-  isPinned Boolean @default(false)
-  color    String?
-
-  opportunityId String
-  opportunity   Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-
-  authorId String
-  author   User   @relation(fields: [authorId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model Tag {
-  id            String           @id @default(cuid())
-  name          String           @unique
-  color         String? // Hex color code
-  opportunities OpportunityTag[]
-}
-
-model OpportunityTag {
-  opportunityId String
-  tagId         String
-
-  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  tag         Tag         @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-  @@id([opportunityId, tagId])
-}
-
-// --- PRODUCTS & QUOTATION SCHEMA ---
-
-model Product {
-  id          String  @id @default(cuid())
-  sku         String  @unique
-  name        String
-  description String? @db.Text
-  basePrice   Float // Default price
-  weight      Float? // Weight per unit (kg)
-  cbm         Float? // CBM per unit (m3)
-
-  quotationItems QuotationItem[]
-  customPrices   CompanyPrice[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// For company-specific pricing
-model CompanyPrice {
-  id    String @id @default(cuid())
-  price Float
-
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id])
-
-  @@unique([productId, companyId])
-}
-
-model Quotation {
-  id          String      @id @default(cuid())
-  quoteNumber String      @unique // e.g., QT-2026-0001
-  status      QuoteStatus @default(DRAFT)
-
-  totalAmount Float @default(0)
-  totalWeight Float @default(0)
-  totalCBM    Float @default(0)
-
-  // Relations
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id])
-
-  opportunityId String?
-  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id])
-
-  creatorId String
-  creator   User   @relation("QuotationCreator", fields: [creatorId], references: [id])
-
-  items QuotationItem[]
-
-  validUntil DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
 }
 
 enum QuoteStatus {
@@ -679,342 +455,25 @@ enum QuoteStatus {
   INVOICED
 }
 
-model QuotationItem {
-  id        String @id @default(cuid())
-  quantity  Int
-  unitPrice Float
-  discount  Float  @default(0)
-
-  // Calculated fields stored for historical record in case product changes
-  totalPrice  Float
-  totalWeight Float?
-  totalCBM    Float?
-
-  quotationId String
-  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
+enum ContactType {
+  CUSTOMER
+  TRADER
+  SHIPPING
+  MY_OFFICE
+  SUPPLIER
+  PARTNER
+  OTHER
 }
 
-// --- AI EVENT SUMMARIZER SCHEMA ---
-
-enum AIProviderStatus {
-  ENABLED
-  DISABLED
-  DEGRADED
+enum ContactStatus {
+  QUALIFIED
+  UNQUALIFIED
 }
 
-model AIProviderConfig {
-  providerKey           String           @id // e.g. GOOGLE_GEMINI, OPENAI
-  enabled               Boolean          @default(true)
-  status                AIProviderStatus @default(ENABLED)
-  secretRef             String?          @db.Text // Encrypted secret payload (DO NOT STORE PLAINTEXT)
-  baseUrl               String?
-  timeoutMs             Int              @default(15000)
-  maxConcurrentRequests Int              @default(5)
-  lastHealthCheckAt     DateTime?
-  lastHealthStatus      String?
-
-  consecutiveFailures Int       @default(0)
-  circuitOpenedAt     DateTime?
-  probeLockedUntil    DateTime?
-
-  createdById String?
-  creator     User?   @relation("ProviderConfigCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedById String?
-  updater     User?   @relation("ProviderConfigUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  policies AIModelPolicy[]
-}
-
-enum AIModelPolicyStatus {
-  DRAFT
-  ACTIVE
-  RETIRED
-}
-
-model AIModelPolicy {
-  id       String              @id @default(cuid())
-  agentKey AgentKey            @default(EVENT_SUMMARIZER)
-  version  Int
-  status   AIModelPolicyStatus @default(DRAFT)
-
-  providerKey String
-  provider    AIProviderConfig @relation(fields: [providerKey], references: [providerKey])
-  modelId     String
-
-  fallbackProviderKey String?
-  fallbackModelId     String?
-
-  // Capabilities contract
-  structuredJson      Boolean  @default(true)
-  supportedInputTypes String[]
-  maximumContext      Int
-
-  maxInputTokens  Int
-  maxOutputTokens Int
-  timeoutMs       Int    @default(15000)
-  maxAttempts     Int    @default(3)
-  temperature     Float?
-
-  dailyTokenLimit        Int
-  monthlyTokenLimit      Int
-  dailyCostLimitMicros   BigInt // Use BigInt for currency in micros
-  monthlyCostLimitMicros BigInt
-  perRunCostLimitMicros  BigInt
-  maxConcurrentRuns      Int    @default(5)
-
-  promptVersion String
-  schemaVersion String
-
-  effectiveFrom DateTime?
-
-  createdById String?
-  creator     User?   @relation("PolicyCreator", fields: [createdById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  runs AgentRun[]
-
-  @@unique([agentKey, version])
-}
-
-enum AgentRunStatus {
-  QUEUED
-  STARTED
-  COMPLETED
-  FAILED
-  DEAD
-}
-
-model AgentRun {
-  id            String   @id @default(cuid())
-  agentKey      AgentKey
-  outboxId      String
-  domainEventId String
-  dealId        String
-  traceId       String
-
-  status       AgentRunStatus @default(QUEUED)
-  attemptCount Int            @default(0)
-
-  policyId String
-  policy   AIModelPolicy @relation(fields: [policyId], references: [id])
-
-  providerKey   String
-  modelId       String
-  promptVersion String
-  schemaVersion String
-
-  queuedAt          DateTime  @default(now())
-  startedAt         DateTime?
-  providerLatencyMs Int?
-  completedAt       DateTime?
-
-  normalizedErrorCode String?
-  errorCategory       String?
-  redactedErrorMsg    String? @db.Text
-
-  inputContentHash  String?
-  outputContentHash String?
-
-  totalTokens         Int?
-  estimatedCostMicros BigInt?
-
-  outputRevisionId String? // Link to DealAIEventRevision
-
-  usageRecords AIUsageRecord[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([dealId])
-  @@index([outboxId])
-  @@index([domainEventId])
-  @@index([traceId])
-  @@index([status, createdAt])
-}
-
-enum AIUsageSource {
-  PROVIDER_REPORTED
-  ESTIMATED
-  UNMETERED
-}
-
-model AIUsageRecord {
-  id String @id @default(cuid())
-
-  agentRunId String
-  run        AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
-
-  attempt           Int
-  providerRequestId String?
-
-  providerKey  String
-  modelId      String
-  priceVersion String?
-
-  inputTokens       Int @default(0)
-  cachedInputTokens Int @default(0)
-  outputTokens      Int @default(0)
-  reasoningTokens   Int @default(0)
-  totalTokens       Int @default(0)
-
-  costMicros BigInt @default(0)
-  currency   String @default("USD")
-
-  latencyMs  Int?
-  httpStatus Int?
-  outcome    String?
-
-  usageSource AIUsageSource @default(PROVIDER_REPORTED)
-
-  createdAt DateTime @default(now())
-
-  @@unique([agentRunId, attempt])
-  @@index([agentRunId])
-  @@index([providerKey, createdAt])
-}
-
-enum AIBudgetReservationStatus {
-  HELD
-  RECONCILED
-  RELEASED
-  EXPIRED
-}
-
-model AIBudgetReservation {
-  id                 String @id @default(cuid())
-  scope              String // global | provider | agent
-  periodKey          String // e.g. 2026-09-02 or 2026-09
-  reservedTokens     Int
-  reservedCostMicros BigInt
-
-  status AIBudgetReservationStatus @default(HELD)
-
-  runId    String?  @unique
-  expiryAt DateTime
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([scope, periodKey])
-  @@index([status, expiryAt])
-}
-
-model AIAlert {
-  id       String @id @default(cuid())
-  type     String // e.g. TOKEN_EXPLOSION, BUDGET_EXCEEDED, HIGH_ERROR_RATE
-  severity String // CRITICAL, WARNING
-  message  String @db.Text
-  details  Json?
-
-  isResolved   Boolean   @default(false)
-  resolvedById String?
-  resolvedBy   User?     @relation("AlertResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
-  resolvedAt   DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([isResolved, createdAt])
-}
-
-model AIConfigAuditLog {
-  id         String @id @default(cuid())
-  entityType String // AIProviderConfig, AIModelPolicy, SYSTEM_STATUS
-  entityId   String
-  action     String // CREATED, UPDATED, ACTIVATED, RETIRED, PAUSED
-
-  previousValue Json?
-  newValue      Json?
-
-  reason String? @db.Text
-
-  actorId String?
-  actor   User?   @relation("ConfigAuditor", fields: [actorId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@index([entityType, entityId])
-  @@index([createdAt])
-}
-
-enum DealAIFactStatus {
-  ACTIVE
-  SUPERSEDED
-  RETRACTED
-  NEEDS_REVIEW
-}
-
-enum FactRelationType {
-  UPDATED_BY
-  CONTRADICTED_BY
-  CORRECTED_BY
-  SOURCE_DELETED
-}
-
-enum DealAIFactMode {
-  STATE
-  OCCURRENCE
-}
-
-model DealAIFact {
-  id String @id @default(cuid())
-
-  dealId String
-  deal   Opportunity @relation(fields: [dealId], references: [id], onDelete: Restrict)
-
-  aiEventId String
-  aiEvent   DealAIEvent @relation(fields: [aiEventId], references: [id], onDelete: Restrict)
-
-  sourceRevisionId String
-  sourceRevision   DealAIEventRevision @relation(fields: [sourceRevisionId], references: [id], onDelete: Restrict)
-
-  sourceDomainEventId String
-  sourceDomainEvent   DealDomainEvent @relation(fields: [sourceDomainEventId], references: [id], onDelete: Restrict)
-
-  sourceOccurredAt      DateTime
-  sourceSummaryRevision Int
-
-  factType        String
-  factMode        DealAIFactMode
-  subject         String
-  content         String         @db.Text
-  normalizedValue Json?
-
-  normalizedValueHash String
-  sourceFactKey       String
-
-  importance Int
-  confidence Float?
-  status     DealAIFactStatus @default(ACTIVE)
-
-  supersededById   String?
-  supersededBy     DealAIFact?  @relation("FactSupersession", fields: [supersededById], references: [id], onDelete: SetNull)
-  supersedingFacts DealAIFact[] @relation("FactSupersession")
-
-  supersessionReason FactRelationType?
-
-  observedAt     DateTime
-  localEventDate DateTime @db.Date
-
-  createdById String?
-  createdBy   User?   @relation("FactCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-
-  retractedAt   DateTime?
-  retractedById String?
-  retractedBy   User?     @relation("FactRetractedBy", fields: [retractedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([sourceRevisionId, sourceFactKey])
-  @@index([dealId, status, factType])
-  @@index([dealId, observedAt])
+enum AddressType {
+  BILLING
+  SHIPPING
+  HEADQUARTERS
+  BRANCH
+  OTHER
 }

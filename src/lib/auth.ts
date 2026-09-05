@@ -1,5 +1,6 @@
 import { NextAuthOptions } from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
+import CredentialsProvider from "next-auth/providers/credentials"
 import { PrismaAdapter } from "@auth/prisma-adapter"
 import prisma from "@/lib/prisma"
 import { Adapter } from "next-auth/adapters"
@@ -12,6 +13,34 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
       allowDangerousEmailAccountLinking: true,
     }),
+    ...(process.env.NODE_ENV !== "production"
+      ? [
+          CredentialsProvider({
+            id: "dev-credentials",
+            name: "Dev Fast-Login",
+            credentials: {
+              email: { label: "Email", type: "text" },
+            },
+            async authorize(credentials) {
+              if (process.env.NODE_ENV === "production") return null;
+              if (!credentials?.email) return null;
+              const email = credentials.email.toLowerCase().trim();
+              const user = await prisma.user.findUnique({
+                where: { email },
+                include: { departments: true },
+              });
+              if (!user) return null;
+              return {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                image: user.image,
+                role: user.role,
+              };
+            },
+          }),
+        ]
+      : []),
   ],
   pages: {
     signIn: '/',
@@ -21,7 +50,11 @@ export const authOptions: NextAuthOptions = {
     strategy: "jwt",
   },
   callbacks: {
-    async signIn({ user }) {
+    async signIn({ user, account }) {
+      if (account?.provider === "dev-credentials") {
+        return process.env.NODE_ENV !== "production";
+      }
+
       if (!user.email) return false;
       const email = user.email.toLowerCase();
       
@@ -52,7 +85,7 @@ export const authOptions: NextAuthOptions = {
         // Sync latest role, departments, and basic info
         token.name = dbUser.name;
         token.role = dbUser.role;
-        token.departments = dbUser.departments.map(d => d.name);
+        token.departments = dbUser.departments.map((d: { name: string }) => d.name);
         token.picture = dbUser.image;
       }
 
@@ -70,7 +103,7 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (!token.sub || token.error === "SessionInvalidated") {
-        return { ...session, error: "SessionInvalidated" } as any; // Pass error to client to force signOut
+        return { ...session, error: "SessionInvalidated" }; // Pass error to client to force signOut
       }
 
       if (session.user) {

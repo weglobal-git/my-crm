@@ -4,7 +4,8 @@ import { aiGateway, AIGatewayAdapter, AIResult, ProviderHealth, ModelCapabilitie
 
 // Mock Adapter
 class MockAdapter implements AIGatewayAdapter {
-  async generateStructured<T>(request: StructuredAIRequest<T>): Promise<AIResult<T>> {
+  async generateStructured<T>(request: StructuredAIRequest): Promise<AIResult<T>> {
+    void request;
     return {
       data: { success: true } as unknown as T,
       usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
@@ -56,7 +57,7 @@ describe('AIGateway', () => {
       schema: { type: 'object' }
     });
     
-    assert.strictEqual((result.data as any).success, true);
+    assert.strictEqual((result.data as { success: boolean }).success, true);
     assert.strictEqual(result.usage.totalTokens, 15);
   });
 });

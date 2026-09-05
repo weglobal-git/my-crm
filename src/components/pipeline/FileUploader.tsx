@@ -6,9 +6,11 @@ import imageCompression from 'browser-image-compression';
 import { Upload, File, Image as ImageIcon, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useDialog } from '@/providers/DialogProvider';
 
+import { Attachment } from '@prisma/client';
+
 interface FileUploaderProps {
   opportunityId: string;
-  onUploadSuccess: (attachment: any) => void;
+  onUploadSuccess: (attachment: Attachment) => void;
 }
 
 export default function FileUploader({ opportunityId, onUploadSuccess }: FileUploaderProps) {
@@ -17,12 +19,29 @@ export default function FileUploader({ opportunityId, onUploadSuccess }: FileUpl
 
   const handleUpload = useCallback(async (files: File[]) => {
     if (!files.length) return;
+
+    // Filter out videos
+    const allowedFiles: File[] = [];
+    for (const f of files) {
+      const isVideo = f.type.startsWith('video/') || Boolean(f.name.match(/\.(mp4|mov|avi|mkv|webm|wmv|flv|m4v|3gp)$/i));
+      if (isVideo) {
+        toast({
+          title: "ไม่อนุญาตให้อัปโหลดวิดีโอ",
+          description: `"${f.name}" เป็นไฟล์วิดีโอ กรุณาอัปโหลดเข้า Google Drive หรือ YouTube แล้วนำลิงก์มาแนบแทนครับ`,
+          type: "warning"
+        });
+      } else {
+        allowedFiles.push(f);
+      }
+    }
+
+    if (!allowedFiles.length) return;
     
-    const newProgress = files.map(f => ({ name: f.name, status: 'uploading' as const }));
+    const newProgress = allowedFiles.map(f => ({ name: f.name, status: 'uploading' as const }));
     setProgressFiles(prev => [...newProgress, ...prev]);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    for (let i = 0; i < allowedFiles.length; i++) {
+      const file = allowedFiles[i];
       const isImage = file.type.startsWith('image/');
       const isRaw = !isImage;
 
@@ -83,11 +102,20 @@ export default function FileUploader({ opportunityId, onUploadSuccess }: FileUpl
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: handleUpload,
-    // Max 4.5MB per file for Vercel Serverless Function limit. 
-    // Wait, images will compress, but PDF limit must be respected.
+    // Disallow videos by specifying accepted file types
+    accept: {
+      'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp'],
+      'application/pdf': ['.pdf'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
+      'application/msword': ['.doc'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'text/plain': ['.txt'],
+      'text/csv': ['.csv'],
+    },
     maxSize: 4.5 * 1024 * 1024,
     onDropRejected: () => {
-      toast({ title: "File too large", description: "Maximum file size is 4.5MB", type: "warning" });
+      toast({ title: "ไฟล์ไม่ถูกต้องหรือมีขนาดเกิน 4.5MB", description: "รองรับเฉพาะไฟล์รูปภาพและเอกสาร (ไม่อนุญาตไฟล์วิดีโอ)", type: "warning" });
     }
   });
 
@@ -104,7 +132,7 @@ export default function FileUploader({ opportunityId, onUploadSuccess }: FileUpl
           {isDragActive ? "Drop files here..." : "Click or drag files to upload"}
         </h4>
         <p className="text-xs text-slate-400">
-          Supports JPG, PNG, PDF, Excel (Max 4.5MB)
+          Supports JPG, PNG, PDF, Docs (No video files allowed)
         </p>
       </div>
 

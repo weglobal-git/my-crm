@@ -1,16 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { LayoutDashboard } from "lucide-react";
+import { LayoutDashboard, UserCheck, ShieldCheck } from "lucide-react";
 import { signIn } from "next-auth/react";
 
 export function WelcomeLogin() {
   const [loading, setLoading] = useState(false);
+  const [devLoadingEmail, setDevLoadingEmail] = useState<string | null>(null);
 
   const handleGoogleLogin = async () => {
     setLoading(true);
     await signIn("google", { callbackUrl: "/" });
   };
+
+  const handleDevLogin = async (email: string) => {
+    setDevLoadingEmail(email);
+    await signIn("dev-credentials", { email, callbackUrl: "/" });
+  };
+
+  const isDev = process.env.NODE_ENV !== "production";
 
   return (
     <section className="min-h-screen w-full flex bg-[#fbfbfd]">
@@ -53,19 +61,19 @@ export function WelcomeLogin() {
             <span className="text-2xl font-bold tracking-tight text-slate-900">SB Interlab</span>
           </div>
 
-          <div className="text-center mb-10">
-            <h1 className="text-[40px] font-bold text-[#1d1d1f] tracking-tight mb-3">
+          <div className="text-center mb-8">
+            <h1 className="text-[36px] font-bold text-[#1d1d1f] tracking-tight mb-2">
               Welcome
             </h1>
-            <p className="text-slate-500">Sign in with your company Google Workspace account to continue.</p>
+            <p className="text-slate-500 text-sm">Sign in with your company Google Workspace account to continue.</p>
           </div>
 
-          <div className="space-y-6">
+          <div className="space-y-4">
             <button
               type="button"
               onClick={handleGoogleLogin}
-              disabled={loading}
-              className="w-full btn-secondary text-base disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3 border-gray-300 "
+              disabled={loading || !!devLoadingEmail}
+              className="w-full btn-secondary text-base disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-3 border-gray-300 shadow-sm"
             >
               {loading ? (
                 <span className="flex items-center gap-2">
@@ -99,8 +107,51 @@ export function WelcomeLogin() {
                 </>
               )}
             </button>
+
+            {isDev && (
+              <div className="pt-4">
+                <div className="relative mb-4">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-slate-200"></div>
+                  </div>
+                  <div className="relative flex justify-center text-xs">
+                    <span className="bg-white px-2 text-slate-400 font-medium tracking-wide">
+                      Dev Quick Login
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDevLogin("jakkaphan.jindarug@gmail.com")}
+                    disabled={loading || !!devLoadingEmail}
+                    className="w-full py-2.5 px-4 bg-slate-900 hover:bg-black text-white text-xs font-semibold rounded-xl transition flex items-center justify-between shadow-sm disabled:opacity-60"
+                  >
+                    <span className="flex items-center gap-2">
+                      <UserCheck className="w-4 h-4 text-[#C7F33C]" />
+                      <span>{devLoadingEmail === "jakkaphan.jindarug@gmail.com" ? "Signing in..." : "Sign in as Light (jakkaphan)"}</span>
+                    </span>
+                    <span className="text-[10px] text-white/70 bg-white/10 px-2 py-0.5 rounded font-mono">Light</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDevLogin("weglobal.server@gmail.com")}
+                    disabled={loading || !!devLoadingEmail}
+                    className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl transition flex items-center justify-between disabled:opacity-60"
+                  >
+                    <span className="flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                      <span>{devLoadingEmail === "weglobal.server@gmail.com" ? "Signing in..." : "Sign in as System Admin"}</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500 bg-slate-200 px-2 py-0.5 rounded font-mono">Admin</span>
+                  </button>
+                </div>
+              </div>
+            )}
             
-            <p className="text-center text-xs text-slate-400 mt-8">
+            <p className="text-center text-xs text-slate-400 pt-4">
               Only authorized personnel can access this system.
               <br />
               If you encounter an error, contact your administrator.

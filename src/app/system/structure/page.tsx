@@ -1,4 +1,4 @@
-import { getPermissionMatrix } from "@/lib/actions/permission";
+import { getDbMenus } from "@/lib/actions/permission";
 import { MenuStructureBuilder } from "@/components/system/MenuStructureBuilder";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -22,7 +22,7 @@ export default async function StructurePage() {
     );
   }
 
-  const { menus } = await getPermissionMatrix();
+  const menus = await getDbMenus();
 
   return (
     <div className="flex flex-col w-full h-full bg-[#252728]">

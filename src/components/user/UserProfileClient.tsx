@@ -26,6 +26,8 @@ export default function UserProfileClient() {
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   
   const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
+  const [avatarLimit, setAvatarLimit] = useState(24);
+  const [optimisticImage, setOptimisticImage] = useState<string | null>(null);
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
   const [isSavingName, setIsSavingName] = useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -46,6 +48,7 @@ export default function UserProfileClient() {
   };
 
   const handleAvatarSelect = async (url: string) => {
+    setOptimisticImage(url);
     setIsUpdatingAvatar(true);
     try {
       await updateProfileImage(url);
@@ -53,6 +56,7 @@ export default function UserProfileClient() {
       toast({ title: "Success", description: "Profile picture updated.", type: "success" });
       setIsAvatarModalOpen(false);
     } catch {
+      setOptimisticImage(null);
       toast({ title: "Error", description: "Failed to update profile picture.", type: "error" });
     } finally {
       setIsUpdatingAvatar(false);
@@ -99,7 +103,7 @@ export default function UserProfileClient() {
     }
   };
 
-  const currentImage = session?.user?.image;
+  const currentImage = optimisticImage || session?.user?.image;
   const initial = session?.user?.name?.charAt(0).toUpperCase() || session?.user?.email?.charAt(0).toUpperCase() || "U";
 
   return (
@@ -199,7 +203,7 @@ export default function UserProfileClient() {
                     <button onClick={() => setIsAvatarModalOpen(false)} className="text-sm text-slate-400 hover:text-slate-300">Close</button>
                   </div>
                   <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-3 overflow-y-auto custom-scrollbar p-1">
-                    {PREDEFINED_AVATARS.map((url, idx) => (
+                    {PREDEFINED_AVATARS.slice(0, avatarLimit).map((url, idx) => (
                       <button 
                         key={idx}
                         onClick={() => handleAvatarSelect(url)}
@@ -210,6 +214,17 @@ export default function UserProfileClient() {
                       </button>
                     ))}
                   </div>
+                  {avatarLimit < PREDEFINED_AVATARS.length && (
+                    <div className="flex justify-center mt-2">
+                      <button
+                        type="button"
+                        onClick={() => setAvatarLimit((prev) => Math.min(prev + 24, PREDEFINED_AVATARS.length))}
+                        className="text-xs text-[#C7F33C] hover:underline py-1 px-3 rounded-lg hover:bg-[#3A3B3C]/50 transition-colors"
+                      >
+                        Load More Avatars...
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -2,7 +2,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BellRing, CircleDollarSign, Wrench, Handshake, Wand2 } from "lucide-react";
+import { BellRing, Bot, FileText } from "lucide-react";
+import { DealTypeIcon } from "./DealTypeBadge";
 import { Opportunity, Company, User, Tag, OpportunityTag } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
@@ -13,11 +14,45 @@ const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
 };
 
+interface ParsedLogAttachment {
+  url: string;
+  filename: string;
+  type: string;
+  isImage: boolean;
+}
+
+function parseLogContent(content: string) {
+  const attachments: ParsedLogAttachment[] = [];
+  const cleanText = content
+    .replace(/\[ATTACHMENT:(https?:\/\/[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+[^\s\]|]*|blob:[^\]|\s]+)(?:\|([^\]|]*))?(?:\|([^\]|]*))?\]/g, (_match, url, filename = '', type = '') => {
+      const isImg =
+        type.startsWith('image/') ||
+        Boolean(url.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)(\?.*)?$/i)) ||
+        Boolean(url.includes('/image/upload/')) ||
+        url.startsWith('blob:');
+      attachments.push({
+        url,
+        filename: filename || 'Attachment',
+        type: type || (isImg ? 'image/jpeg' : 'application/octet-stream'),
+        isImage: isImg,
+      });
+      return '';
+    })
+    .trim();
+
+  const images = attachments.filter((a) => a.isImage);
+  const otherFiles = attachments.filter((a) => !a.isImage);
+
+  return { cleanText, images, otherFiles };
+}
+
+export const PendingAcceleratorsContext = createContext<Record<string, number>>({});
+
 export type OpportunityWithRelations = Opportunity & {
   company: Company | null;
   owner: User;
   teamMembers: User[];
-  tags: (OpportunityTag & { tag: Tag })[];
+  tags?: (OpportunityTag & { tag: Tag })[];
   activityLogs: { 
     id: string; 
     createdAt: Date; 
@@ -150,12 +185,16 @@ import React from 'react';
 export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging, onOpenPanel, onPanelIntent }: KanbanCardProps & { isDragging?: boolean }) {
   const { visibleRightMenus } = usePermissions();
   const rightMenus = visibleRightMenus('pipeline') || [];
+  const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
   
   const canView = (tabKey: string) => rightMenus.some(menu => menu.key === `pipeline.${tabKey}`);
   const canViewInformation = canView('information');
 
   // Compute display values
-  const customerName = deal.company?.name || "Unknown Company"; // In old CRM, Project = Company Name
+  const isInternal = deal.type === 'INTERNAL_TASK';
+  const customerName = isInternal 
+    ? (deal.company?.displayName || deal.company?.name || null)
+    : (deal.company?.displayName || deal.company?.name || "No Customer");
   const contactName = deal.owner.name || deal.owner.email || "Unknown Contact";
   const highlight = checkIsRedCard(deal);
   
@@ -178,7 +217,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   return (
     <div
       className={`
-        flex flex-col gap-4 p-2 rounded-[24px] relative overflow-visible group/card h-[220px]
+        flex flex-col gap-2 p-2 rounded-[24px] relative overflow-visible group/card h-[220px]
         ${highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
       `}
@@ -218,31 +257,12 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             )}
             
             <div className={`absolute -bottom-1 -left-1 w-6 h-6 rounded-full flex items-center justify-center z-20 ${highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}>
-              {deal.type === 'SALES_DEAL' && (
-                <div className={`w-full h-full rounded-full flex items-center justify-center ${highlight ? 'bg-[#C7F33C] text-slate-800' : 'bg-[#C7F33C] text-black'}`}>
-                  <CircleDollarSign className="w-5.5 h-5.5" />
-                </div>
-              )}
-              {deal.type === 'INTERNAL_TASK' && (
-                <div className={`w-full h-full rounded-full flex items-center justify-center ${highlight ? 'bg-[#C7F33C] text-slate-800' : 'bg-slate-700 text-slate-300'}`}>
-                  <Wrench className="w-5.5 h-5.5" />
-                </div>
-              )}
-              {deal.type === 'PARTNERSHIP' && (
-                <div className={`w-full h-full rounded-full flex items-center justify-center ${highlight ? 'bg-[#C7F33C] text-slate-800' : 'bg-indigo-500 text-white'}`}>
-                  <Handshake className="w-5.5 h-5.5" />
-                </div>
-              )}
+              <DealTypeIcon type={deal.type} size="sm" highlight={highlight} />
             </div>
           </div>
           <div className="flex flex-col flex-1 min-w-0 pr-1 pl-1">
             <div className="flex items-center gap-1.5 mb-1">
               <div className={`font-semibold text-[13px] leading-tight truncate ${highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
-              {deal.activityLogs?.some(log => log.type === 'SYSTEM_UPDATE' && (log as any).sourceDomainEventId) && (
-                <div title="AI Summary Available" className="w-4 h-4 rounded flex items-center justify-center bg-[#C7F33C]/20 border border-[#C7F33C]/30 shrink-0">
-                  <Wand2 className="w-2.5 h-2.5 text-[#C7F33C]" />
-                </div>
-              )}
             </div>
             <div className={`flex items-center text-[11px] truncate ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>
               {contactName}
@@ -250,13 +270,44 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
           </div>
         </div>
         
-        {deal.dueDate && (
-          <div className="flex-shrink-0 ml-auto" title={`Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${highlight ? 'bg-black/20 text-red-50 hover:bg-black/40' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}>
-              <BellRing className="w-4 h-4" />
+        <div className="flex items-center gap-0.5 shrink-0 ml-auto">
+          {deal.dueDate && (
+            <div 
+              className="flex-shrink-0" 
+              title={`Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`}
+            >
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${highlight ? 'bg-black/15 text-slate-900 hover:bg-black/25' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}>
+                <BellRing className="w-4 h-4" />
+              </div>
             </div>
-          </div>
-        )}
+          )}
+          {canView('summary') && canView('activity') && (() => {
+            const pendingCount = pendingAcceleratorsMap[deal.id] || 0;
+            return (
+              <div className="relative">
+                <button
+                  type="button"
+                  aria-label={`Open AI Summary for ${deal.topic}`}
+                  title={pendingCount > 0 ? `AI Manager มี ${pendingCount} คำถามรอคำตอบเพื่อช่วยเร่งงาน` : "Open AI Summary"}
+                  onPointerDown={event => event.stopPropagation()}
+                  onKeyDown={event => event.stopPropagation()}
+                  onClick={event => { event.stopPropagation(); onOpenPanel?.('summary'); }}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-100 ${highlight ? 'bg-black/15 text-slate-900 hover:bg-black/25' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}
+                >
+                  <Bot className="w-4 h-4" aria-hidden="true" />
+                </button>
+                {pendingCount > 0 && (
+                  <span 
+                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-400 text-slate-950 font-black text-[11px] leading-none flex items-center justify-center animate-bounce shadow-sm pointer-events-none"
+                    title="AI Manager รอคำตอบเพื่อช่วยเร่งงาน"
+                  >
+                    ?
+                  </span>
+                )}
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       {/* Middle row: Action box & Log */}
@@ -277,9 +328,11 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             );
           }
           
+          const { cleanText, images, otherFiles } = parseLogContent(latestLog.content);
+          
           return (
             <div className="flex flex-col gap-2 mt-1 flex-1 overflow-hidden">
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
                   <span className={`pl-4 text-[10px] font-medium ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>{formatDateTime(latestLog.createdAt)}</span>
                 </div>
@@ -293,8 +346,45 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                       </span>
                     )}
                   </div>
-                  <div className={`text-[11px] font-medium line-clamp-4 leading-tight mt-0.5 ${highlight ? 'text-slate-800' : 'text-slate-300'}`}>
-                    {latestLog.content}
+                  <div className="flex-1 min-w-0 flex flex-col gap-1 overflow-hidden">
+                    {cleanText && (
+                      <div className={`text-[11px] font-medium ${images.length > 0 ? 'line-clamp-2' : 'line-clamp-4'} leading-tight mt-0.5 ${highlight ? 'text-slate-800' : 'text-slate-300'}`}>
+                        {cleanText}
+                      </div>
+                    )}
+
+                    {images.length > 0 && (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {images.slice(0, 3).map((img, idx) => (
+                          <div
+                            key={idx}
+                            className={`${cleanText ? 'w-10 h-10' : 'w-12 h-12'} rounded-lg overflow-hidden border border-[#4E4F50]/60 bg-[#1C1C1D] shrink-0 relative`}
+                          >
+                            <img
+                              src={getOptimizedCloudinaryUrl(img.url, 150)}
+                              alt={img.filename}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.currentTarget.onerror = null;
+                                e.currentTarget.src = "https://placehold.co/100x100/252728/4E4F50?text=IMG";
+                              }}
+                            />
+                          </div>
+                        ))}
+                        {images.length > 3 && (
+                          <div className={`${cleanText ? 'w-10 h-10' : 'w-12 h-12'} rounded-lg bg-[#252728] border border-[#4E4F50] flex items-center justify-center text-[10px] font-bold text-slate-300 shrink-0`}>
+                            +{images.length - 3}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {images.length === 0 && otherFiles.length > 0 && (
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-300 bg-[#252728] px-2 py-1 rounded-md border border-[#4E4F50]/60 w-fit max-w-full mt-0.5">
+                        <FileText className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                        <span className="truncate">{otherFiles[0].filename}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -304,11 +394,20 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
       </div>
 
       {/* Bottom row: Customer Name & Timer */}
-      {(canViewInformation || (highlight && getRedThreshold(deal))) && (
+      {(customerName || (highlight && getRedThreshold(deal))) && (
         <div className="flex justify-between items-end mt-auto">
-          {canViewInformation ? (
+          {customerName ? (
             <div 
-              onClick={(e) => { e.stopPropagation(); onOpenPanel?.('information'); }}
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                if (canViewInformation && deal.type === 'SALES_DEAL') {
+                  onOpenPanel?.('information');
+                } else if (canView('notes')) {
+                  onOpenPanel?.('notes');
+                } else {
+                  onOpenPanel?.('activity');
+                }
+              }}
               className={`px-3 py-1.5 rounded-full text-[11px] font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[150px]
                 ${highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
               `}

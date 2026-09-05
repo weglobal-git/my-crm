@@ -1,12 +1,14 @@
 "use client";
 
-import { X, MoreHorizontal, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2, Wand2 } from "lucide-react";
+import { X, MoreHorizontal, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Settings, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Building2, Pencil, Briefcase } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
+import { DealTypeIcon } from "./DealTypeBadge";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
 
 import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
-import { correctDealAISummary, getDealAISummaries } from "@/lib/actions/ai-events";
+import { getLatestDealSummary, generateDealSummary, getDealSummaryPromptConfig, saveDealSummaryPromptConfig, resetDealSummaryPromptConfig } from "@/lib/actions/deal-summary";
+import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, updateDealTargetGoal } from "@/lib/actions/ai-accelerator";
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
@@ -14,10 +16,9 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import useSWR, { useSWRConfig, mutate } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
-import { User } from "@prisma/client";
+import { User, OpportunityType } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
-import { AISummaryCard } from "@/components/pipeline/AISummaryCard";
 import { useDialog } from "@/providers/DialogProvider";
 import { CustomerTab } from "./CustomerTab";
 import { NotesTab } from "./NotesTab";
@@ -27,6 +28,7 @@ import { HighlightText } from "@/components/ui/HighlightText";
 import { pusherClient } from "@/lib/pusher";
 import {
   applyActivityEvent,
+  activityFeedKey,
   replaceOptimisticActivity,
   type ActivityLogPage,
   type ActivityLogWithRelations,
@@ -52,13 +54,15 @@ const renderCommentText = (text: string, highlight: string = '') => {
   });
 };
 
-function ImageGrid({ images, onImageClick }: { images: {url: string, filename: string, type: string}[], onImageClick?: (url: string) => void }) {
+function ImageGrid({ images, onImageClick }: { images: {url: string, filename: string, type: string}[], onImageClick?: (url: string, index?: number, allUrls?: string[]) => void }) {
   if (images.length === 0) return null;
 
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     e.currentTarget.onerror = null;
     e.currentTarget.src = "https://placehold.co/600x400/252728/4E4F50?text=Image+Unavailable";
   };
+
+  const allUrls = images.map(img => img.url);
 
   if (images.length === 1) {
     return (
@@ -67,7 +71,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
           src={images[0].url}
           alt={images[0].filename}
           className="w-full h-auto max-h-80 object-contain cursor-pointer hover:opacity-90 transition-opacity"
-          onClick={() => onImageClick?.(images[0].url)}
+          onClick={() => onImageClick?.(images[0].url, 0, allUrls)}
           onError={handleImageError}
         />
       </div>
@@ -81,7 +85,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
           <img
             key={idx} src={img.url} alt={img.filename}
             className="w-full h-40 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-            onClick={() => onImageClick?.(img.url)}
+            onClick={() => onImageClick?.(img.url, idx, allUrls)}
             onError={handleImageError}
           />
         ))}
@@ -96,21 +100,21 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
           src={images[0].url}
           alt=""
           className="col-span-2 w-full h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-          onClick={() => onImageClick?.(images[0].url)}
+          onClick={() => onImageClick?.(images[0].url, 0, allUrls)}
           onError={handleImageError}
         />
         <img
           src={images[1].url}
           alt=""
           className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-          onClick={() => onImageClick?.(images[1].url)}
+          onClick={() => onImageClick?.(images[1].url, 1, allUrls)}
           onError={handleImageError}
         />
         <img
           src={images[2].url}
           alt=""
           className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-          onClick={() => onImageClick?.(images[2].url)}
+          onClick={() => onImageClick?.(images[2].url, 2, allUrls)}
           onError={handleImageError}
         />
       </div>
@@ -123,7 +127,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
       {images.slice(0, 4).map((img, idx) => {
         if (idx === 3 && images.length > 4) {
           return (
-            <div key={idx} className="relative cursor-pointer group" onClick={() => onImageClick?.(img.url)}>
+            <div key={idx} className="relative cursor-pointer group" onClick={() => onImageClick?.(img.url, 3, allUrls)}>
               <img src={img.url} alt="" className="w-full h-32 object-cover" onError={handleImageError} />
               <div className="absolute inset-0 bg-black/60 flex items-center justify-center transition-colors group-hover:bg-black/70">
                 <span className="text-white text-2xl font-bold">+{images.length - 4}</span>
@@ -135,7 +139,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
           <img
             key={idx} src={img.url} alt={img.filename}
             className="w-full h-32 object-cover cursor-pointer hover:opacity-90 transition-opacity"
-            onClick={() => onImageClick?.(img.url)}
+            onClick={() => onImageClick?.(img.url, idx, allUrls)}
             onError={handleImageError}
           />
         )
@@ -144,7 +148,7 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
   );
 }
 
-function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, mutateLogs?: (data: (currentPages?: ActivityLogPage[]) => ActivityLogPage[] | undefined, opts?: { revalidate: boolean }) => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string) => void, searchQuery?: string }) {
+function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, mutateLogs?: (data: (currentPages?: ActivityLogPage[]) => ActivityLogPage[] | undefined, opts?: { revalidate: boolean }) => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string, index?: number, allUrls?: string[]) => void, searchQuery?: string }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(log.content);
   const [isReplying, setIsReplying] = useState(false);
@@ -339,11 +343,17 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                     const images: {url: string, filename: string, type: string}[] = [];
                     const files: {url: string, filename: string, type: string}[] = [];
 
-                    const cleanText = displayContent.replace(/\[ATTACHMENT:([^|]+)\|([^|]*)\|([^\]]+)\]/g, (match, url, filename, type) => {
-                      if (type.startsWith('image/') || type.startsWith('video/')) {
-                        images.push({ url, filename, type });
+                    const cleanText = displayContent.replace(/\[ATTACHMENT:(https?:\/\/[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+[^\s\]|]*|blob:[^\]|\s]+)(?:\|([^\]|]*))?(?:\|([^\]|]*))?\]/g, (_match, url, filename = '', type = '') => {
+                      const isImg =
+                        type.startsWith('image/') ||
+                        type.startsWith('video/') ||
+                        Boolean(url.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)(\?.*)?$/i)) ||
+                        Boolean(url.includes('/image/upload/')) ||
+                        url.startsWith('blob:');
+                      if (isImg) {
+                        images.push({ url, filename: filename || 'Attachment', type: type || 'image/jpeg' });
                       } else {
-                        files.push({ url, filename, type });
+                        files.push({ url, filename: filename || 'File', type: type || 'application/octet-stream' });
                       }
                       return '';
                     }).trim();
@@ -502,8 +512,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const [activitySearchQuery, setActivitySearchQuery] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
-  const { visibleRightMenus } = usePermissions();
-  const rightMenus = visibleRightMenus("pipeline");
+  const { visibleRightMenus, canSee } = usePermissions();
+  const canUseSalesDeal = canSee("pipeline.information");
+  const rawRightMenus = visibleRightMenus("pipeline");
+  const rightMenus = rawRightMenus.filter(m => {
+    if (m.key === 'pipeline.information') {
+      return deal.type === 'SALES_DEAL';
+    }
+    return true;
+  });
 
   // Try to find the initial tab matching a visible right menu, fallback to the first one available
   const allowedInitialTab = rightMenus.find(m => m.key.endsWith(`.${initialTab}`)) ? initialTab : (rightMenus[0]?.key.split('.').pop() as TabType || 'activity');
@@ -517,8 +534,50 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const calendarRef = useRef<HTMLDivElement>(null);
 
-  // Lightbox Preview State
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  // Lightbox Preview State (Supports multi-image gallery with Next/Prev)
+  const [previewLightbox, setPreviewLightbox] = useState<{
+    images: string[];
+    currentIndex: number;
+  } | null>(null);
+
+  const handleOpenPreview = useCallback((url: string, index?: number, allUrls?: string[]) => {
+    if (allUrls && allUrls.length > 0) {
+      const initialIdx = typeof index === 'number' ? index : allUrls.indexOf(url);
+      setPreviewLightbox({
+        images: allUrls,
+        currentIndex: initialIdx >= 0 ? initialIdx : 0
+      });
+    } else {
+      setPreviewLightbox({
+        images: [url],
+        currentIndex: 0
+      });
+    }
+  }, [setPreviewLightbox]);
+
+  // Keyboard navigation for image lightbox
+  useEffect(() => {
+    if (!previewLightbox) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPreviewLightbox(null);
+      } else if (e.key === 'ArrowLeft') {
+        setPreviewLightbox(prev => {
+          if (!prev || prev.images.length <= 1) return prev;
+          const nextIdx = prev.currentIndex > 0 ? prev.currentIndex - 1 : prev.images.length - 1;
+          return { ...prev, currentIndex: nextIdx };
+        });
+      } else if (e.key === 'ArrowRight') {
+        setPreviewLightbox(prev => {
+          if (!prev || prev.images.length <= 1) return prev;
+          const nextIdx = prev.currentIndex < prev.images.length - 1 ? prev.currentIndex + 1 : 0;
+          return { ...prev, currentIndex: nextIdx };
+        });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewLightbox]);
 
   // Topic editing state
   const [isEditingTopic, setIsEditingTopic] = useState(false);
@@ -552,21 +611,18 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const isTeamMember = deal.teamMembers?.some(tm => tm.email === session?.user?.email);
   const canInvite = isOwner || isTeamMember;
   const canEditDueDate = isOwner || (session?.user as Record<string, unknown>)?.role === "ADMIN";
+  const canAnswerAccelerators = isOwner || (session?.user as Record<string, unknown>)?.role === "ADMIN";
 
   useEffect(() => {
-    const t = setTimeout(() => setActiveTab(initialTab), 0);
+    const t = setTimeout(() => setActiveTab(allowedInitialTab), 0);
     return () => clearTimeout(t);
-  }, [initialTab, isOpen]);
+  }, [allowedInitialTab, isOpen]);
 
   // Optimistic UI State
   type TeamMember = { id: string; name: string | null; email: string | null; image: string | null; role: string; department?: { name: string } | null; [key: string]: unknown };
   const [localTeamMembers, setLocalTeamMembers] = useState<TeamMember[]>(deal.teamMembers || []);
   const getKey = (pageIndex: number, previousPageData: { data: ActivityLogWithRelations[], nextCursor?: string } | null) => {
-    if (!isOpen) return null;
-    if (previousPageData && !previousPageData.nextCursor) return null; // reached the end
-    const typeFilter = activeTab === 'system' ? 'SYSTEM_UPDATE' :
-                       activeTab === 'summary' ? 'SYSTEM_UPDATE' : 'COMMENT';
-    return ['activity-logs', deal.id, typeFilter, previousPageData?.nextCursor ?? ''];
+    return activityFeedKey(deal.id, activeTab, isOpen, previousPageData);
   };
 
   const {
@@ -590,13 +646,314 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   const allLogs = rawLocalActivityPages ? rawLocalActivityPages.flatMap(page => page.data) : [];
   const {
-    data: aiSummaries = [],
-    mutate: loadAISummaries,
-    isLoading: isLoadingAISummaries,
+    data: dealSummaryResponse,
+    mutate: mutateDealSummary,
+    isLoading: isLoadingDealSummary,
   } = useSWR(
-    isOpen && activeTab === 'summary' ? ['deal-ai-summaries', deal.id] : null,
-    ([, id]) => getDealAISummaries(id),
+    isOpen && activeTab === 'summary' ? ['deal-summary-on-demand', deal.id] : null,
+    ([, id]) => getLatestDealSummary(id),
   );
+
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [isCopiedSummary, setIsCopiedSummary] = useState(false);
+
+  // AI Deal Accelerators State
+  const {
+    data: acceleratorsResponse,
+    mutate: mutateAccelerators,
+    isLoading: isLoadingAccelerators,
+  } = useSWR(
+    isOpen && activeTab === 'summary' ? ['deal-accelerators', deal.id] : null,
+    ([, id]) => getDealAccelerators(id),
+  );
+
+  const acceleratorsState = acceleratorsResponse?.data;
+  const [isGeneratingAccelerators, setIsGeneratingAccelerators] = useState(false);
+  const [isAnsweringQuestionId, setIsAnsweringQuestionId] = useState<string | null>(null);
+  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
+  const [showCustomInput, setShowCustomInput] = useState<Record<string, boolean>>({});
+  const [isEditingGoal, setIsEditingGoal] = useState(false);
+  const [goalInput, setGoalInput] = useState('');
+  const [isSavingGoal, setIsSavingGoal] = useState(false);
+  const [isAcceleratorsExpanded, setIsAcceleratorsExpanded] = useState(true);
+  const [acceleratorTab, setAcceleratorTab] = useState<'pending' | 'answered'>('pending');
+  const [editingAnswerQuestionId, setEditingAnswerQuestionId] = useState<string | null>(null);
+  const [editCustomAnswers, setEditCustomAnswers] = useState<Record<string, string>>({});
+  const [showEditCustomInput, setShowEditCustomInput] = useState<Record<string, boolean>>({});
+  const [prevDealId, setPrevDealId] = useState(deal.id);
+  const [dealType, setDealType] = useState(deal.type);
+
+  if (deal.id !== prevDealId) {
+    setPrevDealId(deal.id);
+    setDealType(deal.type);
+  }
+
+  const [isConverting, setIsConverting] = useState(false);
+
+  const handleConvertToSalesDeal = async () => {
+    const isConfirmed = await confirm({
+      title: "Convert to Sale Deal",
+      description: "Are you sure you want to convert this card to a Sales Deal? Once converted, this deal cannot be reverted back to an Internal Task.",
+      confirmText: "Convert to Sale Deal",
+      cancelText: "Cancel",
+      variant: "primary"
+    });
+
+    if (!isConfirmed) return;
+
+    setIsConverting(true);
+    const prevType = dealType;
+    setDealType(OpportunityType.SALES_DEAL);
+
+    // Optimistic cache update
+    mutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (currentData: OpportunityWithRelations[] | undefined) =>
+        currentData?.map(opp => opp.id === deal.id ? { ...opp, type: OpportunityType.SALES_DEAL } : opp),
+      { revalidate: false }
+    );
+
+    try {
+      await updateOpportunity(deal.id, { type: 'SALES_DEAL' });
+      await addSystemLog(deal.id, "Converted opportunity type from Internal Task to Sales Deal.");
+      toast({ title: "Converted to Sale Deal", description: "This card is now a Sales Deal.", type: "success" });
+      setActiveTab('information');
+    } catch (e: unknown) {
+      setDealType(prevType);
+      mutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
+      toast({ title: "Error", description: e instanceof Error ? e.message : "Failed to convert to Sales Deal", type: "error" });
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
+  const pendingQuestions = acceleratorsState?.questions?.filter(q => q.status === 'PENDING') || [];
+  const answeredQuestions = acceleratorsState?.questions?.filter(q => q.status === 'ANSWERED') || [];
+  const pendingQuestionsCount = pendingQuestions.length;
+
+  const handleAnswerAccelerator = async (questionId: string, answer: string) => {
+    if (!answer.trim() || isAnsweringQuestionId) return;
+    setIsAnsweringQuestionId(questionId);
+    try {
+      const res = await answerDealAccelerator(deal.id, questionId, answer.trim());
+      if (res.success && res.data) {
+        await mutateAccelerators({ success: true, data: res.data }, false);
+        void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+        toast({ title: 'บันทึกคำตอบเรียบร้อย', description: `ตอบ: "${answer}"`, type: 'success' });
+      } else {
+        toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
+      }
+    } catch {
+      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
+    } finally {
+      setIsAnsweringQuestionId(null);
+    }
+  };
+
+  const handleRefreshAccelerators = async () => {
+    setIsGeneratingAccelerators(true);
+    try {
+      const res = await generateDealAccelerators(deal.id, acceleratorsState?.targetGoal);
+      if (res.success && res.data) {
+        await mutateAccelerators({ success: true, data: res.data }, false);
+        void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+        toast({ title: 'วิเคราะห์สำเร็จ', description: 'อัปเดตเป้าหมายและจุดคอขวดเรียบร้อยแล้ว', type: 'success' });
+      } else {
+        toast({ title: 'ไม่สามารถวิเคราะห์ได้', description: res.error || 'โปรดตรวจสอบการเชื่อมต่อ', type: 'error' });
+      }
+    } catch {
+      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถสร้างคำถามเร่งงานได้', type: 'error' });
+    } finally {
+      setIsGeneratingAccelerators(false);
+    }
+  };
+
+  const handleSaveGoal = async () => {
+    if (!goalInput.trim() || isSavingGoal) return;
+    setIsSavingGoal(true);
+    try {
+      const res = await updateDealTargetGoal(deal.id, goalInput.trim());
+      if (res.success && res.data) {
+        await mutateAccelerators({ success: true, data: res.data }, false);
+        setIsEditingGoal(false);
+        toast({ title: 'อัปเดตเป้าหมายเรียบร้อย', type: 'success' });
+      } else {
+        toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถบันทึกเป้าหมายได้', type: 'error' });
+      }
+    } catch {
+      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกเป้าหมายได้', type: 'error' });
+    } finally {
+      setIsSavingGoal(false);
+    }
+  };
+
+  // Admin Prompt Configuration State
+  const isAdmin = session?.user?.role === 'ADMIN';
+  const [summaryViewMode, setSummaryViewMode] = useState<'summary' | 'prompt'>('summary');
+  const [systemInstructionInput, setSystemInstructionInput] = useState('');
+  const [taskInstructionInput, setTaskInstructionInput] = useState('');
+  const [jsonSchemaInput, setJsonSchemaInput] = useState('');
+  const [isLoadingPrompt, setIsLoadingPrompt] = useState(false);
+  const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+
+  // Stable refs for Prompt Settings textareas to prevent render-time height resets & scroll jumping
+  const systemInstructionRef = useRef<HTMLTextAreaElement | null>(null);
+  const taskInstructionRef = useRef<HTMLTextAreaElement | null>(null);
+  const jsonSchemaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
+  useEffect(() => {
+    if (summaryViewMode === 'prompt') {
+      const timer = setTimeout(() => {
+        autoResizeTextarea(systemInstructionRef.current);
+        autoResizeTextarea(taskInstructionRef.current);
+        autoResizeTextarea(jsonSchemaRef.current);
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [summaryViewMode, systemInstructionInput, taskInstructionInput, jsonSchemaInput]);
+
+  const handleLoadPromptConfig = async () => {
+    setIsLoadingPrompt(true);
+    try {
+      const config = await getDealSummaryPromptConfig();
+      setSystemInstructionInput(config.systemInstruction);
+      setTaskInstructionInput(config.taskInstruction);
+      setJsonSchemaInput(config.jsonSchema);
+    } catch {
+      toast({ title: 'Error', description: 'Failed to load prompt configuration', type: 'error' });
+    } finally {
+      setIsLoadingPrompt(false);
+    }
+  };
+
+  const handleSavePrompt = async () => {
+    if (!systemInstructionInput.trim()) {
+      toast({ title: 'Validation Error', description: 'System instruction cannot be empty.', type: 'warning' });
+      return;
+    }
+    if (!taskInstructionInput.trim()) {
+      toast({ title: 'Validation Error', description: 'Task instruction cannot be empty.', type: 'warning' });
+      return;
+    }
+    if (jsonSchemaInput.trim()) {
+      try {
+        JSON.parse(jsonSchemaInput);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Invalid JSON format';
+        toast({ title: 'JSON Schema Error', description: `รูปแบบ JSON Schema ไม่ถูกต้อง: ${msg}`, type: 'warning' });
+        return;
+      }
+    }
+    setIsSavingPrompt(true);
+    try {
+      await saveDealSummaryPromptConfig({
+        systemInstruction: systemInstructionInput,
+        taskInstruction: taskInstructionInput,
+        customInstruction: '',
+        jsonSchema: jsonSchemaInput,
+      });
+      toast({ title: 'Prompt Saved', description: 'AI Summary prompt configuration updated successfully.', type: 'success' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to save prompt configuration';
+      toast({ title: 'Error', description: msg, type: 'error' });
+    } finally {
+      setIsSavingPrompt(false);
+    }
+  };
+
+  const handleResetPrompt = async () => {
+    const isConfirmed = await confirm({
+      title: 'Reset AI Prompt',
+      description: 'Are you sure you want to reset prompts and JSON schema to system defaults?',
+      confirmText: 'Reset',
+      variant: 'danger',
+    });
+    if (!isConfirmed) return;
+    setIsSavingPrompt(true);
+    try {
+      const res = await resetDealSummaryPromptConfig();
+      setSystemInstructionInput(res.data.systemInstruction);
+      setTaskInstructionInput(res.data.taskInstruction);
+      setJsonSchemaInput(res.data.jsonSchema);
+      toast({ title: 'Prompt Reset', description: 'Prompt and schema restored to default configuration.', type: 'success' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to reset prompt configuration';
+      toast({ title: 'Error', description: msg, type: 'error' });
+    } finally {
+      setIsSavingPrompt(false);
+    }
+  };
+
+  const handleGenerateSummary = async () => {
+    setIsGeneratingSummary(true);
+    setSummaryError(null);
+    try {
+      // Also generate accelerators if none exist yet
+      if (!acceleratorsState) {
+        generateDealAccelerators(deal.id).then(accRes => {
+          if (accRes.success && accRes.data) {
+            void mutateAccelerators(accRes, false);
+            void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+          }
+        }).catch(() => {});
+      }
+
+      const res = await generateDealSummary(deal.id);
+      if (res.success && res.data) {
+        await mutateDealSummary(res, false);
+        toast({ title: 'AI Summary Ready', description: 'Deal summary generated successfully.', type: 'success' });
+      } else {
+        const errorMsg = res.message || 'Unable to generate summary.';
+        setSummaryError(errorMsg);
+        toast({ title: 'Error', description: errorMsg, type: 'error' });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Connection error occurred.';
+      setSummaryError(msg);
+      toast({ title: 'Error', description: msg, type: 'error' });
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  };
+
+  const handleCopySummary = () => {
+    if (!dealSummaryResponse?.data) return;
+    const { overview, keyHighlights, blockers, nextSteps } = dealSummaryResponse.data;
+
+    // Additional custom fields from JSON schema
+    const extraSections = Object.entries(dealSummaryResponse.data)
+      .filter(([k, v]) => !['overview', 'keyHighlights', 'blockers', 'nextSteps'].includes(k) && v)
+      .map(([k, v]) => {
+        const title = k.replace(/([A-Z])/g, ' $1').replace(/[_-]/g, ' ').toUpperCase().trim();
+        if (Array.isArray(v)) {
+          return `[${title}]\n${v.map(item => `• ${item}`).join('\n')}\n`;
+        }
+        return `[${title}]\n${typeof v === 'object' ? JSON.stringify(v, null, 2) : v}\n`;
+      });
+
+    const text = [
+      `📌 Deal Summary: ${deal.topic}`,
+      dealSummaryResponse.generatedAt ? `(As of: ${formatDateTime(dealSummaryResponse.generatedAt)})` : '',
+      '',
+      overview ? `[CURRENT STATUS]\n${overview}\n` : '',
+      keyHighlights?.length ? `[KEY HIGHLIGHTS]\n${keyHighlights.map(k => `• ${k}`).join('\n')}\n` : '',
+      blockers?.length ? `[BLOCKERS & RISKS]\n${blockers.map(b => `• ${b}`).join('\n')}\n` : '',
+      nextSteps?.length ? `[RECOMMENDED NEXT STEPS]\n${nextSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : '',
+      ...extraSections,
+    ].filter(Boolean).join('\n');
+
+    navigator.clipboard.writeText(text);
+    setIsCopiedSummary(true);
+    toast({ title: 'Copied', description: 'Summary copied to clipboard.', type: 'success' });
+    setTimeout(() => setIsCopiedSummary(false), 2000);
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -604,10 +961,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
 
     const handleUpdate = (data?: ActivityUpdateEvent) => {
-      if (data?.dealId === deal.id && data?.action === 'AI_EVENT_READY') {
-        loadAISummaries();
-        return;
-      }
       if (data?.dealId === deal.id && data?.action?.startsWith('ACTIVITY_')) {
         loadActivityLogs(pages => applyActivityEvent(pages, data), { revalidate: false });
       }
@@ -617,10 +970,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
     return () => {
       channel.unbind('pipeline-updated', handleUpdate);
-      // KanbanBoard uses the same channel. Unbinding this handler is sufficient;
-      // unsubscribing here would silently stop board updates after closing panel.
     };
-  }, [deal.id, isOpen, loadActivityLogs, loadAISummaries, session?.user?.id]);
+  }, [deal.id, isOpen, loadActivityLogs, session?.user?.id]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {
     if (!uniqueLogsMap.has(log.id)) {
@@ -665,11 +1016,20 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     const currentAttachments = [...pendingAttachments];
     const currentDueDate = pendingDueDate;
 
-    // 1. Create Fake Optimistic Log
+    // 1. Create Fake Optimistic Log with instant local blob previews
     const fakeId = `temp-${Date.now()}`;
+    const optimisticAttachmentText = currentAttachments.map(f => {
+      const isImg = f.type.startsWith('image/');
+      const previewUrl = isImg ? URL.createObjectURL(f) : '';
+      return previewUrl ? `\n[ATTACHMENT:${previewUrl}|${f.name}|${f.type}]` : '';
+    }).join('');
+
+    const optimisticContent = (currentNewLog.trim() + optimisticAttachmentText).trim() || 
+      (currentDueDate ? 'Updated due date' : (currentAttachments.length ? 'Uploaded attachment' : 'Updated deal'));
+
     const optimisticLog = {
       id: fakeId,
-      content: currentNewLog.trim() || (currentDueDate ? 'Updated due date' : (currentAttachments.length ? 'Uploaded attachment' : 'Updated deal')),
+      content: optimisticContent,
       type: "COMMENT",
       createdAt: new Date(),
       opportunityId: deal.id,
@@ -710,6 +1070,19 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           }
           return opp;
         });
+      },
+      { revalidate: false }
+    );
+
+    // แจ้งเตือน AI Summary ทันทีว่ามีข้อมูลใหม่เข้ามา
+    mutateDealSummary(
+      (current) => {
+        if (!current?.data) return current;
+        return {
+          ...current,
+          isOutdated: true,
+          newerActivitiesCount: (current.newerActivitiesCount || 0) + 1,
+        };
       },
       { revalidate: false }
     );
@@ -810,6 +1183,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const validFiles = acceptedFiles.filter(file => {
+      const isVideo = file.type.startsWith('video/') || Boolean(file.name.match(/\.(mp4|mov|avi|mkv|webm|wmv|flv|m4v|3gp)$/i));
+      if (isVideo) {
+        toast({
+          title: "ไม่อนุญาตให้อัปโหลดวิดีโอ",
+          description: `"${file.name}" เป็นไฟล์วิดีโอ กรุณาอัปโหลดเข้า Google Drive หรือ YouTube แล้วนำลิงก์มาแนบแทนครับ`,
+          type: "warning"
+        });
+        return false;
+      }
       if (file.size > 4.5 * 1024 * 1024 && !file.type.startsWith('image/')) {
         toast({ title: "File too large", description: `"${file.name}" exceeds 4.5MB limit.`, type: "warning" });
         return false;
@@ -841,7 +1223,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     try {
       await requestDealTransfer(deal.id, newOwnerId);
 
-      const newOwner = users.find(u => u.id === newOwnerId);
+      const newOwner = users.find((u: { id: string; name?: string | null }) => u.id === newOwnerId);
       if (session?.user?.id && newOwner) {
         await addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`);
       }
@@ -860,7 +1242,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const handleAddMember = async (userId: string) => {
     const originalTeamMembers = deal.teamMembers || [];
     // 1. Optimistic Update (Local Panel State)
-    const userToAdd = users.find(u => u.id === userId);
+    const userToAdd = users.find((u: { id: string }) => u.id === userId);
     if (userToAdd) {
       setLocalTeamMembers(prev => prev.some(u => u.id === userToAdd.id) ? prev : [...prev, userToAdd]);
 
@@ -980,7 +1362,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           <div className="w-16 bg-[#252728] border-r border-[#1C1C1D] flex flex-col items-center py-3 gap-3 z-10">
           {rightMenus.map(menu => {
             const tabId = menu.key.split('.').pop() as TabType;
-            const Icon = menu.iconName ? IconMap[menu.iconName] : MessageSquare;
+            const Icon = tabId === 'summary' || menu.key === 'pipeline.summary' 
+              ? Bot 
+              : (menu.iconName ? IconMap[menu.iconName] || MessageSquare : MessageSquare);
             return (
               <button
                 key={menu.key}
@@ -1000,87 +1384,88 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         </div>
 
         {/* Main Panel Content */}
-        <div className="w-[600px] max-w-[90vw] bg-[#252728] flex flex-col">
+        <div className="w-[750px] max-w-[90vw] bg-[#252728] flex flex-col">
           <div className="flex items-center justify-between p-3 border-b border-[#1C1C1D] shrink-0">
-            <div className="flex flex-col flex-1 pr-4">
-              {isEditingTopic ? (
-                <div className="relative">
-                <input
-                  autoFocus
-                  type="text"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                  onBlur={async () => {
-                    if (topic.trim() !== deal.topic) {
-                      setIsSavingTopic(true);
-                      try {
-                        const newTopic = topic.trim();
-                        await updateOpportunity(deal.id, { topic: newTopic });
-                        await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`);
-                        toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
-                        // router.refresh(); removed for Optimistic UI
-                      } catch {
-                        toast({ title: 'Error', description: 'Failed to update topic', type: 'error' });
-                        setTopic(deal.topic || 'Untitled Deal');
-                      } finally {
-                        setIsSavingTopic(false);
-                      }
-                    }
-                    setIsEditingTopic(false);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') e.currentTarget.blur();
-                    if (e.key === 'Escape') {
-                      setTopic(deal.topic || 'Untitled Deal');
-                      setIsEditingTopic(false);
-                    }
-                  }}
-                  disabled={isSavingTopic}
-                  className="w-full bg-[#1C1C1D] border border-[#4E4F50] rounded-lg px-3 py-1 text-xl font-bold text-slate-100 focus:outline-none focus:border-[#C7F33C]"
-                />
-              </div>
-            ) : (
-              <h2
-                className={`text-xl font-bold text-slate-100 line-clamp-1 ${canEditDueDate ? 'cursor-text hover:text-white' : ''}`}
-                onClick={() => canEditDueDate && setIsEditingTopic(true)}
-                title={canEditDueDate ? "Click to edit title" : undefined}
-              >
-                {topic}
-              </h2>
-            )}
+            <div className="flex flex-col flex-1 pr-4 min-w-0">
+              <div className="flex items-center gap-2">
+                {/* Card Type Indicator Icon */}
+                <div title={dealType === "SALES_DEAL" ? "Sales Deal" : "Internal Task"} className="shrink-0">
+                  <DealTypeIcon type={dealType} size="md" />
+                </div>
 
-            <div className="mt-2 flex items-center gap-2">
-              <select
-                value={deal.type}
-                onChange={async (e) => {
-                  const newType = e.target.value as typeof deal.type;
-                  if (newType !== deal.type) {
-                    try {
-                      await updateOpportunity(deal.id, { type: newType });
-                      const oldLabel = deal.type === 'INTERNAL_TASK' ? 'Internal Task' : (deal.type === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
-                      const newLabel = newType === 'INTERNAL_TASK' ? 'Internal Task' : (newType === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
-                      await addSystemLog(deal.id, `Changed opportunity type from ${oldLabel} to ${newLabel}.`);
-                      toast({ title: 'Success', description: 'Type updated', type: 'success' });
-                      // router.refresh(); removed for Optimistic UI
-                    } catch {
-                      toast({ title: 'Error', description: 'Failed to update type', type: 'error' });
-                    }
-                  }
-                }}
-                disabled={!canEditDueDate} // Using canEditDueDate as it checks for isOwner or isAdmin
-                className={`text-xs font-semibold px-2 py-1 rounded-md border ${
-                  deal.type === 'SALES_DEAL' ? 'bg-[#C7F33C]/20 text-[#C7F33C] border-[#C7F33C]/30' :
-                  deal.type === 'INTERNAL_TASK' ? 'bg-slate-700 text-slate-300 border-slate-600' :
-                  'bg-indigo-500/20 text-indigo-400 border-indigo-500/30'
-                } ${canEditDueDate ? 'cursor-pointer hover:opacity-80' : 'cursor-default appearance-none'} focus:outline-none`}
-              >
-                <option value="SALES_DEAL">Sales Deal</option>
-                <option value="INTERNAL_TASK">Internal Task</option>
-                <option value="PARTNERSHIP">Partnership</option>
-              </select>
+                {/* Topic / Title */}
+                {isEditingTopic ? (
+                  <div className="relative flex-1 min-w-0">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={topic}
+                      onChange={(e) => setTopic(e.target.value)}
+                      onBlur={async () => {
+                        if (topic.trim() !== deal.topic) {
+                          setIsSavingTopic(true);
+                          try {
+                            const newTopic = topic.trim();
+                            await updateOpportunity(deal.id, { topic: newTopic });
+                            await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`);
+                            toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
+                          } catch {
+                            toast({ title: 'Error', description: 'Failed to update topic', type: 'error' });
+                            setTopic(deal.topic || 'Untitled Deal');
+                          } finally {
+                            setIsSavingTopic(false);
+                          }
+                        }
+                        setIsEditingTopic(false);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur();
+                        if (e.key === 'Escape') {
+                          setTopic(deal.topic || 'Untitled Deal');
+                          setIsEditingTopic(false);
+                        }
+                      }}
+                      disabled={isSavingTopic}
+                      className="w-full bg-[#1C1C1D] border border-[#4E4F50] rounded-lg px-3 py-1 text-xl font-bold text-slate-100 focus:outline-none focus:border-[#C7F33C]"
+                    />
+                  </div>
+                ) : (
+                  <h2
+                    className={`text-xl font-bold text-slate-100 line-clamp-1 flex-1 min-w-0 ${canEditDueDate ? 'cursor-text hover:text-white' : ''}`}
+                    onClick={() => canEditDueDate && setIsEditingTopic(true)}
+                    title={canEditDueDate ? "Click to edit title" : undefined}
+                  >
+                    {topic}
+                  </h2>
+                )}
+              </div>
+
+              {/* Customer / Company Row (Replacing old Card Type position) */}
+              {(deal.company?.displayName || deal.company?.name) && (
+                <div className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-400 font-medium pl-0.5" title={deal.company.name}>
+                  <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <span className="truncate">{deal.company.displayName || deal.company.name}</span>
+                  {deal.company.displayName && deal.company.displayName !== deal.company.name && (
+                    <span className="text-[11px] text-slate-500 truncate">({deal.company.name})</span>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
+
             <div className="flex items-center gap-2 shrink-0">
+              {/* Convert to Sale Deal Button (Only for Internal Task, and only for users with Sale Deal permission) */}
+              {dealType === 'INTERNAL_TASK' && canUseSalesDeal && (
+                <button
+                  type="button"
+                  onClick={handleConvertToSalesDeal}
+                  disabled={isConverting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#C7F33C]/10 border border-[#C7F33C]/40 text-[#C7F33C] hover:bg-[#C7F33C] hover:text-black rounded-full text-xs font-bold transition-all disabled:opacity-50 mr-1 cursor-pointer"
+                  title="Convert this Internal Task to a Sales Deal"
+                >
+                  <Briefcase className="w-3.5 h-3.5" />
+                  {isConverting ? "Converting..." : "Convert to Sale Deal"}
+                </button>
+              )}
               {deal.dueDate && (
                 <div className="text-[11px] font-bold text-[#111111] bg-[#C7F33C] px-3 py-1 rounded-full whitespace-nowrap mr-2">
                   DUE: {new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}
@@ -1115,6 +1500,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               )}
               <button
                 onClick={onClose}
+                type="button"
+                aria-label="Close card panel"
                 className="p-2 hover:bg-[#3A3B3C] rounded-full transition-colors text-slate-400"
               >
                 <X className="w-5 h-5" />
@@ -1128,64 +1515,114 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               <div className="flex items-center justify-between w-full mb-2">
                 <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
                   {activeTab === 'summary' ? (
-                    <Wand2 className="w-5 h-5 text-[#C7F33C]" />
+                    <Bot className="w-5 h-5 text-[#C7F33C]" />
                   ) : (
                     <Activity className="w-5 h-5 text-[#C7F33C]" />
                   )}
                   {activeTab === 'summary' ? 'AI Summary' : 'Activity Log'}
                 </h3>
 
-                <div className="flex items-center gap-2 overflow-x-auto" role="tablist" aria-label="Deal activity views">
-                  <button
-                    onClick={() => setActiveTab('activity')}
-                    role="tab"
-                    aria-selected={activeTab === 'activity'}
-                    className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                      activeTab === 'activity'
-                        ? 'bg-[#C7F33C] text-black'
-                        : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                    }`}
-                  >
-                    <MessageSquare className="w-4 h-4" /> Activity
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('system')}
-                    role="tab"
-                    aria-selected={activeTab === 'system'}
-                    className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                      activeTab === 'system'
-                        ? 'bg-[#C7F33C] text-black'
-                        : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                    }`}
-                  >
-                    <MessageSquare className="w-4 h-4" /> System
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('summary')}
-                    role="tab"
-                    aria-selected={activeTab === 'summary'}
-                    className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                      activeTab === 'summary'
-                        ? 'bg-[#C7F33C] text-black'
-                        : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                    }`}
-                  >
-                    <Wand2 className="w-4 h-4" /> AI Summary
-                  </button>
+                {activeTab !== 'summary' ? (
+                  <div className="flex items-center gap-2 overflow-x-auto" role="tablist" aria-label="Deal activity views">
+                    <button
+                      onClick={() => setActiveTab('activity')}
+                      role="tab"
+                      aria-selected={activeTab === 'activity'}
+                      className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
+                        activeTab === 'activity'
+                          ? 'bg-[#C7F33C] text-black'
+                          : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
+                      }`}
+                    >
+                      <MessageSquare className="w-4 h-4" /> Activity
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('system')}
+                      role="tab"
+                      aria-selected={activeTab === 'system'}
+                      className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
+                        activeTab === 'system'
+                          ? 'bg-[#C7F33C] text-black'
+                          : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
+                      }`}
+                    >
+                      <MessageSquare className="w-4 h-4" /> System
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2" role="tablist" aria-label="AI Summary views">
+                    <button
+                      type="button"
+                      onClick={() => setSummaryViewMode('summary')}
+                      role="tab"
+                      aria-selected={summaryViewMode === 'summary'}
+                      className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors cursor-pointer ${
+                        summaryViewMode === 'summary'
+                          ? 'bg-[#C7F33C] text-black font-semibold'
+                          : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
+                      }`}
+                    >
+                      <Bot className="w-4 h-4" /> Summary
+                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSummaryViewMode('prompt');
+                          handleLoadPromptConfig();
+                        }}
+                        role="tab"
+                        aria-selected={summaryViewMode === 'prompt'}
+                        className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors cursor-pointer ${
+                          summaryViewMode === 'prompt'
+                            ? 'bg-[#C7F33C] text-black font-semibold'
+                            : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
+                        }`}
+                      >
+                        <Settings className="w-4 h-4" /> Prompt Settings
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {activeTab === 'summary' && (
+                <div className="flex items-center gap-2 mt-1 flex-wrap w-full justify-end">
+                  <p className="text-sm text-slate-400">
+                    {summaryViewMode === 'prompt'
+                      ? ""
+                      : dealSummaryResponse?.generatedAt
+                        ? `Last summarized: ${formatDateTime(dealSummaryResponse.generatedAt)}`
+                        : "Summarize deal status, key highlights, and next steps in one click."}
+                  </p>
+                  {summaryViewMode === 'summary' && dealSummaryResponse?.data && dealSummaryResponse?.generatedAt && (
+                    dealSummaryResponse.isOutdated ? (
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#3A3B3C] text-slate-200 border border-[#C7F33C]/60 text-xs font-medium flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] animate-pulse" />
+                        New updates available
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#3A3B3C] text-slate-300 border border-[#4E4F50] text-xs font-medium flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C]" />
+                        Up to date
+                      </span>
+                    )
+                  )}
                 </div>
-              </div>
+              )}
 
-              {/* Search Bar */}
-              <div className="relative mt-3 mb-2">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                <input
-                  type="text"
-                  placeholder={activeTab === 'summary' ? 'Search AI summaries...' : 'Search updates...'}
-                  value={activitySearchQuery}
-                  onChange={(e) => setActivitySearchQuery(e.target.value)}
-                  className="w-full bg-[#3A3B3C] hover:bg-[#4E4F50] border border-[#4E4F50] rounded-full pl-10 pr-4 py-2 text-sm text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors placeholder:text-slate-400"
-                />
-              </div>
+              {/* Search Bar (เฉพาะแท็บ Activity และ System) */}
+              {activeTab !== 'summary' && (
+                <div className="relative mt-3 mb-2">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                  <input
+                    type="text"
+                    placeholder="Search updates..."
+                    value={activitySearchQuery}
+                    onChange={(e) => setActivitySearchQuery(e.target.value)}
+                    className="w-full bg-[#3A3B3C] hover:bg-[#4E4F50] border border-[#4E4F50] rounded-full pl-10 pr-4 py-2 text-sm text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors placeholder:text-slate-400"
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -1268,7 +1705,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       setNewLog(prev => prev ? `${prev} @${username} ` : `@${username} `);
                                       if (inputRef.current) inputRef.current.focus();
                                     }}
-                                    onImageClick={(url) => setPreviewImage(url)}
+                                    onImageClick={handleOpenPreview}
                                   />
                                 );
                               })}
@@ -1280,56 +1717,841 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   )}
 
                   {activeTab === 'summary' && (
-                    <div className="flex flex-col gap-4 mt-2">
-                      {(() => {
-                        if (isLoadingAISummaries) {
-                          return (
-                            <div className="flex flex-col gap-4 mt-4 w-full">
-                              {[1, 2, 3].map(i => (
-                                <div key={i} className="flex gap-3 animate-pulse">
-                                  <div className="w-10 h-10 rounded-full bg-[#3A3B3C] shrink-0" />
-                                  <div className="flex flex-col gap-2 flex-1">
-                                    <div className="w-3/4 h-16 bg-[#3A3B3C] rounded-2xl rounded-tl-sm" />
-                                    <div className="w-24 h-3 bg-[#3A3B3C] rounded-full ml-2" />
-                                  </div>
+                    <div className="flex flex-col gap-5 mt-2">
+                      {summaryViewMode === 'prompt' && isAdmin ? (
+                        <div className="flex flex-col gap-5 pb-24">
+                          {isLoadingPrompt ? (
+                            <div className="flex flex-col items-center justify-center py-16 gap-3">
+                              <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
+                              <p className="text-xs text-slate-400">Loading prompt configuration...</p>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-4">
+                              {/* 1. System Instruction */}
+                              <div className="flex flex-col gap-2 p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
+                                    1. System Instruction (Core Rules & Persona)
+                                  </span>
                                 </div>
-                              ))}
+                                <textarea
+                                  ref={systemInstructionRef}
+                                  value={systemInstructionInput}
+                                  onChange={e => {
+                                    setSystemInstructionInput(e.target.value);
+                                    autoResizeTextarea(e.target);
+                                  }}
+                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-sm text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
+                                  placeholder="Enter system prompt instruction..."
+                                />
+                              </div>
+
+                              {/* 2. Task Instruction */}
+                              <div className="flex flex-col gap-2 p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
+                                    2. Task Instructions (Analysis Topics & Guidelines)
+                                  </span>
+                                </div>
+                                <textarea
+                                  ref={taskInstructionRef}
+                                  value={taskInstructionInput}
+                                  onChange={e => {
+                                    setTaskInstructionInput(e.target.value);
+                                    autoResizeTextarea(e.target);
+                                  }}
+                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-sm text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
+                                  placeholder="Enter task instruction and topics..."
+                                />
+                              </div>
+
+                              {/* 3. JSON Schema (Structured Output Definition) */}
+                              <div className="flex flex-col gap-2 p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
+                                    3. JSON Schema (Structured Output Definition)
+                                  </span>
+                                </div>
+                                <textarea
+                                  ref={jsonSchemaRef}
+                                  value={jsonSchemaInput}
+                                  onChange={e => {
+                                    setJsonSchemaInput(e.target.value);
+                                    autoResizeTextarea(e.target);
+                                  }}
+                                  rows={12}
+                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-sm text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
+                                  placeholder="Enter JSON Schema..."
+                                />
+                              </div>
+
+                              {/* Bottom Action Row */}
+                              <div className="flex items-center justify-between pt-4 border-t border-[#4E4F50]">
+                                <button
+                                  type="button"
+                                  onClick={handleResetPrompt}
+                                  disabled={isSavingPrompt || isLoadingPrompt}
+                                  className="px-4 py-2 text-sm font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                                >
+                                  Reset to Default
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={handleSavePrompt}
+                                  disabled={isSavingPrompt || isLoadingPrompt}
+                                  className="px-6 py-2.5 text-sm font-bold bg-[#C7F33C] hover:bg-[#b0d635] text-black rounded-xl transition-colors flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                                >
+                                  {isSavingPrompt ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                  <span>{isSavingPrompt ? "Saving..." : "Save Prompt"}</span>
+                                </button>
+                              </div>
                             </div>
-                          );
-                        }
+                          )}
+                        </div>
+                      ) : (
+                        /* Standard Deal Summary View */
+                        <>
+                          {/* 🎯 AI Deal Accelerators Box */}
+                          {!isGeneratingSummary && (
+                            <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-3 mb-2">
+                              {/* Header & Toggle Bar */}
+                              <div className="flex items-center justify-between">
+                                <button
+                                  type="button"
+                                  onClick={() => setIsAcceleratorsExpanded(prev => !prev)}
+                                  className="flex items-center gap-2.5 text-left group cursor-pointer focus:outline-none"
+                                >
+                                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                    <span>AI Deal Accelerators</span>
+                                  </span>
+                                  {pendingQuestionsCount > 0 ? (
+                                    <span className="px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 text-xs font-semibold">
+                                      {pendingQuestionsCount} Pending
+                                    </span>
+                                  ) : acceleratorsState ? (
+                                    <span className="px-2.5 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] border border-[#C7F33C]/30 text-xs font-semibold flex items-center gap-1">
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>All Clear</span>
+                                    </span>
+                                  ) : null}
+                                  <div className="text-slate-400 group-hover:text-slate-200 transition-colors ml-1">
+                                    {isAcceleratorsExpanded ? (
+                                      <ChevronUp className="w-4 h-4" />
+                                    ) : (
+                                      <ChevronDown className="w-4 h-4" />
+                                    )}
+                                  </div>
+                                </button>
 
-                        let summaries = aiSummaries;
+                                <button
+                                  type="button"
+                                  onClick={handleRefreshAccelerators}
+                                  disabled={isGeneratingAccelerators}
+                                  className="px-3 py-1.5 rounded-full bg-[#252728] hover:bg-[#4E4F50] text-xs font-semibold text-slate-200 hover:text-white border border-[#4E4F50] flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                  title="Re-scan and identify bottlenecks"
+                                >
+                                  <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingAccelerators ? 'animate-spin text-[#C7F33C]' : ''}`} />
+                                  <span>{isGeneratingAccelerators ? 'Scanning...' : 'Rescan'}</span>
+                                </button>
+                              </div>
 
-                        if (activitySearchQuery.trim()) {
-                          const query = activitySearchQuery.toLowerCase();
-                          summaries = summaries.filter(event => {
-                            const revision = event.currentRevision;
-                            return revision?.summary.toLowerCase().includes(query) ||
-                              revision?.eventType.toLowerCase().includes(query);
-                          });
-                        }
+                              {/* Collapsible Content */}
+                              {isAcceleratorsExpanded && (
+                                <div className="flex flex-col gap-3 pt-1">
+                                  {/* Target Goal Milestone */}
+                                  <div className="flex flex-col gap-2 p-3.5 rounded-2xl bg-[#252728] border border-[#4E4F50]/60">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                                        <Target className="w-4 h-4 text-[#C7F33C]" />
+                                        <span>TARGET GOAL</span>
+                                        <span className="text-slate-500 font-normal">
+                                          ({acceleratorsState?.goalSource === 'USER_OVERRIDE' ? 'Custom' : 'AI Inferred'})
+                                        </span>
+                                      </div>
+                                      {!isEditingGoal && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setGoalInput(acceleratorsState?.targetGoal || deal.topic);
+                                            setIsEditingGoal(true);
+                                          }}
+                                          className="text-xs text-slate-400 hover:text-[#C7F33C] transition-colors cursor-pointer"
+                                        >
+                                          Edit Goal
+                                        </button>
+                                      )}
+                                    </div>
 
-                        if (summaries.length === 0) {
-                          return (
-                            <div className="text-center py-10 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
-                              <p className="text-sm text-slate-300 font-medium">{activitySearchQuery.trim() ? "No AI summaries found." : "No AI summaries yet."}</p>
-                              <p className="text-xs text-slate-400 mt-1">{activitySearchQuery.trim() ? "Try searching for something else." : "AI will automatically summarize events here."}</p>
+                                    {isEditingGoal ? (
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <input
+                                          type="text"
+                                          value={goalInput}
+                                          onChange={e => setGoalInput(e.target.value)}
+                                          onKeyDown={e => {
+                                            if (e.key === 'Enter') handleSaveGoal();
+                                            if (e.key === 'Escape') setIsEditingGoal(false);
+                                          }}
+                                          placeholder="Define the primary goal of this deal..."
+                                          className="flex-1 bg-[#3A3B3C] border border-[#C7F33C] rounded-full px-4 py-2 text-sm text-slate-100 outline-none"
+                                          autoFocus
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={handleSaveGoal}
+                                          disabled={isSavingGoal}
+                                          className="px-4 py-2 rounded-full bg-[#C7F33C] text-black text-sm font-bold hover:bg-[#b0d635] transition-colors cursor-pointer disabled:opacity-50"
+                                        >
+                                          {isSavingGoal ? 'Saving...' : 'Save'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setIsEditingGoal(false)}
+                                          className="px-3 py-2 text-sm text-slate-400 hover:text-slate-200 cursor-pointer"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <p className="text-sm text-slate-200 font-medium leading-relaxed">
+                                        {acceleratorsState?.targetGoal || (isLoadingAccelerators ? 'Loading goal...' : `Deliver results for ${deal.topic}`)}
+                                      </p>
+                                    )}
+                                  </div>
+
+                                  {/* Sub-tabs: Pending (X) vs Answered (Y) */}
+                                  <div className="flex items-center justify-between gap-2 pt-1 pb-0.5">
+                                    <div className="flex items-center gap-1.5 p-1 rounded-full bg-[#252728] border border-[#4E4F50]/60">
+                                      <button
+                                        type="button"
+                                        onClick={() => setAcceleratorTab('pending')}
+                                        className={`px-3.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                          acceleratorTab === 'pending'
+                                            ? 'bg-[#3A3B3C] text-slate-100 border border-[#4E4F50]'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                        }`}
+                                      >
+                                        <span>Pending</span>
+                                        <span className={`px-1.5 py-0.2 rounded-full text-[11px] font-bold ${
+                                          pendingQuestions.length > 0 ? 'bg-amber-400/20 text-amber-300' : 'bg-[#4E4F50]/40 text-slate-400'
+                                        }`}>
+                                          {pendingQuestions.length}
+                                        </span>
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => setAcceleratorTab('answered')}
+                                        className={`px-3.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                          acceleratorTab === 'answered'
+                                            ? 'bg-[#3A3B3C] text-slate-100 border border-[#4E4F50]'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                        }`}
+                                      >
+                                        <span>Answered</span>
+                                        <span className={`px-1.5 py-0.2 rounded-full text-[11px] font-bold ${
+                                          answeredQuestions.length > 0 ? 'bg-[#C7F33C]/20 text-[#C7F33C]' : 'bg-[#4E4F50]/40 text-slate-400'
+                                        }`}>
+                                          {answeredQuestions.length}
+                                        </span>
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Questions List (Facebook / Activity Thread Style) */}
+                                  {acceleratorTab === 'pending' ? (
+                                    pendingQuestions.length > 0 ? (
+                                      <div className="flex flex-col gap-4">
+                                        {pendingQuestions.map((q) => {
+                                          const questionDate = q.createdAt || acceleratorsState?.lastGeneratedAt || acceleratorsState?.updatedAt;
+                                          return (
+                                            <div
+                                              key={q.id}
+                                              className="p-4 rounded-2xl border bg-[#252728] border-amber-500/30 flex flex-col gap-3.5 transition-all"
+                                            >
+                                              {/* Thread 1: AI Agent Post (Question) */}
+                                              <div className="flex gap-3">
+                                                <div className="w-9 h-9 rounded-full bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C] shrink-0 mt-0.5">
+                                                  <Bot className="w-5 h-5" />
+                                                </div>
+
+                                                <div className="flex flex-col flex-1 min-w-0">
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                      <span className="text-sm font-bold text-slate-100">AI Agent</span>
+                                                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] font-semibold border border-[#C7F33C]/20">
+                                                        Bot
+                                                      </span>
+                                                      {questionDate && (
+                                                        <span className="text-xs text-slate-500">
+                                                          • {formatDateTime(questionDate)}
+                                                        </span>
+                                                      )}
+                                                    </div>
+
+                                                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400/10 text-amber-300 shrink-0 font-semibold border border-amber-400/20">
+                                                      Waiting for reply
+                                                    </span>
+                                                  </div>
+
+                                                  <p className="text-sm text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
+                                                    {q.question}
+                                                  </p>
+
+                                                  {q.reason && (
+                                                    <div className="mt-1 text-sm text-slate-400 flex items-center gap-1.5">
+                                                      <span>💡</span>
+                                                      <span>{q.reason}</span>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </div>
+
+                                              {/* Thread 2: Reply Area */}
+                                              <div className="ml-4 pl-4 border-l-2 border-[#4E4F50]/40 flex flex-col gap-2.5 pt-1">
+                                                {canAnswerAccelerators ? (
+                                                  <>
+                                                    <div className="flex flex-col gap-2">
+                                                      {q.choices.map((choice, cIdx) => (
+                                                        <button
+                                                          key={cIdx}
+                                                          type="button"
+                                                          disabled={isAnsweringQuestionId === q.id}
+                                                          onClick={() => handleAnswerAccelerator(q.id, choice)}
+                                                          className="w-full text-left px-4 py-2.5 rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] text-sm font-medium text-slate-200 hover:text-white border border-[#4E4F50] hover:border-[#C7F33C] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group"
+                                                        >
+                                                          <span>{choice}</span>
+                                                          <span className="opacity-0 group-hover:opacity-100 text-[#C7F33C] text-xs font-bold transition-opacity">
+                                                            Reply →
+                                                          </span>
+                                                        </button>
+                                                      ))}
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between pt-1">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setShowCustomInput(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
+                                                        className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer transition-colors"
+                                                      >
+                                                        {showCustomInput[q.id] ? 'Hide' : '+ Type custom reply'}
+                                                      </button>
+                                                    </div>
+
+                                                    {showCustomInput[q.id] && (
+                                                      <div className="flex items-center gap-2 mt-1">
+                                                        <input
+                                                          type="text"
+                                                          value={customAnswers[q.id] || ''}
+                                                          onChange={e => setCustomAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
+                                                          onKeyDown={e => {
+                                                            if (e.key === 'Enter') handleAnswerAccelerator(q.id, customAnswers[q.id] || '');
+                                                          }}
+                                                          placeholder="Type your reply..."
+                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C]"
+                                                        />
+                                                        <button
+                                                          type="button"
+                                                          disabled={isAnsweringQuestionId === q.id || !customAnswers[q.id]?.trim()}
+                                                          onClick={() => handleAnswerAccelerator(q.id, customAnswers[q.id] || '')}
+                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-sm font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                                                        >
+                                                          Reply
+                                                        </button>
+                                                      </div>
+                                                    )}
+                                                  </>
+                                                ) : (
+                                                  <div className="px-4 py-2.5 rounded-full bg-[#3A3B3C]/70 border border-[#4E4F50]/60 text-xs text-slate-400 flex items-center gap-2">
+                                                    <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                                    <span>
+                                                      Only the Card Owner ({deal.owner.name}) or an Admin can reply to this question.
+                                                    </span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="p-4 rounded-2xl bg-[#252728] border border-[#4E4F50]/40 text-center flex flex-col items-center gap-1.5">
+                                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] font-semibold border border-[#C7F33C]/30">
+                                          ✓ All Pending Questions Resolved
+                                        </span>
+                                        <p className="text-xs text-slate-400 mt-1">
+                                          No bottleneck questions pending. Check the &quot;Answered&quot; tab to review confirmed decisions.
+                                        </p>
+                                      </div>
+                                    )
+                                  ) : (
+                                    /* Answered Tab Content */
+                                    answeredQuestions.length > 0 ? (
+                                      <div className="flex flex-col gap-4">
+                                        {answeredQuestions.map((q) => {
+                                          const questionDate = q.createdAt || acceleratorsState?.lastGeneratedAt || acceleratorsState?.updatedAt;
+                                          return (
+                                            <div
+                                              key={q.id}
+                                              className="p-4 rounded-2xl border bg-[#252728]/50 border-[#4E4F50]/40 flex flex-col gap-3.5 transition-all"
+                                            >
+                                              {/* Thread 1: AI Agent Post (Question) */}
+                                              <div className="flex gap-3">
+                                                <div className="w-9 h-9 rounded-full bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C] shrink-0 mt-0.5">
+                                                  <Bot className="w-5 h-5" />
+                                                </div>
+
+                                                <div className="flex flex-col flex-1 min-w-0">
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                      <span className="text-sm font-bold text-slate-100">AI Agent</span>
+                                                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] font-semibold border border-[#C7F33C]/20">
+                                                        Bot
+                                                      </span>
+                                                      {questionDate && (
+                                                        <span className="text-xs text-slate-500">
+                                                          • {formatDateTime(questionDate)}
+                                                        </span>
+                                                      )}
+                                                    </div>
+
+                                                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] shrink-0 font-semibold border border-[#C7F33C]/20">
+                                                      Answered
+                                                    </span>
+                                                  </div>
+
+                                                  <p className="text-sm text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
+                                                    {q.question}
+                                                  </p>
+
+                                                  {q.reason && (
+                                                    <div className="mt-1 text-sm text-slate-400 flex items-center gap-1.5">
+                                                      <span>💡</span>
+                                                      <span>{q.reason}</span>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              </div>
+
+                                              {/* Thread 2: User Reply Bubble or Edit Form */}
+                                              <div className="ml-4 pl-4 border-l-2 border-[#4E4F50]/40 flex flex-col gap-2.5 pt-1">
+                                                {editingAnswerQuestionId === q.id ? (
+                                                  <div className="flex flex-col gap-2">
+                                                    <div className="flex flex-col gap-2">
+                                                      {q.choices.map((choice, cIdx) => (
+                                                        <button
+                                                          key={cIdx}
+                                                          type="button"
+                                                          disabled={isAnsweringQuestionId === q.id}
+                                                          onClick={async () => {
+                                                            await handleAnswerAccelerator(q.id, choice);
+                                                            setEditingAnswerQuestionId(null);
+                                                          }}
+                                                          className={`w-full text-left px-4 py-2.5 rounded-full text-sm font-medium border transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group ${
+                                                            q.answer === choice
+                                                              ? 'bg-[#C7F33C]/20 text-[#C7F33C] border-[#C7F33C]'
+                                                              : 'bg-[#3A3B3C] hover:bg-[#4E4F50] text-slate-200 hover:text-white border-[#4E4F50] hover:border-[#C7F33C]'
+                                                          }`}
+                                                        >
+                                                          <span>{choice}</span>
+                                                          <span className="text-[#C7F33C] text-xs font-bold">
+                                                            {q.answer === choice ? 'Selected' : 'Choose →'}
+                                                          </span>
+                                                        </button>
+                                                      ))}
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between pt-1">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setShowEditCustomInput(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
+                                                        className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer transition-colors"
+                                                      >
+                                                        {showEditCustomInput[q.id] ? 'Hide' : '+ Type custom reply'}
+                                                      </button>
+
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setEditingAnswerQuestionId(null)}
+                                                        className="text-xs text-slate-400 hover:text-red-400 cursor-pointer transition-colors"
+                                                      >
+                                                        Cancel
+                                                      </button>
+                                                    </div>
+
+                                                    {showEditCustomInput[q.id] && (
+                                                      <div className="flex items-center gap-2 mt-1">
+                                                        <input
+                                                          type="text"
+                                                          value={editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id] : (q.answer || '')}
+                                                          onChange={e => setEditCustomAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
+                                                          onKeyDown={async (e) => {
+                                                            if (e.key === 'Enter') {
+                                                              const val = editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id] : (q.answer || '');
+                                                              await handleAnswerAccelerator(q.id, val);
+                                                              setEditingAnswerQuestionId(null);
+                                                            }
+                                                          }}
+                                                          placeholder="Type updated reply..."
+                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C]"
+                                                        />
+                                                        <button
+                                                          type="button"
+                                                          disabled={isAnsweringQuestionId === q.id || !(editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id]?.trim() : q.answer?.trim())}
+                                                          onClick={async () => {
+                                                            const val = editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id] : (q.answer || '');
+                                                            await handleAnswerAccelerator(q.id, val);
+                                                            setEditingAnswerQuestionId(null);
+                                                          }}
+                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-sm font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                                                        >
+                                                          Save
+                                                        </button>
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                ) : (
+                                                  <div className="flex gap-3 items-start justify-between">
+                                                    <div className="flex gap-3 items-start flex-1 min-w-0">
+                                                      <div className="w-8 h-8 rounded-full bg-[#4E4F50] shrink-0 overflow-hidden mt-0.5">
+                                                        <img
+                                                          src={
+                                                            q.answeredByImage ||
+                                                            (q.answeredBy === session?.user?.name ? session?.user?.image : null) ||
+                                                            (q.answeredBy === deal.owner.name ? deal.owner.image : null) ||
+                                                            `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(q.answeredBy || 'User')}`
+                                                          }
+                                                          alt={q.answeredBy || 'User'}
+                                                          className="w-full h-full object-cover"
+                                                        />
+                                                      </div>
+                                                      <div className="flex flex-col flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                          <span className="text-sm font-bold text-slate-200">
+                                                            {q.answeredBy || 'User'}
+                                                          </span>
+                                                          {q.answeredAt && (
+                                                            <span className="text-xs text-slate-500">
+                                                              • {formatDateTime(q.answeredAt)} {q.isEdited && <span className="text-amber-400/80 font-normal">(edited)</span>}
+                                                            </span>
+                                                          )}
+                                                        </div>
+                                                        <div className="mt-1.5 inline-block">
+                                                          <div className="px-4 py-2 rounded-full bg-[#3A3B3C] border border-[#4E4F50] text-sm text-[#C7F33C] font-medium leading-normal inline-block">
+                                                            &quot;{q.answer}&quot;
+                                                          </div>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+
+                                                    {canAnswerAccelerators && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          setEditingAnswerQuestionId(q.id);
+                                                          setEditCustomAnswers(prev => ({ ...prev, [q.id]: q.answer || '' }));
+                                                        }}
+                                                        className="text-xs px-2.5 py-1 rounded-full text-slate-400 hover:text-slate-100 hover:bg-[#3A3B3C] border border-transparent hover:border-[#4E4F50] transition-all cursor-pointer shrink-0 flex items-center gap-1"
+                                                        title="Edit your response"
+                                                      >
+                                                        <Pencil className="w-3 h-3" />
+                                                        <span>Edit</span>
+                                                      </button>
+                                                    )}
+                                                  </div>
+                                                )}
+                                              </div>
+
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : (
+                                      <div className="p-4 rounded-2xl bg-[#252728] border border-[#4E4F50]/40 text-center">
+                                        <p className="text-sm text-slate-400">No answered questions yet.</p>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
                             </div>
-                          );
-                        }
+                          )}
 
-                        return summaries.map(event => (
-                          <div key={event.id} className="mb-4">
-                            <AISummaryCard
-                              event={event}
-                              onSave={async (eventId, expectedRevisionId, summary) => {
-                                await correctDealAISummary({ dealId: deal.id, eventId, expectedRevisionId, summary });
-                                await loadAISummaries();
-                              }}
-                            />
-                          </div>
-                        ));
-                      })()}
+                          {/* 1. Loading Initial State */}
+                          {isLoadingDealSummary && (
+                            <div className="flex flex-col gap-4 mt-2 w-full animate-pulse">
+                              <div className="h-28 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]" />
+                              <div className="h-24 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]" />
+                              <div className="h-24 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]" />
+                            </div>
+                          )}
+
+                          {/* 2. Generating in Progress */}
+                          {!isLoadingDealSummary && isGeneratingSummary && (
+                            <div className="flex flex-col items-center justify-center p-8 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] text-center gap-4">
+                              <div className="w-14 h-14 rounded-2xl bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C] animate-pulse">
+                                <Sparkles className="w-7 h-7 animate-spin" />
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                <h4 className="text-base font-semibold text-slate-100">Analyzing deal and recent activity logs...</h4>
+                                <p className="text-xs text-slate-400 max-w-sm">
+                                  Extracting key updates, customer discussions, blockers, and next steps with AI.
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 text-xs text-[#C7F33C]">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span>Usually takes around 3–5 seconds</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* 3. Empty State (No summary yet) */}
+                          {!isLoadingDealSummary && !isGeneratingSummary && !dealSummaryResponse?.data && (
+                            <div className="flex flex-col items-center justify-center p-8 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] text-center gap-5">
+                              <div className="w-14 h-14 rounded-2xl bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C]">
+                                <Sparkles className="w-7 h-7" />
+                              </div>
+                              <div className="flex flex-col gap-2 max-w-md">
+                                <h4 className="text-lg font-bold text-slate-100">Instant Deal Summary</h4>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                  Save time reading lengthy activity logs. AI summarizes the current status, key highlights, blockers, and next steps in one click.
+                                </p>
+                              </div>
+
+                              {summaryError && (
+                                <div className="w-full max-w-md p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 text-left flex flex-col gap-2">
+                                  <div className="flex items-center gap-2 font-medium text-amber-300">
+                                    <AlertCircle className="w-4 h-4 shrink-0" />
+                                    <span>Alert</span>
+                                  </div>
+                                  <p className="text-[11px] leading-relaxed text-slate-300">{summaryError}</p>
+                                </div>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={handleGenerateSummary}
+                                disabled={isGeneratingSummary}
+                                className="px-6 py-2.5 rounded-full bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <Sparkles className="w-4 h-4" />
+                                ✨ Summarize Deal
+                              </button>
+                            </div>
+                          )}
+
+                          {/* 4. Ready State (Summary Content) */}
+                          {!isLoadingDealSummary && !isGeneratingSummary && dealSummaryResponse?.data && (
+                            <div className="flex flex-col gap-4">
+                              {/* Outdated Warning Notice */}
+                              {dealSummaryResponse.isOutdated && (
+                                <div className="p-3.5 bg-[#3A3B3C] border border-[#C7F33C]/50 rounded-2xl flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div className="w-8 h-8 rounded-xl bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C] shrink-0">
+                                      <Sparkles className="w-4 h-4" />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-100">
+                                          มีกิจกรรมใหม่เพิ่มเข้ามาหลังจากการสรุปล่าสุด
+                                        </span>
+                                        {dealSummaryResponse.newerActivitiesCount && dealSummaryResponse.newerActivitiesCount > 0 ? (
+                                          <span className="px-1.5 py-0.5 rounded-full bg-[#C7F33C] text-black font-bold text-[10px]">
+                                            +{dealSummaryResponse.newerActivitiesCount} new
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <p className="text-[11px] text-slate-400">
+                                        เนื้อหาสรุปด้านล่างยังไม่ได้รวมกิจกรรมล่าสุด กด Re-Summarize เพื่ออัปเดต
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={isGeneratingSummary}
+                                    onClick={handleGenerateSummary}
+                                    className="px-3.5 py-1.5 rounded-xl bg-[#C7F33C] hover:bg-[#b0d635] text-black text-xs font-bold shrink-0 transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                  >
+                                    <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingSummary ? 'animate-spin' : ''}`} />
+                                    <span>Re-Summarize</span>
+                                  </button>
+                                </div>
+                              )}
+
+                              {summaryError && (
+                                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-200 flex items-center gap-2">
+                                  <AlertCircle className="w-4 h-4 shrink-0" />
+                                  <span>{summaryError}</span>
+                                </div>
+                              )}
+
+                              {/* Section 1: CURRENT STATUS */}
+                              {dealSummaryResponse.data.overview && (
+                                <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
+                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                      CURRENT STATUS
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-slate-100 leading-relaxed whitespace-pre-wrap font-normal">
+                                    {dealSummaryResponse.data.overview}
+                                  </p>
+                                </div>
+                              )}
+
+                              {/* Section 2: KEY HIGHLIGHTS */}
+                              {Array.isArray(dealSummaryResponse.data.keyHighlights) && dealSummaryResponse.data.keyHighlights.length > 0 && (
+                                <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
+                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                      KEY HIGHLIGHTS
+                                    </span>
+                                  </div>
+                                  <ul className="flex flex-col gap-2">
+                                    {dealSummaryResponse.data.keyHighlights.map((point, idx) => (
+                                      <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] mt-1.5 shrink-0" />
+                                        <span>{point}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+
+                              {/* Section 3: BLOCKERS & RISKS */}
+                              {Array.isArray(dealSummaryResponse.data.blockers) && dealSummaryResponse.data.blockers.length > 0 && (
+                                <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-rose-400" />
+                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                      BLOCKERS & RISKS
+                                    </span>
+                                  </div>
+                                  <ul className="flex flex-col gap-2">
+                                    {dealSummaryResponse.data.blockers.map((blocker, idx) => (
+                                      <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-rose-400 mt-1.5 shrink-0" />
+                                        <span>{blocker}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+
+                              {/* Section 4: RECOMMENDED NEXT STEPS */}
+                              {Array.isArray(dealSummaryResponse.data.nextSteps) && dealSummaryResponse.data.nextSteps.length > 0 && (
+                                <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
+                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                      RECOMMENDED NEXT STEPS
+                                    </span>
+                                  </div>
+                                  <ul className="flex flex-col gap-2">
+                                    {dealSummaryResponse.data.nextSteps.map((step, idx) => (
+                                      <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] mt-2 shrink-0" />
+                                        <span>{step}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+
+                              {/* Dynamic Dimensions from Custom JSON Schema */}
+                              {Object.entries(dealSummaryResponse.data).map(([key, value]) => {
+                                if (['overview', 'keyHighlights', 'blockers', 'nextSteps'].includes(key)) {
+                                  return null;
+                                }
+                                if (value === undefined || value === null || value === '') return null;
+
+                                const formattedTitle = key
+                                  .replace(/([A-Z])/g, ' $1')
+                                  .replace(/[_-]/g, ' ')
+                                  .toUpperCase()
+                                  .trim();
+
+                                return (
+                                  <div key={key} className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
+                                    <div className="flex items-center gap-2">
+                                      <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
+                                      <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                        {formattedTitle}
+                                      </span>
+                                    </div>
+                                    {Array.isArray(value) ? (
+                                      <ul className="flex flex-col gap-2">
+                                        {value.map((item, idx) => (
+                                          <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] mt-2 shrink-0" />
+                                            <span>{typeof item === 'object' ? JSON.stringify(item) : String(item)}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    ) : typeof value === 'object' ? (
+                                      <pre className="text-xs text-slate-200 bg-[#252728] p-3 rounded-xl overflow-x-auto font-mono">
+                                        {JSON.stringify(value, null, 2)}
+                                      </pre>
+                                    ) : (
+                                      <p className="text-sm text-slate-100 leading-relaxed whitespace-pre-wrap font-normal">
+                                        {String(value)}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })}
+
+                              {/* Footer Actions */}
+                              <div className="flex items-center justify-between pt-4 pb-6 border-t border-[#3A3B3C]">
+                                <div className="flex items-center justify-between w-full">
+                                  {dealSummaryResponse?.usage && (
+                                    <div 
+                                      className="text-xs px-2.5 py-2 rounded-xl bg-[#252728] text-slate-300 flex items-center gap-1.5 font-mono"
+                                      title={`Tokens: ${dealSummaryResponse.usage.inputTokens.toLocaleString()} input, ${dealSummaryResponse.usage.outputTokens.toLocaleString()} output`}
+                                    >
+                                      <Zap className="w-3.5 h-3.5 text-[#C7F33C]" />
+                                      <span>{dealSummaryResponse.usage.totalTokens.toLocaleString()} tokens</span>
+                                      <span className="text-[#4E4F50]">•</span>
+                                      <span className="text-[#C7F33C] font-semibold">
+                                        ≈ {dealSummaryResponse.usage.costThb < 0.01 ? '<0.01' : dealSummaryResponse.usage.costThb.toFixed(2)} THB
+                                      </span>
+                                    </div>
+                                  )}  
+                                  <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={handleCopySummary}
+                                    className="px-4 py-2 rounded-xl bg-[#3A3B3C] hover:bg-[#4E4F50] text-sm font-medium text-slate-200 hover:text-white flex items-center gap-2 transition-colors cursor-pointer border border-[#4E4F50]"
+                                    title="Copy summary to clipboard"
+                                  >
+                                    {isCopiedSummary ? <Check className="w-4 h-4 text-[#C7F33C]" /> : <Copy className="w-4 h-4 text-slate-400" />}
+                                    <span>{isCopiedSummary ? "Copied" : "Copy"}</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isGeneratingSummary}
+                                    onClick={handleGenerateSummary}
+                                    className="px-5 py-2 rounded-xl bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                                    title="Re-analyze and update summary"
+                                  >
+                                    <RefreshCw className={`w-4 h-4 ${isGeneratingSummary ? 'animate-spin' : ''}`} />
+                                    <span>{isGeneratingSummary ? 'Re-summarizing...' : 'Re-Summarize'}</span>
+                                  </button>
+                                  </div>  
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
                   )}
 
@@ -1352,7 +2574,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           );
                         }
 
-                        let sysLogs = localActivityLogs.filter(log => log.type === 'SYSTEM_UPDATE' && !log.sourceDomainEventId);
+                        let sysLogs = localActivityLogs.filter(log => log.type === 'SYSTEM_UPDATE');
 
                         if (activitySearchQuery.trim()) {
                           const query = activitySearchQuery.toLowerCase();
@@ -1402,7 +2624,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     </div>
                   )}
 
-                  {hasMoreLogs && (
+                  {activeTab === 'activity' && hasMoreLogs && (
                     <div ref={lastLogElementRef} className="py-4 flex justify-center mt-2">
                       {isLoadingMore ? (
                         <Loader2 className="w-6 h-6 animate-spin text-[#C7F33C]" />
@@ -1529,7 +2751,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             )}
 
             {activeTab === 'information' && (
-              <CustomerTab deal={deal} />
+              <CustomerTab deal={deal} onClose={onClose} />
             )}
 
             {activeTab === 'notes' && (
@@ -1537,7 +2759,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             )}
 
             {['sharedMedia'].includes(activeTab) && (
-              <SharedMediaTab deal={deal} activityLogs={localActivityLogs} onImageClick={setPreviewImage} />
+              <SharedMediaTab deal={deal} activityLogs={localActivityLogs} onImageClick={handleOpenPreview} />
             )}
           </div>
 
@@ -1716,24 +2938,105 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         </div>
       </div>
 
+
+
       {/* Lightbox Overlay */}
-      {previewImage && (
+      {previewLightbox && previewLightbox.images.length > 0 && (
         <div
-          className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center p-4"
-          onClick={() => setPreviewImage(null)}
+          className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center p-4 select-none animate-in fade-in duration-200"
+          onClick={() => setPreviewLightbox(null)}
         >
-          <button
-            className="absolute top-6 right-6 p-2 rounded-full bg-[#1C1C1D]/50 text-white hover:bg-[#C7F33C] hover:text-black transition-colors"
-            onClick={() => setPreviewImage(null)}
-          >
-            <X className="w-6 h-6" />
-          </button>
-          <img
-            src={previewImage}
-            className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
-            onClick={e => e.stopPropagation()}
-            alt="Preview"
-          />
+          {/* Header Controls: Counter badge + Close button */}
+          <div className="absolute top-6 inset-x-6 flex items-center justify-between z-10 pointer-events-none">
+            {previewLightbox.images.length > 1 ? (
+              <div className="bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-full backdrop-blur-md pointer-events-auto">
+                {previewLightbox.currentIndex + 1} / {previewLightbox.images.length}
+              </div>
+            ) : <div />}
+
+            <button
+              type="button"
+              className="p-2.5 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer pointer-events-auto shadow-lg"
+              onClick={() => setPreviewLightbox(null)}
+              title="Close (Esc)"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Previous Button */}
+          {previewLightbox.images.length > 1 && (
+            <button
+              type="button"
+              className="absolute left-6 z-10 p-3 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer backdrop-blur-md shadow-2xl hover:scale-105 active:scale-95"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPreviewLightbox(prev => {
+                  if (!prev) return null;
+                  const prevIdx = prev.currentIndex > 0 ? prev.currentIndex - 1 : prev.images.length - 1;
+                  return { ...prev, currentIndex: prevIdx };
+                });
+              }}
+              title="Previous (Left Arrow)"
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+          )}
+
+          {/* Main Image */}
+          <div className="relative max-w-full max-h-full flex items-center justify-center">
+            <img
+              key={previewLightbox.images[previewLightbox.currentIndex]}
+              src={previewLightbox.images[previewLightbox.currentIndex]}
+              className="max-w-[90vw] max-h-[85vh] object-contain rounded-xl shadow-2xl transition-all"
+              onClick={e => e.stopPropagation()}
+              alt={`Preview ${previewLightbox.currentIndex + 1}`}
+            />
+          </div>
+
+          {/* Next Button */}
+          {previewLightbox.images.length > 1 && (
+            <button
+              type="button"
+              className="absolute right-6 z-10 p-3 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer backdrop-blur-md shadow-2xl hover:scale-105 active:scale-95"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPreviewLightbox(prev => {
+                  if (!prev) return null;
+                  const nextIdx = prev.currentIndex < prev.images.length - 1 ? prev.currentIndex + 1 : 0;
+                  return { ...prev, currentIndex: nextIdx };
+                });
+              }}
+              title="Next (Right Arrow)"
+            >
+              <ChevronRight className="w-6 h-6" />
+            </button>
+          )}
+
+          {/* Bottom Thumbnail Strip */}
+          {previewLightbox.images.length > 1 && (
+            <div 
+              className="absolute bottom-6 inset-x-0 flex justify-center items-center gap-2 z-10 pointer-events-auto px-4 overflow-x-auto max-w-full"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="bg-[#1C1C1D]/80 border border-[#3A3B3C] p-1.5 rounded-2xl flex items-center gap-2 backdrop-blur-md shadow-xl">
+                {previewLightbox.images.map((imgUrl, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setPreviewLightbox(prev => prev ? { ...prev, currentIndex: idx } : null)}
+                    className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
+                      idx === previewLightbox.currentIndex
+                        ? "border-[#C7F33C] scale-105 shadow-md"
+                        : "border-transparent opacity-50 hover:opacity-100 hover:border-slate-500"
+                    }`}
+                  >
+                    <img src={imgUrl} alt="" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </>

@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Search, ChevronDown, Check } from "lucide-react";
+import { Search, ChevronDown, Check, X } from "lucide-react";
 
-interface Option {
+export interface Option {
   label: string;
   value: string;
+  searchTerms?: string;
 }
 
 interface SearchableSelectProps {
@@ -14,9 +15,17 @@ interface SearchableSelectProps {
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  isClearable?: boolean;
 }
 
-export function SearchableSelect({ options, value, onChange, placeholder = "Select an option...", className = "" }: SearchableSelectProps) {
+export function SearchableSelect({
+  options,
+  value,
+  onChange,
+  placeholder = "Select an option...",
+  className = "",
+  isClearable = false,
+}: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -31,20 +40,46 @@ export function SearchableSelect({ options, value, onChange, placeholder = "Sele
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const filteredOptions = options.filter(opt => opt.label.toLowerCase().includes(search.toLowerCase()));
-  const selectedOption = options.find(opt => opt.value === value);
+  const filteredOptions = options.filter((opt) => {
+    const q = search.toLowerCase().trim();
+    if (!q) return true;
+    const matchLabel = opt.label.toLowerCase().includes(q);
+    const matchTerms = opt.searchTerms ? opt.searchTerms.toLowerCase().includes(q) : false;
+    return matchLabel || matchTerms;
+  });
+
+  const selectedOption = options.find((opt) => opt.value === value);
 
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
         type="button"
-        onClick={() => { setIsOpen(!isOpen); setSearch(""); }}
+        onClick={() => {
+          setIsOpen(!isOpen);
+          setSearch("");
+        }}
         className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-4 text-left text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors text-sm flex items-center justify-between"
       >
-        <span className={selectedOption ? "text-slate-100" : "text-slate-500"}>
+        <span className={selectedOption ? "text-slate-100 truncate" : "text-slate-500 truncate"}>
           {selectedOption ? selectedOption.label : placeholder}
         </span>
-        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+          {isClearable && value && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange("");
+              }}
+              className="p-1 hover:bg-[#3A3B3C] rounded-full text-slate-400 hover:text-slate-200 transition-colors"
+              title="Clear"
+            >
+              <X className="w-3.5 h-3.5" />
+            </span>
+          )}
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </div>
       </button>
 
       {isOpen && (

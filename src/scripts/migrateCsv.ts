@@ -48,7 +48,7 @@ async function migrateProducts() {
   const data = JSON.parse(fs.readFileSync(path.join(cleanedPath, 'Products.json'), 'utf8'));
 
   for (const row of data) {
-    let sku = row.name || `SKU-${Math.random().toString(36).substr(2, 9)}`;
+    const sku = row.name || `SKU-${Math.random().toString(36).substr(2, 9)}`;
 
     const existing = await prisma.product.findFirst({ where: { name: row.name } });
     if (!existing) {
