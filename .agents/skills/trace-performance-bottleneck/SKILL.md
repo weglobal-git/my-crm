@@ -25,6 +25,8 @@ For the detailed procedure and stopping conditions, read [references/workflow.md
 
 When profiling this CRM's Pipeline page, EditDealPanel, or a similar Next.js + Prisma/Neon + Pusher interaction, read [references/pipeline-case-study.md](references/pipeline-case-study.md). It records measured bottlenecks, failed hypotheses, cache pitfalls, and fixes from two completed investigations.
 
+For real-world CRM performance problem logs and verified solutions collected across modules, consult the [problem-cases/](problem-cases/README.md) registry. Every agent encountering a newly solved bottleneck should document their case using [problem-cases/TEMPLATE.md](problem-cases/TEMPLATE.md).
+
 ## Measurement rules
 
 - Use `performance.now()` in browser and Node; use database-reported execution time for SQL.

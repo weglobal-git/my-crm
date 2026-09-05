@@ -36,6 +36,7 @@ interface PersonTableProps {
   onContactUpdated?: () => void;
   onAddPerson?: () => void;
   isLoading?: boolean;
+  onRowIntent?: () => void;
 }
 
 export function PersonTable({
@@ -44,6 +45,7 @@ export function PersonTable({
   selectedContactId,
   onSelectContact,
   isLoading = false,
+  onRowIntent,
 }: PersonTableProps) {
   // Get initials for avatar
   const getInitials = (name: string) => {
@@ -141,6 +143,7 @@ export function PersonTable({
                   <tr
                     key={contact.id}
                     onClick={() => onSelectContact(contact.id)}
+                    onMouseEnter={onRowIntent}
                     className={`group transition-colors cursor-pointer border-0 ${
                       isSelected ? "bg-[#2D2E30]" : "hover:bg-[#252728]"
                     }`}

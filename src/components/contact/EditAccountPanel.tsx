@@ -43,13 +43,31 @@ import {
 } from "@/lib/actions/contact";
 import { useDialog } from "@/providers/DialogProvider";
 import { usePermissions } from "@/providers/PermissionProvider";
+import dynamic from "next/dynamic";
 import { ProjectsTab } from "./ProjectsTab";
 import { EmailTab } from "./EmailTab";
-import { AccountAITab } from "./AccountAITab";
-import { SharedMediaTab } from "@/components/pipeline/SharedMediaTab";
+
+const AccountAITab = dynamic(() => import("./AccountAITab").then((m) => m.AccountAITab), {
+  loading: () => (
+    <div className="flex items-center justify-center h-64">
+      <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
+    </div>
+  ),
+  ssr: false,
+});
+
+const SharedMediaTab = dynamic(() => import("@/components/pipeline/SharedMediaTab").then((m) => m.SharedMediaTab), {
+  loading: () => (
+    <div className="flex items-center justify-center h-64">
+      <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
+    </div>
+  ),
+  ssr: false,
+});
 
 interface EditAccountPanelProps {
   companyId: string | null;
+  initialOverview?: AccountOverviewResult | null;
   isOpen: boolean;
   onClose: () => void;
   onAccountUpdated: () => void;
@@ -68,8 +86,29 @@ const formatDateTime = (date: Date | string) => {
   }).format(new Date(date));
 };
 
+const buildPersonForms = (contacts?: AccountOverviewResult['contacts']) => {
+  const forms: Record<string, {
+    name: string;
+    role: string;
+    contactDepartment: string;
+    email: string;
+    phone: string;
+  }> = {};
+  contacts?.forEach((c) => {
+    forms[c.id] = {
+      name: c.name || "",
+      role: c.role || "",
+      contactDepartment: c.contactDepartment || "",
+      email: c.email || "",
+      phone: c.phone || "",
+    };
+  });
+  return forms;
+};
+
 export function EditAccountPanel({
   companyId,
+  initialOverview = null,
   isOpen,
   onClose,
   onAccountUpdated,
@@ -79,9 +118,10 @@ export function EditAccountPanel({
 }: EditAccountPanelProps) {
   const { toast, confirm } = useDialog();
 
-  const [isLoading, setIsLoading] = useState(false);
+  const isInitialMatch = Boolean(initialOverview && companyId && initialOverview.company.id === companyId);
+  const [isLoading, setIsLoading] = useState(!isInitialMatch);
   const [isSavingDetails, setIsSavingDetails] = useState(false);
-  const [overview, setOverview] = useState<AccountOverviewResult | null>(null);
+  const [overview, setOverview] = useState<AccountOverviewResult | null>(() => isInitialMatch ? initialOverview : null);
 
   const { visibleRightMenus, isAdmin } = usePermissions();
   const allowedRightMenus = useMemo(() => visibleRightMenus("contact"), [visibleRightMenus]);
@@ -145,16 +185,25 @@ export function EditAccountPanel({
   const [accountLogSearch, setAccountLogSearch] = useState("");
 
   // Company Profile Form State
-  const [displayName, setDisplayName] = useState("");
-  const [name, setName] = useState("");
-  const [accountType, setAccountType] = useState<ContactType>("CUSTOMER");
-  const [country, setCountry] = useState("");
-  const [notes, setNotes] = useState("");
-  const [addresses, setAddresses] = useState<CompanyAddress[]>([]);
-  const [expandedAddressIds, setExpandedAddressIds] = useState<Set<string>>(new Set());
+  const [displayName, setDisplayName] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.displayName || initialOverview.company.name || "") : "");
+  const [name, setName] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.name || "") : "");
+  const [accountType, setAccountType] = useState<ContactType>(() => isInitialMatch && initialOverview ? (initialOverview.company.type || "CUSTOMER") : "CUSTOMER");
+  const [country, setCountry] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.country || "") : "");
+  const [notes, setNotes] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.notes || "") : "");
+  const [addresses, setAddresses] = useState<CompanyAddress[]>(() => isInitialMatch && initialOverview ? (initialOverview.addresses || []) : []);
+  const [expandedAddressIds, setExpandedAddressIds] = useState<Set<string>>(() => {
+    if (isInitialMatch && initialOverview?.addresses && initialOverview.addresses.length > 0) {
+      const defaultAddr = initialOverview.addresses.find((a) => a.isDefault) || initialOverview.addresses[0];
+      return new Set([defaultAddr.id]);
+    }
+    return new Set();
+  });
 
   // Person inline accordion state
-  const [expandedPersonIds, setExpandedPersonIds] = useState<Set<string>>(new Set());
+  const [expandedPersonIds, setExpandedPersonIds] = useState<Set<string>>(() => {
+    if (selectedContactId) return new Set([selectedContactId]);
+    return new Set();
+  });
   const [personSubTabs, setPersonSubTabs] = useState<Record<string, "info" | "logs">>({});
   const [personForms, setPersonForms] = useState<Record<string, {
     name: string;
@@ -162,7 +211,7 @@ export function EditAccountPanel({
     contactDepartment: string;
     email: string;
     phone: string;
-  }>>({});
+  }>>(() => isInitialMatch && initialOverview ? buildPersonForms(initialOverview.contacts) : {});
   const [isSavingPersonId, setIsSavingPersonId] = useState<string | null>(null);
 
   // Add Person form state
@@ -175,72 +224,76 @@ export function EditAccountPanel({
   const [newPersonPhone, setNewPersonPhone] = useState("");
 
   // Email tab selection
-  const [selectedEmailContactId, setSelectedEmailContactId] = useState<string | null>(null);
-
-  const loadData = useCallback(async () => {
-    if (!companyId) return;
-    setIsLoading(true);
-    try {
-      const res = await getAccountOverview(companyId, { includeLogs: true });
-      setOverview(res);
-      setName(res.company.name || "");
-      setDisplayName(res.company.displayName || res.company.name || "");
-      setAccountType(res.company.type || "CUSTOMER");
-      setCountry(res.company.country || "");
-      setNotes(res.company.notes || "");
-      setAddresses(res.addresses || []);
-
-      if (res.addresses && res.addresses.length > 0) {
-        const defaultAddr = res.addresses.find((a) => a.isDefault) || res.addresses[0];
-        setExpandedAddressIds(new Set([defaultAddr.id]));
-      }
-
-      // Initialize person forms
-      const forms: Record<string, {
-        name: string;
-        role: string;
-        contactDepartment: string;
-        email: string;
-        phone: string;
-      }> = {};
-      res.contacts?.forEach((c) => {
-        forms[c.id] = {
-          name: c.name || "",
-          role: c.role || "",
-          contactDepartment: c.contactDepartment || "",
-          email: c.email || "",
-          phone: c.phone || "",
-        };
-      });
-      setPersonForms(forms);
-
-      if (res.contacts && res.contacts.length > 0) {
-        setSelectedEmailContactId((prev) => prev || res.contacts![0].id);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load account details";
-      toast({ title: "Error", description: msg, type: "error" });
-    } finally {
-      setIsLoading(false);
+  const [selectedEmailContactId, setSelectedEmailContactId] = useState<string | null>(() => {
+    if (isInitialMatch && initialOverview?.contacts && initialOverview.contacts.length > 0) {
+      return initialOverview.contacts[0].id;
     }
-  }, [companyId, toast]);
+    return null;
+  });
+
+  const applyOverviewData = useCallback((res: AccountOverviewResult) => {
+    setOverview(res);
+    setName(res.company.name || "");
+    setDisplayName(res.company.displayName || res.company.name || "");
+    setAccountType(res.company.type || "CUSTOMER");
+    setCountry(res.company.country || "");
+    setNotes(res.company.notes || "");
+    setAddresses(res.addresses || []);
+
+    if (res.addresses && res.addresses.length > 0) {
+      const defaultAddr = res.addresses.find((a) => a.isDefault) || res.addresses[0];
+      setExpandedAddressIds((prev) => prev.size > 0 ? prev : new Set([defaultAddr.id]));
+    }
+
+    setPersonForms(buildPersonForms(res.contacts));
+
+    if (res.contacts && res.contacts.length > 0) {
+      setSelectedEmailContactId((prev) => prev || res.contacts![0].id);
+    }
+  }, []);
+
+  const loadData = useCallback(async (silent = false) => {
+    if (!companyId) return;
+    if (!silent) setIsLoading(true);
+    try {
+      const res = await getAccountOverview(companyId);
+      applyOverviewData(res);
+    } catch (err: unknown) {
+      if (!silent) {
+        const msg = err instanceof Error ? err.message : "Failed to load account details";
+        toast({ title: "Error", description: msg, type: "error" });
+      }
+    } finally {
+      if (!silent) setIsLoading(false);
+    }
+  }, [companyId, applyOverviewData, toast]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (isOpen) {
-        if (selectedContactId) {
-          setExpandedPersonIds(new Set([selectedContactId]));
-        }
-        if (companyId) {
-          void loadData();
-        }
-      } else {
+      if (!isOpen) {
         setIsAddingPerson(false);
         setExpandedPersonIds(new Set());
+        return;
       }
+
+      if (selectedContactId) {
+        setExpandedPersonIds(new Set([selectedContactId]));
+      }
+
+      if (!companyId) return;
+
+      // Direct Object Passing (0ms instant render):
+      // If initialOverview matches current companyId, apply it immediately without full-panel loading!
+      if (initialOverview && initialOverview.company.id === companyId) {
+        applyOverviewData(initialOverview);
+        setIsLoading(false);
+        return;
+      }
+
+      void loadData(false);
     }, 0);
     return () => clearTimeout(timer);
-  }, [isOpen, companyId, selectedContactId, loadData]);
+  }, [isOpen, companyId, selectedContactId, initialOverview, applyOverviewData, loadData]);
 
   // Address expand/collapse
   const toggleAddressExpand = (id: string) => {
@@ -291,7 +344,17 @@ export function EditAccountPanel({
         description: "Account details saved successfully.",
         type: "success",
       });
-      await loadData();
+      setOverview((prev) => prev ? {
+        ...prev,
+        company: {
+          ...prev.company,
+          name: name.trim(),
+          displayName: displayName.trim(),
+          country: country.trim() || null,
+          type: accountType,
+          notes: notes.trim() || null,
+        }
+      } : prev);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to update account";
@@ -314,7 +377,7 @@ export function EditAccountPanel({
         isDefault: addresses.length === 0,
       });
       toast({ title: "Address Added", description: `Created Address #${nextIdx}.`, type: "success" });
-      await loadData();
+      await loadData(true);
       setExpandedAddressIds((prev) => new Set(prev).add(created.id));
       onAccountUpdated();
     } catch (err: unknown) {
@@ -349,7 +412,7 @@ export function EditAccountPanel({
         googleMapsUrl: addr.googleMapsUrl || undefined,
       });
       toast({ title: "Address Saved", description: `${addr.title || "Address"} updated successfully.`, type: "success" });
-      await loadData();
+      await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save address";
@@ -377,7 +440,7 @@ export function EditAccountPanel({
         googleMapsUrl: addr.googleMapsUrl || undefined,
       });
       toast({ title: "Address Duplicated", description: `Created Address #${nextIdx}.`, type: "success" });
-      await loadData();
+      await loadData(true);
       setExpandedAddressIds((prev) => new Set(prev).add(created.id));
       onAccountUpdated();
     } catch (err: unknown) {
@@ -399,7 +462,7 @@ export function EditAccountPanel({
     try {
       await deleteCompanyAddress(addrId);
       toast({ title: "Address Deleted", description: "Address was removed.", type: "success" });
-      await loadData();
+      await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete address";
@@ -412,7 +475,7 @@ export function EditAccountPanel({
     try {
       await setDefaultCompanyAddress(companyId, addrId);
       toast({ title: "Default Set", description: "Primary address updated.", type: "success" });
-      await loadData();
+      await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to set default address";
@@ -437,7 +500,17 @@ export function EditAccountPanel({
         phone: formData.phone.trim() || undefined,
       });
       toast({ title: "Contact Updated", description: `Changes to ${formData.name} saved.`, type: "success" });
-      await loadData();
+      setOverview((prev) => prev ? {
+        ...prev,
+        contacts: prev.contacts.map((c) => c.id === personId ? {
+          ...c,
+          name: formData.name.trim(),
+          role: formData.role.trim() || null,
+          contactDepartment: formData.contactDepartment.trim() || null,
+          email: formData.email.trim() || null,
+          phone: formData.phone.trim() || null,
+        } : c)
+      } : prev);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save contact";
@@ -479,7 +552,7 @@ export function EditAccountPanel({
       setNewPersonPhone("");
       setIsAddingPerson(false);
 
-      await loadData();
+      await loadData(true);
       setExpandedPersonIds((prev) => new Set(prev).add(created.id));
       onAccountUpdated();
     } catch (err: unknown) {
@@ -508,7 +581,10 @@ export function EditAccountPanel({
         next.delete(personId);
         return next;
       });
-      await loadData();
+      setOverview((prev) => prev ? {
+        ...prev,
+        contacts: prev.contacts.filter((c) => c.id !== personId)
+      } : prev);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete contact";

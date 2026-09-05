@@ -360,8 +360,16 @@ export function ContactView({
     void loadCreateAccountPanel();
   }, []);
 
-  const handleOpenEditModal = async (tab = "account", contactId: string | null = null) => {
-    await loadEditAccountPanel();
+  // Idle preload EditAccountPanel chunk after initial mount
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void loadEditAccountPanel();
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleOpenEditModal = (tab = "account", contactId: string | null = null) => {
+    void loadEditAccountPanel();
     setEditAccountInitialTab(tab);
     setEditAccountContactId(contactId);
     setIsEditAccountModalOpen(true);
@@ -952,6 +960,7 @@ export function ContactView({
                     handleOpenEditModal("contact", contactId);
                   }}
                   onContactUpdated={handleContactUpdated}
+                  onRowIntent={handleEditPanelIntent}
                 />
               </div>
             </>
@@ -982,6 +991,7 @@ export function ContactView({
       {/* Edit Account Slide-over Panel (Unified with 5 tabs: Account, Contact, Projects, Email, Account AI) */}
       <EditAccountPanel
         companyId={selectedCompanyId}
+        initialOverview={accountOverview || null}
         isOpen={isEditAccountModalOpen}
         onClose={() => {
           setIsEditAccountModalOpen(false);
