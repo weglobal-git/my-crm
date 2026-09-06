@@ -21,7 +21,7 @@ import {
   Tag
 } from "lucide-react";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
-
+import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
 interface LogItem {
   id: string;
   summary: string;
@@ -217,6 +217,16 @@ export function InformationTab({
   const handleSave = async () => {
     if (!formData.name.trim()) {
       return toast({ title: "Validation", description: "Person name is required", type: "warning" });
+    }
+
+    const cleanEmails = formData.emails.filter((e) => e.trim()).map((e) => e.trim());
+    const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
+    if (invalidEmail) {
+      return toast({
+        title: "Invalid Email Address",
+        description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
+        type: "warning",
+      });
     }
 
     setIsSaving(true);
@@ -480,13 +490,12 @@ export function InformationTab({
                 <div className="space-y-2">
                   {formData.emails.map((em, idx) => (
                     <div key={idx} className="flex items-center gap-2">
-                      <input
-                        type="email"
+                      <EmailInput
                         value={em}
-                        onChange={(e) => handleEmailChange(idx, e.target.value)}
+                        onChange={(val) => handleEmailChange(idx, val)}
                         placeholder="contact@company.com"
                         disabled={contact.isMasked}
-                        className="flex-1 bg-[#252728] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors disabled:opacity-60 border-0"
+                        className="flex-1"
                       />
                       {idx === 0 && (
                         <button

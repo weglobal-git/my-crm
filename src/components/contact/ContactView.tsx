@@ -44,7 +44,8 @@ const loadCreateAccountPanel = () =>
 const CreateAccountPanel = dynamic(loadCreateAccountPanel, { ssr: false });
 
 // Canonical fetcher shared across SWR hooks and hover preload
-const fetchAccountOverview = ([, compId]: [string, string]) => getAccountOverview(compId);
+const fetchAccountOverview = ([, compId]: [string, string]) =>
+  getAccountOverview(compId, { includeAddresses: true });
 
 const ACCOUNT_TYPES: { label: string; value: ContactType }[] = [
   { label: "Customer", value: "CUSTOMER" },

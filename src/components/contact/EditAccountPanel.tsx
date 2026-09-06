@@ -22,13 +22,18 @@ import {
   History, 
   Search,
   Bot,
-  Folder
+  Folder,
+  Sparkles,
+  ExternalLink
 } from "lucide-react";
 import { SlideOverPanel, SlideOverTab } from "@/components/ui/SlideOverPanel";
 import { CountrySelect } from "@/components/ui/CountrySelect";
 import { AccountTypeSelect } from "@/components/ui/AccountTypeSelect";
 import { AddressTypeSelect } from "@/components/ui/AddressTypeSelect";
+import { AddressAutocomplete } from "@/components/contact/AddressAutocomplete";
+import type { ParsedAddressResult } from "@/lib/actions/places";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
+import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
 import { 
   getAccountOverview, 
   updateCompanyDetails, 
@@ -93,14 +98,26 @@ const buildPersonForms = (contacts?: AccountOverviewResult['contacts']) => {
     contactDepartment: string;
     email: string;
     phone: string;
+    emails: string[];
+    phones: string[];
   }> = {};
   contacts?.forEach((c) => {
+    const hasEmails = Array.isArray(c.emails);
+    const emails = hasEmails && c.emails.length > 0 
+      ? [...c.emails] 
+      : (hasEmails && c.emails.length === 0 ? [""] : (c.email ? [c.email] : [""]));
+    const hasPhones = Array.isArray(c.phones);
+    const phones = hasPhones && c.phones.length > 0 
+      ? [...c.phones] 
+      : (hasPhones && c.phones.length === 0 ? [""] : (c.phone ? [c.phone] : [""]));
     forms[c.id] = {
       name: c.name || "",
       role: c.role || "",
       contactDepartment: c.contactDepartment || "",
-      email: c.email || "",
-      phone: c.phone || "",
+      email: emails[0] || "",
+      phone: phones[0] || "",
+      emails,
+      phones,
     };
   });
   return forms;
@@ -187,6 +204,7 @@ export function EditAccountPanel({
   // Company Profile Form State
   const [displayName, setDisplayName] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.displayName || initialOverview.company.name || "") : "");
   const [name, setName] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.name || "") : "");
+  const [phone, setPhone] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.phone || "") : "");
   const [accountType, setAccountType] = useState<ContactType>(() => isInitialMatch && initialOverview ? (initialOverview.company.type || "CUSTOMER") : "CUSTOMER");
   const [country, setCountry] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.country || "") : "");
   const [notes, setNotes] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.notes || "") : "");
@@ -211,6 +229,8 @@ export function EditAccountPanel({
     contactDepartment: string;
     email: string;
     phone: string;
+    emails: string[];
+    phones: string[];
   }>>(() => isInitialMatch && initialOverview ? buildPersonForms(initialOverview.contacts) : {});
   const [isSavingPersonId, setIsSavingPersonId] = useState<string | null>(null);
 
@@ -220,8 +240,13 @@ export function EditAccountPanel({
   const [newPersonName, setNewPersonName] = useState("");
   const [newPersonRole, setNewPersonRole] = useState("");
   const [newPersonDept, setNewPersonDept] = useState("");
-  const [newPersonEmail, setNewPersonEmail] = useState("");
-  const [newPersonPhone, setNewPersonPhone] = useState("");
+  const [newPersonEmails, setNewPersonEmails] = useState<string[]>([""]);
+  const [newPersonPhones, setNewPersonPhones] = useState<string[]>([""]);
+
+  // In-memory draft address state (not saved until explicitly confirmed)
+  const [draftAddress, setDraftAddress] = useState<Partial<CompanyAddress> | null>(null);
+  const [isSavingDraftAddress, setIsSavingDraftAddress] = useState(false);
+  const [savingAddressId, setSavingAddressId] = useState<string | null>(null);
 
   // Email tab selection
   const [selectedEmailContactId, setSelectedEmailContactId] = useState<string | null>(() => {
@@ -235,6 +260,7 @@ export function EditAccountPanel({
     setOverview(res);
     setName(res.company.name || "");
     setDisplayName(res.company.displayName || res.company.name || "");
+    setPhone(res.company.phone || "");
     setAccountType(res.company.type || "CUSTOMER");
     setCountry(res.company.country || "");
     setNotes(res.company.notes || "");
@@ -335,6 +361,7 @@ export function EditAccountPanel({
       await updateCompanyDetails(companyId, {
         displayName: displayName.trim(),
         name: name.trim(),
+        phone: phone.trim() || null,
         country: country.trim() || undefined,
         type: accountType,
         notes: notes.trim() || undefined,
@@ -350,6 +377,7 @@ export function EditAccountPanel({
           ...prev.company,
           name: name.trim(),
           displayName: displayName.trim(),
+          phone: phone.trim() || null,
           country: country.trim() || null,
           type: accountType,
           notes: notes.trim() || null,
@@ -365,24 +393,57 @@ export function EditAccountPanel({
   };
 
   // Address handlers
-  const handleAddNewAddress = async () => {
-    if (!companyId) return;
+  const handleAddNewAddress = () => {
     const nextIdx = addresses.length + 1;
+    setDraftAddress({
+      title: `Address #${nextIdx}`,
+      type: nextIdx === 1 ? "HEADQUARTERS" : "BRANCH",
+      country: country || "Thailand",
+      addressLine1: "",
+      addressLine2: "",
+      subdistrict: "",
+      district: "",
+      province: "",
+      postalCode: "",
+      googleMapsUrl: "",
+      isDefault: addresses.length === 0,
+    });
+  };
+
+  const handleSaveDraftAddress = async () => {
+    if (!companyId || !draftAddress) return;
+    if (!draftAddress.addressLine1?.trim()) {
+      return toast({ title: "Validation", description: "Address Line 1 is required", type: "warning" });
+    }
+    setIsSavingDraftAddress(true);
     try {
+      const nextIdx = addresses.length + 1;
       const created = await createCompanyAddress(companyId, {
-        title: `Address #${nextIdx}`,
-        type: nextIdx === 1 ? "HEADQUARTERS" : "BRANCH",
-        country: country || "Thailand",
-        addressLine1: "New Address Location",
-        isDefault: addresses.length === 0,
+        title: draftAddress.title || `Address #${nextIdx}`,
+        type: draftAddress.type || (nextIdx === 1 ? "HEADQUARTERS" : "BRANCH"),
+        taxId: draftAddress.taxId || undefined,
+        branchNumber: draftAddress.branchNumber || undefined,
+        addressLine1: draftAddress.addressLine1.trim(),
+        addressLine2: draftAddress.addressLine2?.trim() || undefined,
+        subdistrict: draftAddress.subdistrict?.trim() || undefined,
+        district: draftAddress.district?.trim() || undefined,
+        province: draftAddress.province?.trim() || undefined,
+        postalCode: draftAddress.postalCode?.trim() || undefined,
+        country: draftAddress.country || country || "Thailand",
+        googleMapsUrl: draftAddress.googleMapsUrl?.trim() || undefined,
+        isDefault: Boolean(draftAddress.isDefault),
       });
-      toast({ title: "Address Added", description: `Created Address #${nextIdx}.`, type: "success" });
-      await loadData(true);
+      toast({ title: "Address Created", description: `Added ${created.title} successfully.`, type: "success" });
+      setDraftAddress(null);
+      setAddresses((prev) => [...prev, created]);
       setExpandedAddressIds((prev) => new Set(prev).add(created.id));
+      await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to add address";
       toast({ title: "Error", description: msg, type: "error" });
+    } finally {
+      setIsSavingDraftAddress(false);
     }
   };
 
@@ -396,8 +457,9 @@ export function EditAccountPanel({
     if (!addr.addressLine1?.trim()) {
       return toast({ title: "Validation", description: "Address Line 1 is required", type: "warning" });
     }
+    setSavingAddressId(addr.id);
     try {
-      await updateCompanyAddress(addr.id, {
+      const updated = await updateCompanyAddress(addr.id, {
         title: addr.title || "Address",
         type: addr.type,
         taxId: addr.taxId || undefined,
@@ -412,11 +474,14 @@ export function EditAccountPanel({
         googleMapsUrl: addr.googleMapsUrl || undefined,
       });
       toast({ title: "Address Saved", description: `${addr.title || "Address"} updated successfully.`, type: "success" });
+      setAddresses((prev) => prev.map((a) => (a.id === addr.id ? updated : a)));
       await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save address";
       toast({ title: "Error", description: msg, type: "error" });
+    } finally {
+      setSavingAddressId(null);
     }
   };
 
@@ -490,14 +555,28 @@ export function EditAccountPanel({
       return toast({ title: "Validation", description: "Person name is required", type: "warning" });
     }
 
+    const cleanEmails = (formData.emails || [formData.email]).map((e) => e.trim()).filter(Boolean);
+    const cleanPhones = (formData.phones || [formData.phone]).map((p) => p.trim()).filter(Boolean);
+
+    const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
+    if (invalidEmail) {
+      return toast({
+        title: "Invalid Email Address",
+        description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
+        type: "warning",
+      });
+    }
+
     setIsSavingPersonId(personId);
     try {
       await updateContact(personId, {
         name: formData.name.trim(),
         role: formData.role.trim() || undefined,
         contactDepartment: formData.contactDepartment.trim() || undefined,
-        email: formData.email.trim() || undefined,
-        phone: formData.phone.trim() || undefined,
+        emails: cleanEmails,
+        phones: cleanPhones,
+        email: cleanEmails[0] || null,
+        phone: cleanPhones[0] || null,
       });
       toast({ title: "Contact Updated", description: `Changes to ${formData.name} saved.`, type: "success" });
       setOverview((prev) => prev ? {
@@ -507,10 +586,25 @@ export function EditAccountPanel({
           name: formData.name.trim(),
           role: formData.role.trim() || null,
           contactDepartment: formData.contactDepartment.trim() || null,
-          email: formData.email.trim() || null,
-          phone: formData.phone.trim() || null,
+          emails: cleanEmails,
+          phones: cleanPhones,
+          email: cleanEmails[0] || null,
+          phone: cleanPhones[0] || null,
         } : c)
       } : prev);
+      setPersonForms((prev) => ({
+        ...prev,
+        [personId]: {
+          ...prev[personId],
+          name: formData.name.trim(),
+          role: formData.role.trim(),
+          contactDepartment: formData.contactDepartment.trim(),
+          emails: cleanEmails.length > 0 ? cleanEmails : [""],
+          phones: cleanPhones.length > 0 ? cleanPhones : [""],
+          email: cleanEmails[0] || "",
+          phone: cleanPhones[0] || "",
+        },
+      }));
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to save contact";
@@ -528,14 +622,28 @@ export function EditAccountPanel({
       return toast({ title: "Validation", description: "Person name is required", type: "warning" });
     }
 
+    const cleanEmails = newPersonEmails.map((e) => e.trim()).filter(Boolean);
+    const cleanPhones = newPersonPhones.map((p) => p.trim()).filter(Boolean);
+
+    const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
+    if (invalidEmail) {
+      return toast({
+        title: "Invalid Email Address",
+        description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
+        type: "warning",
+      });
+    }
+
     setIsSavingNewPerson(true);
     try {
       const created = await createContact({
         name: newPersonName.trim(),
         role: newPersonRole.trim() || undefined,
         contactDepartment: newPersonDept.trim() || undefined,
-        email: newPersonEmail.trim() || undefined,
-        phone: newPersonPhone.trim() || undefined,
+        emails: cleanEmails,
+        phones: cleanPhones,
+        email: cleanEmails[0] || undefined,
+        phone: cleanPhones[0] || undefined,
         companyId: companyId,
       });
 
@@ -548,8 +656,8 @@ export function EditAccountPanel({
       setNewPersonName("");
       setNewPersonRole("");
       setNewPersonDept("");
-      setNewPersonEmail("");
-      setNewPersonPhone("");
+      setNewPersonEmails([""]);
+      setNewPersonPhones([""]);
       setIsAddingPerson(false);
 
       await loadData(true);
@@ -742,6 +850,26 @@ export function EditAccountPanel({
                           placeholder="Select account country..."
                         />
                       </div>
+
+                      {/* Office Phone / Landline */}
+                      <div className="flex flex-col gap-1.5 md:col-span-2">
+                        <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Building2 className="w-3.5 h-3.5 text-[#C7F33C]" />
+                            <span>Office Phone / Landline</span>
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            e.g. 02 123 4567 ext. 12 or +66 2 123 4567
+                          </span>
+                        </label>
+                        <input
+                          type="text"
+                          value={phone}
+                          onChange={(e) => setPhone(e.target.value)}
+                          placeholder="e.g. 02 123 4567 ext. 12"
+                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
+                        />
+                      </div>
                     </div>
 
                     {/* Notes */}
@@ -784,7 +912,252 @@ export function EditAccountPanel({
 
                     {/* Address Cards List */}
                     <div className="space-y-3">
-                      {addresses.length === 0 ? (
+                      {/* In-memory Draft Address Card */}
+                      {draftAddress && (
+                        <div className="bg-[#3A3B3C] rounded-2xl border-2 border-[#C7F33C]/80 relative z-20 shadow-xl overflow-hidden animate-in fade-in duration-200">
+                          {/* Draft Card Header */}
+                          <div className="flex items-center justify-between p-4 bg-[#2D2E30] border-b border-[#252728]">
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-xs font-bold text-[#C7F33C]">
+                                {draftAddress.title || `Address #${addresses.length + 1}`}
+                              </span>
+                              <span className="text-[10px] uppercase font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                                Draft (Unsaved)
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setDraftAddress(null)}
+                              className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                            >
+                              Discard
+                            </button>
+                          </div>
+
+                          {/* Draft Card Body */}
+                          <div className="p-5 space-y-3.5">
+                            {/* Autocomplete with Google Places */}
+                            <div>
+                              <label className="text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5 text-[#C7F33C]" />
+                                <span>Quick Auto-Fill with Google Places</span>
+                              </label>
+                              <AddressAutocomplete
+                                onAddressSelected={(place: ParsedAddressResult) => {
+                                  setDraftAddress((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          addressLine1: place.addressLine1 || prev.addressLine1,
+                                          subdistrict: place.subdistrict || prev.subdistrict,
+                                          district: place.district || prev.district,
+                                          province: place.province || prev.province,
+                                          postalCode: place.postalCode || prev.postalCode,
+                                          country: place.country || prev.country,
+                                          googleMapsUrl: place.googleMapsUrl || prev.googleMapsUrl,
+                                        }
+                                      : null
+                                  );
+                                }}
+                                placeholder="Search building name, company, or full address..."
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[11px] font-semibold text-slate-300">
+                                  Address Type
+                                </label>
+                                <AddressTypeSelect
+                                  value={draftAddress.type || "BRANCH"}
+                                  onChange={(val) =>
+                                    setDraftAddress((prev) => (prev ? { ...prev, type: val } : null))
+                                  }
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[11px] font-semibold text-slate-300">
+                                  Branch Code
+                                </label>
+                                <input
+                                  type="text"
+                                  value={draftAddress.branchNumber || ""}
+                                  onChange={(e) =>
+                                    setDraftAddress((prev) => (prev ? { ...prev, branchNumber: e.target.value } : null))
+                                  }
+                                  placeholder="00000"
+                                  className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[11px] font-semibold text-slate-300">
+                                  Tax ID
+                                </label>
+                                <input
+                                  type="text"
+                                  value={draftAddress.taxId || ""}
+                                  onChange={(e) =>
+                                    setDraftAddress((prev) => (prev ? { ...prev, taxId: e.target.value } : null))
+                                  }
+                                  placeholder="e.g. 0105558000000"
+                                  className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] font-semibold text-slate-300">Country</label>
+                              <CountrySelect
+                                value={draftAddress.country || country || "Thailand"}
+                                onChange={(val) =>
+                                  setDraftAddress((prev) => (prev ? { ...prev, country: val } : null))
+                                }
+                                placeholder="Select Country"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] font-semibold text-slate-300">
+                                Address Line 1 <span className="text-[#C7F33C]">*</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={draftAddress.addressLine1 || ""}
+                                onChange={(e) =>
+                                  setDraftAddress((prev) => (prev ? { ...prev, addressLine1: e.target.value } : null))
+                                }
+                                placeholder="e.g. 123 Sukhumvit Road, Building A"
+                                className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[11px] font-semibold text-slate-300">
+                                Address Line 2
+                              </label>
+                              <input
+                                type="text"
+                                value={draftAddress.addressLine2 || ""}
+                                onChange={(e) =>
+                                  setDraftAddress((prev) => (prev ? { ...prev, addressLine2: e.target.value } : null))
+                                }
+                                placeholder="e.g. Near BTS Asok"
+                                className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[11px] font-semibold text-slate-300">Subdistrict</label>
+                                <input
+                                  type="text"
+                                  value={draftAddress.subdistrict || ""}
+                                  onChange={(e) =>
+                                    setDraftAddress((prev) => (prev ? { ...prev, subdistrict: e.target.value } : null))
+                                  }
+                                  placeholder="e.g. Khlong Toei Nuea"
+                                  className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[11px] font-semibold text-slate-300">District</label>
+                                <input
+                                  type="text"
+                                  value={draftAddress.district || ""}
+                                  onChange={(e) =>
+                                    setDraftAddress((prev) => (prev ? { ...prev, district: e.target.value } : null))
+                                  }
+                                  placeholder="e.g. Watthana"
+                                  className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[11px] font-semibold text-slate-300">Province</label>
+                                <input
+                                  type="text"
+                                  value={draftAddress.province || ""}
+                                  onChange={(e) =>
+                                    setDraftAddress((prev) => (prev ? { ...prev, province: e.target.value } : null))
+                                  }
+                                  placeholder="e.g. Bangkok"
+                                  className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
+                                />
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <label className="text-[11px] font-semibold text-slate-300">Postal Code</label>
+                                <input
+                                  type="text"
+                                  value={draftAddress.postalCode || ""}
+                                  onChange={(e) =>
+                                    setDraftAddress((prev) => (prev ? { ...prev, postalCode: e.target.value } : null))
+                                  }
+                                  placeholder="e.g. 10110"
+                                  className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Google Maps URL */}
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[11px] font-semibold text-slate-300">
+                                  Google Maps URL (Optional)
+                                </label>
+                                {draftAddress.googleMapsUrl && (
+                                  <a
+                                    href={draftAddress.googleMapsUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[10px] text-[#C7F33C] hover:underline flex items-center gap-1"
+                                  >
+                                    <span>Open Map</span>
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                )}
+                              </div>
+                              <input
+                                type="url"
+                                value={draftAddress.googleMapsUrl || ""}
+                                onChange={(e) =>
+                                  setDraftAddress((prev) => (prev ? { ...prev, googleMapsUrl: e.target.value } : null))
+                                }
+                                placeholder="https://maps.google.com/?q=..."
+                                className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#252728]">
+                              <button
+                                type="button"
+                                onClick={() => setDraftAddress(null)}
+                                className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition-colors cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleSaveDraftAddress}
+                                disabled={isSavingDraftAddress}
+                                className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                              >
+                                {isSavingDraftAddress ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
+                                ) : (
+                                  <Save className="w-3.5 h-3.5 text-black" />
+                                )}
+                                <span>Save Address</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {addresses.length === 0 && !draftAddress ? (
                         <div className="p-8 text-center bg-[#3A3B3C] rounded-2xl text-slate-400 text-xs">
                           No addresses registered for this account. Click &quot;Add Address&quot; to create one.
                         </div>
@@ -891,6 +1264,35 @@ export function EditAccountPanel({
                               {/* Body Form (Inline Expansion) */}
                               {isExpanded && (
                                 <div className="p-5 space-y-3.5 animate-in fade-in duration-150">
+                                  {/* Google Places Autocomplete Auto-Fill */}
+                                  <div>
+                                    <label className="text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                                      <Sparkles className="w-3.5 h-3.5 text-[#C7F33C]" />
+                                      <span>Auto-Fill with Google Places</span>
+                                    </label>
+                                    <AddressAutocomplete
+                                      onAddressSelected={(place: ParsedAddressResult) => {
+                                        setAddresses((prev) =>
+                                          prev.map((a) =>
+                                            a.id === addr.id
+                                              ? {
+                                                  ...a,
+                                                  addressLine1: place.addressLine1 || a.addressLine1,
+                                                  subdistrict: place.subdistrict || a.subdistrict,
+                                                  district: place.district || a.district,
+                                                  province: place.province || a.province,
+                                                  postalCode: place.postalCode || a.postalCode,
+                                                  country: place.country || a.country,
+                                                  googleMapsUrl: place.googleMapsUrl || a.googleMapsUrl,
+                                                }
+                                              : a
+                                          )
+                                        );
+                                      }}
+                                      placeholder="Search building name, company, or full address..."
+                                    />
+                                  </div>
+
                                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[11px] font-semibold text-slate-300">
@@ -906,7 +1308,7 @@ export function EditAccountPanel({
 
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[11px] font-semibold text-slate-300">
-                                        Branch Code (รหัสสาขา)
+                                        Branch Code
                                       </label>
                                       <input
                                         type="text"
@@ -921,7 +1323,7 @@ export function EditAccountPanel({
 
                                     <div className="flex flex-col gap-1">
                                       <label className="text-[11px] font-semibold text-slate-300">
-                                        Tax ID (เลขประจำตัวผู้เสียภาษี)
+                                        Tax ID
                                       </label>
                                       <input
                                         type="text"
@@ -944,7 +1346,7 @@ export function EditAccountPanel({
 
                                   <div className="flex flex-col gap-1">
                                     <label className="text-[11px] font-semibold text-slate-300">
-                                      Address Line 1 (อาคาร, บ้านเลขที่, ถนน) <span className="text-[#C7F33C]">*</span>
+                                      Address Line 1 <span className="text-[#C7F33C]">*</span>
                                     </label>
                                     <input
                                       type="text"
@@ -959,7 +1361,7 @@ export function EditAccountPanel({
 
                                   <div className="flex flex-col gap-1">
                                     <label className="text-[11px] font-semibold text-slate-300">
-                                      Address Line 2 (ข้อมูลเพิ่มเติม)
+                                      Address Line 2
                                     </label>
                                     <input
                                       type="text"
@@ -981,7 +1383,7 @@ export function EditAccountPanel({
                                         onChange={(e) =>
                                           handleUpdateAddressField(addr.id, "subdistrict", e.target.value)
                                         }
-                                        placeholder="ตำบล/แขวง"
+                                        placeholder="e.g. Khlong Toei Nuea"
                                         className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
                                       />
                                     </div>
@@ -994,7 +1396,7 @@ export function EditAccountPanel({
                                         onChange={(e) =>
                                           handleUpdateAddressField(addr.id, "district", e.target.value)
                                         }
-                                        placeholder="อำเภอ/เขต"
+                                        placeholder="e.g. Watthana"
                                         className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
                                       />
                                     </div>
@@ -1007,7 +1409,7 @@ export function EditAccountPanel({
                                         onChange={(e) =>
                                           handleUpdateAddressField(addr.id, "province", e.target.value)
                                         }
-                                        placeholder="จังหวัด"
+                                        placeholder="e.g. Bangkok"
                                         className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
                                       />
                                     </div>
@@ -1020,19 +1422,52 @@ export function EditAccountPanel({
                                         onChange={(e) =>
                                           handleUpdateAddressField(addr.id, "postalCode", e.target.value)
                                         }
-                                        placeholder="รหัสไปรษณีย์"
+                                        placeholder="e.g. 10110"
                                         className="w-full bg-[#252728] rounded-xl px-2.5 py-1.5 text-xs text-slate-100 border-0"
                                       />
                                     </div>
+                                  </div>
+
+                                  <div className="flex flex-col gap-1">
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-[11px] font-semibold text-slate-300">
+                                        Google Maps URL (Optional)
+                                      </label>
+                                      {addr.googleMapsUrl && (
+                                        <a
+                                          href={addr.googleMapsUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-[10px] text-[#C7F33C] hover:underline flex items-center gap-1"
+                                        >
+                                          <span>Open Map</span>
+                                          <ExternalLink className="w-2.5 h-2.5" />
+                                        </a>
+                                      )}
+                                    </div>
+                                    <input
+                                      type="url"
+                                      value={addr.googleMapsUrl || ""}
+                                      onChange={(e) =>
+                                        handleUpdateAddressField(addr.id, "googleMapsUrl", e.target.value)
+                                      }
+                                      placeholder="https://maps.google.com/?q=..."
+                                      className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                                    />
                                   </div>
 
                                   <div className="flex items-center justify-end pt-1">
                                     <button
                                       type="button"
                                       onClick={() => handleSaveAddressCard(addr)}
-                                      className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 cursor-pointer"
+                                      disabled={savingAddressId === addr.id}
+                                      className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
                                     >
-                                      <Save className="w-3.5 h-3.5 text-black" />
+                                      {savingAddressId === addr.id ? (
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
+                                      ) : (
+                                        <Save className="w-3.5 h-3.5 text-black" />
+                                      )}
                                       <span>Save Address</span>
                                     </button>
                                   </div>
@@ -1182,24 +1617,88 @@ export function EditAccountPanel({
                       />
                     </div>
 
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold text-slate-300">Email Address</label>
-                      <input
-                        type="email"
-                        value={newPersonEmail}
-                        onChange={(e) => setNewPersonEmail(e.target.value)}
-                        placeholder="e.g. somchai@company.com"
-                        className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
-                      />
+                    {/* Multi-Email Addresses */}
+                    <div className="flex flex-col gap-1.5 sm:col-span-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                          <Mail className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Email Addresses</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setNewPersonEmails((prev) => [...prev, ""])}
+                          className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          + Add Email
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {newPersonEmails.map((emailVal, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <EmailInput
+                              value={emailVal}
+                              onChange={(val) => {
+                                const next = [...newPersonEmails];
+                                next[idx] = val;
+                                setNewPersonEmails(next);
+                              }}
+                              placeholder="e.g. somchai@company.com"
+                              className="flex-1"
+                            />
+                            {newPersonEmails.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setNewPersonEmails((prev) => prev.filter((_, i) => i !== idx))}
+                                className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold text-slate-300">Phone Number</label>
-                      <PhoneInputWithCountry
-                        value={newPersonPhone}
-                        onChange={setNewPersonPhone}
-                        placeholder="081 234 5678"
-                      />
+                    {/* Multi-Phone Numbers */}
+                    <div className="flex flex-col gap-1.5 sm:col-span-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                          <Phone className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Phone Numbers</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setNewPersonPhones((prev) => [...prev, ""])}
+                          className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          + Add Phone
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {newPersonPhones.map((phoneVal, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <PhoneInputWithCountry
+                              value={phoneVal}
+                              onChange={(val) => {
+                                const next = [...newPersonPhones];
+                                next[idx] = val;
+                                setNewPersonPhones(next);
+                              }}
+                              placeholder="081 234 5678"
+                              className="flex-1"
+                            />
+                            {newPersonPhones.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setNewPersonPhones((prev) => prev.filter((_, i) => i !== idx))}
+                                className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
@@ -1425,44 +1924,156 @@ export function EditAccountPanel({
                                       onChange={(e) =>
                                         setPersonForms((prev) => ({
                                           ...prev,
-                                          [c.id]: { ...pForm, contactDepartment: e.target.value },
+                                          [c.id]: { ...(prev[c.id] || pForm), contactDepartment: e.target.value },
                                         }))
                                       }
                                       className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
                                     />
                                   </div>
 
-                                  <div className="flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">
-                                      Email Address
-                                    </label>
-                                    <input
-                                      type="email"
-                                      value={pForm.email}
-                                      onChange={(e) =>
-                                        setPersonForms((prev) => ({
-                                          ...prev,
-                                          [c.id]: { ...pForm, email: e.target.value },
-                                        }))
-                                      }
-                                      className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
-                                    />
+                                  {/* Multi-Email Addresses */}
+                                  <div className="flex flex-col gap-1.5 sm:col-span-2">
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                                        <Mail className="w-3.5 h-3.5 text-slate-400" />
+                                        <span>Email Addresses</span>
+                                      </label>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setPersonForms((prev) => {
+                                            const existing = prev[c.id] || pForm;
+                                            const currentEmails = existing.emails && existing.emails.length > 0 ? existing.emails : (existing.email ? [existing.email] : [""]);
+                                            return {
+                                              ...prev,
+                                              [c.id]: {
+                                                ...existing,
+                                                emails: [...currentEmails, ""],
+                                              },
+                                            };
+                                          });
+                                        }}
+                                        className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                                      >
+                                        + Add Email
+                                      </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {(pForm.emails && pForm.emails.length > 0 ? pForm.emails : (pForm.email ? [pForm.email] : [""])).map((em, eIdx) => (
+                                        <div key={eIdx} className="flex items-center gap-2">
+                                          <EmailInput
+                                            value={em}
+                                            onChange={(val) => {
+                                              setPersonForms((prev) => {
+                                                const existing = prev[c.id] || pForm;
+                                                const currentEmails = [...(existing.emails && existing.emails.length > 0 ? existing.emails : (existing.email ? [existing.email] : [""]))];
+                                                currentEmails[eIdx] = val;
+                                                return {
+                                                  ...prev,
+                                                  [c.id]: {
+                                                    ...existing,
+                                                    emails: currentEmails,
+                                                    email: currentEmails[0] || "",
+                                                  },
+                                                };
+                                              });
+                                            }}
+                                            placeholder="e.g. contact@company.com"
+                                            className="flex-1"
+                                          />
+                                          {(pForm.emails?.length || 1) > 1 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const currentEmails = (pForm.emails || []).filter((_, i) => i !== eIdx);
+                                                setPersonForms((prev) => ({
+                                                  ...prev,
+                                                  [c.id]: {
+                                                    ...pForm,
+                                                    emails: currentEmails.length > 0 ? currentEmails : [""],
+                                                    email: currentEmails[0] || "",
+                                                  },
+                                                }));
+                                              }}
+                                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
 
-                                  <div className="flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">
-                                      Phone Number
-                                    </label>
-                                    <PhoneInputWithCountry
-                                      value={pForm.phone}
-                                      onChange={(val) =>
-                                        setPersonForms((prev) => ({
-                                          ...prev,
-                                          [c.id]: { ...pForm, phone: val },
-                                        }))
-                                      }
-                                      placeholder="081 234 5678"
-                                    />
+                                  {/* Multi-Phone Numbers */}
+                                  <div className="flex flex-col gap-1.5 sm:col-span-2">
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                                        <Phone className="w-3.5 h-3.5 text-slate-400" />
+                                        <span>Phone Numbers</span>
+                                      </label>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const currentPhones = pForm.phones && pForm.phones.length > 0 ? pForm.phones : (pForm.phone ? [pForm.phone] : [""]);
+                                          setPersonForms((prev) => ({
+                                            ...prev,
+                                            [c.id]: {
+                                              ...pForm,
+                                              phones: [...currentPhones, ""],
+                                            },
+                                          }));
+                                        }}
+                                        className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                                      >
+                                        + Add Phone
+                                      </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {(pForm.phones && pForm.phones.length > 0 ? pForm.phones : (pForm.phone ? [pForm.phone] : [""])).map((ph, pIdx) => (
+                                        <div key={pIdx} className="flex items-center gap-2">
+                                          <PhoneInputWithCountry
+                                            value={ph}
+                                            onChange={(val) => {
+                                              setPersonForms((prev) => {
+                                                const existing = prev[c.id] || pForm;
+                                                const currentPhones = [...(existing.phones && existing.phones.length > 0 ? existing.phones : (existing.phone ? [existing.phone] : [""]))];
+                                                currentPhones[pIdx] = val;
+                                                return {
+                                                  ...prev,
+                                                  [c.id]: {
+                                                    ...existing,
+                                                    phones: currentPhones,
+                                                    phone: currentPhones[0] || "",
+                                                  },
+                                                };
+                                              });
+                                            }}
+                                            placeholder="081 234 5678"
+                                            className="flex-1"
+                                          />
+                                          {(pForm.phones?.length || 1) > 1 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                const currentPhones = (pForm.phones || []).filter((_, i) => i !== pIdx);
+                                                setPersonForms((prev) => ({
+                                                  ...prev,
+                                                  [c.id]: {
+                                                    ...pForm,
+                                                    phones: currentPhones.length > 0 ? currentPhones : [""],
+                                                    phone: currentPhones[0] || "",
+                                                  },
+                                                }));
+                                              }}
+                                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
                                 </div>
 

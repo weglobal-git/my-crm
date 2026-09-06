@@ -127,6 +127,7 @@ model Company {
   id            String           @id @default(cuid())
   displayName   String?
   name          String
+  phone         String?
   address       String?
   notes         String?
   country       String?

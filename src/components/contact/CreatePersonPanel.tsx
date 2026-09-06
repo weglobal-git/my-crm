@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import { 
   UserPlus, 
@@ -10,10 +10,12 @@ import {
   Building2, 
   Briefcase, 
   Mail, 
-  Phone
+  Phone,
+  Trash2
 } from "lucide-react";
 import { SlideOverPanel } from "@/components/ui/SlideOverPanel";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
+import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
 import { useDialog } from "@/providers/DialogProvider";
 import { createContact } from "@/lib/actions/contact";
 import { ContactStatus } from "@prisma/client";
@@ -43,11 +45,45 @@ export function CreatePersonPanel({
     role: "",
     contactDepartment: "",
     departmentId: "",
+    emails: [""] as string[],
+    phones: [""] as string[],
     email: "",
     phone: "",
     image: "",
     status: "UNQUALIFIED" as ContactStatus,
   });
+
+  const resetForm = useCallback(() => {
+    setAvatarPreview(null);
+    setForm({
+      name: "",
+      role: "",
+      contactDepartment: "",
+      departmentId: "",
+      emails: [""],
+      phones: [""],
+      email: "",
+      phone: "",
+      image: "",
+      status: "UNQUALIFIED",
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
+
+  // When panel closes or reopens, reset form so unsaved inputs are not retained
+  useEffect(() => {
+    if (!isOpen) {
+      const timer = setTimeout(() => {
+        resetForm();
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, resetForm]);
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -112,6 +148,18 @@ export function CreatePersonPanel({
       });
     }
 
+    const cleanEmails = form.emails.map((e) => e.trim()).filter(Boolean);
+    const cleanPhones = form.phones.map((p) => p.trim()).filter(Boolean);
+
+    const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
+    if (invalidEmail) {
+      return toast({
+        title: "Invalid Email Address",
+        description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
+        type: "warning",
+      });
+    }
+
     setIsSubmitting(true);
     try {
       const created = await createContact({
@@ -120,8 +168,10 @@ export function CreatePersonPanel({
         contactDepartment: form.contactDepartment.trim() || undefined,
         departmentId: form.departmentId || undefined,
         image: form.image || undefined,
-        email: form.email.trim() || undefined,
-        phone: form.phone.trim() || undefined,
+        emails: cleanEmails,
+        phones: cleanPhones,
+        email: cleanEmails[0] || undefined,
+        phone: cleanPhones[0] || undefined,
         status: form.status,
         companyId: prefillCompany.id,
       });
@@ -139,6 +189,8 @@ export function CreatePersonPanel({
         role: "",
         contactDepartment: "",
         departmentId: "",
+        emails: [""],
+        phones: [""],
         email: "",
         phone: "",
         image: "",
@@ -158,7 +210,7 @@ export function CreatePersonPanel({
   return (
     <SlideOverPanel
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="Add New Person"
       subtitle={
         prefillCompany?.name 
@@ -308,33 +360,94 @@ export function CreatePersonPanel({
               />
             </div>
 
-            {/* Email Address */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
-                <Mail className="w-3.5 h-3.5 text-slate-400" />
-                Email Address
-              </label>
-              <input
-                type="email"
-                name="email"
-                value={form.email}
-                onChange={handleChange}
-                placeholder="contact@company.com"
-                className="bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
-              />
+            {/* Multi-Email Addresses */}
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Email Addresses</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, emails: [...prev.emails, ""] }))}
+                  className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  + Add Email
+                </button>
+              </div>
+              <div className="space-y-2">
+                {form.emails.map((emailVal, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <EmailInput
+                      value={emailVal}
+                      onChange={(val) => {
+                        const next = [...form.emails];
+                        next[idx] = val;
+                        setForm((prev) => ({ ...prev, emails: next, email: next[0] || "" }));
+                      }}
+                      placeholder="e.g. contact@company.com"
+                      className="flex-1"
+                    />
+                    {form.emails.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = form.emails.filter((_, i) => i !== idx);
+                          setForm((prev) => ({ ...prev, emails: next.length > 0 ? next : [""], email: next[0] || "" }));
+                        }}
+                        className="p-2 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Phone Number with International Searchable Dial Code */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
-                <Phone className="w-3.5 h-3.5 text-[#C7F33C]" />
-                <span>Phone Number</span>
-              </label>
-              <PhoneInputWithCountry
-                value={form.phone}
-                onChange={(val) => setForm((prev) => ({ ...prev, phone: val }))}
-                placeholder="81 234 5678"
-              />
+            {/* Multi-Phone Numbers with International Searchable Dial Code */}
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-[#C7F33C]" />
+                  <span>Phone Numbers</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, phones: [...prev.phones, ""] }))}
+                  className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  + Add Phone
+                </button>
+              </div>
+              <div className="space-y-2">
+                {form.phones.map((phoneVal, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <PhoneInputWithCountry
+                      value={phoneVal}
+                      onChange={(val) => {
+                        const next = [...form.phones];
+                        next[idx] = val;
+                        setForm((prev) => ({ ...prev, phones: next, phone: next[0] || "" }));
+                      }}
+                      placeholder="81 234 5678"
+                      className="flex-1"
+                    />
+                    {form.phones.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = form.phones.filter((_, i) => i !== idx);
+                          setForm((prev) => ({ ...prev, phones: next.length > 0 ? next : [""], phone: next[0] || "" }));
+                        }}
+                        className="p-2 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-xl transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Initial Qualification */}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { 
   Building2, 
   MapPin, 
@@ -13,12 +13,15 @@ import {
   FileText,
   Tag,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Sparkles,
+  RotateCcw
 } from "lucide-react";
 import { SlideOverPanel } from "@/components/ui/SlideOverPanel";
 import { CountrySelect } from "@/components/ui/CountrySelect";
 import { AccountTypeSelect } from "@/components/ui/AccountTypeSelect";
 import { AddressTypeSelect } from "@/components/ui/AddressTypeSelect";
+import { AddressAutocomplete } from "@/components/contact/AddressAutocomplete";
 import { useDialog } from "@/providers/DialogProvider";
 import { createCompany, CreateCompanyAddressInput } from "@/lib/actions/contact";
 import { ContactType } from "@prisma/client";
@@ -55,13 +58,14 @@ export function CreateAccountPanel({
   onClose,
   onAccountCreated,
 }: CreateAccountPanelProps) {
-  const { toast } = useDialog();
+  const { toast, confirm } = useDialog();
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Account General Fields
   const [displayName, setDisplayName] = useState("");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [accountType, setAccountType] = useState<ContactType>("CUSTOMER");
   const [country, setCountry] = useState("Thailand");
   const [notes, setNotes] = useState("");
@@ -131,10 +135,19 @@ export function CreateAccountPanel({
     });
   };
 
-  const handleRemoveAddress = (index: number) => {
+  const handleRemoveAddress = async (index: number) => {
     if (addresses.length <= 1) {
       return toast({ title: "Cannot Remove", description: "At least one address form is required", type: "warning" });
     }
+
+    const ok = await confirm({
+      title: "Remove Address?",
+      description: `Are you sure you want to remove ${addresses[index]?.title || "this address form"}?`,
+      confirmText: "Remove",
+      cancelText: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
 
     const wasDefault = addresses[index]?.isDefault;
     setAddresses((prev) => {
@@ -164,15 +177,45 @@ export function CreateAccountPanel({
     });
   };
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setDisplayName("");
     setName("");
+    setPhone("");
     setAccountType("CUSTOMER");
     setCountry("Thailand");
     setNotes("");
     const initial = emptyAddressDraft("Thailand", true, 1);
     setAddresses([initial]);
     setExpandedIds(new Set([initial.tempId]));
+  }, []);
+
+  // Whenever the panel closes, defer resetting all fields to prevent retaining unsaved autofill data
+  useEffect(() => {
+    if (!isOpen) {
+      const timer = setTimeout(() => {
+        resetForm();
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, resetForm]);
+
+  const handleClose = () => {
+    resetForm();
+    onClose();
+  };
+
+  const handleClearAddress = (index: number) => {
+    setAddresses((prev) => {
+      const next = [...prev];
+      const current = next[index];
+      if (!current) return prev;
+      next[index] = {
+        ...emptyAddressDraft(country || "Thailand", current.isDefault, index + 1),
+        tempId: `addr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      };
+      return next;
+    });
+    toast({ title: "Address Cleared", description: "Address fields have been reset.", type: "info" });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -208,6 +251,7 @@ export function CreateAccountPanel({
       const created = await createCompany({
         displayName: displayName.trim(),
         name: name.trim(),
+        phone: phone.trim() || undefined,
         type: accountType,
         country: country.trim() || "Thailand",
         notes: notes.trim() || undefined,
@@ -234,7 +278,7 @@ export function CreateAccountPanel({
   return (
     <SlideOverPanel
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="Add New Account"
       subtitle="Register an account with multiple location addresses"
       widthClass="w-[740px]"
@@ -320,6 +364,26 @@ export function CreateAccountPanel({
                 value={country}
                 onChange={handleAccountCountryChange}
                 placeholder="Select country..."
+              />
+            </div>
+
+            {/* Office Phone / Landline */}
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-[#C7F33C]" />
+                  <span>Office Phone / Landline</span>
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">
+                  e.g. 02 123 4567 ext. 12 or +66 2 123 4567
+                </span>
+              </label>
+              <input
+                type="text"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="e.g. 02 123 4567 ext. 12"
+                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
               />
             </div>
 
@@ -449,6 +513,17 @@ export function CreateAccountPanel({
                         <span>Copy</span>
                       </button>
 
+                      {/* Clear / Reset Address Fields Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleClearAddress(idx)}
+                        className="px-2.5 py-1 rounded-xl text-xs font-medium text-slate-300 bg-[#252728] hover:bg-[#4E4F50] hover:text-amber-300 transition-colors flex items-center gap-1 cursor-pointer"
+                        title="Clear all fields in this address"
+                      >
+                        <RotateCcw className="w-3 h-3 text-slate-400" />
+                        <span>Clear</span>
+                      </button>
+
                       {/* Delete Address Button (if > 1) */}
                       {addresses.length > 1 && (
                         <button
@@ -466,7 +541,32 @@ export function CreateAccountPanel({
                   {/* Address Form Body (Expandable) */}
                   {isExpanded && (
                     <div className="p-5 space-y-3.5 animate-in fade-in duration-150 rounded-b-2xl">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                      {/* Global Google Places Autocomplete */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-[#C7F33C]" />
+                          <span>Global Address Search (Auto-fill)</span>
+                        </label>
+                        <AddressAutocomplete
+                          key={addr.tempId}
+                          onAddressSelected={(parsed) => {
+                            if (parsed.addressLine1) handleAddressChange(idx, "addressLine1", parsed.addressLine1);
+                            if (parsed.subdistrict) handleAddressChange(idx, "subdistrict", parsed.subdistrict);
+                            if (parsed.district) handleAddressChange(idx, "district", parsed.district);
+                            if (parsed.province) handleAddressChange(idx, "province", parsed.province);
+                            if (parsed.postalCode) handleAddressChange(idx, "postalCode", parsed.postalCode);
+                            if (parsed.country) handleAddressChange(idx, "country", parsed.country);
+                            if (parsed.googleMapsUrl) handleAddressChange(idx, "googleMapsUrl", parsed.googleMapsUrl);
+                            if (parsed.title && (!addr.title || addr.title.startsWith("Headquarters") || addr.title.startsWith("Branch"))) {
+                              handleAddressChange(idx, "title", parsed.title);
+                            }
+                            toast({ title: "Address Auto-filled", description: "Details populated from Google Places.", type: "success" });
+                          }}
+                          placeholder="Type business name, building, or address worldwide..."
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1">
                         {/* Location Name */}
                         <div className="sm:col-span-2 flex flex-col gap-1">
                           <label className="text-[11px] font-semibold text-slate-300">
@@ -495,7 +595,7 @@ export function CreateAccountPanel({
                         {/* Branch Code */}
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-semibold text-slate-300">
-                            Branch Code (รหัสสาขา)
+                            Branch Code
                           </label>
                           <input
                             type="text"
@@ -511,7 +611,7 @@ export function CreateAccountPanel({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-semibold text-slate-300">
-                            Branch Tax ID (เลขประจำตัวผู้เสียภาษี)
+                            Tax ID
                           </label>
                           <input
                             type="text"
@@ -524,7 +624,7 @@ export function CreateAccountPanel({
 
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-semibold text-slate-300">
-                            Country (ประเทศ)
+                            Country
                           </label>
                           <CountrySelect
                             value={addr.country || country || "Thailand"}
@@ -537,7 +637,7 @@ export function CreateAccountPanel({
                       {/* Address Line 1 */}
                       <div className="flex flex-col gap-1">
                         <label className="text-[11px] font-semibold text-slate-300">
-                          Address Line 1 (อาคาร, บ้านเลขที่, ถนน) <span className="text-[#C7F33C]">*</span>
+                          Address Line 1 <span className="text-[#C7F33C]">*</span>
                         </label>
                         <input
                           type="text"
@@ -551,7 +651,7 @@ export function CreateAccountPanel({
                       {/* Address Line 2 */}
                       <div className="flex flex-col gap-1">
                         <label className="text-[11px] font-semibold text-slate-300">
-                          Address Line 2 (ข้อมูลเพิ่มเติม)
+                          Address Line 2
                         </label>
                         <input
                           type="text"
@@ -566,7 +666,7 @@ export function CreateAccountPanel({
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-semibold text-slate-300">
-                            Subdistrict (ตำบล/แขวง)
+                            Subdistrict
                           </label>
                           <input
                             type="text"
@@ -579,7 +679,7 @@ export function CreateAccountPanel({
 
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-semibold text-slate-300">
-                            District (อำเภอ/เขต)
+                            District
                           </label>
                           <input
                             type="text"
@@ -592,7 +692,7 @@ export function CreateAccountPanel({
 
                         <div className="flex flex-col gap-1">
                           <label className="text-[11px] font-semibold text-slate-300">
-                            Province / State (จังหวัด)
+                            Province / State
                           </label>
                           <input
                             type="text"

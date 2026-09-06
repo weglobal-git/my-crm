@@ -419,7 +419,7 @@ export function EditAccountModal({
                       {/* Branch Code */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                          Branch Code (รหัสสาขา)
+                          Branch Code
                         </label>
                         <input
                           type="text"
@@ -435,7 +435,7 @@ export function EditAccountModal({
                       {/* Tax ID */}
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                          Tax ID (เลขประจำตัวผู้เสียภาษี)
+                          Tax ID
                         </label>
                         <input
                           type="text"
@@ -494,39 +494,39 @@ export function EditAccountModal({
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                          Subdistrict (ตำบล/แขวง)
+                          Subdistrict
                         </label>
                         <input
                           type="text"
                           value={addrForm.subdistrict || ""}
                           onChange={(e) => setAddrForm((p) => ({ ...p, subdistrict: e.target.value }))}
-                          placeholder="e.g. สีลม"
+                          placeholder="e.g. Silom"
                           className="w-full bg-[#252728] rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                          District (อำเภอ/เขต)
+                          District
                         </label>
                         <input
                           type="text"
                           value={addrForm.district || ""}
                           onChange={(e) => setAddrForm((p) => ({ ...p, district: e.target.value }))}
-                          placeholder="e.g. บางรัก"
+                          placeholder="e.g. Bang Rak"
                           className="w-full bg-[#252728] rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
                         />
                       </div>
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-400 mb-1">
-                          Province (จังหวัด)
+                          Province
                         </label>
                         <input
                           type="text"
                           value={addrForm.province || ""}
                           onChange={(e) => setAddrForm((p) => ({ ...p, province: e.target.value }))}
-                          placeholder="e.g. กรุงเทพมหานคร"
+                          placeholder="e.g. Bangkok"
                           className="w-full bg-[#252728] rounded-xl px-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
                         />
                       </div>

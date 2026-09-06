@@ -228,7 +228,7 @@ export async function getCompaniesWithContacts({
   pageSize = 20,
   actor: providedActor,
 }: GetCompaniesParams = {}) {
-  const actor = providedActor || (await getContactActor());
+  if (!providedActor) await getContactActor();
 
   const where: Prisma.CompanyWhereInput = {};
 
@@ -430,8 +430,8 @@ export async function getContactById(contactId: string) {
 
 export interface UpdateContactInput {
   name?: string;
-  email?: string;
-  phone?: string;
+  email?: string | null;
+  phone?: string | null;
   role?: string;
   contactDepartment?: string | null;
   emails?: string[];
@@ -935,6 +935,7 @@ export async function updateCompanyDetails(
     status?: ContactStatus;
     starRating?: number;
     notes?: string | null;
+    phone?: string | null;
   }
 ) {
   const actor = await getContactActor();
@@ -950,6 +951,9 @@ export async function updateCompanyDetails(
   }
   if (data.name !== undefined && data.name.trim() !== company.name) {
     changes.push(`Changed name from "${company.name}" to "${data.name.trim()}"`);
+  }
+  if (data.phone !== undefined && data.phone?.trim() !== (company.phone || "")) {
+    changes.push(`Updated office phone to ${data.phone?.trim() || "None"}`);
   }
   if (data.country !== undefined && data.country?.trim() !== (company.country || "")) {
     changes.push(`Updated country to ${data.country || "None"}`);
@@ -973,6 +977,7 @@ export async function updateCompanyDetails(
       data: {
         displayName: data.displayName !== undefined ? data.displayName.trim() : company.displayName,
         name: data.name !== undefined ? data.name.trim() : company.name,
+        phone: data.phone !== undefined ? data.phone?.trim() || null : company.phone,
         country: data.country !== undefined ? data.country?.trim() || null : company.country,
         type: data.type !== undefined ? data.type : company.type,
         status: data.status !== undefined ? data.status : company.status,
@@ -1007,6 +1012,7 @@ export async function updateCompanyDetails(
 export interface CreateCompanyInput {
   displayName?: string;
   name: string;
+  phone?: string;
   country?: string;
   type?: ContactType;
   notes?: string;
@@ -1036,6 +1042,7 @@ export async function createCompany(input: CreateCompanyInput) {
       data: {
         displayName,
         name: input.name.trim(),
+        phone: input.phone?.trim() || null,
         country: input.country?.trim() || "Thailand",
         type: input.type || "CUSTOMER",
         notes: input.notes?.trim() || null,
@@ -1307,7 +1314,7 @@ export async function getAccountOverview(
   companyId: string,
   _options?: GetAccountOverviewOptions
 ) {
-  const includeAddresses = _options?.includeAddresses ?? false;
+  const includeAddresses = _options?.includeAddresses ?? true;
   const includeLogs = _options?.includeLogs ?? false;
   const actor = _options?.actor || (await getContactActor());
 
@@ -1319,6 +1326,7 @@ export async function getAccountOverview(
         id: true,
         name: true,
         displayName: true,
+        phone: true,
         type: true,
         status: true,
         starRating: true,
@@ -1541,6 +1549,7 @@ export async function getAccountOverview(
       id: company.id,
       name: company.name,
       displayName: company.displayName,
+      phone: company.phone,
       type: company.type,
       status: company.status,
       starRating: company.starRating,

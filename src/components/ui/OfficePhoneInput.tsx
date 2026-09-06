@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Search, ChevronDown, Check, X, ShieldAlert } from "lucide-react";
 import { parsePhoneNumberFromString, AsYouType, CountryCode } from "libphonenumber-js/max";
 import { COUNTRIES, CountryData, DEFAULT_COUNTRY } from "@/lib/data/countries";
 
-interface PhoneInputWithCountryProps {
+export interface OfficePhoneInputProps {
   value?: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -14,14 +14,14 @@ interface PhoneInputWithCountryProps {
   id?: string;
 }
 
-export function PhoneInputWithCountry({
+export function OfficePhoneInput({
   value = "",
   onChange,
-  placeholder = "081 234 5678",
+  placeholder = "02 123 4567",
   disabled = false,
   className = "",
   id,
-}: PhoneInputWithCountryProps) {
+}: OfficePhoneInputProps) {
   const [isDialDropdownOpen, setIsDialDropdownOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(false);
   const [search, setSearch] = useState("");
@@ -46,34 +46,57 @@ export function PhoneInputWithCountry({
     }
   }, [isDialDropdownOpen]);
 
-  // Parse dial code and national number from value
-  const parsePhone = useCallback((phoneStr: string): { country: CountryData; nationalNumber: string } => {
-    if (!phoneStr) {
-      return { country: DEFAULT_COUNTRY, nationalNumber: "" };
-    }
+  // Parse dial code, national number, and extension from value
+  const parsePhone = useCallback(
+    (phoneStr: string): { country: CountryData; nationalNumber: string; extension: string } => {
+      if (!phoneStr) {
+        return { country: DEFAULT_COUNTRY, nationalNumber: "", extension: "" };
+      }
 
-    const trimmed = phoneStr.trim();
-    if (trimmed.startsWith("+")) {
-      // Find matching country by longest dial code prefix
-      const sortedByDialLen = [...COUNTRIES].sort((a, b) => b.dialCode.length - a.dialCode.length);
-      for (const c of sortedByDialLen) {
-        if (trimmed.startsWith(c.dialCode)) {
-          const rest = trimmed.slice(c.dialCode.length).trim();
-          return { country: c, nationalNumber: rest };
+      let trimmed = phoneStr.trim();
+      let extension = "";
+
+      // Extract extension if present (e.g. ext. 123, ต่อ 123, #123, x123)
+      const extMatch = trimmed.match(/(?:ext\.?|x|ต่อ|#)\s*([0-9]{1,6})/i);
+      if (extMatch) {
+        extension = extMatch[1];
+        trimmed = trimmed.replace(extMatch[0], "").trim();
+      }
+
+      if (trimmed.startsWith("+")) {
+        const sortedByDialLen = [...COUNTRIES].sort((a, b) => b.dialCode.length - a.dialCode.length);
+        for (const c of sortedByDialLen) {
+          if (trimmed.startsWith(c.dialCode)) {
+            const rest = trimmed.slice(c.dialCode.length).trim();
+            return { country: c, nationalNumber: rest, extension };
+          }
         }
       }
-    }
 
-    // Default to Thailand if domestic number starting with 0
-    if (trimmed.startsWith("0")) {
-      return { country: DEFAULT_COUNTRY, nationalNumber: trimmed.replace(/^0/, "") };
-    }
+      // Default to Thailand if domestic number starting with 0
+      if (trimmed.startsWith("0")) {
+        return { country: DEFAULT_COUNTRY, nationalNumber: trimmed.replace(/^0/, ""), extension };
+      }
 
-    return { country: DEFAULT_COUNTRY, nationalNumber: trimmed };
-  }, []);
+      return { country: DEFAULT_COUNTRY, nationalNumber: trimmed, extension };
+    },
+    []
+  );
 
   const parsed = useMemo(() => parsePhone(value), [value, parsePhone]);
   const [selectedCountry, setSelectedCountry] = useState<CountryData>(parsed.country);
+
+  // Helper to build standardized phone string
+  const buildCombined = useCallback((country: CountryData, national: string, ext: string) => {
+    const cleanNat = national.trim();
+    const cleanExt = ext.trim();
+    if (!cleanNat) return "";
+    let res = `${country.dialCode} ${cleanNat}`;
+    if (cleanExt) {
+      res += ` ext. ${cleanExt}`;
+    }
+    return res;
+  }, []);
 
   const filteredCountries = useMemo(() => {
     if (!search.trim()) return COUNTRIES;
@@ -116,15 +139,25 @@ export function PhoneInputWithCountry({
     }
   }, [isDialDropdownOpen]);
 
+  const activeCountry = value && value.trim().startsWith("+") ? parsed.country : selectedCountry;
+
   const handleCountryChange = (country: CountryData) => {
     setSelectedCountry(country);
     closeDialDropdown();
-    const combined = parsed.nationalNumber ? `${country.dialCode} ${parsed.nationalNumber}` : "";
+    const combined = buildCombined(country, parsed.nationalNumber, parsed.extension);
     onChange(combined);
   };
 
   const handleNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let rawVal = e.target.value;
+
+    // Check if user pasted with an extension (e.g. "02 152 3787 ext 79" or "ต่อ 79")
+    let currentExt = parsed.extension;
+    const extMatch = rawVal.match(/(?:ext\.?|x|ต่อ|#)\s*([0-9]{1,6})/i);
+    if (extMatch) {
+      currentExt = extMatch[1];
+      rawVal = rawVal.replace(extMatch[0], "");
+    }
 
     // Detect if user pasted multiple numbers separated by delimiters
     if (/[,\/;\n|]|\band\b|\bor\b|และ|หรือ/i.test(rawVal)) {
@@ -136,7 +169,7 @@ export function PhoneInputWithCountry({
     if (rawVal.trim().startsWith("+")) {
       const p = parsePhone(rawVal.trim());
       setSelectedCountry(p.country);
-      onChange(rawVal.trim());
+      onChange(buildCombined(p.country, p.nationalNumber, p.extension || currentExt));
       return;
     }
 
@@ -160,6 +193,7 @@ export function PhoneInputWithCountry({
       try {
         const ayt = new AsYouType(activeCountry.code as CountryCode);
         if (activeCountry.code === "TH") {
+          // For Thailand, landlines (02) require leading 0 for AsYouType pattern detection
           const domestic = digitsOnly.startsWith("0") ? digitsOnly : "0" + digitsOnly;
           formattedNational = ayt.input(domestic).replace(/^0\s?/, "");
         } else {
@@ -173,33 +207,47 @@ export function PhoneInputWithCountry({
       }
     }
 
-    const combined = formattedNational.trim() ? `${activeCountry.dialCode} ${formattedNational.trim()}` : "";
+    const combined = buildCombined(activeCountry, formattedNational, currentExt);
     onChange(combined);
   };
 
-  const activeCountry = value && value.trim().startsWith("+") ? parsed.country : selectedCountry;
+  const handleExtensionChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const extDigits = e.target.value.replace(/\D/g, "").slice(0, 6);
+    onChange(buildCombined(activeCountry, parsed.nationalNumber, extDigits));
+  };
 
   // Real-time phone number validation using Google's libphonenumber dataset
   const validationInfo = useMemo(() => {
     const rawDigits = parsed.nationalNumber.replace(/\D/g, "");
     if (!rawDigits || rawDigits.length < 3) {
-      return { isValid: null, type: null, isPossible: null, rawLength: rawDigits.length };
+      return { isValid: null, type: null, isPossible: null, rawLength: rawDigits.length, hint: null };
     }
 
     const fullNumber = `${activeCountry.dialCode}${rawDigits}`;
     try {
       const p = parsePhoneNumberFromString(fullNumber, activeCountry.code as CountryCode);
       if (!p) {
-        return { isValid: false, type: null, isPossible: false, rawLength: rawDigits.length };
+        let hint = "Check number";
+        if (activeCountry.code === "TH" && rawDigits.startsWith("2") && rawDigits.length > 8) {
+          hint = "เบอร์ 02 มี 8 หลัก (หลัง +66)";
+        }
+        return { isValid: false, type: null, isPossible: false, rawLength: rawDigits.length, hint };
       }
+
+      let hint: string | null = null;
+      if (!p.isValid() && activeCountry.code === "TH" && rawDigits.startsWith("2") && rawDigits.length > 8) {
+        hint = "เบอร์ 02 มี 8 หลัก (หลัง +66)";
+      }
+
       return {
         isValid: p.isValid(),
         type: p.getType(),
         isPossible: p.isPossible(),
         rawLength: rawDigits.length,
+        hint,
       };
     } catch {
-      return { isValid: false, type: null, isPossible: false, rawLength: rawDigits.length };
+      return { isValid: false, type: null, isPossible: false, rawLength: rawDigits.length, hint: null };
     }
   }, [activeCountry.dialCode, activeCountry.code, parsed.nationalNumber]);
 
@@ -207,7 +255,7 @@ export function PhoneInputWithCountry({
     <div
       className={`flex items-center rounded-xl bg-[#252728] border transition-colors ${
         validationInfo.isValid === true
-          ? "focus-within:border-[#C7F33C]"
+          ? "border-[#C7F33C]/40 focus-within:border-[#C7F33C]"
           : validationInfo.isValid === false && validationInfo.rawLength >= 7
           ? "border-amber-500/40 focus-within:border-amber-400"
           : "border-[#4E4F50]/40 focus-within:border-[#C7F33C]"
@@ -320,9 +368,26 @@ export function PhoneInputWithCountry({
         className="w-full bg-transparent px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none"
       />
 
+      {/* Extension (เบอร์ต่อ) */}
+      <div className="flex items-center pl-2 pr-1 border-l border-[#4E4F50]/40 shrink-0 select-none">
+        <span className="text-[10px] text-slate-400 font-medium mr-1" title="เบอร์ต่อสำนักงาน (Extension)">
+          Ext:
+        </span>
+        <input
+          type="text"
+          value={parsed.extension}
+          onChange={handleExtensionChange}
+          disabled={disabled}
+          maxLength={6}
+          placeholder="ต่อ"
+          className="w-10 bg-transparent text-xs text-slate-100 placeholder-slate-500 focus:outline-none disabled:opacity-50"
+          title="เบอร์ต่อภายในสำนักงาน เช่น 101, 79"
+        />
+      </div>
+
       {/* Action & Live Validation Badge */}
       <div className="flex items-center gap-1.5 pr-2.5 shrink-0 select-none">
-        {parsed.nationalNumber && !disabled && (
+        {(parsed.nationalNumber || parsed.extension) && !disabled && (
           <button
             type="button"
             onClick={() => onChange("")}
@@ -336,20 +401,26 @@ export function PhoneInputWithCountry({
         {validationInfo.isValid === true && (
           <span
             className="text-[10px] font-bold text-[#C7F33C] bg-[#C7F33C]/10 border border-[#C7F33C]/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
-            title="Valid phone number format according to international telecom standards"
+            title="Valid landline/office number format"
           >
             <Check className="w-2.5 h-2.5 text-[#C7F33C]" />
-            <span>Valid</span>
+            <span>
+              {validationInfo.type === "FIXED_LINE"
+                ? parsed.extension
+                  ? `Landline (ต่อ ${parsed.extension})`
+                  : "Landline"
+                : "Office"}
+            </span>
           </span>
         )}
 
         {validationInfo.isValid === false && validationInfo.rawLength >= 7 && (
           <span
             className="text-[10px] font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
-            title="Check number length or prefix for selected country"
+            title={validationInfo.hint || "Check number length or prefix for selected country"}
           >
             <ShieldAlert className="w-2.5 h-2.5 text-amber-400" />
-            <span>Check number</span>
+            <span>{validationInfo.hint || "Check number"}</span>
           </span>
         )}
       </div>
