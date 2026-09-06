@@ -1425,7 +1425,7 @@ export async function getAccountOverview(
             dueDate: true,
             createdAt: true,
             ownerId: true,
-            ...(includeAddresses || includeLogs ? {
+            ...(includeLogs ? {
               stage: {
                 select: {
                   id: true,

@@ -157,6 +157,7 @@ export function PersonTable({
                               src={contact.image}
                               alt={contact.name}
                               fill
+                              unoptimized
                               className="object-cover"
                             />
                           ) : (

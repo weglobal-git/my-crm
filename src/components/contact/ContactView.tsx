@@ -237,6 +237,18 @@ export function ContactView({
     void fetchFilteredCompanies();
   }, [fetchFilteredCompanies]);
 
+  // Idle Background Preloading: warm-fills SWR cache for top visible accounts (0ms transition on click)
+  useEffect(() => {
+    if (!companies || companies.length === 0) return;
+    const timer = setTimeout(() => {
+      const topCompanies = companies.slice(0, 5);
+      for (const c of topCompanies) {
+        void preload(["account-overview", c.id], fetchAccountOverview);
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [companies]);
+
   // Load more function for Infinite Scroll
   const loadMoreCompanies = useCallback(async () => {
     if (isLoadingMoreRef.current || !hasMoreRef.current) return;
@@ -994,8 +1006,8 @@ export function ContactView({
               <div className="flex-1 overflow-y-auto hide-scrollbar p-3 flex flex-col gap-2">
                 {/* Upper Section: Account Analytics Dashboard */}
                 <AccountAnalyticsCard
-                  overview={accountOverview || null}
-                  isLoading={!accountOverview && isOverviewLoading}
+                  overview={isCurrentAccountLoaded ? (accountOverview || null) : null}
+                  isLoading={!isCurrentAccountLoaded}
                   isTransitioning={isOverviewTransitioning}
                   companyId={selectedCompany.id}
                   companyType={selectedCompany.type}
@@ -1013,7 +1025,7 @@ export function ContactView({
 
                 {/* Lower Section: Person Table */}
                 <PersonTable
-                  contacts={accountOverview?.contacts || []}
+                  contacts={isCurrentAccountLoaded ? (accountOverview?.contacts || []) : []}
                   companyName={selectedCompany.name}
                   selectedContactId={selectedContactId}
                   isLoading={isOverviewTransitioning}
