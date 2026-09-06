@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getCompaniesWithContacts, getAccountOverview, getContactActor } from "@/lib/actions/contact";
+import { getCompaniesWithContacts, getContactActor } from "@/lib/actions/contact";
 import { ContactView } from "@/components/contact/ContactView";
 
-// Preload and render Account & Person view with updated Prisma schema
+// Preload and render Account & Person view with lightweight SSR
 export const dynamic = "force-dynamic";
 
 export default async function ContactPage() {
@@ -27,17 +27,13 @@ export default async function ContactPage() {
     actor,
   });
 
-  const firstCompanyId = companies[0]?.id;
-  const initialOverview = firstCompanyId
-    ? await getAccountOverview(firstCompanyId, { actor })
-    : null;
-
   return (
     <ContactView
       initialCompanies={companies}
       initialStats={stats}
       initialTotal={total}
-      initialOverview={initialOverview}
+      initialOverview={null}
     />
   );
 }
+

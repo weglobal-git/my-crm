@@ -313,6 +313,9 @@ export function EditAccountPanel({
       if (initialOverview && initialOverview.company.id === companyId) {
         applyOverviewData(initialOverview);
         setIsLoading(false);
+        // Silently fetch complete details (including addresses and full logs) in the background
+        // so tabs like Address and Logs are fully populated without blocking the 0ms panel open
+        void loadData(true);
         return;
       }
 

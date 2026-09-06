@@ -45,7 +45,7 @@ const CreateAccountPanel = dynamic(loadCreateAccountPanel, { ssr: false });
 
 // Canonical fetcher shared across SWR hooks and hover preload
 const fetchAccountOverview = ([, compId]: [string, string]) =>
-  getAccountOverview(compId, { includeAddresses: true });
+  getAccountOverview(compId, { includeAddresses: false });
 
 const ACCOUNT_TYPES: { label: string; value: ContactType }[] = [
   { label: "Customer", value: "CUSTOMER" },
@@ -73,9 +73,10 @@ export function ContactView({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  // Star Rating Hover & Status Toggle States
+  // Star Rating Hover & Sequence Tracking Refs for Safe Optimistic UI
   const [hoverRating, setHoverRating] = useState<number | null>(null);
-  const [isTogglingStatus, setIsTogglingStatus] = useState(false);
+  const toggleSequenceRef = useRef<Map<string, number>>(new Map());
+  const starSequenceRef = useRef<Map<string, number>>(new Map());
 
   // Infinite Scroll State
   const [companies, setCompanies] = useState<CompanyMasterItem[]>(initialCompanies);
@@ -225,7 +226,7 @@ export function ContactView({
     } finally {
       setIsSearching(false);
     }
-  }, [activeTab, activeType, selectedCountry, debouncedSearch]);
+  }, [activeTab, activeType, selectedCountry, debouncedSearch, setSelectedCompanyId]);
 
   // Trigger re-fetch when filter changes (skip initial mount to avoid duplicate fetch of SSR data)
   useEffect(() => {
@@ -316,6 +317,9 @@ export function ContactView({
       status?: ContactStatus;
       starRating?: number;
       company?: Partial<CompanyMasterItem>;
+      contactId?: string;
+      contact?: unknown;
+      isActive?: boolean;
     };
 
     channel.bind("account-updated", (data?: ContactPusherEvent) => {
@@ -338,6 +342,50 @@ export function ContactView({
         setCompanies((prev) =>
           prev.map((c) => (c.id === data.companyId ? { ...c, ...data.company } : c))
         );
+      } else if (data.action === "COMPANY_CREATED" && data.company) {
+        const newComp = data.company as CompanyMasterItem;
+        setCompanies((prev) => {
+          if (prev.some((c) => c.id === newComp.id)) return prev;
+          if (newComp.status === activeTab && newComp.type === activeType) {
+            return [newComp, ...prev];
+          }
+          return prev;
+        });
+        setStats((prev) => ({
+          ...prev,
+          qualifiedCount: newComp.status === "QUALIFIED" ? prev.qualifiedCount + 1 : prev.qualifiedCount,
+          unqualifiedCount: newComp.status === "UNQUALIFIED" ? prev.unqualifiedCount + 1 : prev.unqualifiedCount,
+          totalCount: prev.totalCount + 1,
+        }));
+        setTotalCompanies((prev) => prev + 1);
+      } else if (data.action === "CONTACT_CREATED") {
+        setCompanies((prev) =>
+          prev.map((c) =>
+            c.id === data.companyId
+              ? {
+                  ...c,
+                  _count: {
+                    contacts: (c._count?.contacts || 0) + 1,
+                    opportunities: c._count?.opportunities || 0,
+                  },
+                }
+              : c
+          )
+        );
+      } else if (data.action === "CONTACT_DELETED") {
+        setCompanies((prev) =>
+          prev.map((c) =>
+            c.id === data.companyId
+              ? {
+                  ...c,
+                  _count: {
+                    contacts: Math.max(0, (c._count?.contacts || 1) - 1),
+                    opportunities: c._count?.opportunities || 0,
+                  },
+                }
+              : c
+          )
+        );
       }
 
       // If the currently selected company was changed, revalidate overview
@@ -349,7 +397,7 @@ export function ContactView({
     return () => {
       pusherClient.unsubscribe("contact");
     };
-  }, [selectedCompanyId, mutateOverview]);
+  }, [selectedCompanyId, mutateOverview, activeTab, activeType]);
 
   // Find currently selected company
   const selectedCompany = companies.find((c) => c.id === selectedCompanyId) || null;
@@ -392,17 +440,19 @@ export function ContactView({
     void mutateOverview();
   };
 
-  // Toggle Account Qualification with Instant Optimistic UI
+  // Toggle Account Qualification with Instant Optimistic UI (Queue-based / Race-safe)
   const handleToggleQualification = async () => {
-    if (!selectedCompany || isTogglingStatus) return;
+    if (!selectedCompany) return;
     const compId = selectedCompany.id;
-    const prevStatus = selectedCompany.status;
+    const currentStatus = selectedCompany.status;
     const nextStatus: ContactStatus =
-      prevStatus === "QUALIFIED" ? "UNQUALIFIED" : "QUALIFIED";
+      currentStatus === "QUALIFIED" ? "UNQUALIFIED" : "QUALIFIED";
 
-    setIsTogglingStatus(true);
+    // Sequence tracking per company to handle rapid clicks safely
+    const currentSeq = (toggleSequenceRef.current.get(compId) || 0) + 1;
+    toggleSequenceRef.current.set(compId, currentSeq);
 
-    // 1. Instant optimistic update (<10ms)
+    // 1. Instant optimistic update (<5ms)
     setCompanies((prev) =>
       prev.map((c) => (c.id === compId ? { ...c, status: nextStatus } : c))
     );
@@ -429,35 +479,38 @@ export function ContactView({
       await toggleCompanyStatus(compId, nextStatus);
     } catch (err) {
       console.error("Failed to toggle company status:", err);
-      // Revert on failure
-      setCompanies((prev) =>
-        prev.map((c) => (c.id === compId ? { ...c, status: prevStatus } : c))
-      );
-      setStats((prev) => ({
-        ...prev,
-        qualifiedCount:
-          prevStatus === "QUALIFIED"
-            ? prev.qualifiedCount + 1
-            : Math.max(0, prev.qualifiedCount - 1),
-        unqualifiedCount:
-          prevStatus === "UNQUALIFIED"
-            ? prev.unqualifiedCount + 1
-            : Math.max(0, prev.unqualifiedCount - 1),
-      }));
-      void mutateOverview(
-        (curr) => (curr ? { ...curr, company: { ...curr.company, status: prevStatus } } : curr),
-        { revalidate: false }
-      );
-    } finally {
-      setIsTogglingStatus(false);
+      // Only rollback if this is still the most recent toggle request for this company
+      if (toggleSequenceRef.current.get(compId) === currentSeq) {
+        setCompanies((prev) =>
+          prev.map((c) => (c.id === compId ? { ...c, status: currentStatus } : c))
+        );
+        setStats((prev) => ({
+          ...prev,
+          qualifiedCount:
+            currentStatus === "QUALIFIED"
+              ? prev.qualifiedCount + 1
+              : Math.max(0, prev.qualifiedCount - 1),
+          unqualifiedCount:
+            currentStatus === "UNQUALIFIED"
+              ? prev.unqualifiedCount + 1
+              : Math.max(0, prev.unqualifiedCount - 1),
+        }));
+        void mutateOverview(
+          (curr) => (curr ? { ...curr, company: { ...curr.company, status: currentStatus } } : curr),
+          { revalidate: false }
+        );
+      }
     }
   };
 
-  // Change Account Star Rating with Instant Optimistic UI
+  // Change Account Star Rating with Instant Optimistic UI (Queue-based / Race-safe)
   const handleSetStarRating = async (stars: number) => {
     if (!selectedCompany) return;
     const compId = selectedCompany.id;
     const previousStars = selectedCompany.starRating || 0;
+
+    const currentSeq = (starSequenceRef.current.get(compId) || 0) + 1;
+    starSequenceRef.current.set(compId, currentSeq);
 
     // 1. Optimistic update and sort descending by starRating (<5ms)
     setCompanies((prev) => {
@@ -479,19 +532,21 @@ export function ContactView({
       await updateCompanyStarRating(compId, stars);
     } catch (err) {
       console.error("Failed to update star rating:", err);
-      // Revert on failure
-      setCompanies((prev) => {
-        const updated = prev.map((c) =>
-          c.id === compId ? { ...c, starRating: previousStars } : c
+      // Only rollback if this is still the latest rating change for this company
+      if (starSequenceRef.current.get(compId) === currentSeq) {
+        setCompanies((prev) => {
+          const updated = prev.map((c) =>
+            c.id === compId ? { ...c, starRating: previousStars } : c
+          );
+          return [...updated].sort(
+            (a, b) => (b.starRating || 0) - (a.starRating || 0)
+          );
+        });
+        void mutateOverview(
+          (curr) => (curr ? { ...curr, company: { ...curr.company, starRating: previousStars } } : curr),
+          { revalidate: false }
         );
-        return [...updated].sort(
-          (a, b) => (b.starRating || 0) - (a.starRating || 0)
-        );
-      });
-      void mutateOverview(
-        (curr) => (curr ? { ...curr, company: { ...curr.company, starRating: previousStars } } : curr),
-        { revalidate: false }
-      );
+      }
     }
   };
 
@@ -554,8 +609,8 @@ export function ContactView({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search account, person, country..."
-              className="bg-[#3A3B3C] rounded-full pl-9 pr-4 py-1.5 text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] w-64 md:w-80 transition-all border-0"
+              placeholder="Search..."
+              className="block w-full bg-[#3A3B3C] text-slate-200 placeholder-slate-500 hover:bg-[#4E4F50] rounded-full py-1.5 pl-8 pr-6 border border-transparent focus:outline-none focus:border-[#C7F33C] focus:bg-[#3A3B3C] transition-all text-xs"
             />
           </div>
 
@@ -896,13 +951,10 @@ export function ContactView({
                       role="switch"
                       aria-checked={selectedCompany.status === "QUALIFIED"}
                       onClick={handleToggleQualification}
-                      disabled={isTogglingStatus}
                       className={`w-9 h-5 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer focus:outline-none ${
                         selectedCompany.status === "QUALIFIED"
                           ? "bg-[#C7F33C]"
                           : "bg-[#3A3B3C]"
-                      } ${
-                        isTogglingStatus ? "opacity-60 cursor-not-allowed" : ""
                       }`}
                       title={
                         selectedCompany.status === "QUALIFIED"

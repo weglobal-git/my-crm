@@ -263,14 +263,10 @@ export async function getCompaniesWithContacts({
     ];
   }
 
-  const [
-    total,
-    rawCompanies,
-    qualifiedCount,
-    unqualifiedCount,
-    totalCount,
-  ] = await Promise.all([
-    prisma.company.count({ where }),
+  const isFirstPage = page === 1;
+
+  const [totalCountFromFilter, rawCompaniesWithExtra, statusGroups] = await Promise.all([
+    isFirstPage ? prisma.company.count({ where }) : Promise.resolve(0),
     prisma.company.findMany({
       where,
       select: {
@@ -291,19 +287,38 @@ export async function getCompaniesWithContacts({
       },
       orderBy: [{ starRating: "desc" }, { createdAt: "desc" }],
       skip: (page - 1) * pageSize,
-      take: pageSize,
+      take: pageSize + 1,
     }),
-    prisma.company.count({ where: { status: "QUALIFIED" } }),
-    prisma.company.count({ where: { status: "UNQUALIFIED" } }),
-    prisma.company.count(),
+    isFirstPage
+      ? prisma.company.groupBy({
+          by: ["status"],
+          _count: { id: true },
+        })
+      : Promise.resolve([]),
   ]);
+
+  const hasMore = rawCompaniesWithExtra.length > pageSize;
+  const rawCompanies = hasMore
+    ? rawCompaniesWithExtra.slice(0, pageSize)
+    : rawCompaniesWithExtra;
+
+  let qualifiedCount = 0;
+  let unqualifiedCount = 0;
+  for (const group of statusGroups) {
+    if (group.status === "QUALIFIED") {
+      qualifiedCount = group._count.id;
+    } else if (group.status === "UNQUALIFIED") {
+      unqualifiedCount = group._count.id;
+    }
+  }
+  const totalCount = qualifiedCount + unqualifiedCount;
 
   return {
     companies: rawCompanies,
-    total,
+    total: isFirstPage ? totalCountFromFilter : 0,
     page,
     pageSize,
-    hasMore: page * pageSize < total,
+    hasMore,
     stats: {
       qualifiedCount,
       unqualifiedCount,
@@ -643,6 +658,12 @@ export async function updateContact(contactId: string, input: UpdateContactInput
   });
 
   revalidatePath("/contact");
+  void pusherServer.trigger("contact", "account-updated", {
+    action: "CONTACT_UPDATED",
+    companyId: current.companyId,
+    contactId,
+  }).catch((err) => console.error("Pusher trigger error:", err));
+
   return { success: true };
 }
 
@@ -719,6 +740,12 @@ export async function deleteContact(contactId: string) {
   });
 
   revalidatePath("/contact");
+  void pusherServer.trigger("contact", "account-updated", {
+    action: "CONTACT_DELETED",
+    companyId: contact.companyId,
+    contactId,
+  }).catch((err) => console.error("Pusher trigger error:", err));
+
   return { success: true };
 }
 
@@ -812,6 +839,12 @@ export async function createContact(input: CreateContactInput) {
   });
 
   revalidatePath("/contact");
+  void pusherServer.trigger("contact", "account-updated", {
+    action: "CONTACT_CREATED",
+    companyId: result.companyId,
+    contact: result,
+  }).catch((err) => console.error("Pusher trigger error:", err));
+
   return result;
 }
 
@@ -820,7 +853,7 @@ export async function toggleContactActive(contactId: string, isActive: boolean) 
 
   const current = await prisma.contact.findUnique({
     where: { id: contactId },
-    select: { id: true, name: true, isActive: true },
+    select: { id: true, name: true, isActive: true, companyId: true },
   });
 
   if (!current) throw new Error("Person not found");
@@ -844,6 +877,13 @@ export async function toggleContactActive(contactId: string, isActive: boolean) 
   ]);
 
   revalidatePath("/contact");
+  void pusherServer.trigger("contact", "account-updated", {
+    action: "CONTACT_STATUS_CHANGE",
+    companyId: current.companyId,
+    contactId,
+    isActive,
+  }).catch((err) => console.error("Pusher trigger error:", err));
+
   return { success: true, isActive };
 }
 
@@ -1102,6 +1142,22 @@ export async function createCompany(input: CreateCompanyInput) {
   });
 
   revalidatePath("/contact");
+  void pusherServer.trigger("contact", "account-updated", {
+    action: "COMPANY_CREATED",
+    companyId: result.id,
+    company: {
+      id: result.id,
+      name: result.name,
+      displayName: result.displayName,
+      country: result.country,
+      status: result.status,
+      type: result.type,
+      starRating: result.starRating,
+      createdAt: result.createdAt,
+      _count: { contacts: 0, opportunities: 0 },
+    },
+  }).catch((err) => console.error("Pusher trigger error:", err));
+
   return result;
 }
 
@@ -1314,7 +1370,7 @@ export async function getAccountOverview(
   companyId: string,
   _options?: GetAccountOverviewOptions
 ) {
-  const includeAddresses = _options?.includeAddresses ?? true;
+  const includeAddresses = _options?.includeAddresses ?? false;
   const includeLogs = _options?.includeLogs ?? false;
   const actor = _options?.actor || (await getContactActor());
 
