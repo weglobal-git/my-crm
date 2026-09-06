@@ -1690,30 +1690,53 @@ export interface AccountSharedMediaResult {
 export async function getAccountSharedMedia(companyId: string): Promise<AccountSharedMediaResult> {
   await getContactActor();
 
-  // 1. Fetch attachments across all opportunities for this company
-  const rawAttachments = await prisma.attachment.findMany({
-    where: {
-      opportunity: { companyId },
-    },
-    select: {
-      id: true,
-      fileName: true,
-      fileType: true,
-      size: true,
-      cloudinaryUrl: true,
-      googleDriveFileId: true,
-      createdAt: true,
-      opportunity: {
-        select: {
-          id: true,
-          topic: true,
-          status: true,
-          createdAt: true,
+  // Run Attachment & ActivityLog queries concurrently in parallel
+  const [rawAttachments, logs] = await Promise.all([
+    prisma.attachment.findMany({
+      where: {
+        opportunity: { companyId },
+      },
+      select: {
+        id: true,
+        fileName: true,
+        fileType: true,
+        size: true,
+        cloudinaryUrl: true,
+        googleDriveFileId: true,
+        createdAt: true,
+        opportunity: {
+          select: {
+            id: true,
+            topic: true,
+            status: true,
+            createdAt: true,
+          },
         },
       },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+      orderBy: { createdAt: "desc" },
+    }),
+    prisma.activityLog.findMany({
+      where: {
+        opportunity: { companyId },
+        content: { contains: "http" },
+      },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+        opportunity: {
+          select: {
+            id: true,
+            topic: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    }),
+  ]);
 
   const attachments: AccountSharedAttachment[] = rawAttachments.map((a) => ({
     id: a.id,
@@ -1730,29 +1753,6 @@ export async function getAccountSharedMedia(companyId: string): Promise<AccountS
       createdAt: a.opportunity.createdAt.toISOString(),
     },
   }));
-
-  // 2. Fetch activity logs containing URLs (filtered at DB level with contains: "http")
-  const logs = await prisma.activityLog.findMany({
-    where: {
-      opportunity: { companyId },
-      content: { contains: "http" },
-    },
-    select: {
-      id: true,
-      content: true,
-      createdAt: true,
-      opportunity: {
-        select: {
-          id: true,
-          topic: true,
-          status: true,
-          createdAt: true,
-        },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-    take: 150,
-  });
 
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   const links: AccountSharedLink[] = [];

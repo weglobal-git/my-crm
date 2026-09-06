@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import useSWR from "swr";
 import { 
   Bot, 
   Settings, 
@@ -62,16 +63,44 @@ export function AccountAITab({
 
   const [activeTab, setActiveTab] = useState<"summary" | "research" | "prompt">("summary");
 
-  // Analysis state
-  const [analysis, setAnalysis] = useState<AccountBehaviorAnalysis | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  // Analysis SWR (cache-first, 0ms instant render when preloaded or revisited)
+  const {
+    data: analysisRes,
+    mutate: mutateAnalysis,
+    isLoading: isAnalysisLoading,
+  } = useSWR(
+    companyId ? ["account-ai-cached", companyId] : null,
+    () => getCachedAccountAnalysis(companyId!),
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 60000,
+    }
+  );
+
+  // Web Intelligence SWR (cache-first)
+  const {
+    data: webIntelRes,
+    mutate: mutateWebIntel,
+  } = useSWR(
+    companyId ? ["account-web-intel", companyId] : null,
+    () => getCachedWebIntelligence(companyId!),
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 60000,
+    }
+  );
+
+  const analysis = analysisRes?.data || null;
+  const isUpToDate = analysisRes?.isUpToDate !== false;
+  const webIntel = webIntelRes?.data || null;
+  const isLoading = isAnalysisLoading && !analysis;
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isUpToDate, setIsUpToDate] = useState(true);
   const [isCopied, setIsCopied] = useState(false);
 
   // Web Intelligence state
-  const [webIntel, setWebIntel] = useState<WebIntelligenceData | null>(null);
-  const [searchQuery, setSearchQuery] = useState(`${companyName} ${country || ""}`.trim());
+  const [userSearchQuery, setUserSearchQuery] = useState<string | null>(null);
+  const searchQuery = userSearchQuery ?? (webIntel?.searchQuery || `${companyName} ${country || ""}`.trim());
   const [isSearching, setIsSearching] = useState(false);
   const [isWebCopied, setIsWebCopied] = useState(false);
   const [newProductInput, setNewProductInput] = useState("");
@@ -109,59 +138,6 @@ export function AccountAITab({
     }
   }, [activeTab, systemInstruction, taskInstruction, jsonSchema]);
 
-  // Load cached analysis & web intelligence when mounted or company changes
-  useEffect(() => {
-    if (!companyId) return;
-
-    let isMounted = true;
-    queueMicrotask(() => {
-      if (isMounted) setIsLoading(true);
-    });
-
-    getCachedAccountAnalysis(companyId)
-      .then((res) => {
-        if (!isMounted) return;
-        if (res.success && res.data) {
-          setAnalysis(res.data);
-          setIsUpToDate(res.isUpToDate !== false);
-          setEditedSummary(res.data.companyProfile?.businessSummary || "");
-        } else {
-          setAnalysis(null);
-          setIsUpToDate(false);
-        }
-      })
-      .catch((err) => {
-        if (!isMounted) return;
-        console.error("Error loading account analysis:", err);
-        setAnalysis(null);
-      })
-      .finally(() => {
-        if (isMounted) setIsLoading(false);
-      });
-
-    getCachedWebIntelligence(companyId)
-      .then((res) => {
-        if (!isMounted) return;
-        if (res.success && res.data) {
-          setWebIntel(res.data);
-          if (res.data.searchQuery) {
-            setSearchQuery(res.data.searchQuery);
-          }
-        } else {
-          setWebIntel(null);
-          setSearchQuery(`${companyName} ${country || ""}`.trim());
-        }
-      })
-      .catch((err) => {
-        if (!isMounted) return;
-        console.error("Error loading web intel:", err);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [companyId, companyName, country]);
-
   // Load prompt config when switching to prompt tab
   const handleLoadPromptConfig = async () => {
     setIsLoadingPrompt(true);
@@ -186,8 +162,7 @@ export function AccountAITab({
     try {
       const res = await getAccountBehaviorAnalysis(companyId);
       if (res.success && res.data) {
-        setAnalysis(res.data);
-        setIsUpToDate(true);
+        mutateAnalysis(res, false);
         const newSummary = res.data.companyProfile?.businessSummary || "";
         setEditedSummary(newSummary);
         onAnalysisUpdated?.(res.data);
@@ -208,25 +183,39 @@ export function AccountAITab({
     }
   };
 
-  // Save user-edited business profile
+  // Save user-edited business profile with instant optimistic UI (<5ms)
   const handleSaveProfile = async () => {
     if (!companyId || !editedSummary.trim()) return;
 
     setIsSavingProfile(true);
+    const prevRes = analysisRes;
+    if (analysis) {
+      const optimisticData: AccountBehaviorAnalysis = {
+        ...analysis,
+        companyProfile: {
+          ...analysis.companyProfile,
+          businessSummary: editedSummary.trim(),
+          isUserEdited: true,
+        },
+      };
+      mutateAnalysis({ success: true, data: optimisticData, isUpToDate: true }, false);
+    }
+    setIsEditingProfile(false);
+    onBusinessSummaryUpdated?.(editedSummary.trim());
+    toast({
+      title: "Profile Saved",
+      description: "Company business background updated and saved.",
+      type: "success",
+    });
+
     try {
       const res = await updateCompanyBusinessProfile(companyId, editedSummary);
       if (res.success && res.data) {
-        setAnalysis(res.data);
-        setIsEditingProfile(false);
+        mutateAnalysis({ success: true, data: res.data, isUpToDate: true }, false);
         onAnalysisUpdated?.(res.data);
-        onBusinessSummaryUpdated?.(editedSummary.trim());
-        toast({
-          title: "Profile Saved",
-          description: "Company business background updated and saved.",
-          type: "success",
-        });
       }
     } catch (err: unknown) {
+      mutateAnalysis(prevRes, false);
       const msg = err instanceof Error ? err.message : "Failed to update profile";
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
@@ -291,7 +280,7 @@ export function AccountAITab({
     try {
       const res = await researchCompanyWebIntelligence(companyId, searchQuery);
       if (res.success && res.data) {
-        setWebIntel(res.data);
+        mutateWebIntel(res, false);
         toast({
           title: "Research Complete",
           description: `Gathered web intelligence for ${companyName}.`,
@@ -342,7 +331,7 @@ export function AccountAITab({
   const updateWebIntelField = (field: keyof WebIntelligenceData, value: WebIntelligenceData[keyof WebIntelligenceData]) => {
     if (!webIntel) return;
     const updated = { ...webIntel, [field]: value, isUserEdited: true };
-    setWebIntel(updated);
+    mutateWebIntel({ success: true, data: updated }, false);
     if (companyId) {
       saveCompanyWebIntelligence(companyId, { [field]: value });
     }
@@ -834,7 +823,7 @@ export function AccountAITab({
                 <input
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => setUserSearchQuery(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && searchQuery.trim() && !isSearching) {
                       handleRunResearch();

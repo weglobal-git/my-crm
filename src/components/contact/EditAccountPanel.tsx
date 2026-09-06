@@ -34,6 +34,7 @@ import { AddressAutocomplete } from "@/components/contact/AddressAutocomplete";
 import type { ParsedAddressResult } from "@/lib/actions/places";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
 import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
+import { preload } from "swr";
 import { 
   getAccountOverview, 
   updateCompanyDetails, 
@@ -45,8 +46,10 @@ import {
   updateContact, 
   deleteContact, 
   AccountOverviewResult,
-  CompanyMasterItem
+  CompanyMasterItem,
+  getAccountSharedMedia
 } from "@/lib/actions/contact";
+import { getCachedAccountAnalysis, getCachedWebIntelligence } from "@/lib/actions/account-ai";
 import { useDialog } from "@/providers/DialogProvider";
 import { usePermissions } from "@/providers/PermissionProvider";
 import dynamic from "next/dynamic";
@@ -325,6 +328,24 @@ export function EditAccountPanel({
     }, 0);
     return () => clearTimeout(timer);
   }, [isOpen, companyId, selectedContactId, initialOverview, applyOverviewData, loadData]);
+
+  // Idle Background Preloading: warms JS chunks & SWR cache for Account AI & Shared Media (0ms tab switch)
+  useEffect(() => {
+    if (!isOpen || !companyId) return;
+
+    const timer = setTimeout(() => {
+      // 1. Preload dynamic component JS bundles
+      void import("./AccountAITab");
+      void import("@/components/pipeline/SharedMediaTab");
+
+      // 2. Preload SWR caches in background
+      void preload(["account-ai-cached", companyId], () => getCachedAccountAnalysis(companyId));
+      void preload(["account-web-intel", companyId], () => getCachedWebIntelligence(companyId));
+      void preload(["account-shared-media", companyId], () => getAccountSharedMedia(companyId));
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, companyId]);
 
   // Address expand/collapse
   const toggleAddressExpand = (id: string) => {
@@ -2285,6 +2306,7 @@ export function EditAccountPanel({
           {/* TAB 5: ACCOUNT AI ANALYSIS (Unified Right-Menu AI Summary) */}
           {activeTab === "ai_analysis" && (
             <AccountAITab
+              key={companyId}
               companyId={companyId}
               companyName={name}
               companyType={accountType}
@@ -2301,6 +2323,7 @@ export function EditAccountPanel({
           {/* TAB 6: SHARED MEDIA (Company pipeline opportunities shared media & links) */}
           {activeTab === "sharedMedia" && companyId && (
             <SharedMediaTab
+              key={companyId}
               companyId={companyId}
               groupByDeal={true}
             />

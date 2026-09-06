@@ -92,10 +92,14 @@ export function SharedMediaTab({
   const [activeSubTab, setActiveSubTab] = useState<TabType>("images");
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
-  // 1. Account Mode SWR Fetcher
-  const { data: accountMedia, isValidating: isAccountLoading } = useSWR(
+  // 1. Account Mode SWR Fetcher (cache-first, 0ms render when preloaded)
+  const { data: accountMedia, isLoading: isAccountLoading } = useSWR(
     companyId ? ["account-shared-media", companyId] : null,
-    () => getAccountSharedMedia(companyId!)
+    () => getAccountSharedMedia(companyId!),
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 30000,
+    }
   );
 
   // 2. Deal Mode SWR Fetcher
@@ -109,7 +113,7 @@ export function SharedMediaTab({
     dealFetcher
   );
 
-  const isLoading = companyId ? isAccountLoading : isDealLoading;
+  const isLoading = companyId ? (isAccountLoading && !accountMedia) : isDealLoading;
 
   // Unified Attachments
   const attachments: AttachmentData[] = useMemo(() => {
