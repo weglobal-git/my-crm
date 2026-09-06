@@ -21,12 +21,12 @@ interface OpportunityItem {
   dueDate: Date | string | null;
   createdAt: Date | string;
   stage?: { id: string; name: string } | null;
-  owner: {
+  owner?: {
     id: string;
     name: string | null;
     email: string | null;
     image: string | null;
-  };
+  } | null;
   teamMembers?: {
     id: string;
     name: string | null;
@@ -182,10 +182,10 @@ export function ProjectsTab({
 
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 rounded-full bg-[#252728] flex items-center justify-center text-[10px] font-bold text-slate-300">
-                    {deal.owner.name ? deal.owner.name.slice(0, 2).toUpperCase() : "U"}
+                    {deal.owner?.name ? deal.owner.name.slice(0, 2).toUpperCase() : "U"}
                   </div>
                   <span className="text-slate-400 truncate max-w-[120px]">
-                    {deal.owner.name || "Unassigned"}
+                    {deal.owner?.name || "Unassigned"}
                   </span>
                 </div>
               </div>

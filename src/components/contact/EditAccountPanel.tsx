@@ -55,6 +55,7 @@ import { usePermissions } from "@/providers/PermissionProvider";
 import dynamic from "next/dynamic";
 import { ProjectsTab } from "./ProjectsTab";
 import { EmailTab } from "./EmailTab";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 
 const AccountAITab = dynamic(() => import("./AccountAITab").then((m) => m.AccountAITab), {
   loading: () => (
@@ -196,10 +197,14 @@ export function EditAccountPanel({
     prevInitialTabRef.current = initialTab;
   }, [isOpen, initialTab, resolveTargetTab]);
 
-  // If current activeTab is no longer permitted (e.g. after permissions change), fallback to first permitted tab
-  if (tabs.length > 0 && !tabs.some((t) => t.key === activeTab)) {
-    setActiveTab(tabs[0].key);
-  }
+  // Derive safe active tab if current activeTab is no longer permitted (e.g. after permissions change)
+  const safeActiveTab = useMemo(() => {
+    if (tabs.length > 0 && !tabs.some((t) => t.key === activeTab)) {
+      return tabs[0]?.key || "account";
+    }
+    return activeTab;
+  }, [tabs, activeTab]);
+
 
   // Sub-tabs in Account Tab
   const [accountSubTab, setAccountSubTab] = useState<"details" | "logs">("details");
@@ -338,10 +343,10 @@ export function EditAccountPanel({
       void import("./AccountAITab");
       void import("@/components/pipeline/SharedMediaTab");
 
-      // 2. Preload SWR caches in background
-      void preload(["account-ai-cached", companyId], () => getCachedAccountAnalysis(companyId));
-      void preload(["account-web-intel", companyId], () => getCachedWebIntelligence(companyId));
-      void preload(["account-shared-media", companyId], () => getAccountSharedMedia(companyId));
+      // 2. Preload SWR caches in background (catch any rejection silently)
+      void preload(["account-ai-cached", companyId], () => getCachedAccountAnalysis(companyId)).catch(() => {});
+      void preload(["account-web-intel", companyId], () => getCachedWebIntelligence(companyId)).catch(() => {});
+      void preload(["account-shared-media", companyId], () => getAccountSharedMedia(companyId)).catch(() => {});
     }, 150);
 
     return () => clearTimeout(timer);
@@ -841,7 +846,7 @@ export function EditAccountPanel({
           : `${accountType} • ${overview?.contacts?.length || 0} Contacts`
       }
       tabs={tabs}
-      activeTab={activeTab}
+      activeTab={safeActiveTab}
       onTabChange={setActiveTab}
       widthClass="w-[750px]"
     >
@@ -850,9 +855,10 @@ export function EditAccountPanel({
           <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
         </div>
       ) : (
-        <div className="flex flex-col gap-6">
-          {/* TAB 1: ACCOUNT (Profile + Addresses + System Log) */}
-          {activeTab === "account" && (
+        <ErrorBoundary fallbackTitle="Error displaying section">
+          <div className="flex flex-col gap-6">
+            {/* TAB 1: ACCOUNT (Profile + Addresses + System Log) */}
+            {safeActiveTab === "account" && (
             <div className="flex flex-col gap-5">
               {/* Account Sub-Tabs */}
               <div className="flex items-center gap-1.5 bg-[#1C1C1D] p-1.5 rounded-full w-fit">
@@ -1649,7 +1655,7 @@ export function EditAccountPanel({
           )}
 
           {/* TAB 2: CONTACT / PERSON (Inline Accordion + Person System Log) */}
-          {activeTab === "contact" && (
+          {safeActiveTab === "contact" && (
             <div className="flex flex-col gap-4">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-[#3A3B3C]">
@@ -2265,7 +2271,7 @@ export function EditAccountPanel({
           )}
 
           {/* TAB 3: PROJECTS (Company pipeline opportunities) */}
-          {activeTab === "projects" && (
+          {safeActiveTab === "projects" && (
             <div className="flex flex-col gap-4">
               <ProjectsTab
                 companyName={name}
@@ -2276,7 +2282,7 @@ export function EditAccountPanel({
           )}
 
           {/* TAB 4: EMAIL (Compose & Communications) */}
-          {activeTab === "email" && (
+          {safeActiveTab === "email" && (
             <div className="flex flex-col gap-4">
               {/* Recipient Person Picker */}
               {overview?.contacts && overview.contacts.length > 1 && (
@@ -2304,7 +2310,7 @@ export function EditAccountPanel({
           )}
 
           {/* TAB 5: ACCOUNT AI ANALYSIS (Unified Right-Menu AI Summary) */}
-          {activeTab === "ai_analysis" && (
+          {safeActiveTab === "ai_analysis" && companyId && (
             <AccountAITab
               key={companyId}
               companyId={companyId}
@@ -2321,14 +2327,15 @@ export function EditAccountPanel({
           )}
 
           {/* TAB 6: SHARED MEDIA (Company pipeline opportunities shared media & links) */}
-          {activeTab === "sharedMedia" && companyId && (
+          {safeActiveTab === "sharedMedia" && companyId && (
             <SharedMediaTab
               key={companyId}
               companyId={companyId}
               groupByDeal={true}
             />
           )}
-        </div>
+          </div>
+        </ErrorBoundary>
       )}
     </SlideOverPanel>
   );

@@ -1425,22 +1425,20 @@ export async function getAccountOverview(
             dueDate: true,
             createdAt: true,
             ownerId: true,
-            ...(includeLogs ? {
-              stage: {
-                select: {
-                  id: true,
-                  name: true,
-                },
+            stage: {
+              select: {
+                id: true,
+                name: true,
               },
-              owner: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
+            },
+            owner: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
               },
-            } : {}),
+            },
           },
         },
       },
