@@ -1006,8 +1006,8 @@ export function ContactView({
               <div className="flex-1 overflow-y-auto hide-scrollbar p-3 flex flex-col gap-2">
                 {/* Upper Section: Account Analytics Dashboard */}
                 <AccountAnalyticsCard
-                  overview={isCurrentAccountLoaded ? (accountOverview || null) : null}
-                  isLoading={!isCurrentAccountLoaded}
+                  overview={accountOverview || null}
+                  isLoading={!accountOverview && isOverviewLoading}
                   isTransitioning={isOverviewTransitioning}
                   companyId={selectedCompany.id}
                   companyType={selectedCompany.type}
