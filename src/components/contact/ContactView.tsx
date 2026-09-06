@@ -45,7 +45,7 @@ const CreateAccountPanel = dynamic(loadCreateAccountPanel, { ssr: false });
 
 // Canonical fetcher shared across SWR hooks and hover preload
 const fetchAccountOverview = ([, compId]: [string, string]) =>
-  getAccountOverview(compId, { includeAddresses: false });
+  getAccountOverview(compId, { includeAddresses: true, includeLogs: false });
 
 const ACCOUNT_TYPES: { label: string; value: ContactType }[] = [
   { label: "Customer", value: "CUSTOMER" },
@@ -435,8 +435,12 @@ export function ContactView({
     void mutateOverview();
   };
 
-  const handleAccountUpdated = () => {
-    void fetchFilteredCompanies();
+  const handleAccountUpdated = (updatedCompany?: Partial<CompanyMasterItem>) => {
+    if (updatedCompany && selectedCompanyId) {
+      setCompanies((prev) =>
+        prev.map((c) => (c.id === selectedCompanyId ? { ...c, ...updatedCompany } : c))
+      );
+    }
     void mutateOverview();
   };
 

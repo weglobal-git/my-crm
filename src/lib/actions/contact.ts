@@ -1370,7 +1370,7 @@ export async function getAccountOverview(
   companyId: string,
   _options?: GetAccountOverviewOptions
 ) {
-  const includeAddresses = _options?.includeAddresses ?? false;
+  const includeAddresses = _options?.includeAddresses ?? true;
   const includeLogs = _options?.includeLogs ?? false;
   const actor = _options?.actor || (await getContactActor());
 

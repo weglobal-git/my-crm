@@ -44,7 +44,8 @@ import {
   createContact, 
   updateContact, 
   deleteContact, 
-  AccountOverviewResult 
+  AccountOverviewResult,
+  CompanyMasterItem
 } from "@/lib/actions/contact";
 import { useDialog } from "@/providers/DialogProvider";
 import { usePermissions } from "@/providers/PermissionProvider";
@@ -75,7 +76,7 @@ interface EditAccountPanelProps {
   initialOverview?: AccountOverviewResult | null;
   isOpen: boolean;
   onClose: () => void;
-  onAccountUpdated: () => void;
+  onAccountUpdated: (updatedCompany?: Partial<CompanyMasterItem>) => void;
   initialTab?: "account" | "contact" | "projects" | "email" | "ai_analysis" | "sharedMedia" | string;
   selectedContactId?: string | null;
   onBusinessSummaryUpdated?: (summary: string) => void;
@@ -245,6 +246,7 @@ export function EditAccountPanel({
 
   // In-memory draft address state (not saved until explicitly confirmed)
   const [draftAddress, setDraftAddress] = useState<Partial<CompanyAddress> | null>(null);
+  const isSavingDraftRef = useRef(false);
   const [isSavingDraftAddress, setIsSavingDraftAddress] = useState(false);
   const [savingAddressId, setSavingAddressId] = useState<string | null>(null);
 
@@ -282,7 +284,7 @@ export function EditAccountPanel({
     if (!companyId) return;
     if (!silent) setIsLoading(true);
     try {
-      const res = await getAccountOverview(companyId, { includeAddresses: true, includeLogs: true });
+      const res = await getAccountOverview(companyId, { includeAddresses: true, includeLogs: false });
       applyOverviewData(res);
     } catch (err: unknown) {
       if (!silent) {
@@ -386,7 +388,12 @@ export function EditAccountPanel({
           notes: notes.trim() || null,
         }
       } : prev);
-      onAccountUpdated();
+      onAccountUpdated({
+        name: name.trim(),
+        displayName: displayName.trim(),
+        country: country.trim() || null,
+        type: accountType,
+      });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to update account";
       toast({ title: "Error", description: msg, type: "error" });
@@ -397,6 +404,7 @@ export function EditAccountPanel({
 
   // Address handlers
   const handleAddNewAddress = () => {
+    if (draftAddress) return;
     const nextIdx = addresses.length + 1;
     setDraftAddress({
       title: `Address #${nextIdx}`,
@@ -415,37 +423,97 @@ export function EditAccountPanel({
 
   const handleSaveDraftAddress = async () => {
     if (!companyId || !draftAddress) return;
-    if (!draftAddress.addressLine1?.trim()) {
+    if (isSavingDraftRef.current) return;
+    const addrLine1 = draftAddress.addressLine1?.trim();
+    if (!addrLine1) {
       return toast({ title: "Validation", description: "Address Line 1 is required", type: "warning" });
     }
+
+    isSavingDraftRef.current = true;
     setIsSavingDraftAddress(true);
+
+    const nextIdx = addresses.length + 1;
+    const draftSnapshot = { ...draftAddress };
+    const tempId = `temp_addr_${Date.now()}`;
+    const shouldBeDefault = addresses.length === 0 || Boolean(draftSnapshot.isDefault);
+
+    const optimisticAddr: CompanyAddress = {
+      id: tempId,
+      companyId,
+      title: draftSnapshot.title || `Address #${nextIdx}`,
+      type: draftSnapshot.type || (nextIdx === 1 ? "HEADQUARTERS" : "BRANCH"),
+      taxId: draftSnapshot.taxId || null,
+      branchNumber: draftSnapshot.branchNumber || null,
+      addressLine1: addrLine1,
+      addressLine2: draftSnapshot.addressLine2?.trim() || null,
+      subdistrict: draftSnapshot.subdistrict?.trim() || null,
+      district: draftSnapshot.district?.trim() || null,
+      province: draftSnapshot.province?.trim() || null,
+      postalCode: draftSnapshot.postalCode?.trim() || null,
+      country: draftSnapshot.country || country || "Thailand",
+      googleMapsUrl: draftSnapshot.googleMapsUrl?.trim() || null,
+      formattedAddress: [
+        addrLine1,
+        draftSnapshot.addressLine2?.trim(),
+        draftSnapshot.subdistrict?.trim(),
+        draftSnapshot.district?.trim(),
+        draftSnapshot.province?.trim(),
+        draftSnapshot.postalCode?.trim(),
+        draftSnapshot.country || country || "Thailand",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      isDefault: shouldBeDefault,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    // Instant optimistic update (<5ms): close draft form and show card immediately
+    setDraftAddress(null);
+    setAddresses((prev) => {
+      const list = shouldBeDefault ? prev.map((a) => ({ ...a, isDefault: false })) : prev;
+      return [...list, optimisticAddr];
+    });
+    setExpandedAddressIds((prev) => new Set(prev).add(tempId));
+
     try {
-      const nextIdx = addresses.length + 1;
       const created = await createCompanyAddress(companyId, {
-        title: draftAddress.title || `Address #${nextIdx}`,
-        type: draftAddress.type || (nextIdx === 1 ? "HEADQUARTERS" : "BRANCH"),
-        taxId: draftAddress.taxId || undefined,
-        branchNumber: draftAddress.branchNumber || undefined,
-        addressLine1: draftAddress.addressLine1.trim(),
-        addressLine2: draftAddress.addressLine2?.trim() || undefined,
-        subdistrict: draftAddress.subdistrict?.trim() || undefined,
-        district: draftAddress.district?.trim() || undefined,
-        province: draftAddress.province?.trim() || undefined,
-        postalCode: draftAddress.postalCode?.trim() || undefined,
-        country: draftAddress.country || country || "Thailand",
-        googleMapsUrl: draftAddress.googleMapsUrl?.trim() || undefined,
-        isDefault: Boolean(draftAddress.isDefault),
+        title: optimisticAddr.title || undefined,
+        type: optimisticAddr.type,
+        taxId: optimisticAddr.taxId || undefined,
+        branchNumber: optimisticAddr.branchNumber || undefined,
+        addressLine1: optimisticAddr.addressLine1,
+        addressLine2: optimisticAddr.addressLine2 || undefined,
+        subdistrict: optimisticAddr.subdistrict || undefined,
+        district: optimisticAddr.district || undefined,
+        province: optimisticAddr.province || undefined,
+        postalCode: optimisticAddr.postalCode || undefined,
+        country: optimisticAddr.country || undefined,
+        googleMapsUrl: optimisticAddr.googleMapsUrl || undefined,
+        isDefault: shouldBeDefault,
       });
+
+      // Replace optimistic temp ID with server ID
+      setAddresses((prev) =>
+        prev.map((a) => (a.id === tempId ? created : a))
+      );
+      setExpandedAddressIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tempId);
+        next.add(created.id);
+        return next;
+      });
+
       toast({ title: "Address Created", description: `Added ${created.title} successfully.`, type: "success" });
-      setDraftAddress(null);
-      setAddresses((prev) => [...prev, created]);
-      setExpandedAddressIds((prev) => new Set(prev).add(created.id));
-      await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
+      // Revert on error
+      setAddresses((prev) => prev.filter((a) => a.id !== tempId));
+      setDraftAddress(draftSnapshot);
       const msg = err instanceof Error ? err.message : "Failed to add address";
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
+      isSavingDraftRef.current = false;
       setIsSavingDraftAddress(false);
     }
   };
@@ -461,6 +529,7 @@ export function EditAccountPanel({
       return toast({ title: "Validation", description: "Address Line 1 is required", type: "warning" });
     }
     setSavingAddressId(addr.id);
+    const previous = addresses;
     try {
       const updated = await updateCompanyAddress(addr.id, {
         title: addr.title || "Address",
@@ -476,11 +545,11 @@ export function EditAccountPanel({
         country: addr.country || "Thailand",
         googleMapsUrl: addr.googleMapsUrl || undefined,
       });
-      toast({ title: "Address Saved", description: `${addr.title || "Address"} updated successfully.`, type: "success" });
       setAddresses((prev) => prev.map((a) => (a.id === addr.id ? updated : a)));
-      await loadData(true);
+      toast({ title: "Address Saved", description: `${addr.title || "Address"} updated successfully.`, type: "success" });
       onAccountUpdated();
     } catch (err: unknown) {
+      setAddresses(previous);
       const msg = err instanceof Error ? err.message : "Failed to save address";
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
@@ -507,9 +576,9 @@ export function EditAccountPanel({
         isDefault: false,
         googleMapsUrl: addr.googleMapsUrl || undefined,
       });
-      toast({ title: "Address Duplicated", description: `Created Address #${nextIdx}.`, type: "success" });
-      await loadData(true);
+      setAddresses((prev) => [...prev, created]);
       setExpandedAddressIds((prev) => new Set(prev).add(created.id));
+      toast({ title: "Address Duplicated", description: `Created Address #${nextIdx}.`, type: "success" });
       onAccountUpdated();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to duplicate address";
@@ -527,12 +596,18 @@ export function EditAccountPanel({
     });
     if (!ok) return;
 
+    const previous = addresses;
+
+    // 1. Instant optimistic delete (<5ms)
+    setAddresses((prev) => prev.filter((a) => a.id !== addrId));
+    toast({ title: "Address Deleted", description: "Address was removed.", type: "success" });
+
+    // 2. Fire server action in background
     try {
       await deleteCompanyAddress(addrId);
-      toast({ title: "Address Deleted", description: "Address was removed.", type: "success" });
-      await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
+      setAddresses(previous);
       const msg = err instanceof Error ? err.message : "Failed to delete address";
       toast({ title: "Error", description: msg, type: "error" });
     }
@@ -540,12 +615,23 @@ export function EditAccountPanel({
 
   const handleSetDefaultAddress = async (addrId: string) => {
     if (!companyId) return;
+    const previous = addresses;
+
+    // 1. Instant optimistic flip (<5ms)
+    setAddresses((prev) =>
+      prev.map((a) => ({
+        ...a,
+        isDefault: a.id === addrId,
+      }))
+    );
+    toast({ title: "Default Set", description: "Primary address updated.", type: "success" });
+
+    // 2. Fire server action in background
     try {
       await setDefaultCompanyAddress(companyId, addrId);
-      toast({ title: "Default Set", description: "Primary address updated.", type: "success" });
-      await loadData(true);
       onAccountUpdated();
     } catch (err: unknown) {
+      setAddresses(previous);
       const msg = err instanceof Error ? err.message : "Failed to set default address";
       toast({ title: "Error", description: msg, type: "error" });
     }
