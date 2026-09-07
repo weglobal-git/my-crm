@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { IconMap } from "@/lib/menu-registry";
+import { useSwipeToClose } from "@/hooks/useSwipeToClose";
 
 export interface SlideOverTab {
   key: string;
@@ -16,6 +17,7 @@ export interface SlideOverPanelProps {
   title?: React.ReactNode;
   subtitle?: React.ReactNode;
   headerRight?: React.ReactNode;
+  subBar?: React.ReactNode;
   tabs?: SlideOverTab[];
   activeTab?: string;
   onTabChange?: (tabKey: string) => void;
@@ -29,6 +31,7 @@ export function SlideOverPanel({
   title,
   subtitle,
   headerRight,
+  subBar,
   tabs,
   activeTab,
   onTabChange,
@@ -37,6 +40,11 @@ export function SlideOverPanel({
 }: SlideOverPanelProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+
+  const { dragOffset, isDragging, swipeHandlers } = useSwipeToClose({
+    onClose,
+    isOpen,
+  });
 
   useEffect(() => {
     if (isOpen) {
@@ -61,6 +69,15 @@ export function SlideOverPanel({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
+  // Map widthClass to responsive desktop width
+  const widthClassesMap: Record<string, string> = {
+    "w-[600px]": "md:w-[600px]",
+    "w-[650px]": "md:w-[650px]",
+    "w-[740px]": "md:w-[740px]",
+    "w-[750px]": "md:w-[750px]",
+  };
+  const responsiveWidth = widthClassesMap[widthClass] || (widthClass.startsWith("md:") ? widthClass : `md:${widthClass}`);
+
   if (!isOpen && !mounted) return null;
 
   return (
@@ -70,15 +87,32 @@ export function SlideOverPanel({
         className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] transition-opacity duration-300 ${
           internalIsOpen ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
+        style={
+          dragOffset > 0
+            ? {
+                opacity: Math.max(0, 1 - dragOffset / 350),
+                transition: isDragging ? "none" : "opacity 0.2s ease-out",
+              }
+            : undefined
+        }
         onClick={onClose}
       />
 
       {/* Slide-over Container */}
       <div
-        className={`fixed inset-0 md:inset-y-4 md:inset-x-4 md:w-[620px] md:mx-auto lg:inset-y-4 lg:right-4 lg:left-auto lg:mx-0 w-full lg:w-[600px] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-center lg:origin-right ${
+        {...swipeHandlers}
+        style={
+          dragOffset > 0
+            ? {
+                transform: `translateX(${dragOffset}px)`,
+                transition: isDragging ? "none" : "transform 0.2s ease-out",
+              }
+            : undefined
+        }
+        className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full ${responsiveWidth} md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${
           internalIsOpen
-            ? "opacity-100 translate-y-0 lg:translate-x-0 scale-100"
-            : "opacity-0 translate-y-4 lg:translate-y-0 lg:translate-x-8 scale-[0.97] pointer-events-none"
+            ? "opacity-100 translate-y-0 md:translate-x-0 scale-100"
+            : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"
         }`}
       >
         <div className="flex flex-col md:flex-row h-full w-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C] bg-[#252728]">
@@ -136,7 +170,7 @@ export function SlideOverPanel({
                 )}
               </div>
 
-              <div className="flex items-center gap-3 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
                 {headerRight}
                 <button
                   type="button"
@@ -148,6 +182,9 @@ export function SlideOverPanel({
                 </button>
               </div>
             </div>
+
+            {/* SubBar (Contextual Toolbar) */}
+            {subBar}
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto hide-scrollbar p-4 md:p-6">
@@ -171,11 +208,17 @@ export function SlideOverPanel({
                     <button
                       key={tab.key}
                       type="button"
-                      onClick={() => onTabChange?.(tab.key)}
+                      onClick={() => {
+                        if (isActive) {
+                          onClose();
+                        } else {
+                          onTabChange?.(tab.key);
+                        }
+                      }}
                       title={tab.label}
                       className={`flex items-center justify-center h-9 w-9 rounded-full transition-all duration-200 cursor-pointer ${
                         isActive
-                          ? "bg-[#3A3B3C] text-[#C7F33C]"
+                          ? "bg-[#C7F33C] text-black"
                           : "text-slate-400 hover:bg-[#3A3B3C]/50 hover:text-slate-200"
                       }`}
                     >

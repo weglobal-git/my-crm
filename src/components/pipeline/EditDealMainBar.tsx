@@ -46,10 +46,12 @@ export function EditDealMainBar({
   const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
   const hamburgerMenuRef = useRef<HTMLDivElement>(null);
 
-  // Sync external topic changes
-  useEffect(() => {
+  // Sync external topic changes during render (avoid cascading renders)
+  const [prevTopic, setPrevTopic] = useState(topic);
+  if (topic !== prevTopic) {
+    setPrevTopic(topic);
     setTopicValue(topic);
-  }, [topic]);
+  }
 
   // Click outside to close hamburger menu
   useEffect(() => {

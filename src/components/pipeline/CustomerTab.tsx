@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, forwardRef, useImperativeHandle } from "react";
+import { useState, useMemo, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useSWRConfig } from "swr";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { updateOpportunity } from "@/lib/actions/opportunity";
 import { useDialog } from "@/providers/DialogProvider";
@@ -21,6 +22,7 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
   { deal },
   ref
 ) {
+  const { mutate } = useSWRConfig();
   const { toast } = useDialog();
   const [isSaving, setIsSaving] = useState(false);
 
@@ -49,29 +51,50 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
+    const previousFormData = { ...formData };
+    const updatedPayload = {
+      value: formData.value !== "" ? parseFloat(formData.value.toString()) : null,
+      currency: formData.currency,
+      goodsReadyDate: formData.goodsReadyDate ? new Date(formData.goodsReadyDate) : null,
+      goodsLoadingDate: formData.goodsLoadingDate ? new Date(formData.goodsLoadingDate) : null,
+      reserveId: formData.reserveId || null,
+      invoiceId: formData.invoiceId || null,
+    };
+
+    // 1. Optimistically patch SWR cache across pipeline deals immediately (< 50ms)
+    void mutate(
+      (key) => Array.isArray(key) && key[0] === "pipeline-deals",
+      (currentDeals: OpportunityWithRelations[] | undefined) => {
+        if (!currentDeals) return currentDeals;
+        return currentDeals.map((d) =>
+          d.id === deal.id ? { ...d, ...updatedPayload } : d
+        );
+      },
+      false
+    );
+
+    // 2. Instant feedback toast
+    toast({
+      title: "Saved",
+      description: "Sale deal information updated.",
+      type: "success",
+    });
+
+    // 3. Fire server action in background
     setIsSaving(true);
     try {
-      await updateOpportunity(deal.id, {
-        value: formData.value !== "" ? parseFloat(formData.value.toString()) : null,
-        currency: formData.currency,
-        goodsReadyDate: formData.goodsReadyDate ? new Date(formData.goodsReadyDate) : null,
-        goodsLoadingDate: formData.goodsLoadingDate ? new Date(formData.goodsLoadingDate) : null,
-        reserveId: formData.reserveId || null,
-        invoiceId: formData.invoiceId || null,
-      });
-      toast({
-        title: "Success",
-        description: "Sale deal information saved successfully.",
-        type: "success",
-      });
+      await updateOpportunity(deal.id, updatedPayload);
+      void mutate((key) => Array.isArray(key) && key[0] === "pipeline-deals");
     } catch (error: unknown) {
+      setFormData(previousFormData);
+      void mutate((key) => Array.isArray(key) && key[0] === "pipeline-deals");
       const message = error instanceof Error ? error.message : "Failed to save information.";
       toast({ title: "Error", description: message, type: "error" });
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [deal.id, formData, mutate, toast]);
 
   useImperativeHandle(
     ref,

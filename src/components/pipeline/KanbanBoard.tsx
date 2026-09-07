@@ -580,54 +580,22 @@ export function KanbanBoard({
   const scrollToColumn = useCallback((index: number) => {
     const clamped = Math.max(0, Math.min(initialStages.length - 1, index));
     const stage = initialStages[clamped];
-    if (stage && columnRefs.current[stage.id]) {
-      columnRefs.current[stage.id]?.scrollIntoView({
+    const container = boardContainerRef.current;
+    const el = stage ? columnRefs.current[stage.id] : null;
+
+    if (stage && el && container) {
+      const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+      const targetLeft = isMobile
+        ? Math.max(0, el.offsetLeft - Math.max(0, (container.clientWidth - el.offsetWidth) / 2))
+        : Math.max(0, Math.min(container.scrollWidth - container.clientWidth, el.offsetLeft - 16));
+
+      container.scrollTo({
+        left: targetLeft,
         behavior: "smooth",
-        inline: "center",
-        block: "nearest",
       });
       setActiveColumnIndex(clamped);
     }
   }, [initialStages]);
-
-  // Sync activeColumnIndex when user swipes on touchscreen
-  useEffect(() => {
-    const container = boardContainerRef.current;
-    if (!container || isCompletedTab) return;
-
-    let scrollTimeout: NodeJS.Timeout;
-    const handleScroll = () => {
-      clearTimeout(scrollTimeout);
-      scrollTimeout = setTimeout(() => {
-        const containerRect = container.getBoundingClientRect();
-        const containerCenter = containerRect.left + containerRect.width / 2;
-
-        let closestIndex = 0;
-        let minDistance = Infinity;
-
-        initialStages.forEach((stage, idx) => {
-          const el = columnRefs.current[stage.id];
-          if (el) {
-            const rect = el.getBoundingClientRect();
-            const elCenter = rect.left + rect.width / 2;
-            const dist = Math.abs(containerCenter - elCenter);
-            if (dist < minDistance) {
-              minDistance = dist;
-              closestIndex = idx;
-            }
-          }
-        });
-
-        setActiveColumnIndex(closestIndex);
-      }, 50);
-    };
-
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => {
-      container.removeEventListener("scroll", handleScroll);
-      clearTimeout(scrollTimeout);
-    };
-  }, [initialStages, isCompletedTab]);
 
   // Register column navigation with SidebarContext for floating buttons
   useEffect(() => {
@@ -652,7 +620,7 @@ export function KanbanBoard({
 
   if (isLoading && !rawOpportunities && (!initialOpportunities || initialOpportunities.length === 0)) {
     return (
-      <div className="flex w-full h-[calc(100vh-140px)] items-center justify-center">
+      <div className="flex w-full h-full items-center justify-center">
         <svg className="animate-spin h-8 w-8 text-[#C7F33C]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -666,7 +634,7 @@ export function KanbanBoard({
       <KanbanClockProvider>
         <div 
           ref={boardContainerRef}
-          className={`flex gap-3 md:gap-3 overflow-x-auto hide-scrollbar snap-x snap-mandatory scroll-smooth w-full max-w-full min-w-0 px-2 sm:px-4 ${isCompletedTab ? '' : 'xl:w-fit xl:mx-auto h-[calc(100vh-140px)]'}`}
+          className={`relative flex gap-3 md:gap-3.5 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-hidden xl:overflow-x-auto touch-pan-y xl:touch-auto'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-[calc(100vh-140px)]'}`}
         >
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
@@ -725,7 +693,7 @@ export function KanbanBoard({
               <div
                 key={col.id}
                 ref={(el) => { columnRefs.current[col.id] = el; }}
-                className="shrink-0 snap-center snap-always md:snap-start md:snap-always"
+                className="w-[calc(100vw-32px)] max-w-[380px] shrink-0 md:w-[320px] lg:shrink lg:w-0 lg:flex-1 lg:min-w-0"
               >
                 <KanbanColumn 
                   id={col.id} 

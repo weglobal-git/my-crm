@@ -40,6 +40,7 @@ export interface EditDealSubBarProps {
   search?: SubBarSearchConfig;
   actions?: SubBarActionItem[];
   customActionSlot?: React.ReactNode;
+  className?: string;
 }
 
 export function EditDealSubBar({
@@ -50,6 +51,7 @@ export function EditDealSubBar({
   search,
   actions,
   customActionSlot,
+  className,
 }: EditDealSubBarProps) {
   const [showActionMenu, setShowActionMenu] = useState(false);
   const actionMenuRef = useRef<HTMLDivElement>(null);
@@ -72,7 +74,7 @@ export function EditDealSubBar({
   // If search is currently active in expanded mode
   if (search?.isActive) {
     return (
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-[#1C1C1D] bg-[#252728] shrink-0 min-h-[44px] animate-in fade-in duration-200">
+      <div className={className ? `flex items-center gap-2 ${className} animate-in fade-in duration-200` : "flex items-center gap-2 px-4 py-2 border-b border-[#1C1C1D] bg-[#252728] shrink-0 min-h-[44px] animate-in fade-in duration-200"}>
         <div className="relative flex-1 flex items-center">
           <Search className="absolute left-3 w-4 h-4 text-[#C7F33C]" />
           <input
@@ -114,13 +116,12 @@ export function EditDealSubBar({
   }
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 border-b border-[#1C1C1D] bg-[#252728] shrink-0 min-h-[44px]">
+    <div className={className ? `flex items-center justify-between ${className}` : "flex items-center justify-between px-4 py-2 border-b border-[#1C1C1D] bg-[#252728] shrink-0 min-h-[44px]"}>
       {/* Left: Sub-tabs or custom content */}
       <div className="flex items-center gap-2 min-w-0">
         {tabs && tabs.length > 0 && onTabChange ? (
           <div className="flex items-center gap-1 bg-[#1C1C1D] p-0.5 rounded-lg" role="tablist">
             {tabs.map((tab) => {
-              const Icon = tab.icon;
               const isCurrent = activeTab === tab.id;
               return (
                 <button
@@ -135,7 +136,6 @@ export function EditDealSubBar({
                       : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
-                  {Icon && <Icon className="w-3.5 h-3.5" />}
                   <span>{tab.label}</span>
                   {tab.badge}
                 </button>
@@ -153,7 +153,7 @@ export function EditDealSubBar({
         {search && search.query && (
           <div className="hidden sm:flex items-center gap-1 text-[11px] text-[#C7F33C] bg-[#1C1C1D] px-2 py-0.5 rounded-full border border-[#C7F33C]/30">
             <Search className="w-3 h-3" />
-            <span className="truncate max-w-[100px]">"{search.query}"</span>
+            <span className="truncate max-w-[100px]">&quot;{search.query}&quot;</span>
             <button
               type="button"
               onClick={search.onClear}
@@ -198,6 +198,9 @@ export function EditDealSubBar({
               }`}
               title="Tab actions"
             >
+              {actions.some((a) => a.loading) && (
+                <Loader2 className="w-3 h-3 animate-spin text-[#C7F33C]" />
+              )}
               <span>Actions</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>

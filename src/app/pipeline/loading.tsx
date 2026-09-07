@@ -29,7 +29,7 @@ export default function PipelineLoading() {
 
           {/* Kanban Board 4-Column Skeleton (Symmetrical with 4 Kanban Stages) */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            <div className="flex gap-2 overflow-x-auto pb-8 hide-scrollbar mx-auto w-fit h-[calc(100vh-140px)]">
+            <div className="flex gap-2 overflow-x-auto pb-8 hide-scrollbar mx-auto w-fit h-[calc(100vh-100px)==]">
               {[1, 2, 3, 4].map((col) => (
                 <div key={col} className="w-[320px] shrink-0 flex flex-col gap-4 h-full max-h-full">
                   {/* Column Header */}

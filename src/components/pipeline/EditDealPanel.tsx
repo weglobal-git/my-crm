@@ -1,8 +1,7 @@
 "use client";
 
-import { X, Menu, MoreHorizontal, MoreVertical, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Settings, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Building2, Pencil, Briefcase, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft } from "lucide-react";
+import { X, MoreHorizontal, MessageSquare, Trash2, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Pencil, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
-import { DealTypeIcon } from "./DealTypeBadge";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
 
@@ -13,13 +12,14 @@ import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
 import { useEffect, useState, useRef, useCallback } from "react";
-import useSWR, { useSWRConfig, mutate } from "swr";
+import useSWR, { useSWRConfig, mutate, preload } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
 import { User, OpportunityType } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
 import { useDialog } from "@/providers/DialogProvider";
+import { getOpportunitySharedMedia } from "@/lib/actions/opportunity";
 import { CustomerTab, type CustomerTabRef } from "./CustomerTab";
 import { NotesTab } from "./NotesTab";
 import { SharedMediaTab } from "./SharedMediaTab";
@@ -29,6 +29,7 @@ import { WonLostModal } from "./WonLostModal";
 import { ChatAttachmentButton } from "./ChatAttachmentButton";
 import { HighlightText } from "@/components/ui/HighlightText";
 import { pusherClient } from "@/lib/pusher";
+import { useSwipeToClose } from "@/hooks/useSwipeToClose";
 import {
   applyActivityEvent,
   activityFeedKey,
@@ -519,10 +520,27 @@ interface EditDealPanelProps {
 }
 
 export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }: EditDealPanelProps) {
+  const { dragOffset, isDragging, swipeHandlers } = useSwipeToClose({
+    onClose,
+    isOpen,
+  });
   const { mutate } = useSWRConfig();
   const [newLog, setNewLog] = useState("");
   const [activitySearchQuery, setActivitySearchQuery] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const adjustTextareaHeight = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    const nextHeight = Math.min(Math.max(el.scrollHeight, 28), 120);
+    el.style.height = `${nextHeight}px`;
+  };
+
+  useEffect(() => {
+    if (!newLog && inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
+  }, [newLog]);
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
   const { visibleRightMenus, canSee, isAdmin: isPermAdmin } = usePermissions();
   const canUseSalesDeal = canSee("pipeline.information");
@@ -591,10 +609,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [previewLightbox]);
 
-  // Topic editing state
-  const [isEditingTopic, setIsEditingTopic] = useState(false);
+  // Topic state
   const [topic, setTopic] = useState(deal.topic || 'Untitled Deal');
-  const [isSavingTopic, setIsSavingTopic] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -704,8 +720,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     mutate: mutateDealSummary,
     isLoading: isLoadingDealSummary,
   } = useSWR(
-    isOpen && activeTab === 'summary' ? ['deal-summary-on-demand', deal.id] : null,
+    isOpen ? ['deal-summary-on-demand', deal.id] : null,
     ([, id]) => getLatestDealSummary(id),
+    { revalidateOnFocus: false, dedupingInterval: 30000 }
   );
 
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
@@ -718,9 +735,21 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     mutate: mutateAccelerators,
     isLoading: isLoadingAccelerators,
   } = useSWR(
-    isOpen && activeTab === 'summary' ? ['deal-accelerators', deal.id] : null,
+    isOpen ? ['deal-accelerators', deal.id] : null,
     ([, id]) => getDealAccelerators(id),
+    { revalidateOnFocus: false, dedupingInterval: 30000 }
   );
+
+  // Idle Background Preloader: warms caches for Shared Media, AI Summary & Accelerators (0ms tab switch)
+  useEffect(() => {
+    if (!isOpen || !deal?.id) return;
+    const timer = setTimeout(() => {
+      void preload(['opportunity-shared-media', deal.id], () => getOpportunitySharedMedia(deal.id));
+      void preload(['deal-summary-on-demand', deal.id], () => getLatestDealSummary(deal.id));
+      void preload(['deal-accelerators', deal.id], () => getDealAccelerators(deal.id));
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [isOpen, deal?.id]);
 
   const acceleratorsState = acceleratorsResponse?.data;
   const [isGeneratingAccelerators, setIsGeneratingAccelerators] = useState(false);
@@ -781,17 +810,66 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   const handleAnswerAccelerator = async (questionId: string, answer: string) => {
     if (!answer.trim() || isAnsweringQuestionId) return;
+    const cleanAnswer = answer.trim();
+    const previousState = acceleratorsResponse;
+
+    // 1. Optimistic UI update (< 50ms)
+    if (acceleratorsState) {
+      const optimisticQuestions = (acceleratorsState.questions || []).map(q => {
+        if (q.id === questionId) {
+          return {
+            ...q,
+            status: 'ANSWERED' as const,
+            answer: cleanAnswer,
+            answeredBy: session?.user?.name || 'คุณ',
+            answeredAt: new Date().toISOString(),
+          };
+        }
+        return q;
+      });
+
+      void mutateAccelerators(
+        {
+          success: true,
+          data: {
+            ...acceleratorsState,
+            questions: optimisticQuestions,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        false
+      );
+
+      // Optimistically decrement pending counter on board
+      void mutate(
+        key => Array.isArray(key) && key[0] === 'pending-accelerators',
+        (prevMap: Record<string, number> | undefined) => {
+          if (!prevMap) return prevMap;
+          const currentCount = prevMap[deal.id] || 0;
+          return {
+            ...prevMap,
+            [deal.id]: Math.max(0, currentCount - 1),
+          };
+        },
+        false
+      );
+    }
+
+    toast({ title: 'บันทึกคำตอบเรียบร้อย', description: `ตอบ: "${cleanAnswer}"`, type: 'success' });
+
+    // 2. Fire server action in background
     setIsAnsweringQuestionId(questionId);
     try {
-      const res = await answerDealAccelerator(deal.id, questionId, answer.trim());
+      const res = await answerDealAccelerator(deal.id, questionId, cleanAnswer);
       if (res.success && res.data) {
         await mutateAccelerators({ success: true, data: res.data }, false);
         void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
-        toast({ title: 'บันทึกคำตอบเรียบร้อย', description: `ตอบ: "${answer}"`, type: 'success' });
       } else {
+        if (previousState) void mutateAccelerators(previousState, false);
         toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
       }
     } catch {
+      if (previousState) void mutateAccelerators(previousState, false);
       toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
     } finally {
       setIsAnsweringQuestionId(null);
@@ -818,17 +896,39 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   const handleSaveGoal = async () => {
     if (!goalInput.trim() || isSavingGoal) return;
+    const targetGoal = goalInput.trim();
+    const previousState = acceleratorsResponse;
+
+    // 1. Optimistic UI update (< 50ms)
+    if (acceleratorsState) {
+      void mutateAccelerators(
+        {
+          success: true,
+          data: {
+            ...acceleratorsState,
+            targetGoal,
+            goalSource: 'USER_OVERRIDE',
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        false
+      );
+    }
+    setIsEditingGoal(false);
+    toast({ title: 'อัปเดตเป้าหมายเรียบร้อย', type: 'success' });
+
+    // 2. Fire server action in background
     setIsSavingGoal(true);
     try {
-      const res = await updateDealTargetGoal(deal.id, goalInput.trim());
+      const res = await updateDealTargetGoal(deal.id, targetGoal);
       if (res.success && res.data) {
         await mutateAccelerators({ success: true, data: res.data }, false);
-        setIsEditingGoal(false);
-        toast({ title: 'อัปเดตเป้าหมายเรียบร้อย', type: 'success' });
       } else {
+        if (previousState) void mutateAccelerators(previousState, false);
         toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถบันทึกเป้าหมายได้', type: 'error' });
       }
     } catch {
+      if (previousState) void mutateAccelerators(previousState, false);
       toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกเป้าหมายได้', type: 'error' });
     } finally {
       setIsSavingGoal(false);
@@ -1006,9 +1106,18 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     if (!session?.user?.id) return;
     const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
 
-    const handleUpdate = (data?: ActivityUpdateEvent) => {
-      if (data?.dealId === deal.id && data?.action?.startsWith('ACTIVITY_')) {
-        loadActivityLogs(pages => applyActivityEvent(pages, data), { revalidate: false });
+    const handleUpdate = (data?: ActivityUpdateEvent & { dealId?: string; action?: string }) => {
+      if (data?.dealId === deal.id) {
+        if (data?.action?.startsWith('ACTIVITY_')) {
+          loadActivityLogs(pages => applyActivityEvent(pages, data as ActivityUpdateEvent), { revalidate: false });
+          void mutate(['opportunity-shared-media', deal.id]);
+        } else if (data?.action === 'DEAL_SUMMARY_UPDATED') {
+          void mutate(['deal-summary-on-demand', deal.id]);
+        } else if (data?.action === 'DEAL_ACCELERATORS_UPDATED') {
+          void mutate(['deal-accelerators', deal.id]);
+        } else if (data?.action === 'OPPORTUNITY_UPDATED') {
+          void mutate(['deal-summary-on-demand', deal.id]);
+        }
       }
     };
 
@@ -1017,7 +1126,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     return () => {
       channel.unbind('pipeline-updated', handleUpdate);
     };
-  }, [deal.id, isOpen, loadActivityLogs, session?.user?.id]);
+  }, [deal.id, isOpen, loadActivityLogs, mutate, session?.user?.id]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {
     if (!uniqueLogsMap.has(log.id)) {
@@ -1205,6 +1314,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         // A due-date action creates both a comment and a system record in one
         // transaction, so reconcile that uncommon multi-record mutation once.
         loadActivityLogs();
+      }
+
+      if (currentAttachments.length > 0 || finalLog.includes('http')) {
+        void mutate(['opportunity-shared-media', deal.id]);
       }
     } catch (e) {
       // Revert if error
@@ -1399,10 +1512,29 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     <>
       <div
         className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${internalIsOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        style={
+          dragOffset > 0
+            ? {
+                opacity: Math.max(0, 1 - dragOffset / 350),
+                transition: isDragging ? "none" : "opacity 0.2s ease-out",
+              }
+            : undefined
+        }
         onClick={onClose}
       />
 
-      <div className={`fixed inset-0 md:inset-y-4 md:inset-x-4 md:w-[620px] md:mx-auto lg:inset-y-4 lg:right-4 lg:left-auto lg:mx-0 w-full lg:w-[600px] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-center lg:origin-right ${internalIsOpen ? "opacity-100 translate-y-0 lg:translate-x-0 scale-100" : "opacity-0 translate-y-4 lg:translate-y-0 lg:translate-x-8 scale-[0.97] pointer-events-none"}`}>
+      <div
+        {...swipeHandlers}
+        style={
+          dragOffset > 0
+            ? {
+                transform: `translateX(${dragOffset}px)`,
+                transition: isDragging ? "none" : "transform 0.2s ease-out",
+              }
+            : undefined
+        }
+        className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[600px] md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${internalIsOpen ? "opacity-100 translate-y-0 md:translate-x-0 scale-100" : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"}`}
+      >
         <div className="flex flex-col md:flex-row w-full h-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C]">
           {/* Tab Sidebar (desktop only) */}
           <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-3 gap-3 z-10 shrink-0">
@@ -1419,7 +1551,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 className={`
                   flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200
                   ${activeTab === tabId || (activeTab === 'system' && tabId === 'activity')
-                    ? "bg-[#3A3B3C] text-white "
+                    ? "bg-[#C7F33C] text-black "
                     : "text-slate-400 hover:bg-[#C7F33C] hover:text-[#111111]"}
                 `}
               >
@@ -1643,7 +1775,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 { id: 'summary', label: 'Summary' },
               ];
               if (isAdmin) {
-                summaryTabs.push({ id: 'prompt', label: 'Prompt Settings' });
+                summaryTabs.push({ id: 'prompt', label: 'Prompt' });
               }
 
               return (
@@ -1664,7 +1796,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             return null;
           })()}
 
-          <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 flex flex-col gap-8 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 flex flex-col gap-8 custom-scrollbar">
 
             {(activeTab === 'activity' || activeTab === 'system' || activeTab === 'summary') && (
               <>
@@ -2674,7 +2806,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                     </div>
                                   </div>
 
-                                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <div className="flex items-center gap-2">
                                     {!isRowOwner && (isOwner || isAdmin || (session?.user?.id && tm.id === session.user.id) || (session?.user?.email && tm.email && session.user.email.toLowerCase() === tm.email.toLowerCase())) && (
                                       <button
                                         onClick={() => handleRemoveMember(tm.id)}
@@ -2720,7 +2852,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
           {/* Sticky Footer for Activity Tab */}
           {activeTab === 'activity' && (
-            <div className="p-4 bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative">
+            <div className="p-2 bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative">
 
               {/* Mini Calendar Popup */}
               {canEditDueDate && showCalendar && (
@@ -2845,12 +2977,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 </div>
               )}
 
-              {/* Single Row Chat Input (LINE / WhatsApp style) */}
-              <div {...getRootProps()} className={`flex items-center gap-2 bg-[#3A3B3C] px-3 py-1.5 rounded-full border transition-colors ${isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
+              {/* Auto-expanding Chat Input (LINE / WhatsApp style) */}
+              <div {...getRootProps()} className={`flex items-end gap-2 bg-[#3A3B3C] px-3 py-1.5 rounded-lg border transition-all ${isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
                 <input {...getInputProps()} />
 
-                {/* Left Action Buttons: Attach & Due Date */}
-                <div className="flex items-center gap-1 shrink-0">
+                {/* Left Action Buttons: Attach & Due Date (Anchored to bottom, height 28px) */}
+                <div className="flex items-center gap-1 shrink-0 h-7 self-end">
                   {session?.user?.id && (
                     <ChatAttachmentButton
                       onFileSelect={(files) => setPendingAttachments(prev => [...prev, ...files])}
@@ -2880,32 +3012,50 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   })()}
                 </div>
 
-                {/* Single-row Input with Enter to Post */}
-                <input
+                {/* Auto-adjusting Textarea with Shift+Enter & Mobile Return to Newline */}
+                <textarea
                   ref={inputRef}
-                  type="text"
+                  rows={1}
                   value={newLog}
-                  onChange={e => setNewLog(e.target.value)}
+                  onChange={e => {
+                    setNewLog(e.target.value);
+                    adjustTextareaHeight(e.target);
+                  }}
                   onKeyDown={e => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      if (!isSubmittingLog && (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate)) {
-                        handleAddLog();
+                    if (e.key === 'Enter') {
+                      if (e.shiftKey) {
+                        setTimeout(() => adjustTextareaHeight(inputRef.current), 0);
+                        return;
+                      }
+                      const isMobileDevice = typeof window !== 'undefined' &&
+                        ('ontouchstart' in window || navigator.maxTouchPoints > 0) &&
+                        window.innerWidth < 768;
+
+                      if (!isMobileDevice) {
+                        e.preventDefault();
+                        if (!isSubmittingLog && (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate)) {
+                          handleAddLog();
+                        }
+                      } else {
+                        setTimeout(() => adjustTextareaHeight(inputRef.current), 0);
                       }
                     }
                   }}
                   placeholder={isDragActive ? "Drop files here..." : "Write an update..."}
-                  className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-slate-400 min-w-0"
+                  style={{ height: 'auto', minHeight: '28px', maxHeight: '120px' }}
+                  className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
                 />
 
-                {/* Send Button / Indicator */}
+                {/* Send Button / Indicator (Anchored to bottom, height 28px) */}
                 {isSubmittingLog ? (
-                  <Loader2 className="w-4 h-4 text-[#C7F33C] animate-spin shrink-0 mr-1" />
+                  <div className="w-7 h-7 flex items-center justify-center shrink-0 self-end">
+                    <Loader2 className="w-4 h-4 text-[#C7F33C] animate-spin" />
+                  </div>
                 ) : (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate) ? (
                   <button
                     type="button"
                     onClick={handleAddLog}
-                    className="shrink-0 p-1 rounded-full text-[#C7F33C] hover:bg-black/20 transition-colors cursor-pointer mr-0.5"
+                    className="w-7 h-7 flex items-center justify-center shrink-0 rounded-full text-[#C7F33C] hover:bg-black/20 transition-colors cursor-pointer self-end"
                     title="Send (Enter)"
                   >
                     <Send className="w-4 h-4" />
@@ -2917,7 +3067,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
           {/* Mobile Bottom Tab Bar (Icons only - no text) */}
           {rightMenus.length > 0 && (
-            <div className="flex md:hidden w-full h-12 border-t border-[#1C1C1D] bg-[#252728] items-center justify-around px-3 shrink-0 z-10">
+            <div className="flex md:hidden w-full h-12 border-t border-[#1C1C1D] bg-[#252728] items-center justify-around p-3 shrink-0 z-10">
               {rightMenus.map(menu => {
                 const tabId = menu.key.split('.').pop() as TabType;
                 const Icon = tabId === 'summary' || menu.key === 'pipeline.summary' 
@@ -2928,11 +3078,17 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   <button
                     key={menu.key}
                     type="button"
-                    onClick={() => setActiveTab(tabId)}
+                    onClick={() => {
+                      if (isActive) {
+                        onClose();
+                      } else {
+                        setActiveTab(tabId);
+                      }
+                    }}
                     title={menu.label}
                     className={`flex items-center justify-center h-9 w-9 rounded-full transition-all duration-200 cursor-pointer ${
                       isActive
-                        ? "bg-[#3A3B3C] text-[#C7F33C]"
+                        ? "bg-[#C7F33C] text-black"
                         : "text-slate-400 hover:bg-[#3A3B3C]/50 hover:text-slate-200"
                     }`}
                   >

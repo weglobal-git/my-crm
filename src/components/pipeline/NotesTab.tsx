@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { format } from "date-fns";
 import { Pin, Send, Trash2, Loader2, StickyNote } from "lucide-react";
@@ -40,6 +40,20 @@ export function NotesTab({ deal, searchQuery: externalSearchQuery }: NotesTabPro
 
   const [newNote, setNewNote] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const noteTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const adjustTextareaHeight = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    const nextHeight = Math.min(Math.max(el.scrollHeight, 28), 120);
+    el.style.height = `${nextHeight}px`;
+  };
+
+  useEffect(() => {
+    if (!newNote && noteTextareaRef.current) {
+      noteTextareaRef.current.style.height = "auto";
+    }
+  }, [newNote]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -246,30 +260,47 @@ export function NotesTab({ deal, searchQuery: externalSearchQuery }: NotesTabPro
         )}
       </div>
 
-      {/* Single Row Chat Input (WhatsApp/LINE style like Activity L2991-L2993) */}
+      {/* Auto-expanding Chat Input (LINE / WhatsApp style) */}
       <div className="pt-3 pb-1 bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10">
-        <div className="flex items-center gap-2 bg-[#3A3B3C] px-3 py-1.5 rounded-full border border-[#4E4F50] focus-within:border-[#C7F33C] transition-colors">
-          <input
-            type="text"
+        <div className="flex items-end gap-2 bg-[#3A3B3C] px-3 py-1.5 rounded-lg border border-[#4E4F50] focus-within:border-[#C7F33C] transition-all">
+          <textarea
+            ref={noteTextareaRef}
+            rows={1}
             value={newNote}
-            onChange={(e) => setNewNote(e.target.value)}
+            onChange={(e) => {
+              setNewNote(e.target.value);
+              adjustTextareaHeight(e.target);
+            }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                if (!isSubmitting && newNote.trim()) {
-                  handleCreateNote();
+              if (e.key === "Enter") {
+                if (e.shiftKey) {
+                  setTimeout(() => adjustTextareaHeight(noteTextareaRef.current), 0);
+                  return;
+                }
+                const isMobileDevice = typeof window !== "undefined" &&
+                  ("ontouchstart" in window || navigator.maxTouchPoints > 0) &&
+                  window.innerWidth < 768;
+
+                if (!isMobileDevice) {
+                  e.preventDefault();
+                  if (!isSubmitting && newNote.trim()) {
+                    handleCreateNote();
+                  }
+                } else {
+                  setTimeout(() => adjustTextareaHeight(noteTextareaRef.current), 0);
                 }
               }
             }}
             placeholder="Write a note..."
-            className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-slate-400"
+            style={{ height: "auto", minHeight: "28px", maxHeight: "120px" }}
+            className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
           />
           <button
             type="button"
             onClick={handleCreateNote}
             disabled={!newNote.trim() || isSubmitting}
-            className="p-1.5 rounded-full text-slate-400 hover:text-[#C7F33C] transition-colors disabled:opacity-40 cursor-pointer"
-            title="Post note"
+            className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:text-[#C7F33C] transition-colors disabled:opacity-40 cursor-pointer shrink-0 self-end"
+            title="Post note (Enter)"
           >
             {isSubmitting ? (
               <Loader2 className="w-4 h-4 animate-spin text-[#C7F33C]" />

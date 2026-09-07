@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { 
-  Mail, 
   Send, 
   Sparkles
 } from "lucide-react";
@@ -56,19 +55,13 @@ export function EmailTab({
   return (
     <div className="flex flex-col gap-6">
       {/* Top Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-[#3A3B3C]">
-        <div>
-          <h3 className="text-xs font-bold text-slate-100 flex items-center gap-2">
-            <Mail className="w-4 h-4 text-[#C7F33C]" />
-            Email Communications
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Recipient:{" "}
-            <span className="text-slate-200 font-semibold">
-              {customerEmail || "No email provided"}
-            </span>
-          </p>
-        </div>
+      <div className="flex items-center justify-between pb-3 border-b border-[#3A3B3C]">
+        <p className="text-xs text-slate-400">
+          Recipient:{" "}
+          <span className="text-slate-200 font-semibold">
+            {customerEmail || "No email provided"}
+          </span>
+        </p>
 
         {customerEmail && (
           <button

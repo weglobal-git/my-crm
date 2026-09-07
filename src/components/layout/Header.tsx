@@ -161,13 +161,13 @@ export function Header() {
   };
 
   return (
-    <header className="flex w-full items-center justify-between p-1 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
+    <header className="flex w-full items-center justify-between py-1 px-2 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
       
       {/* Left: Tablet/Mobile Toggle & Page Title */}
       <div className="flex items-center gap-3">
         <button
           onClick={toggleTabletSidebar}
-          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-[#3A3B3C] transition-colors focus:outline-none lg:hidden"
+          className="hidden md:flex p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-[#3A3B3C] transition-colors focus:outline-none lg:hidden"
           title="Toggle Navigation"
           aria-label="Toggle Navigation"
         >

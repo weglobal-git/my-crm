@@ -200,7 +200,85 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate)
     select: pipelineOpportunitySelect
   });
   await notifyPrivatePipelineUpdate(id, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
-  return result;
+  return fullDeal || result;
+}
+
+export interface OpportunitySharedAttachment {
+  id: string;
+  fileName: string;
+  fileType: string;
+  size: number;
+  cloudinaryUrl: string | null;
+  googleDriveFileId: string | null;
+  createdAt: Date | string;
+  [key: string]: unknown;
+}
+
+export interface OpportunitySharedLink {
+  url: string;
+  logId: string;
+  date: Date | string;
+}
+
+export interface OpportunitySharedMediaResult {
+  attachments: OpportunitySharedAttachment[];
+  links: OpportunitySharedLink[];
+}
+
+export async function getOpportunitySharedMedia(dealId: string): Promise<OpportunitySharedMediaResult> {
+  await requireOpportunityAccess(dealId);
+
+  const [rawAttachments, rawLogs] = await Promise.all([
+    prisma.attachment.findMany({
+      where: { opportunityId: dealId },
+      select: {
+        id: true,
+        fileName: true,
+        fileType: true,
+        size: true,
+        cloudinaryUrl: true,
+        googleDriveFileId: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.activityLog.findMany({
+      where: {
+        opportunityId: dealId,
+        content: { contains: 'http' },
+      },
+      select: {
+        id: true,
+        content: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    }),
+  ]);
+
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const links: OpportunitySharedLink[] = [];
+
+  rawLogs.forEach((log) => {
+    if (!log.content) return;
+    const cleanContent = log.content.replace(/\[ATTACHMENT:[^\]]+\]/g, '');
+    const matches = cleanContent.match(urlRegex);
+    if (matches) {
+      matches.forEach((url) => {
+        links.push({
+          url: url.replace(/[),.]+$/, ''),
+          logId: log.id,
+          date: log.createdAt,
+        });
+      });
+    }
+  });
+
+  return {
+    attachments: rawAttachments,
+    links: links.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+  };
 }
 
 export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string) {

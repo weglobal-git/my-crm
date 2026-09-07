@@ -14,10 +14,6 @@ interface KanbanColumnProps {
   currentUserId?: string;
   currentUserRole?: string;
   onDealIntent?: () => void;
-  hasPrev?: boolean;
-  hasNext?: boolean;
-  onPrevColumn?: () => void;
-  onNextColumn?: () => void;
 }
 
 export function KanbanColumn({ 
@@ -30,10 +26,6 @@ export function KanbanColumn({
   currentUserId, 
   currentUserRole, 
   onDealIntent,
-  hasPrev,
-  hasNext,
-  onPrevColumn,
-  onNextColumn,
 }: KanbanColumnProps) {
   const { setNodeRef } = useDroppable({
     id,
@@ -46,7 +38,7 @@ export function KanbanColumn({
   return (
     <div
       ref={setNodeRef}
-      className={`flex flex-col gap-2 w-[calc(100vw-32px)] max-w-[380px] md:w-[350px] shrink-0 ${isScrollable ? 'h-full max-h-full' : ''}`}
+      className={`flex flex-col gap-2 w-full shrink-0 ${isScrollable ? 'h-full max-h-full' : ''}`}
     >
       {!hideTitle && (
         <div className="flex items-center justify-between px-2 py-2 sticky top-0 z-10 bg-[#252728]">

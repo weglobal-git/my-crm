@@ -57,10 +57,10 @@ export function ChatAttachmentButton({ onFileSelect }: ChatAttachmentButtonProps
       />
       <button
         onClick={() => fileInputRef.current?.click()}
-        className="w-8 h-8 rounded-full flex items-center justify-center transition-colors hover:bg-[#4E4F50] text-slate-400 hover:text-slate-200"
+        className="w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-[#4E4F50] text-slate-400 hover:text-slate-200"
         title="Attach Files or Media"
       >
-        <Paperclip className="w-5 h-5" />
+        <Paperclip className="w-4 h-4" />
       </button>
     </>
   );

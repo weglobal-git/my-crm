@@ -30,7 +30,7 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "crm_overview", label: "CRM Overview", level: 2, parentKey: "dashboard", iconName: "LayoutDashboard", href: "/dashboard/overview", sortOrder: 1 },
   { key: "pipeline",    label: "Pipeline",     level: 2, parentKey: "sales_ops", iconName: "MousePointer2",   href: "/pipeline",   sortOrder: 1 },
   { key: "quotation",   label: "Quotation",    level: 2, parentKey: "sales_ops", iconName: "FileText",        href: "/quotations", sortOrder: 2 },
-  { key: "contact",     label: "Accounts & Persons", level: 2, parentKey: "sales_ops", iconName: "Users",           href: "/contact",    sortOrder: 3 },
+  { key: "contact",     label: "Account", level: 2, parentKey: "sales_ops", iconName: "Users",           href: "/contact",    sortOrder: 3 },
   { key: "product",     label: "Product",      level: 2, parentKey: "marketing", iconName: "Package",         href: "/product",    sortOrder: 4 },
 
   // User Setting Sub-Menus

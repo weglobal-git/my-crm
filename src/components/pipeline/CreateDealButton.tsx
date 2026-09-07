@@ -102,7 +102,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
       <button
         onClick={() => setIsOpen(true)}
         onMouseEnter={() => preload('pipeline-companies', getCompanies)}
-        className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold hover:bg-[#b0d932] transition-colors text-xs"
+        className="flex items-center bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold hover:bg-[#b0d932] transition-colors text-xs"
       >
         <Plus className="w-4 h-4" />
         New

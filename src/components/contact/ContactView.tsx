@@ -12,7 +12,6 @@ import {
   Loader2,
   SlidersHorizontal,
   Star,
-  Bot,
   Globe,
   ChevronDown,
   Check,
@@ -34,6 +33,8 @@ import { CompanyCard } from "./CompanyCard";
 import { AccountAnalyticsCard } from "./AccountAnalyticsCard";
 import { PersonTable } from "./PersonTable";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
+import { useSidebar } from "@/components/layout/SidebarContext";
+import { AccountTypeFilter } from "./AccountTypeFilter";
 
 const loadEditAccountPanel = () =>
   import("./EditAccountPanel").then((mod) => mod.EditAccountPanel);
@@ -84,13 +85,6 @@ function CompanyCardSkeleton() {
   );
 }
 
-const ACCOUNT_TYPES: { label: string; value: ContactType }[] = [
-  { label: "Customer", value: "CUSTOMER" },
-  { label: "Trader", value: "TRADER" },
-  { label: "Shipping", value: "SHIPPING" },
-  { label: "My Office", value: "MY_OFFICE" },
-];
-
 export function ContactView({
   initialCompanies,
   initialStats,
@@ -103,6 +97,7 @@ export function ContactView({
   initialOverview?: AccountOverviewResult | null;
 }) {
   const { canSee, isAdmin } = usePermissions();
+  const { setPageSearchConfig, setPageManageContent, setHasActiveFilters } = useSidebar();
 
   // State: Default strictly to QUALIFIED and CUSTOMER per requirements
   const [activeTab, setActiveTab] = useState<"QUALIFIED" | "UNQUALIFIED">("QUALIFIED");
@@ -516,6 +511,126 @@ export function ContactView({
     void mutateOverview();
   };
 
+  const hasFilters = Boolean(
+    searchQuery.trim() ||
+    activeType !== "CUSTOMER" ||
+    activeTab !== "QUALIFIED" ||
+    (selectedCountry && selectedCountry !== "ALL")
+  );
+
+  useEffect(() => {
+    setHasActiveFilters(hasFilters);
+  }, [hasFilters, setHasActiveFilters]);
+
+  // Connect Account Search to Mobile/Global Search (Find button)
+  useEffect(() => {
+    setPageSearchConfig({
+      query: searchQuery,
+      onSearch: (q: string) => setSearchQuery(q),
+      placeholder: "Search accounts...",
+    });
+    return () => setPageSearchConfig(null);
+  }, [searchQuery, setPageSearchConfig]);
+
+  // Register mobile Manage modal content
+  useEffect(() => {
+    setPageManageContent(
+      <div className="flex flex-col gap-4 select-none">
+        {/* Top Primary Action: + Add Account */}
+        <button
+          type="button"
+          onClick={() => {
+            void handleOpenCreatePanel();
+          }}
+          className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+        >
+          <Plus className="w-4 h-4 text-black" />
+          <span>Add Account</span>
+        </button>
+
+        {/* Section: Status / Qualification */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Status
+          </label>
+          <div className="grid grid-cols-2 gap-2 bg-[#1C1C1D] p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => setActiveTab("QUALIFIED")}
+              className={`py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                activeTab === "QUALIFIED"
+                  ? "bg-[#3A3B3C] text-slate-100"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Qualified</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#252728] text-slate-300 font-semibold">
+                {stats.qualifiedCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("UNQUALIFIED")}
+              className={`py-2 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                activeTab === "UNQUALIFIED"
+                  ? "bg-[#3A3B3C] text-slate-100"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+              <span>Unqualified</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#252728] text-slate-300 font-semibold">
+                {stats.unqualifiedCount}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Section: Account Type */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Account Type
+          </label>
+          <AccountTypeFilter
+            value={activeType}
+            onChange={setActiveType}
+            variant="segmented"
+          />
+        </div>
+
+        {/* Section: Country Filter */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Country
+          </label>
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedCountry}
+              onChange={(e) => setSelectedCountry(e.target.value)}
+              className="w-full bg-[#1C1C1D] text-slate-200 text-xs rounded-xl p-2.5 border border-[#3A3B3C] focus:outline-none focus:border-[#C7F33C]"
+            >
+              <option value="ALL">All Countries</option>
+              {availableCountries.map((c) => (
+                <option key={c.country} value={c.country}>
+                  {c.country} ({c.count})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+    );
+    return () => setPageManageContent(null);
+  }, [
+    activeTab,
+    activeType,
+    selectedCountry,
+    availableCountries,
+    stats,
+    setPageManageContent,
+  ]);
+
   // Toggle Account Qualification with Instant Optimistic UI (Queue-based / Race-safe)
   const handleToggleQualification = async () => {
     if (!selectedCompany) return;
@@ -634,10 +749,10 @@ export function ContactView({
 
   return (
     <WorkspaceLayout scrollMode="hidden">
-      {/* Top Bar: Tabs & Search & Add Button */}
-      <div className="flex flex-wrap items-center justify-between gap-4 shrink-0">
-        {/* Qualification Tabs: Qualified & Unqualified only */}
-        <div className="flex items-center gap-1.5 bg-[#1C1C1D] p-1.5 rounded-full">
+      {/* Top Bar: Tabs & Search & Add Button (Hidden on Mobile, handled via Mobile Central Pill) */}
+      <div className="hidden md:flex justify-between items-center mb-3 gap-3 flex-wrap shrink-0">
+        {/* Qualification Tabs: Qualified & Unqualified (Styled matching PipelineView) */}
+        <div className="flex gap-2 bg-[#252728] p-1 rounded-full shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab("QUALIFIED")}
@@ -647,19 +762,18 @@ export function ContactView({
                 fetchCompaniesFilter
               );
             }}
-            className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-2 cursor-pointer ${
+            className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all cursor-pointer ${
               activeTab === "QUALIFIED"
-                ? "bg-[#C7F33C] text-black"
+                ? "bg-[#3A3B3C] text-slate-100"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Qualified</span>
+            <span>QUALIFIED</span>
             <span
               className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
                 activeTab === "QUALIFIED"
-                  ? "bg-black/20 text-black"
-                  : "bg-[#252728] text-slate-400"
+                  ? "bg-[#252728] text-slate-200"
+                  : "bg-[#1C1C1D] text-slate-400"
               }`}
             >
               {stats.qualifiedCount}
@@ -675,19 +789,18 @@ export function ContactView({
                 fetchCompaniesFilter
               );
             }}
-            className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-2 cursor-pointer ${
+            className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all cursor-pointer ${
               activeTab === "UNQUALIFIED"
-                ? "bg-[#C7F33C] text-black"
+                ? "bg-[#3A3B3C] text-slate-100"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
-            <ShieldAlert className="w-3.5 h-3.5" />
-            <span>Unqualified</span>
+            <span>UNQUALIFIED</span>
             <span
               className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
                 activeTab === "UNQUALIFIED"
-                  ? "bg-black/20 text-black"
-                  : "bg-[#252728] text-slate-400"
+                  ? "bg-[#252728] text-slate-200"
+                  : "bg-[#1C1C1D] text-slate-400"
               }`}
             >
               {stats.unqualifiedCount}
@@ -695,8 +808,8 @@ export function ContactView({
           </button>
         </div>
 
-        {/* Search Box & Add Account Button */}
-        <div className="flex items-center gap-3">
+        {/* Right Tools: Search Box, Account Type Dropdown, Add Account Button */}
+        <div className="flex items-center gap-2.5 shrink-0 ml-auto flex-wrap">
           <div className="relative flex items-center">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 pointer-events-none" />
             <input
@@ -708,47 +821,34 @@ export function ContactView({
             />
           </div>
 
+          {/* Account Type Dropdown */}
+          <AccountTypeFilter
+            value={activeType}
+            onChange={setActiveType}
+            onHoverItem={(type) => {
+              void preload(
+                ["companies-filter", activeTab, type, selectedCountry, debouncedSearch] as const,
+                fetchCompaniesFilter
+              );
+            }}
+          />
+
           <button
             type="button"
             onClick={handleOpenCreatePanel}
             onPointerEnter={handleCreatePanelIntent}
-            className="px-4 py-1.5 rounded-full text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
+            className="px-4 py-1.5 rounded-full text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center shrink-0 cursor-pointer"
           >
             <Plus className="w-4 h-4 text-black" />
-            <span>Add Account</span>
+            <span>Add</span>
           </button>
         </div>
-      </div>
-
-      {/* Type Filter Pills: Customer, Trader, Shipping, My Office */}
-      <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar shrink-0 pl-2 py-1">
-
-        {ACCOUNT_TYPES.map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            onClick={() => setActiveType(item.value)}
-            onPointerEnter={() => {
-              void preload(
-                ["companies-filter", activeTab, item.value, selectedCountry, debouncedSearch] as const,
-                fetchCompaniesFilter
-              );
-            }}
-            className={`px-3.5 py-1 rounded-full text-xs font-semibold transition-colors shrink-0 cursor-pointer ${
-              activeType === item.value
-                ? "bg-[#C7F33C] text-black font-bold"
-                : "bg-[#3A3B3C] text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
       </div>
 
       {/* 2-Column Master-Detail Layout */}
       <div className="flex-1 min-h-0 flex gap-4">
         {/* Left Column: Account Master List (Infinite Scroll) */}
-        <div className="w-80 md:w-96 shrink-0 flex flex-col h-full bg-[#252728] rounded-3xl overflow-hidden">
+        <div className="w-full md:w-80 lg:w-96 shrink-0 flex flex-col h-full bg-[#252728] rounded-3xl overflow-hidden">
           {/* Column Header: Symmetrical to Pipeline Column */}
           <div className="h-14 px-4 flex items-center justify-between shrink-0 bg-[#252728]">
             <div className="flex items-center gap-2.5">
@@ -923,6 +1023,9 @@ export function ContactView({
                       if (selectedCompanyId !== company.id) {
                         setSelectedCompanyId(company.id);
                       }
+                      if (typeof window !== "undefined" && window.innerWidth < 768) {
+                        handleOpenEditModal("account");
+                      }
                     }}
                     onPointerEnter={() => {
                       void preload(["account-overview", company.id], fetchAccountOverview);
@@ -952,12 +1055,12 @@ export function ContactView({
           </div>
         </div>
 
-        {/* Right Column: Detail for Selected Account */}
-        <div className="flex-1 flex flex-col h-full bg-[#252728] rounded-3xl overflow-hidden min-w-0 border-0">
+        {/* Right Column: Detail for Selected Account (Hidden on Mobile, viewed via Modal/Panel) */}
+        <div className="hidden md:flex flex-1 flex-col h-full bg-[#252728] overflow-hidden min-w-0 border-0">
           {selectedCompany ? (
             <>
               {/* Selected Account Header */}
-              <div className="h-14 px-4 flex items-center justify-between shrink-0 bg-[#252728] gap-4 border-0">
+              <div className="h-14 flex items-center justify-between shrink-0 bg-[#252728] gap-4 border-0">
                 {/* Account Name & Star Rating Selector */}
                 <div className="flex flex-col justify-center min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -1031,61 +1134,8 @@ export function ContactView({
                   </div>
                 </div>
 
-                {/* Right Header Actions: AI Bot, Green Qualification Toggle, Country & Edit Account */}
+                {/* Right Header Actions: Edit Account */}
                 <div className="flex items-center gap-2.5 shrink-0">
-                  {/* AI Bot Button (Left of Qualify toggle - opens Account AI in Edit Panel) */}
-                  {(isAdmin || canSee("contact.ai_analysis")) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleOpenEditModal("ai_analysis");
-                      }}
-                      onPointerEnter={handleEditPanelIntent}
-                      className="w-8 h-8 rounded-full bg-[#1C1C1D] text-[#C7F33C] hover:bg-[#2A2B2C] border border-[#3A3B3C] flex items-center justify-center transition-all cursor-pointer shrink-0"
-                      title="Open Account AI Analysis"
-                    >
-                      <Bot className="w-4 h-4" />
-                    </button>
-                  )}
-
-                  {/* Qualification Green Toggle Switch */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1C1C1D]">
-                    <span
-                      className={`text-xs font-bold transition-colors ${
-                        selectedCompany.status === "QUALIFIED"
-                          ? "text-[#C7F33C]"
-                          : "text-slate-400"
-                      }`}
-                    >
-                      {selectedCompany.status === "QUALIFIED"
-                        ? "Qualified"
-                        : "Unqualified"}
-                    </span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={selectedCompany.status === "QUALIFIED"}
-                      onClick={handleToggleQualification}
-                      className={`w-9 h-5 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer focus:outline-none ${
-                        selectedCompany.status === "QUALIFIED"
-                          ? "bg-[#C7F33C]"
-                          : "bg-[#3A3B3C]"
-                      }`}
-                      title={
-                        selectedCompany.status === "QUALIFIED"
-                          ? "Click to mark as Unqualified"
-                          : "Click to mark as Qualified"
-                      }
-                    >
-                      <div
-                        className={`w-4 h-4 rounded-full transition-transform ${
-                          selectedCompany.status === "QUALIFIED"
-                            ? "translate-x-4 bg-black"
-                            : "translate-x-0 bg-slate-400"
-                        }`}
-                      />
-                    </button>
-                  </div>
 
 
                   {/* Edit Account Trigger */}
@@ -1093,10 +1143,10 @@ export function ContactView({
                     type="button"
                     onClick={() => handleOpenEditModal("account", null)}
                     onPointerEnter={handleEditPanelIntent}
-                    className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
                   >
                     <SlidersHorizontal className="w-3.5 h-3.5 text-black" />
-                    <span>Edit Account</span>
+                    <span>Edit</span>
                   </button>
                 </div>
               </div>
@@ -1171,6 +1221,8 @@ export function ContactView({
           setEditAccountContactId(null);
         }}
         onAccountUpdated={handleAccountUpdated}
+        status={selectedCompany?.status}
+        onToggleStatus={handleToggleQualification}
         onBusinessSummaryUpdated={(newSummary) => {
           mutateOverview(
             (prev) => (prev ? { ...prev, businessSummary: newSummary } : prev),

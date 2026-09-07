@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { KanbanBoard } from "@/components/pipeline/KanbanBoard";
 import { PipelineSearch } from "@/components/pipeline/PipelineSearch";
 import { CreateDealButton } from "@/components/pipeline/CreateDealButton";
@@ -38,7 +38,7 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
     return () => clearTimeout(timer);
   }, [searchParams, initialTab, tab, searchQuery]);
 
-  const updateUrl = (newTab: string, newSearch: string) => {
+  const updateUrl = useCallback((newTab: string, newSearch: string) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", newTab);
     if (newSearch) {
@@ -47,17 +47,17 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
       params.delete("search");
     }
     window.history.pushState(null, '', `/pipeline?${params.toString()}`);
-  };
+  }, [searchParams]);
 
-  const handleTabChange = (newTab: string) => {
+  const handleTabChange = useCallback((newTab: string) => {
     setTab(newTab);
     updateUrl(newTab, searchQuery);
-  };
+  }, [searchQuery, updateUrl]);
 
-  const handleSearchChange = (newSearch: string) => {
+  const handleSearchChange = useCallback((newSearch: string) => {
     setSearchQuery(newSearch);
     updateUrl(tab, newSearch);
-  };
+  }, [tab, updateUrl]);
 
   const hasFilters = Boolean(searchQuery.trim() || (cardType && cardType !== 'ALL') || tab !== 'workspace');
   useEffect(() => {
@@ -69,10 +69,10 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
     setPageSearchConfig({
       query: searchQuery,
       onSearch: handleSearchChange,
-      placeholder: "Search cards...",
+      placeholder: "Search",
     });
     return () => setPageSearchConfig(null);
-  }, [searchQuery, setPageSearchConfig]);
+  }, [handleSearchChange, searchQuery, setPageSearchConfig]);
 
   // Register mobile Manage modal content
   useEffect(() => {
@@ -131,7 +131,7 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
       </div>
     );
     return () => setPageManageContent(null);
-  }, [tab, searchQuery, cardType, stages, companies, userId, setPageManageContent]);
+  }, [tab, searchQuery, cardType, stages, companies, userId, handleSearchChange, handleTabChange, setPageManageContent]);
 
   return (
     <WorkspaceLayout scrollMode={tab === "completed" ? "auto" : "hidden"}>

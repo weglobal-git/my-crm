@@ -1,7 +1,7 @@
 "use server";
 
 import prisma from "@/lib/prisma";
-import { requireOpportunityAccess } from "@/lib/pipeline-security";
+import { requireOpportunityAccess, notifyPrivatePipelineUpdate } from "@/lib/pipeline-security";
 import { aiGateway } from "@/lib/ai/gateway";
 import { GoogleGeminiAdapter } from "@/lib/ai/adapters/gemini";
 import { getServerSession } from "next-auth";
@@ -113,13 +113,20 @@ export async function generateDealAccelerators(
       await requireOpportunityAccess(dealId);
     }
 
-    // 1. ดึงข้อมูลดีลและบริบททั้งหมด
+    // 1. ดึงข้อมูลดีลและบริบททั้งหมด (เฉพาะฟิลด์ที่จำเป็น)
     const deal = await prisma.opportunity.findUnique({
       where: { id: dealId },
-      include: {
-        stage: true,
-        company: true,
-        owner: true,
+      select: {
+        id: true,
+        topic: true,
+        type: true,
+        status: true,
+        value: true,
+        currency: true,
+        dueDate: true,
+        stage: { select: { name: true } },
+        company: { select: { name: true } },
+        owner: { select: { name: true } },
       },
     });
 
@@ -129,7 +136,13 @@ export async function generateDealAccelerators(
 
     const logs = await prisma.activityLog.findMany({
       where: { opportunityId: dealId },
-      include: { user: true },
+      select: {
+        id: true,
+        content: true,
+        type: true,
+        createdAt: true,
+        user: { select: { name: true } },
+      },
       orderBy: { createdAt: "desc" },
       take: 25,
     });
@@ -267,6 +280,9 @@ ${userGoalInstruction}
       create: { id: `deal_accelerators_${dealId}`, googleRefreshToken: JSON.stringify(state) },
     });
 
+    // Fire-and-forget Pusher update for real-time multi-user sync
+    void notifyPrivatePipelineUpdate(dealId, { action: 'DEAL_ACCELERATORS_UPDATED', dealId }).catch(() => {});
+
     return { success: true, data: state };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to generate accelerators";
@@ -329,6 +345,9 @@ export async function answerDealAccelerator(
       data: { googleRefreshToken: JSON.stringify(state) },
     });
 
+    // Fire-and-forget Pusher update for real-time multi-user sync
+    void notifyPrivatePipelineUpdate(dealId, { action: 'DEAL_ACCELERATORS_UPDATED', dealId }).catch(() => {});
+
     return { success: true, data: state };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to answer accelerator";
@@ -378,6 +397,9 @@ export async function updateDealTargetGoal(
       update: { googleRefreshToken: JSON.stringify(state) },
       create: { id: `deal_accelerators_${dealId}`, googleRefreshToken: JSON.stringify(state) },
     });
+
+    // Fire-and-forget Pusher update for real-time multi-user sync
+    void notifyPrivatePipelineUpdate(dealId, { action: 'DEAL_ACCELERATORS_UPDATED', dealId }).catch(() => {});
 
     return { success: true, data: state };
   } catch (err: unknown) {

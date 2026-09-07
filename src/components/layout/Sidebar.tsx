@@ -12,13 +12,10 @@ import {
   Headphones, 
   Settings, 
   LayoutDashboard,
-  Building2,
-  Sparkles,
-  Command,
   SlidersHorizontal
 } from "lucide-react";
 import { usePermissions } from "@/providers/PermissionProvider";
-import { IconMap, MenuDefinition } from "@/lib/menu-registry";
+import { IconMap } from "@/lib/menu-registry";
 import { useSidebar } from "./SidebarContext";
 import { useSession } from "next-auth/react";
 import Image from "next/image";
@@ -64,10 +61,13 @@ export function Sidebar() {
   const mobileSearchContainerRef = useRef<HTMLDivElement>(null);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Sync mobile search input when pageSearchConfig query changes
-  useEffect(() => {
-    setMobileSearchTerm(pageSearchConfig?.query || "");
-  }, [pageSearchConfig?.query]);
+  // Sync mobile search input when pageSearchConfig query changes (without cascading render)
+  const currentSearchQuery = pageSearchConfig?.query || "";
+  const [prevPageSearchQuery, setPrevPageSearchQuery] = useState(currentSearchQuery);
+  if (currentSearchQuery !== prevPageSearchQuery) {
+    setPrevPageSearchQuery(currentSearchQuery);
+    setMobileSearchTerm(currentSearchQuery);
+  }
 
   // Focus input when search expands
   useEffect(() => {
@@ -227,10 +227,12 @@ export function Sidebar() {
     );
   }, [allSearchableItems, modalSearchQuery]);
 
-  // Reset selected index when search query changes
-  useEffect(() => {
+  // Reset selected index when search query changes (without cascading render)
+  const [prevModalSearchQuery, setPrevModalSearchQuery] = useState(modalSearchQuery);
+  if (modalSearchQuery !== prevModalSearchQuery) {
+    setPrevModalSearchQuery(modalSearchQuery);
     setSearchSelectedIndex(0);
-  }, [modalSearchQuery]);
+  }
 
   const handleNavigate = useCallback((href: string) => {
     setIsTabletSidebarOpen(false);
@@ -263,7 +265,7 @@ export function Sidebar() {
 
   if (isLoading) {
     return (
-      <aside className="hidden lg:flex h-screen w-56 flex-col bg-[#252728] p-4 shrink-0 z-30 border-r border-[#1C1C1D] animate-pulse">
+      <aside className="hidden lg:flex h-screen w-48 flex-col bg-[#252728] p-4 shrink-0 z-30 border-r border-[#1C1C1D] animate-pulse">
         <div className="h-9 w-full rounded-lg bg-[#3A3B3C] mb-4" />
         <div className="h-8 w-full rounded-lg bg-[#3A3B3C] mb-6" />
         <div className="space-y-2">
@@ -277,9 +279,6 @@ export function Sidebar() {
 
   // Sidebar content (Shared between Desktop permanent sidebar and Tablet drawer)
   const renderSidebarContent = (isDrawer = false) => {
-    const isSearching = desktopFilterQuery.trim().length > 0;
-    const showSystem = systemMenuItems.length > 0 && (isSearching ? filteredSystemItems.length > 0 : true);
-
     return (
       <div className="flex flex-col h-full justify-between select-none">
         {/* Top Section */}
@@ -480,7 +479,7 @@ export function Sidebar() {
       {/* ============================================================ */}
       {/* 1. DESKTOP PERMANENT SIDEBAR (>= 1024px)                     */}
       {/* ============================================================ */}
-      <aside className="hidden lg:flex h-screen w-56 flex-col bg-[#252728] shrink-0 z-30 border-r border-[#1C1C1D]">
+      <aside className="hidden lg:flex h-screen w-48 flex-col bg-[#252728] shrink-0 z-30 border-r border-[#1C1C1D]">
         {renderSidebarContent(false)}
       </aside>
 
@@ -544,7 +543,7 @@ export function Sidebar() {
                     handleMobileClearAndClose();
                   }
                 }}
-                placeholder={pageSearchConfig.placeholder || "Search cards..."}
+                placeholder={pageSearchConfig.placeholder || "Search"}
                 className="flex-1 bg-transparent border-none outline-none text-xs text-slate-100 placeholder:text-slate-400 min-w-0"
               />
               <button
@@ -585,8 +584,10 @@ export function Sidebar() {
             <>
               <div className="h-3.5 w-px bg-[#4E4F50]" />
               <button
+                id="mobile-manage-filter-btn"
                 onClick={() => setIsManageModalOpen(true)}
-                className="flex items-center gap-1.5 text-xs font-medium text-slate-200 hover:text-white transition-colors relative"
+                className="flex items-center gap-1.5 text-xs font-medium text-slate-200 hover:text-white transition-colors relative cursor-pointer"
+                aria-label="Manage and Filters"
               >
                 <SlidersHorizontal className="w-4 h-4 text-[#C7F33C]" />
                 {hasActiveFilters && (
@@ -646,9 +647,9 @@ export function Sidebar() {
       {/* 4. MOBILE MENU DRAWER SHEET (< 768px - md:hidden)           */}
       {/* ============================================================ */}
       {isMobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-30 bg-[#252728] flex flex-col pt-4 pb-24 px-4 overflow-y-auto">
-          {/* Workspace Title & Close */}
-          <div className="flex items-center justify-between pb-4 border-b border-[#1C1C1D] mb-4">
+        <div className="md:hidden fixed inset-0 z-30 bg-[#252728] flex flex-col pb-24 px-4 overflow-y-auto">
+          {/* Workspace Title & Close (Sticky on top) */}
+          <div className="sticky top-0 z-10 bg-[#252728] flex items-center justify-between pt-4 pb-4 border-b border-[#1C1C1D] mb-4 shrink-0">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-md bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white font-bold text-xs">
                 SB
@@ -780,9 +781,9 @@ export function Sidebar() {
       {/* 6. STANDARDIZED MANAGE MODAL (< 768px - md:hidden)          */}
       {/* ============================================================ */}
       {isManageModalOpen && pageManageContent && (
-        <div className="md:hidden fixed inset-0 z-50 bg-[#252728]/95 backdrop-blur-md flex flex-col pt-6 pb-24 px-4 overflow-y-auto">
-          {/* Modal Header */}
-          <div className="flex items-center justify-between pb-4 border-b border-[#1C1C1D] mb-4 shrink-0">
+        <div className="md:hidden fixed inset-0 z-50 bg-[#252728] flex flex-col pb-24 px-4 overflow-y-auto">
+          {/* Modal Header (Sticky on top) */}
+          <div className="sticky top-0 z-10 bg-[#252728] flex items-center justify-between pt-4 pb-4 border-b border-[#1C1C1D] mb-4 shrink-0">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-[#C7F33C]" />
               <span className="font-semibold text-slate-100 text-xs">
@@ -791,7 +792,7 @@ export function Sidebar() {
             </div>
             <button
               onClick={() => setIsManageModalOpen(false)}
-              className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#4E4F50] transition-colors"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#4E4F50] transition-colors"
               aria-label="Close Manage"
             >
               <XIcon className="w-5 h-5" />

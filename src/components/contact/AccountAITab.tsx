@@ -3,8 +3,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import useSWR from "swr";
 import { 
-  Bot, 
-  Settings, 
   RefreshCw, 
   Sparkles, 
   Check, 
@@ -24,6 +22,7 @@ import {
   Trash2,
   Search
 } from "lucide-react";
+import { SlideOverSubBar, type SubBarTab, type SubBarActionItem } from "@/components/ui/SlideOverSubBar";
 import { useSession } from "next-auth/react";
 import { useDialog } from "@/providers/DialogProvider";
 import { 
@@ -404,64 +403,73 @@ export function AccountAITab({
     }
   };
 
+  const aiTabs: SubBarTab[] = [
+    { id: "summary", label: "Summary" },
+    { id: "research", label: "Web Research" },
+  ];
+  if (isAdmin) {
+    aiTabs.push({ id: "prompt", label: "Prompt Settings" });
+  }
+
+  const summaryActions: SubBarActionItem[] = [
+    {
+      id: "copy",
+      label: isCopied ? "Copied" : "Copy",
+      icon: isCopied ? Check : Copy,
+      disabled: !analysis,
+      onClick: handleCopyAnalysis,
+    },
+    {
+      id: "reanalyze",
+      label: isAnalyzing ? "Analyzing..." : "Re-Analyse",
+      icon: RefreshCw,
+      loading: isAnalyzing,
+      disabled: isAnalyzing,
+      onClick: handleRunAnalysis,
+    },
+  ];
+
+  const researchActions: SubBarActionItem[] = [
+    {
+      id: "copy_web",
+      label: isWebCopied ? "Copied" : "Copy",
+      icon: isWebCopied ? Check : Copy,
+      disabled: !webIntel,
+      onClick: handleCopyWebIntel,
+    },
+    {
+      id: "research",
+      label: isSearching ? "Researching..." : webIntel ? "Re-Research" : "Research Web",
+      icon: RefreshCw,
+      loading: isSearching,
+      disabled: isSearching,
+      onClick: handleRunResearch,
+    },
+  ];
+
+  const activeActions =
+    activeTab === "summary"
+      ? summaryActions
+      : activeTab === "research"
+      ? researchActions
+      : undefined;
+
   return (
     <div className="flex flex-col gap-4">
-      {/* Top Header Row with Sub-Tabs */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2.5">
-          <Bot className="w-5 h-5 text-[#C7F33C]" />
-          <h3 className="text-lg font-bold text-slate-100">
-            Account AI Analysis
-          </h3>
-        </div>
-
-        {/* Mode Selector Tabs: Summary / Web Research / Prompt Settings */}
-        <div className="flex items-center gap-1.5 p-1 bg-[#1C1C1D] rounded-full border border-[#3A3B3C]">
-          <button
-            type="button"
-            onClick={() => setActiveTab("summary")}
-            className={`px-3.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === "summary"
-                ? "bg-[#C7F33C] text-black font-bold"
-                : "text-slate-300 hover:text-white"
-            }`}
-          >
-            <Bot className="w-3.5 h-3.5" />
-            <span>Summary</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab("research")}
-            className={`px-3.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeTab === "research"
-                ? "bg-[#C7F33C] text-black font-bold"
-                : "text-slate-300 hover:text-white"
-            }`}
-          >
-            <Globe className="w-3.5 h-3.5" />
-            <span>Web Research</span>
-          </button>
-
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("prompt");
-                handleLoadPromptConfig();
-              }}
-              className={`px-3.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                activeTab === "prompt"
-                  ? "bg-[#C7F33C] text-black font-bold"
-                  : "text-slate-300 hover:text-white"
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>Prompt Settings</span>
-            </button>
-          )}
-        </div>
-      </div>
+      {/* SubBar: Summary / Web Research / Prompt Settings + Actions */}
+      <SlideOverSubBar
+        tabs={aiTabs}
+        activeTab={activeTab}
+        onTabChange={(tabId) => {
+          const nextTab = tabId as "summary" | "research" | "prompt";
+          setActiveTab(nextTab);
+          if (nextTab === "prompt") {
+            handleLoadPromptConfig();
+          }
+        }}
+        actions={activeActions}
+        className="-mx-4 md:-mx-6 -mt-4 md:-mt-6 mb-2 px-4 md:px-6 py-2 border-b border-[#1C1C1D] bg-[#252728] shrink-0 min-h-[44px]"
+      />
 
       {/* Sub-header status bar */}
       {activeTab === "summary" && (
@@ -1153,100 +1161,36 @@ export function AccountAITab({
         )}
       </div>
 
-      {/* Footer Actions (Summary Tab) */}
-      {activeTab === "summary" && (
+      {/* Footer Info (Summary Tab) */}
+      {activeTab === "summary" && analysis?.usage && (
         <div className="flex items-center justify-between pt-4 mt-2 border-t border-[#3A3B3C]">
-          {analysis?.usage ? (
-            <div
-              className="text-xs px-2.5 py-1.5 rounded-xl bg-[#1C1C1D] text-slate-300 flex items-center gap-1.5 font-mono border border-[#3A3B3C]"
-              title={`Tokens: ${analysis.usage.inputTokens.toLocaleString()} input, ${analysis.usage.outputTokens.toLocaleString()} output`}
-            >
-              <Zap className="w-3.5 h-3.5 text-[#C7F33C]" />
-              <span>{analysis.usage.totalTokens.toLocaleString()} tokens</span>
-              <span className="text-[#4E4F50]">•</span>
-              <span className="text-[#C7F33C] font-semibold">
-                ≈ {analysis.usage.costThb < 0.01 ? "<0.01" : analysis.usage.costThb.toFixed(2)} THB
-              </span>
-            </div>
-          ) : (
-            <div />
-          )}
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleCopyAnalysis}
-              disabled={!analysis}
-              className="px-4 py-2 rounded-xl bg-[#3A3B3C] hover:bg-[#4E4F50] text-xs font-medium text-slate-200 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer border border-[#4E4F50] disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Copy summary to clipboard"
-            >
-              {isCopied ? (
-                <Check className="w-3.5 h-3.5 text-[#C7F33C]" />
-              ) : (
-                <Copy className="w-3.5 h-3.5 text-slate-400" />
-              )}
-              <span>{isCopied ? "Copied" : "Copy"}</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isAnalyzing}
-              onClick={handleRunAnalysis}
-              className="px-5 py-2 rounded-xl bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-              title="Re-analyze and update summary"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isAnalyzing ? "animate-spin" : ""}`} />
-              <span>{isAnalyzing ? "Analyzing..." : "Re-Analyse"}</span>
-            </button>
+          <div
+            className="text-xs px-2.5 py-1.5 rounded-xl bg-[#1C1C1D] text-slate-300 flex items-center gap-1.5 font-mono border border-[#3A3B3C]"
+            title={`Tokens: ${analysis.usage.inputTokens.toLocaleString()} input, ${analysis.usage.outputTokens.toLocaleString()} output`}
+          >
+            <Zap className="w-3.5 h-3.5 text-[#C7F33C]" />
+            <span>{analysis.usage.totalTokens.toLocaleString()} tokens</span>
+            <span className="text-[#4E4F50]">•</span>
+            <span className="text-[#C7F33C] font-semibold">
+              ≈ {analysis.usage.costThb < 0.01 ? "<0.01" : analysis.usage.costThb.toFixed(2)} THB
+            </span>
           </div>
         </div>
       )}
 
-      {/* Footer Actions (Web Research Tab) */}
-      {activeTab === "research" && (
+      {/* Footer Info (Web Research Tab) */}
+      {activeTab === "research" && webIntel?.usage && (
         <div className="flex items-center justify-between pt-4 mt-2 border-t border-[#3A3B3C]">
-          {webIntel?.usage ? (
-            <div
-              className="text-xs px-2.5 py-1.5 rounded-xl bg-[#1C1C1D] text-slate-300 flex items-center gap-1.5 font-mono border border-[#3A3B3C]"
-              title={`Tokens: ${webIntel.usage.inputTokens.toLocaleString()} input, ${webIntel.usage.outputTokens.toLocaleString()} output`}
-            >
-              <Zap className="w-3.5 h-3.5 text-[#C7F33C]" />
-              <span>{webIntel.usage.totalTokens.toLocaleString()} tokens</span>
-              <span className="text-[#4E4F50]">•</span>
-              <span className="text-[#C7F33C] font-semibold">
-                ≈ {webIntel.usage.costThb < 0.01 ? "<0.01" : webIntel.usage.costThb.toFixed(2)} THB
-              </span>
-            </div>
-          ) : (
-            <div />
-          )}
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleCopyWebIntel}
-              disabled={!webIntel}
-              className="px-4 py-2 rounded-xl bg-[#3A3B3C] hover:bg-[#4E4F50] text-xs font-medium text-slate-200 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer border border-[#4E4F50] disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Copy web research to clipboard"
-            >
-              {isWebCopied ? (
-                <Check className="w-3.5 h-3.5 text-[#C7F33C]" />
-              ) : (
-                <Copy className="w-3.5 h-3.5 text-slate-400" />
-              )}
-              <span>{isWebCopied ? "Copied" : "Copy"}</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={isSearching}
-              onClick={handleRunResearch}
-              className="px-5 py-2 rounded-xl bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-              title="Search and gather web intelligence"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSearching ? "animate-spin" : ""}`} />
-              <span>{isSearching ? "Researching..." : (webIntel ? "Re-Research" : "Research Web")}</span>
-            </button>
+          <div
+            className="text-xs px-2.5 py-1.5 rounded-xl bg-[#1C1C1D] text-slate-300 flex items-center gap-1.5 font-mono border border-[#3A3B3C]"
+            title={`Tokens: ${webIntel.usage.inputTokens.toLocaleString()} input, ${webIntel.usage.outputTokens.toLocaleString()} output`}
+          >
+            <Zap className="w-3.5 h-3.5 text-[#C7F33C]" />
+            <span>{webIntel.usage.totalTokens.toLocaleString()} tokens</span>
+            <span className="text-[#4E4F50]">•</span>
+            <span className="text-[#C7F33C] font-semibold">
+              ≈ {webIntel.usage.costThb < 0.01 ? "<0.01" : webIntel.usage.costThb.toFixed(2)} THB
+            </span>
           </div>
         </div>
       )}

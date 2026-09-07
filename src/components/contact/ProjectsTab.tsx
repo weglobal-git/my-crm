@@ -1,10 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { 
   Briefcase, 
   Calendar, 
-  ExternalLink, 
   ShieldAlert, 
   CheckCircle2, 
   XCircle, 
@@ -35,11 +33,10 @@ interface OpportunityItem {
 }
 
 export function ProjectsTab({
-  companyName,
   opportunities = [],
   maskedOpportunityCount = 0,
 }: {
-  companyName: string;
+  companyName?: string;
   opportunities?: OpportunityItem[];
   maskedOpportunityCount?: number;
 }) {
@@ -92,26 +89,6 @@ export function ProjectsTab({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Header Info */}
-      <div className="flex items-center justify-between pb-4 border-b border-[#3A3B3C]">
-        <div>
-          <h3 className="text-xs font-bold text-slate-100 flex items-center gap-2">
-            <Briefcase className="w-4 h-4 text-[#C7F33C]" />
-            Deals / Projects for Account: {companyName}
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Showing project cards accessible by your department permissions.
-          </p>
-        </div>
-
-        <Link
-          href={`/pipeline?search=${encodeURIComponent(companyName)}`}
-          className="px-3 py-1.5 rounded-xl text-xs font-bold bg-[#3A3B3C] text-slate-200 hover:bg-[#4E4F50] transition-colors flex items-center gap-1.5"
-        >
-          <span>Open in Pipeline</span>
-          <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-        </Link>
-      </div>
 
       {/* Cross-Department Masked Alert */}
       {maskedOpportunityCount > 0 && (

@@ -5,7 +5,6 @@ import useSWR from "swr";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { ActivityLog } from "@prisma/client";
 import {
-  Folder,
   Download,
   FileText,
   Link2,
@@ -17,6 +16,8 @@ import {
 } from "lucide-react";
 import { formatBytes, getOptimizedCloudinaryUrl } from "@/lib/utils";
 import { getAccountSharedMedia } from "@/lib/actions/contact";
+import { getOpportunitySharedMedia } from "@/lib/actions/opportunity";
+import { SlideOverSubBar, type SubBarTab } from "@/components/ui/SlideOverSubBar";
 
 export interface AttachmentData {
   id: string;
@@ -33,7 +34,6 @@ export interface AttachmentData {
     status: string;
     createdAt?: string | Date;
   };
-  [key: string]: unknown;
 }
 
 export interface LinkData {
@@ -87,7 +87,6 @@ function groupItemsByDeal<T extends { deal?: { id: string; topic: string; status
 
 export function SharedMediaTab({
   deal,
-  activityLogs = [],
   companyId,
   onImageClick,
   groupByDeal = false,
@@ -110,53 +109,32 @@ export function SharedMediaTab({
     }
   );
 
-  // 2. Deal Mode SWR Fetcher
-  const dealFetcher = (url: string) =>
-    fetch(url)
-      .then((res) => res.json())
-      .then((data) => (data.success ? data.attachments : []));
-
-  const { data: rawDealAttachments, isValidating: isDealLoading } = useSWR(
-    deal?.id ? `/api/opportunities/${deal.id}/attachments` : null,
-    dealFetcher
+  // 2. Deal Mode SWR Fetcher (cache-first, 0ms render when preloaded)
+  const { data: dealMedia, isLoading: isDealLoading } = useSWR(
+    deal?.id ? ["opportunity-shared-media", deal.id] : null,
+    () => getOpportunitySharedMedia(deal!.id),
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 30000,
+    }
   );
 
-  const isLoading = companyId ? (isAccountLoading && !accountMedia) : isDealLoading;
+  const isLoading = companyId
+    ? isAccountLoading && !accountMedia
+    : isDealLoading && !dealMedia;
 
   // Unified Attachments
   const attachments: AttachmentData[] = useMemo(() => {
     if (companyId) return accountMedia?.attachments || [];
-    return rawDealAttachments || [];
-  }, [companyId, accountMedia, rawDealAttachments]);
+    return dealMedia?.attachments || [];
+  }, [companyId, accountMedia, dealMedia]);
 
   // Unified Links
   const links: LinkData[] = useMemo(() => {
     if (companyId) return accountMedia?.links || [];
-    if (!activityLogs || activityLogs.length === 0) return [];
-
-    const extractedLinks: LinkData[] = [];
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-
-    activityLogs.forEach((log) => {
-      if (!log.content) return;
-      const cleanContent = log.content.replace(/\[ATTACHMENT:[^\]]+\]/g, "");
-      const matches = cleanContent.match(urlRegex);
-      if (matches) {
-        matches.forEach((url) => {
-          const cleanUrl = url.replace(/[),.]+$/, "");
-          extractedLinks.push({
-            url: cleanUrl,
-            logId: log.id,
-            date: new Date(log.createdAt),
-          });
-        });
-      }
-    });
-
-    return extractedLinks.sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-    );
-  }, [companyId, accountMedia, activityLogs]);
+    if (dealMedia?.links) return dealMedia.links;
+    return [];
+  }, [companyId, accountMedia, dealMedia]);
 
   const imagesAndVideos = useMemo(
     () =>
@@ -389,54 +367,26 @@ export function SharedMediaTab({
     );
   };
 
+  const mediaTabs: SubBarTab[] = [
+    { id: "images", label: "Photos" },
+    { id: "links", label: "Links" },
+    { id: "files", label: "Files" },
+  ];
+
   return (
     <div className="flex flex-col h-full bg-[#252728]">
-      {/* Optional Sticky Sub-Tab Header (shown only when hideHeader is false) */}
+      {/* Standard SubBar Tab Header (shown only when hideHeader is false) */}
       {!hideHeader && (
-        <div className="pb-2 shrink-0">
-          <div className="flex gap-1 bg-[#1C1C1D] p-1 rounded-xl w-full">
-            <button
-              type="button"
-              onClick={() => setActiveSubTab("images")}
-              className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-                activeSubTab === "images"
-                  ? "bg-[#3A3B3C] text-white"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <ImageIcon className="w-3.5 h-3.5" />
-              <span>Photos</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSubTab("links")}
-              className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-                activeSubTab === "links"
-                  ? "bg-[#3A3B3C] text-white"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <Link2 className="w-3.5 h-3.5" />
-              <span>Links</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveSubTab("files")}
-              className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-                activeSubTab === "files"
-                  ? "bg-[#3A3B3C] text-white"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Files</span>
-            </button>
-          </div>
-        </div>
+        <SlideOverSubBar
+          tabs={mediaTabs}
+          activeTab={activeSubTab}
+          onTabChange={(tabId) => setActiveSubTab(tabId as "images" | "links" | "files")}
+          className="-mx-4 md:-mx-6 -mt-4 md:-mt-6 mb-4 px-4 md:px-6 py-2 border-b border-[#1C1C1D] bg-[#252728] shrink-0 min-h-[44px]"
+        />
       )}
 
       {/* Content Area */}
-      <div className={`flex-1 overflow-y-auto ${hideHeader ? "pt-1" : "pt-4"} custom-scrollbar`}>
+      <div className={`flex-1 overflow-y-auto ${hideHeader ? "pt-1" : "pt-0"} custom-scrollbar`}>
         {/* 1. PHOTOS SUB-TAB */}
         {activeSubTab === "images" && (
           <div className="flex flex-col gap-4">

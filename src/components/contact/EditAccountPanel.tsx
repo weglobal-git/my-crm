@@ -1,16 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { CompanyAddress, ContactType } from "@prisma/client";
+import { CompanyAddress, ContactType, ContactStatus } from "@prisma/client";
 import { 
   Building2, 
-  MapPin, 
   Save, 
   Plus, 
   Trash2, 
   Loader2, 
   Star, 
-  Edit3, 
   Tag, 
   Users, 
   Briefcase, 
@@ -20,13 +18,13 @@ import {
   Copy, 
   Phone, 
   History, 
-  Search,
-  Bot,
-  Folder,
-  Sparkles,
-  ExternalLink
+  Bot, 
+  Folder, 
+  Sparkles, 
+  ExternalLink 
 } from "lucide-react";
 import { SlideOverPanel, SlideOverTab } from "@/components/ui/SlideOverPanel";
+import { SlideOverSubBar, SubBarTab, SubBarActionItem } from "@/components/ui/SlideOverSubBar";
 import { CountrySelect } from "@/components/ui/CountrySelect";
 import { AccountTypeSelect } from "@/components/ui/AccountTypeSelect";
 import { AddressTypeSelect } from "@/components/ui/AddressTypeSelect";
@@ -47,7 +45,8 @@ import {
   deleteContact, 
   AccountOverviewResult,
   CompanyMasterItem,
-  getAccountSharedMedia
+  getAccountSharedMedia,
+  toggleCompanyStatus
 } from "@/lib/actions/contact";
 import { getCachedAccountAnalysis, getCachedWebIntelligence } from "@/lib/actions/account-ai";
 import { useDialog } from "@/providers/DialogProvider";
@@ -81,6 +80,8 @@ interface EditAccountPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onAccountUpdated: (updatedCompany?: Partial<CompanyMasterItem>) => void;
+  status?: ContactStatus;
+  onToggleStatus?: () => void;
   initialTab?: "account" | "contact" | "projects" | "email" | "ai_analysis" | "sharedMedia" | string;
   selectedContactId?: string | null;
   onBusinessSummaryUpdated?: (summary: string) => void;
@@ -134,6 +135,8 @@ export function EditAccountPanel({
   isOpen,
   onClose,
   onAccountUpdated,
+  status,
+  onToggleStatus,
   initialTab = "account",
   selectedContactId = null,
   onBusinessSummaryUpdated,
@@ -144,6 +147,29 @@ export function EditAccountPanel({
   const [isLoading, setIsLoading] = useState(!isInitialMatch);
   const [isSavingDetails, setIsSavingDetails] = useState(false);
   const [overview, setOverview] = useState<AccountOverviewResult | null>(() => isInitialMatch ? initialOverview : null);
+
+  const currentStatus: ContactStatus =
+    status || overview?.company?.status || "QUALIFIED";
+
+  const handleToggleQualification = async () => {
+    if (!companyId) return;
+    const nextStatus: ContactStatus =
+      currentStatus === "QUALIFIED" ? "UNQUALIFIED" : "QUALIFIED";
+
+    if (onToggleStatus) {
+      onToggleStatus();
+    } else {
+      try {
+        await toggleCompanyStatus(companyId, nextStatus);
+        onAccountUpdated?.({ status: nextStatus });
+        setOverview((prev) =>
+          prev ? { ...prev, company: { ...prev.company, status: nextStatus } } : prev
+        );
+      } catch (err) {
+        console.error("Failed to toggle status:", err);
+      }
+    }
+  };
 
   const { visibleRightMenus, isAdmin } = usePermissions();
   const allowedRightMenus = useMemo(() => visibleRightMenus("contact"), [visibleRightMenus]);
@@ -209,6 +235,11 @@ export function EditAccountPanel({
   // Sub-tabs in Account Tab
   const [accountSubTab, setAccountSubTab] = useState<"details" | "logs">("details");
   const [accountLogSearch, setAccountLogSearch] = useState("");
+  const [isSearchingAccountLogs, setIsSearchingAccountLogs] = useState(false);
+
+  // Search in Contacts / Person Tab
+  const [isSearchingPersons, setIsSearchingPersons] = useState(false);
+  const [personSearchQuery, setPersonSearchQuery] = useState("");
 
   // Company Profile Form State
   const [displayName, setDisplayName] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.displayName || initialOverview.company.name || "") : "");
@@ -835,6 +866,124 @@ export function EditAccountPanel({
       )
     : accountLogs;
 
+  // Filtered contacts
+  const filteredContacts = useMemo(() => {
+    const list = overview?.contacts || [];
+    const q = personSearchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        (c.role && c.role.toLowerCase().includes(q)) ||
+        (c.contactDepartment && c.contactDepartment.toLowerCase().includes(q)) ||
+        (c.email && c.email.toLowerCase().includes(q)) ||
+        (c.phone && c.phone.includes(q)) ||
+        (Array.isArray(c.emails) && c.emails.some((em) => em.toLowerCase().includes(q))) ||
+        (Array.isArray(c.phones) && c.phones.some((ph) => ph.includes(q)))
+    );
+  }, [overview?.contacts, personSearchQuery]);
+
+  const renderSubBar = () => {
+    if (isLoading) return null;
+
+    if (safeActiveTab === "account") {
+      const accountTabs: SubBarTab[] = [
+        { id: "details", label: "Details", icon: Building2 },
+        { id: "logs", label: "System Log", icon: History },
+      ];
+
+      if (accountSubTab === "details") {
+        const detailActions: SubBarActionItem[] = [
+          {
+            id: "save_account",
+            label: isSavingDetails ? "Saving..." : "Save Account",
+            icon: Save,
+            loading: isSavingDetails,
+            disabled: isSavingDetails,
+            onClick: handleSaveCompanyDetails,
+          },
+          {
+            id: "add_address",
+            label: "Add Address",
+            icon: Plus,
+            onClick: handleAddNewAddress,
+          },
+        ];
+
+        return (
+          <SlideOverSubBar
+            tabs={accountTabs}
+            activeTab={accountSubTab}
+            onTabChange={(id) => setAccountSubTab(id as "details" | "logs")}
+            actions={detailActions}
+          />
+        );
+      }
+
+      if (accountSubTab === "logs") {
+        return (
+          <SlideOverSubBar
+            tabs={accountTabs}
+            activeTab={accountSubTab}
+            onTabChange={(id) => setAccountSubTab(id as "details" | "logs")}
+            search={{
+              isActive: isSearchingAccountLogs,
+              query: accountLogSearch,
+              placeholder: "Search logs...",
+              onToggle: () => setIsSearchingAccountLogs((prev) => !prev),
+              onChange: setAccountLogSearch,
+              onClear: () => setAccountLogSearch(""),
+            }}
+          />
+        );
+      }
+    }
+
+    if (safeActiveTab === "contact") {
+      const contactActions: SubBarActionItem[] = [
+        {
+          id: "add_person",
+          label: "Add Person",
+          icon: Plus,
+          onClick: () => setIsAddingPerson(true),
+        },
+      ];
+
+      return (
+        <SlideOverSubBar
+          leftContent={<div />}
+          search={{
+            isActive: isSearchingPersons,
+            query: personSearchQuery,
+            placeholder: "Search contacts...",
+            onToggle: () => setIsSearchingPersons((prev) => !prev),
+            onChange: setPersonSearchQuery,
+            onClear: () => setPersonSearchQuery(""),
+          }}
+          actions={contactActions}
+        />
+      );
+    }
+
+    if (safeActiveTab === "projects") {
+      return (
+        <SlideOverSubBar
+          leftContent={<div />}
+          actions={[
+            {
+              id: "view_pipeline",
+              label: "View in Pipeline",
+              icon: ExternalLink,
+              onClick: () => window.open(`/pipeline?search=${encodeURIComponent(name)}`, "_blank"),
+            },
+          ]}
+        />
+      );
+    }
+
+    return null;
+  };
+
   return (
     <SlideOverPanel
       isOpen={isOpen && !!companyId}
@@ -845,10 +994,48 @@ export function EditAccountPanel({
           ? `${accountType} • ${country} • ${overview?.contacts?.length || 0} Contacts`
           : `${accountType} • ${overview?.contacts?.length || 0} Contacts`
       }
+      headerRight={
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1C1C1D]">
+          <span
+            className={`text-xs font-bold transition-colors ${
+              currentStatus === "QUALIFIED"
+                ? "text-[#C7F33C]"
+                : "text-slate-400"
+            }`}
+          >
+            {currentStatus === "QUALIFIED" ? "Qualified" : "Unqualified"}
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={currentStatus === "QUALIFIED"}
+            onClick={handleToggleQualification}
+            className={`w-9 h-5 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer focus:outline-none ${
+              currentStatus === "QUALIFIED"
+                ? "bg-[#C7F33C]"
+                : "bg-[#3A3B3C]"
+            }`}
+            title={
+              currentStatus === "QUALIFIED"
+                ? "Click to mark as Unqualified"
+                : "Click to mark as Qualified"
+            }
+          >
+            <div
+              className={`w-4 h-4 rounded-full transition-transform ${
+                currentStatus === "QUALIFIED"
+                  ? "translate-x-4 bg-black"
+                  : "translate-x-0 bg-slate-400"
+              }`}
+            />
+          </button>
+        </div>
+      }
+      subBar={renderSubBar()}
       tabs={tabs}
       activeTab={safeActiveTab}
       onTabChange={setActiveTab}
-      widthClass="w-[750px]"
+      widthClass="w-[600px]"
     >
       {isLoading ? (
         <div className="flex items-center justify-center h-64">
@@ -860,60 +1047,10 @@ export function EditAccountPanel({
             {/* TAB 1: ACCOUNT (Profile + Addresses + System Log) */}
             {safeActiveTab === "account" && (
             <div className="flex flex-col gap-5">
-              {/* Account Sub-Tabs */}
-              <div className="flex items-center gap-1.5 bg-[#1C1C1D] p-1.5 rounded-full w-fit">
-                <button
-                  type="button"
-                  onClick={() => setAccountSubTab("details")}
-                  className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1.5 cursor-pointer ${
-                    accountSubTab === "details"
-                      ? "bg-[#3A3B3C] text-slate-100"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <Building2 className="w-3.5 h-3.5" />
-                  <span>Account Details & Addresses</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setAccountSubTab("logs")}
-                  className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-1.5 cursor-pointer ${
-                    accountSubTab === "logs"
-                      ? "bg-[#3A3B3C] text-slate-100"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <History className="w-3.5 h-3.5" />
-                  <span>System Log ({accountLogs.length})</span>
-                </button>
-              </div>
-
               {accountSubTab === "details" ? (
                 <>
                   {/* Account Profile Card */}
                   <div className="bg-[#3A3B3C] rounded-2xl p-5 space-y-4 border-0">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                        <Building2 className="w-4 h-4 text-[#C7F33C]" />
-                        Account Profile Details
-                      </h4>
-
-                      <button
-                        type="button"
-                        onClick={handleSaveCompanyDetails}
-                        disabled={isSavingDetails}
-                        className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                      >
-                        {isSavingDetails ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
-                        ) : (
-                          <Save className="w-3.5 h-3.5 text-black" />
-                        )}
-                        <span>Save Account</span>
-                      </button>
-                    </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {/* Display Name */}
                       <div className="flex flex-col gap-1.5 md:col-span-2">
@@ -1008,24 +1145,6 @@ export function EditAccountPanel({
 
                   {/* Company Addresses Section */}
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between px-1">
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-[#C7F33C]" />
-                        <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                          Addresses ({addresses.length})
-                        </h4>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleAddNewAddress}
-                        className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Add Address</span>
-                      </button>
-                    </div>
-
                     {/* Address Cards List */}
                     <div className="space-y-3">
                       {/* In-memory Draft Address Card */}
@@ -1599,26 +1718,6 @@ export function EditAccountPanel({
               ) : (
                 /* Account System Log Sub-tab */
                 <div className="bg-[#3A3B3C] rounded-2xl p-5 space-y-4 border-0">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#252728]">
-                    <div className="flex items-center gap-2">
-                      <History className="w-4 h-4 text-[#C7F33C]" />
-                      <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                        Account System Log ({accountLogs.length})
-                      </h4>
-                    </div>
-
-                    <div className="relative w-full sm:w-64">
-                      <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
-                      <input
-                        type="text"
-                        value={accountLogSearch}
-                        onChange={(e) => setAccountLogSearch(e.target.value)}
-                        placeholder="Search logs..."
-                        className="w-full bg-[#252728] rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
-                      />
-                    </div>
-                  </div>
-
                   {filteredAccountLogs.length === 0 ? (
                     <div className="p-8 text-center bg-[#252728] rounded-2xl text-slate-400 text-xs">
                       {accountLogSearch.trim() ? "No matching system logs." : "No system logs recorded for this account."}
@@ -1657,27 +1756,6 @@ export function EditAccountPanel({
           {/* TAB 2: CONTACT / PERSON (Inline Accordion + Person System Log) */}
           {safeActiveTab === "contact" && (
             <div className="flex flex-col gap-4">
-              {/* Header */}
-              <div className="flex items-center justify-between pb-3 border-b border-[#3A3B3C]">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-[#C7F33C]" />
-                  <h4 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                    Company Persons / Contacts ({overview?.contacts?.length || 0})
-                  </h4>
-                </div>
-
-                {!isAddingPerson && (
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingPerson(true)}
-                    className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add Person</span>
-                  </button>
-                )}
-              </div>
-
               {/* Add New Person Form */}
               {isAddingPerson && (
                 <form
@@ -1851,21 +1929,17 @@ export function EditAccountPanel({
                       No persons registered under {name}
                     </span>
                     <span className="text-xs text-slate-400 block mt-1">
-                      Click &quot;+ Add Person&quot; to add contacts to this company.
+                      Select &quot;Add Person&quot; from the Actions menu to add contacts to this company.
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingPerson(true)}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 mt-2 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add First Person</span>
-                  </button>
+                </div>
+              ) : filteredContacts.length === 0 ? (
+                <div className="p-8 text-center bg-[#3A3B3C] rounded-2xl text-slate-400 text-xs">
+                  No contacts found matching &quot;{personSearchQuery}&quot;.
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {overview.contacts.map((c) => {
+                  {filteredContacts.map((c) => {
                     const isExpanded = expandedPersonIds.has(c.id);
                     const subTab = personSubTabs[c.id] || "info";
                     const pForm = personForms[c.id] || {
@@ -1938,14 +2012,6 @@ export function EditAccountPanel({
                             className="flex items-center gap-1.5 shrink-0 ml-2"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <button
-                              type="button"
-                              onClick={() => togglePersonExpand(c.id)}
-                              className="px-3 py-1.5 rounded-xl text-xs font-medium text-slate-200 bg-[#252728] hover:bg-[#4E4F50] transition-colors flex items-center gap-1 cursor-pointer"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                              <span>{isExpanded ? "Collapse" : "Edit"}</span>
-                            </button>
 
                             <button
                               type="button"
@@ -1987,8 +2053,7 @@ export function EditAccountPanel({
                                     : "text-slate-400 hover:text-slate-200"
                                 }`}
                               >
-                                <History className="w-3 h-3" />
-                                <span>System Log ({c.logs?.length || 0})</span>
+                                <span>System Log</span>
                               </button>
                             </div>
 

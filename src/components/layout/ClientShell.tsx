@@ -32,7 +32,7 @@ export function ClientShell({ children }: { children: ReactNode }) {
     <PermissionProvider>
       <SidebarProvider>
         {session && session.user && <Sidebar />}
-        <div className="flex flex-1 flex-col overflow-hidden w-full">
+        <div className="flex flex-1 flex-col overflow-hidden min-w-0">
           {session && session.user && <Header />}
           <main className="flex-1 flex flex-col h-full overflow-hidden">
             {children}

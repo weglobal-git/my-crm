@@ -1,7 +1,7 @@
 "use server";
 
 import prisma from "@/lib/prisma";
-import { requireOpportunityAccess } from "@/lib/pipeline-security";
+import { requireOpportunityAccess, notifyPrivatePipelineUpdate } from "@/lib/pipeline-security";
 import { aiGateway } from "@/lib/ai/gateway";
 import { GoogleGeminiAdapter } from "@/lib/ai/adapters/gemini";
 
@@ -381,13 +381,20 @@ export async function generateDealSummary(dealId: string): Promise<DealSummaryRe
     };
   }
 
-  // 1. ดึงข้อมูลดีล
+  // 1. ดึงข้อมูลดีล (เฉพาะฟิลด์ที่จำเป็น)
   const deal = await prisma.opportunity.findUnique({
     where: { id: dealId },
-    include: {
-      stage: true,
-      company: true,
-      owner: true,
+    select: {
+      id: true,
+      topic: true,
+      type: true,
+      status: true,
+      value: true,
+      currency: true,
+      dueDate: true,
+      stage: { select: { name: true } },
+      company: { select: { name: true } },
+      owner: { select: { name: true } },
     },
   });
 
@@ -395,10 +402,16 @@ export async function generateDealSummary(dealId: string): Promise<DealSummaryRe
     return { success: false, error: "DEAL_NOT_FOUND", message: "ไม่พบข้อมูลดีลนี้ในระบบ" };
   }
 
-  // 2. ดึงประวัติกิจกรรมและคอมเมนต์ล่าสุด
+  // 2. ดึงประวัติกิจกรรมและคอมเมนต์ล่าสุด (เฉพาะฟิลด์ที่จำเป็น)
   const logs = await prisma.activityLog.findMany({
     where: { opportunityId: dealId },
-    include: { user: true },
+    select: {
+      id: true,
+      content: true,
+      type: true,
+      createdAt: true,
+      user: { select: { name: true } },
+    },
     orderBy: { createdAt: "desc" },
     take: 30,
   });
@@ -560,6 +573,9 @@ ${effectiveTaskInstruction}`;
         }),
       },
     });
+
+    // Fire-and-forget Pusher event for other collaborators
+    void notifyPrivatePipelineUpdate(dealId, { action: 'DEAL_SUMMARY_UPDATED', dealId }).catch(() => {});
 
     return {
       success: true,

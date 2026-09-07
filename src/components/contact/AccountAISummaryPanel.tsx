@@ -376,7 +376,7 @@ export function AccountAISummaryPanel({
                       }`}
                     >
                       <Settings className="w-3.5 h-3.5" />
-                      <span>Prompt Settings</span>
+                      <span>Prompt</span>
                     </button>
                   )}
                 </div>

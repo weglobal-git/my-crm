@@ -293,6 +293,8 @@ model Attachment {
   updatedAt          DateTime    @updatedAt
   opportunity        Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   uploader           User        @relation(fields: [uploaderId], references: [id])
+
+  @@index([opportunityId, createdAt(sort: Desc)])
 }
 
 model PipelineStage {
