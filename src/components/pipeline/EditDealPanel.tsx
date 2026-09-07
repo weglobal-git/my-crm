@@ -520,7 +520,7 @@ interface EditDealPanelProps {
 }
 
 export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }: EditDealPanelProps) {
-  const { dragOffset, isDragging, swipeHandlers } = useSwipeToClose({
+  const { dragOffset, isDragging, isDismissed, swipeHandlers } = useSwipeToClose({
     onClose,
     isOpen,
   });
@@ -1511,9 +1511,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   return (
     <>
       <div
-        className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${internalIsOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+        className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${internalIsOpen && !isDismissed ? "opacity-100" : "opacity-0 pointer-events-none"}`}
         style={
-          dragOffset > 0
+          isDismissed
+            ? {
+                opacity: 0,
+                transition: "opacity 0.2s ease-out",
+                pointerEvents: "none",
+              }
+            : dragOffset > 0
             ? {
                 opacity: Math.max(0, 1 - dragOffset / 350),
                 transition: isDragging ? "none" : "opacity 0.2s ease-out",
@@ -1526,14 +1532,21 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       <div
         {...swipeHandlers}
         style={
-          dragOffset > 0
+          isDismissed
+            ? {
+                transform: "translateX(100%)",
+                opacity: 0,
+                transition: "transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease-out",
+                pointerEvents: "none",
+              }
+            : dragOffset > 0
             ? {
                 transform: `translateX(${dragOffset}px)`,
                 transition: isDragging ? "none" : "transform 0.2s ease-out",
               }
             : undefined
         }
-        className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[600px] md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${internalIsOpen ? "opacity-100 translate-y-0 md:translate-x-0 scale-100" : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"}`}
+        className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[600px] md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${internalIsOpen && !isDismissed ? "opacity-100 translate-y-0 md:translate-x-0 scale-100" : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"}`}
       >
         <div className="flex flex-col md:flex-row w-full h-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C]">
           {/* Tab Sidebar (desktop only) */}
@@ -3043,7 +3056,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   }}
                   placeholder={isDragActive ? "Drop files here..." : "Write an update..."}
                   style={{ height: 'auto', minHeight: '28px', maxHeight: '120px' }}
-                  className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
+                  className="flex-1 bg-transparent border-none text-white text-[16px] focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
                 />
 
                 {/* Send Button / Indicator (Anchored to bottom, height 28px) */}
@@ -3079,11 +3092,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     key={menu.key}
                     type="button"
                     onClick={() => {
-                      if (isActive) {
-                        onClose();
-                      } else {
-                        setActiveTab(tabId);
-                      }
+                      setActiveTab(tabId);
                     }}
                     title={menu.label}
                     className={`flex items-center justify-center h-9 w-9 rounded-full transition-all duration-200 cursor-pointer ${

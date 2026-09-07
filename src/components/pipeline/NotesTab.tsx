@@ -293,7 +293,7 @@ export function NotesTab({ deal, searchQuery: externalSearchQuery }: NotesTabPro
             }}
             placeholder="Write a note..."
             style={{ height: "auto", minHeight: "28px", maxHeight: "120px" }}
-            className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
+            className="flex-1 bg-transparent border-none text-white text-[16px] focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
           />
           <button
             type="button"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 export interface UseSwipeToCloseOptions {
   onClose: () => void;
@@ -21,12 +21,36 @@ export function useSwipeToClose({
 }: UseSwipeToCloseOptions) {
   const [dragOffset, setDragOffset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDismissed, setIsDismissed] = useState(false);
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+
+  if (prevIsOpen !== isOpen) {
+    setPrevIsOpen(isOpen);
+    if (isOpen) {
+      setIsDismissed(false);
+      setDragOffset(0);
+    }
+  }
 
   const startX = useRef(0);
   const startY = useRef(0);
   const startTime = useRef(0);
   const intentLocked = useRef<"horizontal" | "vertical" | null>(null);
   const isClosingRef = useRef(false);
+
+  // When panel closes, allow exit transitions (300ms) to complete before resetting
+  useEffect(() => {
+    if (!isOpen) {
+      const timer = setTimeout(() => {
+        setIsDismissed(false);
+        setDragOffset(0);
+        isClosingRef.current = false;
+      }, 350);
+      return () => clearTimeout(timer);
+    } else {
+      isClosingRef.current = false;
+    }
+  }, [isOpen]);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     // Only active on mobile view (< 768px)
@@ -96,13 +120,10 @@ export function useSwipeToClose({
 
       if (distance > minDistance || (velocity > velocityThreshold && distance > 25)) {
         isClosingRef.current = true;
-        const screenW = typeof window !== "undefined" ? window.innerWidth : 400;
-        setDragOffset(screenW);
+        setIsDismissed(true);
         setTimeout(() => {
           onClose();
-          setDragOffset(0);
-          isClosingRef.current = false;
-        }, 180);
+        }, 200);
       } else {
         setDragOffset(0);
       }
@@ -118,8 +139,9 @@ export function useSwipeToClose({
   }, []);
 
   return {
-    dragOffset: isOpen ? dragOffset : 0,
-    isDragging: isOpen && isDragging,
+    dragOffset,
+    isDragging,
+    isDismissed,
     swipeHandlers: {
       onTouchStart: handleTouchStart,
       onTouchMove: handleTouchMove,

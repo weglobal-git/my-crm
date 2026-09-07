@@ -41,7 +41,7 @@ export function SlideOverPanel({
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
 
-  const { dragOffset, isDragging, swipeHandlers } = useSwipeToClose({
+  const { dragOffset, isDragging, isDismissed, swipeHandlers } = useSwipeToClose({
     onClose,
     isOpen,
   });
@@ -85,10 +85,16 @@ export function SlideOverPanel({
       {/* Backdrop */}
       <div
         className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] transition-opacity duration-300 ${
-          internalIsOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+          internalIsOpen && !isDismissed ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         style={
-          dragOffset > 0
+          isDismissed
+            ? {
+                opacity: 0,
+                transition: "opacity 0.2s ease-out",
+                pointerEvents: "none",
+              }
+            : dragOffset > 0
             ? {
                 opacity: Math.max(0, 1 - dragOffset / 350),
                 transition: isDragging ? "none" : "opacity 0.2s ease-out",
@@ -102,7 +108,14 @@ export function SlideOverPanel({
       <div
         {...swipeHandlers}
         style={
-          dragOffset > 0
+          isDismissed
+            ? {
+                transform: "translateX(100%)",
+                opacity: 0,
+                transition: "transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease-out",
+                pointerEvents: "none",
+              }
+            : dragOffset > 0
             ? {
                 transform: `translateX(${dragOffset}px)`,
                 transition: isDragging ? "none" : "transform 0.2s ease-out",
@@ -110,7 +123,7 @@ export function SlideOverPanel({
             : undefined
         }
         className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full ${responsiveWidth} md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${
-          internalIsOpen
+          internalIsOpen && !isDismissed
             ? "opacity-100 translate-y-0 md:translate-x-0 scale-100"
             : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"
         }`}
@@ -209,11 +222,7 @@ export function SlideOverPanel({
                       key={tab.key}
                       type="button"
                       onClick={() => {
-                        if (isActive) {
-                          onClose();
-                        } else {
-                          onTabChange?.(tab.key);
-                        }
+                        onTabChange?.(tab.key);
                       }}
                       title={tab.label}
                       className={`flex items-center justify-center h-9 w-9 rounded-full transition-all duration-200 cursor-pointer ${
