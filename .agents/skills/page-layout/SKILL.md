@@ -69,13 +69,13 @@ export default function StandardPageLayout({ children }) {
           <div className="flex items-center gap-2">
             <Link
               href="/pipeline"
-              className="px-3 py-1.5 rounded-full bg-black text-white text-sm font-medium"
+              className="px-3 py-1.5 rounded-full bg-black text-white text-xs font-medium"
             >
               Pipeline
             </Link>
             <Link
               href="/quotations"
-              className="px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 text-sm font-medium transition-colors"
+              className="px-3 py-1.5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 text-xs font-medium transition-colors"
             >
               Quotation
             </Link>
@@ -87,7 +87,7 @@ export default function StandardPageLayout({ children }) {
             <input
               type="text"
               placeholder="Search..."
-              className="flex-1 bg-transparent border-none outline-none text-sm placeholder:text-slate-400"
+              className="flex-1 bg-transparent border-none outline-none text-xs placeholder:text-slate-400"
             />
           </div>
           {/* Online Users, Notifications, Profile */}

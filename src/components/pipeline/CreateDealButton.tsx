@@ -102,7 +102,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
       <button
         onClick={() => setIsOpen(true)}
         onMouseEnter={() => preload('pipeline-companies', getCompanies)}
-        className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold hover:bg-[#b0d932] transition-colors text-sm"
+        className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold hover:bg-[#b0d932] transition-colors text-xs"
       >
         <Plus className="w-4 h-4" />
         New
@@ -113,8 +113,8 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
         onClick={() => isSubmitting ? null : setIsOpen(false)}
       />
       
-      <div className={`fixed inset-y-4 right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] origin-right ${isOpen ? "opacity-100 translate-x-0 scale-100" : "opacity-0 translate-x-8 scale-[0.97] pointer-events-none"}`}>
-        <div className="w-[450px] max-w-[90vw] bg-[#252728] border border-[#3A3B3C] flex flex-col shadow-2xl h-full rounded-2xl overflow-hidden">
+      <div className={`fixed inset-0 md:inset-y-4 md:right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${isOpen ? "opacity-100 translate-y-0 md:translate-y-0 md:translate-x-0 scale-100" : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"}`}>
+        <div className="w-full md:w-[450px] md:max-w-[90vw] bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden">
           <div className="flex items-center justify-between p-6 border-b border-[#1C1C1D] shrink-0">
             <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
               <Plus className="w-5 h-5 text-[#C7F33C]" />
@@ -139,7 +139,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                       <button
                         type="button"
                         onClick={() => setSelectedType("SALES_DEAL")}
-                        className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-sm transition-all font-semibold ${
+                        className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs transition-all font-semibold ${
                           type === "SALES_DEAL" 
                             ? "border-[#C7F33C] bg-[#C7F33C]/10 text-[#C7F33C]" 
                             : "border-[#3A3B3C] bg-[#1E1F20] text-slate-300 hover:border-[#4E4F50]"
@@ -151,7 +151,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                       <button
                         type="button"
                         onClick={() => setSelectedType("INTERNAL_TASK")}
-                        className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-sm transition-all font-semibold ${
+                        className={`flex items-center justify-center gap-2 p-3 rounded-xl border text-xs transition-all font-semibold ${
                           type === "INTERNAL_TASK" 
                             ? "border-[#C7F33C] bg-[#C7F33C]/10 text-[#C7F33C]" 
                             : "border-[#3A3B3C] bg-[#1E1F20] text-slate-300 hover:border-[#4E4F50]"
@@ -171,7 +171,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                     )}
                   </>
                 ) : (
-                  <div className="flex items-center gap-2 p-3 rounded-xl border border-slate-700 bg-[#1E1F20] text-slate-200 text-sm font-semibold">
+                  <div className="flex items-center gap-2 p-3 rounded-xl border border-slate-700 bg-[#1E1F20] text-slate-200 text-xs font-semibold">
                     <DealTypeIcon type="INTERNAL_TASK" size="sm" />
                     Internal Task
                   </div>
@@ -188,7 +188,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                     value={topic}
                     onChange={(e) => setTopic(e.target.value)}
                     placeholder="e.g. Website Redesign"
-                    className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 pl-10 pr-4 text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors text-sm"
+                    className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 pl-10 pr-4 text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors text-xs"
                   />
                 </div>
               </div>
@@ -222,7 +222,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
           <div className="p-6 border-t border-[#1C1C1D] shrink-0 bg-[#252728] flex justify-end gap-3">
             <button 
               onClick={() => setIsOpen(false)}
-              className="px-5 py-2.5 text-sm font-semibold text-slate-300 hover:text-white transition-colors hover:bg-[#3A3B3C] rounded-lg"
+              className="px-5 py-2.5 text-xs font-semibold text-slate-300 hover:text-white transition-colors hover:bg-[#3A3B3C] rounded-lg"
               disabled={isSubmitting}
             >
               Cancel
@@ -230,7 +230,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
             <button 
               onClick={handleCreate}
               disabled={isSubmitting}
-              className="px-5 py-2.5 text-sm font-bold bg-[#C7F33C] text-black rounded-lg hover:bg-[#b0d932] transition-colors disabled:opacity-50 flex items-center gap-2"
+              className="px-5 py-2.5 text-xs font-bold bg-[#C7F33C] text-black rounded-lg hover:bg-[#b0d932] transition-colors disabled:opacity-50 flex items-center gap-2"
             >
               {isSubmitting ? "Creating..." : (
                 <>

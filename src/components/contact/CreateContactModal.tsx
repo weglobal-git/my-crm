@@ -119,7 +119,7 @@ export function CreateContactModal({
                 onChange={handleChange}
                 placeholder="e.g. Somchai S."
                 required
-                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               />
             </div>
 
@@ -131,7 +131,7 @@ export function CreateContactModal({
                 name="type"
                 value={form.type}
                 onChange={handleChange}
-                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               >
                 <option value="CUSTOMER">Customer</option>
                 <option value="SUPPLIER">Supplier</option>
@@ -148,7 +148,7 @@ export function CreateContactModal({
                 name="status"
                 value={form.status}
                 onChange={handleChange}
-                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               >
                 <option value="UNQUALIFIED">Unqualified</option>
                 <option value="QUALIFIED">Qualified</option>
@@ -163,7 +163,7 @@ export function CreateContactModal({
                 value={form.email}
                 onChange={handleChange}
                 placeholder="email@company.com"
-                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               />
             </div>
 
@@ -175,7 +175,7 @@ export function CreateContactModal({
                 value={form.phone}
                 onChange={handleChange}
                 placeholder="+66..."
-                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               />
             </div>
           </div>
@@ -201,7 +201,7 @@ export function CreateContactModal({
                   readOnly={!!prefillCompany}
                   placeholder="e.g. SB Interlab / Partner Co."
                   required
-                  className={`rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0 ${
+                  className={`rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0 ${
                     prefillCompany ? "bg-[#252728] opacity-80 cursor-not-allowed" : "bg-[#3A3B3C]"
                   }`}
                 />
@@ -215,7 +215,7 @@ export function CreateContactModal({
                   value={form.companyCountry}
                   onChange={handleChange}
                   placeholder="e.g. Thailand, Japan, USA"
-                  className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                  className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
                 />
               </div>
             </div>
@@ -228,7 +228,7 @@ export function CreateContactModal({
                 onChange={handleChange}
                 rows={2}
                 placeholder="Office location details"
-                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors resize-none border-0"
+                className="bg-[#3A3B3C] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors resize-none border-0"
               />
             </div>
           </div>

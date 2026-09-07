@@ -75,16 +75,16 @@ export function SlideOverPanel({
 
       {/* Slide-over Container */}
       <div
-        className={`fixed inset-y-4 right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] origin-right ${
+        className={`fixed inset-0 md:inset-y-4 md:inset-x-4 md:w-[620px] md:mx-auto lg:inset-y-4 lg:right-4 lg:left-auto lg:mx-0 w-full lg:w-[600px] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-center lg:origin-right ${
           internalIsOpen
-            ? "opacity-100 translate-x-0 scale-100"
-            : "opacity-0 translate-x-8 scale-[0.97] pointer-events-none"
+            ? "opacity-100 translate-y-0 lg:translate-x-0 scale-100"
+            : "opacity-0 translate-y-4 lg:translate-y-0 lg:translate-x-8 scale-[0.97] pointer-events-none"
         }`}
       >
-        <div className="flex h-full rounded-2xl overflow-hidden border border-[#3A3B3C] bg-[#252728]">
-          {/* Left Tab Rail (if tabs are provided) */}
+        <div className="flex flex-col md:flex-row h-full w-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C] bg-[#252728]">
+          {/* Left Tab Rail (if tabs are provided, desktop only) */}
           {tabs && tabs.length > 0 && (
-            <div className="w-16 bg-[#252728] border-r border-[#1C1C1D] flex flex-col items-center py-4 gap-3 shrink-0 z-10">
+            <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-4 gap-3 shrink-0 z-10">
               {tabs.map((tab) => {
                 let IconComponent: React.ElementType | null = null;
                 if (typeof tab.icon === "string") {
@@ -120,12 +120,12 @@ export function SlideOverPanel({
           )}
 
           {/* Main Panel Content */}
-          <div className={`${widthClass} max-w-[90vw] bg-[#252728] flex flex-col h-full min-w-0`}>
+          <div className="w-full flex-1 bg-[#252728] flex flex-col h-full min-w-0">
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[#1C1C1D] shrink-0">
+            <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 border-b border-[#1C1C1D] shrink-0">
               <div className="flex flex-col flex-1 pr-4 min-w-0">
                 {title && (
-                  <div className="text-lg font-bold text-slate-100 truncate">
+                  <div className="text-base md:text-lg font-bold text-slate-100 truncate">
                     {title}
                   </div>
                 )}
@@ -150,9 +150,46 @@ export function SlideOverPanel({
             </div>
 
             {/* Body */}
-            <div className="flex-1 overflow-y-auto hide-scrollbar p-6">
+            <div className="flex-1 overflow-y-auto hide-scrollbar p-4 md:p-6">
               {children}
             </div>
+
+            {/* Mobile Bottom Tab Bar (if tabs are provided) */}
+            {tabs && tabs.length > 0 && (
+              <div className="flex md:hidden w-full h-12 border-t border-[#1C1C1D] bg-[#252728] items-center justify-around px-3 shrink-0 z-10">
+                {tabs.map((tab) => {
+                  let IconComponent: React.ElementType | null = null;
+                  if (typeof tab.icon === "string") {
+                    IconComponent = IconMap[tab.icon] || null;
+                  } else if (tab.icon) {
+                    IconComponent = tab.icon;
+                  }
+
+                  const isActive = activeTab === tab.key;
+
+                  return (
+                    <button
+                      key={tab.key}
+                      type="button"
+                      onClick={() => onTabChange?.(tab.key)}
+                      title={tab.label}
+                      className={`flex items-center justify-center h-9 w-9 rounded-full transition-all duration-200 cursor-pointer ${
+                        isActive
+                          ? "bg-[#3A3B3C] text-[#C7F33C]"
+                          : "text-slate-400 hover:bg-[#3A3B3C]/50 hover:text-slate-200"
+                      }`}
+                    >
+                      {IconComponent && (
+                        <IconComponent
+                          className="h-5 w-5"
+                          strokeWidth={isActive ? 2.5 : 2}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>

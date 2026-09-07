@@ -219,6 +219,10 @@ export async function getCompanyCountries(): Promise<{ country: string; count: n
   }
 }
 
+let cachedStatusStats: { qualifiedCount: number; unqualifiedCount: number; totalCount: number } | null = null;
+let lastStatusStatsFetch = 0;
+const STATUS_STATS_TTL = 60 * 1000;
+
 export async function getCompaniesWithContacts({
   status = "ALL",
   type = "ALL",
@@ -264,8 +268,10 @@ export async function getCompaniesWithContacts({
   }
 
   const isFirstPage = page === 1;
+  const now = Date.now();
+  const isStatsFresh = cachedStatusStats && now - lastStatusStatsFetch < STATUS_STATS_TTL;
 
-  const [totalCountFromFilter, rawCompaniesWithExtra, statusGroups] = await Promise.all([
+  const [totalCountFromFilter, rawCompaniesWithExtra, freshStatusStats] = await Promise.all([
     isFirstPage ? prisma.company.count({ where }) : Promise.resolve(0),
     prisma.company.findMany({
       where,
@@ -289,12 +295,33 @@ export async function getCompaniesWithContacts({
       skip: (page - 1) * pageSize,
       take: pageSize + 1,
     }),
-    isFirstPage
-      ? prisma.company.groupBy({
-          by: ["status"],
-          _count: { id: true },
-        })
-      : Promise.resolve([]),
+    isFirstPage && !isStatsFresh
+      ? prisma.company
+          .groupBy({
+            by: ["status"],
+            _count: { id: true },
+          })
+          .then((groups) => {
+            let qualifiedCount = 0;
+            let unqualifiedCount = 0;
+            for (const group of groups) {
+              if (group.status === "QUALIFIED") {
+                qualifiedCount = group._count.id;
+              } else if (group.status === "UNQUALIFIED") {
+                unqualifiedCount = group._count.id;
+              }
+            }
+            const stats = {
+              qualifiedCount,
+              unqualifiedCount,
+              totalCount: qualifiedCount + unqualifiedCount,
+            };
+            cachedStatusStats = stats;
+            lastStatusStatsFetch = Date.now();
+            return stats;
+          })
+          .catch(() => cachedStatusStats)
+      : Promise.resolve(cachedStatusStats),
   ]);
 
   const hasMore = rawCompaniesWithExtra.length > pageSize;
@@ -302,16 +329,11 @@ export async function getCompaniesWithContacts({
     ? rawCompaniesWithExtra.slice(0, pageSize)
     : rawCompaniesWithExtra;
 
-  let qualifiedCount = 0;
-  let unqualifiedCount = 0;
-  for (const group of statusGroups) {
-    if (group.status === "QUALIFIED") {
-      qualifiedCount = group._count.id;
-    } else if (group.status === "UNQUALIFIED") {
-      unqualifiedCount = group._count.id;
-    }
-  }
-  const totalCount = qualifiedCount + unqualifiedCount;
+  const stats = freshStatusStats || cachedStatusStats || {
+    qualifiedCount: 0,
+    unqualifiedCount: 0,
+    totalCount: 0,
+  };
 
   return {
     companies: rawCompanies,
@@ -319,11 +341,7 @@ export async function getCompaniesWithContacts({
     page,
     pageSize,
     hasMore,
-    stats: {
-      qualifiedCount,
-      unqualifiedCount,
-      totalCount,
-    },
+    stats,
   };
 }
 
@@ -916,6 +934,7 @@ export async function toggleCompanyStatus(companyId: string, status: ContactStat
   ]);
 
   revalidatePath("/contact");
+  lastStatusStatsFetch = 0; // Invalidate cached counts for real-time update
   void pusherServer.trigger("contact", "account-updated", {
     action: "STATUS_CHANGE",
     companyId,

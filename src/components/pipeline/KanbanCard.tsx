@@ -217,7 +217,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   return (
     <div
       className={`
-        flex flex-col gap-2 p-2 rounded-[24px] relative overflow-visible group/card h-[220px]
+        flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card min-h-[175px] md:h-[220px]
         ${highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
       `}
@@ -298,7 +298,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                 </button>
                 {pendingCount > 0 && (
                   <span 
-                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-400 text-slate-950 font-black text-[11px] leading-none flex items-center justify-center animate-bounce shadow-sm pointer-events-none"
+                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-400 text-slate-950 font-black text-[11px] leading-none flex items-center justify-center animate-bounce pointer-events-none"
                     title="AI Manager รอคำตอบเพื่อช่วยเร่งงาน"
                   >
                     ?
@@ -462,7 +462,7 @@ export const KanbanCard = React.memo(function KanbanCard({ deal, onOpenPanel, on
       {...(canDrag ? listeners : {})}
       onPointerEnter={onPanelIntent}
       onFocusCapture={onPanelIntent}
-      className={`touch-none ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
       <KanbanCardUI deal={deal} isDragging={isDragging} onOpenPanel={onOpenPanel} onPanelIntent={onPanelIntent} />
     </div>

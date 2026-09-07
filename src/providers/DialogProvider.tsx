@@ -102,7 +102,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
               {(!t.type || t.type === 'info') && <Info className="w-5 h-5 text-sky-400" />}
             </div>
             <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-semibold text-slate-100">{t.title}</h4>
+              <h4 className="text-xs font-semibold text-slate-100">{t.title}</h4>
               {t.description && <p className="text-xs text-slate-400 mt-1 leading-relaxed">{t.description}</p>}
             </div>
             <button 

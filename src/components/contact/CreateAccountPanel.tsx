@@ -323,7 +323,7 @@ export function CreateAccountPanel({
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="e.g. Siam Logistics (Short name shown on cards)"
                 required
-                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
+                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
               />
             </div>
 
@@ -338,7 +338,7 @@ export function CreateAccountPanel({
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Siam Logistics Global Co., Ltd."
                 required
-                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
+                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
               />
             </div>
 
@@ -383,7 +383,7 @@ export function CreateAccountPanel({
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="e.g. 02 123 4567 ext. 12"
-                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
+                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
               />
             </div>
 

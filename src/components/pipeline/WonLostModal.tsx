@@ -80,7 +80,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
         </div>
 
         <div className="mb-6">
-          <p className="text-slate-300 text-sm mb-1">{deal.topic}</p>
+          <p className="text-slate-300 text-xs mb-1">{deal.topic}</p>
           <p className="text-slate-500 text-xs">{deal.company?.name || "Internal Task"}</p>
         </div>
 
@@ -94,7 +94,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
                     type="number" 
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
-                    className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-sm"
+                    className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-xs"
                   />
                 </div>
                 <div>
@@ -102,7 +102,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
                   <select 
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value)}
-                    className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-sm appearance-none"
+                    className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-xs appearance-none"
                   >
                     <option value="THB">THB</option>
                     <option value="USD">USD</option>
@@ -118,7 +118,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
                   type="date" 
                   value={goodsLoadingDate}
                   onChange={(e) => setGoodsLoadingDate(e.target.value)}
-                  className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-sm [color-scheme:dark]"
+                  className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-xs [color-scheme:dark]"
                 />
               </div>
 
@@ -129,7 +129,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
                   value={invoiceId}
                   onChange={(e) => setInvoiceId(e.target.value)}
                   placeholder="e.g. INV-2023-001"
-                  className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-sm"
+                  className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-emerald-500 transition-colors text-xs"
                 />
               </div>
             </>
@@ -138,7 +138,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
           {status === "WON" && !isSalesDeal && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-4 rounded-lg flex items-start gap-3">
               <Check className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="text-sm">
+              <div className="text-xs">
                 <strong className="block mb-1">Confirm Completion</strong>
                 Are you sure you want to mark this internal task as completed?
               </div>
@@ -153,7 +153,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
                 onChange={(e) => setLossReason(e.target.value)}
                 placeholder="Why did we lose this deal?"
                 rows={3}
-                className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-rose-500 transition-colors text-sm resize-none"
+                className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-3 text-slate-100 focus:outline-none focus:border-rose-500 transition-colors text-xs resize-none"
               />
             </div>
           )}
@@ -163,14 +163,14 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
           <button 
             onClick={onClose}
             disabled={isSubmitting}
-            className="px-5 py-2.5 text-sm font-semibold text-slate-300 hover:text-white transition-colors"
+            className="px-5 py-2.5 text-xs font-semibold text-slate-300 hover:text-white transition-colors"
           >
             Cancel
           </button>
           <button 
             onClick={handleSubmit}
             disabled={isSubmitting}
-            className={`px-5 py-2.5 text-sm font-semibold text-black rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2
+            className={`px-5 py-2.5 text-xs font-semibold text-black rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2
               ${status === "WON" ? 'bg-emerald-500 hover:bg-emerald-400' : 'bg-rose-500 hover:bg-rose-400 text-white'}
             `}
           >

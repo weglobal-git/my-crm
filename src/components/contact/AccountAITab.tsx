@@ -519,7 +519,7 @@ export function AccountAITab({
                   <Sparkles className="w-6 h-6 animate-spin" />
                 </div>
                 <div className="space-y-1">
-                  <h4 className="text-sm font-bold text-slate-100">
+                  <h4 className="text-xs font-bold text-slate-100">
                     Analyzing Account Context & Deal History...
                   </h4>
                   <p className="text-xs text-slate-400 max-w-sm">
@@ -851,7 +851,7 @@ export function AccountAITab({
                   <Globe className="w-6 h-6 animate-spin" />
                 </div>
                 <div className="space-y-1">
-                  <h4 className="text-sm font-bold text-slate-100">
+                  <h4 className="text-xs font-bold text-slate-100">
                     Searching Google for {companyName}...
                   </h4>
                   <p className="text-xs text-slate-400 max-w-sm">

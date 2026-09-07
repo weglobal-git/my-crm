@@ -142,7 +142,7 @@ export function ContactCard({
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
               <span
-                className={`font-bold text-sm truncate ${
+                className={`font-bold text-xs truncate ${
                   isSelected ? "text-black" : "text-slate-100 group-hover:text-white"
                 }`}
               >

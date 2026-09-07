@@ -321,7 +321,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
               {user.image ? (
                 <Image src={user.image} alt={user.name || "User"} width={40} height={40} unoptimized className="w-full h-full object-cover" />
               ) : (
-                <span className="font-bold text-sm">
+                <span className="font-bold text-xs">
                   {user.name?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase() || "?"}
                 </span>
               )}
@@ -378,7 +378,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                   value={user.role}
                   onChange={e => handleRoleChange(user.id, e.target.value as Role)}
                   disabled={!isAdmin || user.email === "weglobal.server@gmail.com"}
-                  className="appearance-none bg-transparent text-sm font-medium text-slate-300 hover:text-slate-100 cursor-pointer outline-none w-full border-b border-transparent hover:border-slate-500 focus:border-[#C7F33C] transition-all pb-1 disabled:opacity-70 disabled:cursor-not-allowed"
+                  className="appearance-none bg-transparent text-xs font-medium text-slate-300 hover:text-slate-100 cursor-pointer outline-none w-full border-b border-transparent hover:border-slate-500 focus:border-[#C7F33C] transition-all pb-1 disabled:opacity-70 disabled:cursor-not-allowed"
                 >
                   <option value="ADMIN">ADMIN</option>
                   <option value="MANAGEMENT">MANAGEMENT</option>
@@ -396,7 +396,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                     value={user.departments[0]?.id || ""}
                     onChange={e => handleDepartmentChange(user.id, e.target.value)}
                     disabled={!isAdmin || user.role === "ADMIN"}
-                    className="appearance-none bg-transparent text-sm font-medium text-slate-300 hover:text-slate-100 cursor-pointer outline-none w-full border-b border-transparent hover:border-slate-500 focus:border-[#C7F33C] transition-all pb-1 disabled:opacity-70 disabled:cursor-not-allowed"
+                    className="appearance-none bg-transparent text-xs font-medium text-slate-300 hover:text-slate-100 cursor-pointer outline-none w-full border-b border-transparent hover:border-slate-500 focus:border-[#C7F33C] transition-all pb-1 disabled:opacity-70 disabled:cursor-not-allowed"
                   >
                     <option value="">No Department</option>
                     {departments.map(d => (
@@ -460,7 +460,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                   type="text"
                   value={newDeptName}
                   onChange={e => setNewDeptName(e.target.value)}
-                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-1.5 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors placeholder:text-slate-500"
+                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-1.5 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors placeholder:text-slate-500"
                   placeholder="Department Name"
                   autoFocus
                 />
@@ -508,7 +508,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <Cloud className="w-4 h-4 text-sky-400" />
                       Storage Usage
                     </span>
-                    <span className="text-sm font-medium text-slate-400">
+                    <span className="text-xs font-medium text-slate-400">
                       {isLoadingCloudinary ? (
                         <span className="inline-block w-24 h-4 bg-[#3A3B3C] animate-pulse rounded" />
                       ) : (
@@ -532,7 +532,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <Activity className="w-4 h-4 text-emerald-400" />
                       Monthly Bandwidth
                     </span>
-                    <span className="text-sm font-medium text-slate-400">
+                    <span className="text-xs font-medium text-slate-400">
                       {isLoadingCloudinary ? (
                         <span className="inline-block w-24 h-4 bg-[#3A3B3C] animate-pulse rounded" />
                       ) : (
@@ -559,7 +559,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <HardDrive className="w-4 h-4 text-yellow-400" />
                       Drive Storage
                     </span>
-                    <span className="text-sm font-medium text-slate-400">
+                    <span className="text-xs font-medium text-slate-400">
                       {isLoadingGDrive ? (
                         <span className="inline-block w-28 h-4 bg-[#3A3B3C] animate-pulse rounded" />
                       ) : isGoogleConnected ? (
@@ -578,7 +578,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <div className="h-full bg-yellow-500 rounded-full transition-all duration-500" style={{ width: `${Math.min(gdriveUsage.percent, 100)}%` }} />
                     </div>
                   ) : (
-                    <div className="text-sm text-amber-500 bg-amber-500/10 p-3 rounded-lg border border-amber-500/20">
+                    <div className="text-xs text-amber-500 bg-amber-500/10 p-3 rounded-lg border border-amber-500/20">
                       Please connect your Google Workspace account in the Integrations tab to view storage quota.
                     </div>
                   )}
@@ -594,7 +594,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <BrainCircuit className="w-4 h-4 text-[#C7F33C]" />
                       Monthly Usage
                     </span>
-                    <span className="text-sm font-medium text-slate-300 font-mono">
+                    <span className="text-xs font-medium text-slate-300 font-mono">
                       {isLoadingAiStats ? (
                         <span className="inline-block w-20 h-4 bg-[#3A3B3C] animate-pulse rounded" />
                       ) : (
@@ -638,10 +638,10 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                 <div className="flex items-center justify-between w-full py-1">
                   <div className="flex flex-col">
                     <span className="font-semibold text-slate-100">Monthly Budget Cap</span>
-                    <span className="text-sm text-slate-400">Auto-pause when limit is reached</span>
+                    <span className="text-xs text-slate-400">Auto-pause when limit is reached</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-sm font-mono text-slate-400">$</span>
+                    <span className="text-xs font-mono text-slate-400">$</span>
                     <input
                       type="number"
                       min="0.1"
@@ -674,7 +674,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg" alt="Google Drive" className="w-5 h-5" />
                       Google Drive
                     </span>
-                    <span className="text-sm text-slate-400">
+                    <span className="text-xs text-slate-400">
                       {isGoogleConnected && connectedGoogleEmail
                         ? `Connected as ${connectedGoogleEmail}`
                         : "Connect to enable automated file archiving."}
@@ -683,13 +683,13 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                   {isGoogleConnected ? (
                     <button
                       onClick={handleDisconnectDrive}
-                      className="px-4 py-2 bg-rose-500/10 text-rose-500 font-medium rounded-lg border border-rose-500/20 hover:bg-rose-500/20 transition-all flex items-center gap-2 text-sm">
+                      className="px-4 py-2 bg-rose-500/10 text-rose-500 font-medium rounded-lg border border-rose-500/20 hover:bg-rose-500/20 transition-all flex items-center gap-2 text-xs">
                       Disconnect
                     </button>
                   ) : (
                     <button
                       onClick={handleConnectDrive}
-                      className="px-4 py-2 bg-white text-black font-medium rounded-lg hover:bg-slate-200 transition-all text-sm"
+                      className="px-4 py-2 bg-white text-black font-medium rounded-lg hover:bg-slate-200 transition-all text-xs"
                     >
                       Connect Account
                     </button>
@@ -711,7 +711,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                         <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                         Daily Cleanup Worker
                       </span>
-                      <span className="text-sm text-slate-400">Runs every midnight to archive files from WON/LOST deals.</span>
+                      <span className="text-xs text-slate-400">Runs every midnight to archive files from WON/LOST deals.</span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input type="checkbox" className="sr-only peer" defaultChecked />
@@ -720,7 +720,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                   </div>
 
                   <div className="bg-[#1C1C1D] border border-[#3A3B3C] rounded-lg p-4 mt-2">
-                    <p className="text-sm text-slate-300">
+                    <p className="text-xs text-slate-300">
                       <strong>Policy:</strong> Move images and files to Google Drive, then permanently delete them from Cloudinary if the Opportunity is marked as WON or LOST and has been inactive for more than <strong className="text-white">30 days</strong>.
                     </p>
                   </div>
@@ -734,7 +734,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
           <SettingsContent
             title="All Users & Administrators"
             action={isAdmin && (
-              <button onClick={() => { setIsCreatingUser(true); setAddingUserToDeptId(null); }} className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold text-sm hover:bg-[#b5dc35] transition-colors">
+              <button onClick={() => { setIsCreatingUser(true); setAddingUserToDeptId(null); }} className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold text-xs hover:bg-[#b5dc35] transition-colors">
                 <Plus size={16} /> New User
               </button>
             )}
@@ -750,15 +750,15 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Name</label>
-                        <input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="Full Name" />
+                        <input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="Full Name" />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Email</label>
-                        <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="email@company.com" />
+                        <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="email@company.com" />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Role</label>
-                        <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors">
+                        <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors">
                           <option value="GENERAL">GENERAL</option>
                           <option value="MANAGEMENT">MANAGEMENT</option>
                           <option value="ADMIN">ADMIN</option>
@@ -766,14 +766,14 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Department</label>
-                        <select value={newUser.departmentIds[0] || ""} onChange={e => setNewUser({...newUser, departmentIds: e.target.value ? [e.target.value] : []})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors">
+                        <select value={newUser.departmentIds[0] || ""} onChange={e => setNewUser({...newUser, departmentIds: e.target.value ? [e.target.value] : []})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors">
                           <option value="">No Department</option>
                           {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                         </select>
                       </div>
                     </div>
                     <div className="flex justify-end mt-2">
-                      <button onClick={handleCreateUser} className="bg-[#C7F33C] text-black px-4 py-2 rounded-lg font-bold text-sm hover:bg-[#b5dc35] transition-colors">Create Account</button>
+                      <button onClick={handleCreateUser} className="bg-[#C7F33C] text-black px-4 py-2 rounded-lg font-bold text-xs hover:bg-[#b5dc35] transition-colors">Create Account</button>
                     </div>
                   </div>
                 </SettingsRow>
@@ -782,7 +782,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
 
             {adminUsers.length > 0 && (
               <div className="mb-8">
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2">
                   <Shield className="w-4 h-4" /> System Administrators
                 </h3>
                 {renderUserGroup(adminUsers, true)}
@@ -790,7 +790,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
             )}
 
             <div className="mb-8">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 px-1 flex items-center gap-2">
                 <UserIcon className="w-4 h-4" /> General Users
               </h3>
               {renderUserGroup(regularUsers)}
@@ -833,7 +833,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
               </div>
             }
             action={isAdmin && (
-              <button onClick={() => { setIsCreatingUser(true); setAddingUserToDeptId(dept.id); }} className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold text-sm hover:bg-[#b5dc35] transition-colors">
+              <button onClick={() => { setIsCreatingUser(true); setAddingUserToDeptId(dept.id); }} className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold text-xs hover:bg-[#b5dc35] transition-colors">
                 <Plus size={16} /> Add to {dept.name}
               </button>
             )}
@@ -849,15 +849,15 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Name</label>
-                        <input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="Full Name" />
+                        <input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="Full Name" />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Email</label>
-                        <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="email@company.com" />
+                        <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors" placeholder="email@company.com" />
                       </div>
                       <div>
                         <label className="block text-xs font-semibold text-slate-400 mb-1">Role</label>
-                        <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C] transition-colors">
+                        <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})} className="w-full bg-[#252728] border border-[#4E4F50] rounded-lg px-3 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors">
                           <option value="GENERAL">GENERAL</option>
                           <option value="MANAGEMENT">MANAGEMENT</option>
                           <option value="ADMIN">ADMIN</option>
@@ -865,7 +865,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       </div>
                     </div>
                     <div className="flex justify-end mt-2">
-                      <button onClick={handleCreateUser} className="bg-[#C7F33C] text-black px-4 py-2 rounded-lg font-bold text-sm hover:bg-[#b5dc35] transition-colors">Add User</button>
+                      <button onClick={handleCreateUser} className="bg-[#C7F33C] text-black px-4 py-2 rounded-lg font-bold text-xs hover:bg-[#b5dc35] transition-colors">Add User</button>
                     </div>
                   </div>
                 </SettingsRow>

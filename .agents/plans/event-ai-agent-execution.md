@@ -35,14 +35,14 @@
 
 - **Verification:**
   - `npx tsc --noEmit`: 0 errors.
-  - Live browser test: Verified bouncing `?` badge on *Repeat 2 Containers (Bear)* card, opened panel, clicked 1-click choice *"ยังติดต่อลูกค้าไม่ได้ กำลังหาวิธีอื่น"*, verified immediate transition to "ตอบแล้ว", badge cleared, and new AI summary generated incorporating the response.
+  - Live browser test: Verified bouncing `?` badge on _Repeat 2 Containers (Bear)_ card, opened panel, clicked 1-click choice _"ยังติดต่อลูกค้าไม่ได้ กำลังหาวิธีอื่น"_, verified immediate transition to "ตอบแล้ว", badge cleared, and new AI summary generated incorporating the response.
 
 - **UI/UX Design Refinement Slice (Apple Setting & Activity/Facebook Thread Style):**
   1. Activity/Facebook Thread Layout: Removed the indent-inducing `<CheckCircle2>` / `<HelpCircle>` icons. Replaced with clean comment thread architecture:
      - Question Post: Circular AI Agent Bot avatar (`Bot`), name, bot badge, formatted date/time (`formatDateTime(questionDate)`), and question content.
      - User Reply Thread: Indented with subtle `border-l-2`, showing user's circular profile avatar, user name, reply date/time (`formatDateTime(q.answeredAt)`), and response in a clean pill bubble.
   2. Role & Card Owner Permission Enforcement:
-     - Frontend: Only the Card Owner (`session?.user?.email === deal.owner.email`) or an Admin can see and click the reply buttons (`canAnswerAccelerators = isOwner || isAdmin`). Other users see a clean locked notice: *"Only the Card Owner ({deal.owner.name}) or an Admin can reply to this question."*
+     - Frontend: Only the Card Owner (`session?.user?.email === deal.owner.email`) or an Admin can see and click the reply buttons (`canAnswerAccelerators = isOwner || isAdmin`). Other users see a clean locked notice: _"Only the Card Owner ({deal.owner.name}) or an Admin can reply to this question."_
      - Backend: `answerDealAccelerator()` enforces `requireOpportunityAccess(dealId, { ownerOrAdmin: true })`, throwing forbidden and returning a clear error if unauthorized users attempt to answer.
   3. Formatted Date & Time: Both the question timestamp and answer timestamp are rendered with `formatDateTime`.
   4. 2 Sub-Tabs in AI Deal Accelerators: Separated into **Pending (X)** and **Answered (Y)** tabs with minimal pill switches, reducing vertical clutter significantly.
@@ -96,7 +96,6 @@
      - Verified Cloudinary and Google Drive dashboards: both measure actual live storage from their respective APIs.
      - Fixed `An unexpected response was received from the server` on budget change: updated `getServerSession` import in `ai-admin.ts` from `next-auth/next` to `next-auth`, added super-admin fallback, and wrapped in safe structured `{ success, error }` response. Verified budget limit of $5.00 USD is safely persisted in Neon DB.
      - Resolved login issue (`SIGNIN_OAUTH_ERROR` / `ENOTFOUND accounts.google.com` / Neon connection refused): killed sandboxed background server on port 3003 and restarted `npm run dev` with full network access (`BypassSandbox: true`), restoring Google OAuth and Neon DB connectivity. All session requests now return 200 OK.
-
 
 ## 2026-09-03 Sidebar Navigation & Dashboard Lazy Loading Checkpoint
 
@@ -441,12 +440,14 @@
 - Completed the safe offline Phase 1 foundation; database adapters, migration rehearsal, real concurrency, and applied backfill now require a confirmed preview database.
 
 ### Phase 2: Core Provider Config & Security (COMPLETED)
+
 - Created `EncryptionService` (AES-256-GCM) with key rotation support.
 - Implemented `AIGateway` and `GoogleGeminiAdapter` using standard Fetch.
 - Added AI-related Prisma models (AIProviderConfig, AIUsageRecord, etc.).
 - Created `AIControlCenter` UI for admin management of API keys.
 
 ## Phase 3: Budgets, Monitoring, and Circuit Breakers (REMEDIATION REQUIRED)
+
 - Applied baseline migration and deployed `ai_foundation` to Preview DB.
 - Implemented `BudgetService` to enforce $1.00/mo, $0.10/day limits, and generate warnings at 80%.
 - Implemented `CircuitBreaker` with 3-failure threshold, atomic probe locks, and HALF_OPEN logic.
@@ -458,6 +459,7 @@ Audit correction (2026-09-02): Phase 3 does not meet its exit criteria yet. Budg
 Remediation progress: budget admission now uses a per-agent PostgreSQL advisory transaction lock, serializable transaction, held-reservation accounting, Bangkok boundaries, and idempotent run reservations. Circuit failure transitions use a per-provider advisory transaction lock, and HALF_OPEN probe acquisition enforces the five-minute open interval. Invalid Jest placeholders were removed; project typecheck now passes. Real concurrent Preview DB tests remain required before marking Phase 3 complete.
 
 ## Phase 4: Summarization Logic & Outbox Processor (REMEDIATION REQUIRED)
+
 - Implemented `context-builder.ts` to convert `DealDomainEvent` and `Opportunity` to a strictly bounded text context.
 - Designed the `EVENT_SUMMARIZER` system instructions and `eventSummarySchema`.
 - Created `OutboxProcessor` that reads `AgentOutbox`, grabs atomic leases, integrates with `CircuitBreaker` & `BudgetService`, calls the LLM, and persists the generated summary back into `ActivityLog`.
@@ -470,6 +472,7 @@ Remediation progress: provider secrets are decrypted only at the provider bounda
 Phase 5 activation check (2026-09-02): traced the user's payment Activity through Preview DB. Activity revision and `ACTIVITY_CREATED` domain event existed, but its Outbox remained `PENDING`, proving the Summary tab was empty because no worker invocation occurred. Replaced the worker's hard-coded provider/model snapshot with the active `AIModelPolicy`, replaced the read/update claim race with one PostgreSQL `FOR UPDATE SKIP LOCKED` claim/update statement, and fenced completion/failure by worker ID plus attempt. The Preview provider secret was migrated from plaintext to AES-256-GCM, and the obsolete `gemini-1.5-flash-001` policy was changed to the provider-advertised `gemini-2.5-flash`. The recovered event completed with one Outbox attempt, one READY `DealAIEvent`, immutable AI revision 1, and one usage record (743 provider-reported tokens). Added `after()` dispatch after Activity/Pusher completion so local and deployed Server Actions kick the durable Outbox immediately while cron remains the retry safety net. Production build passes. Keep deployment flags environment-specific; this local Preview environment is enabled for the controlled test only.
 
 ## Phase 5: User-Visible Summaries & Realtime (IN PROGRESS)
+
 - Created `<AISummaryCard>` component with a premium dark-glassmorphism aesthetic.
 - Intercepted `SYSTEM_UPDATE` logs with `sourceDomainEventId` to render AI Summaries directly in the main Activity tab in `EditDealPanel.tsx`.
 - Implemented a hover-to-edit inline text area that updates the AI's JSON `summary` field and uses the existing `editActivityLog` server action (automatically tracks the user revision).
@@ -483,6 +486,7 @@ Remediation progress: added and applied the additive `DealAIEvent`/`DealAIEventR
 Backend convergence evidence (2026-09-02): the user's source Activity `cmtjtutki0005s775famsgtd6` maps to domain event `cmtjtutpr0009s775cvpuhpzb`, completed Outbox `cmtjtutre000bs775xc8dtn9i`, READY AI event `cmtjuawna0004s7m2cb30hdcy`, and current revision `cmtjuawpr0006s7m29ue56fmb`. Visual browser verification remains incomplete because the Codex in-app browser still reports localhost connection refused while host-side production curl succeeds.
 
 ## Phase 6: Timeline composer (STARTED)
+
 - Added a deterministic 30–60 day composer that groups at read time by stored `localEventDate`, preserves one line per event, includes event/revision provenance, and enforces a bounded estimated-token budget.
 - Added an authorized `getDealAITimeline` Server Action and two executable tests for grouping/provenance and budget truncation.
 - Added read-time Important Facts for importance 4–5 events and explicit blockers, independent token budgets, recent/fact deduplication, and an authorized raw-versus-composed benchmark endpoint. Five focused Timeline tests pass.
@@ -490,12 +494,14 @@ Backend convergence evidence (2026-09-02): the user's source Activity `cmtjtutki
 - Persistent `DealAIFact` projection, contradiction/supersession lifecycle, representative multi-Deal benchmark, adaptive context selection, and rebuild verification remain incomplete.
 
 ## Current State & Next Steps
+
 **Current Phase:** Remediate Phase 3–5 before starting Phase 6
 **Target DB:** `ep-wandering-paper-azila23k` (Neon Preview)
 
 Latest continuation document: `event-ai-agent-handoff-2026-09-02.md`. It supersedes conversational summaries for the next working session and records the controlled Phase 5 Preview evidence, remaining exit criteria, and exact next-agent prompt.
 
 ## Phase 6 Implementation Updates (2026-09-02)
+
 - Added `DealAIFact` additive schema migration with canonical hashing, mode, subject, value, importance (4-5), and confidence. Applied to Neon Preview DB.
 - Added partial unique index `DealAIFact_active_state_key` on `(dealId, factType, subject)` WHERE `status = 'ACTIVE' AND factMode = 'STATE'` to strictly enforce database invariants.
 - Implemented `processAIFacts` in `fact-lifecycle.ts` using serializable optimistic locking and pre-supersession to guarantee zero duplicate ACTIVE state facts under parallel worker execution.
@@ -509,10 +515,12 @@ Latest continuation document: `event-ai-agent-handoff-2026-09-02.md`. It superse
 - Typecheck (`npx tsc --noEmit`) and all test suites in `src/lib/ai/` and `src/lib/event-ledger/` pass with 0 errors.
 
 ### Immediate Next Tasks
+
 - Present Phase 6.3 verified test results and walkthrough to user in Thai.
 - Await user authorization to commit to `main` and deploy (Phase 6 Handoff).
 
 ### Blockers / Notes
+
 - Do not enable `FEATURE_FLAG_AI_WORKER`; AI core integration is not stable yet.
 - Do not touch Neon Main DB or commit to Git without explicit user authorization.
 - Preview migration `20260902094104_add_deal_ai_fact` and `AgentKey.FACT_RESOLVER` applied successfully to `ep-wandering-paper-azila23k`.
@@ -522,22 +530,22 @@ Latest continuation document: `event-ai-agent-handoff-2026-09-02.md`. It superse
 
 Superseded by the complete inventory in `event-ai-agent-phase-0-spec.md`. The table below is retained as the initial checkpoint history.
 
-| Current action | Candidate domain event | User-facing Event Summary? | Notes |
-|---|---|---:|---|
-| `createOpportunity` | `DEAL_CREATED` | Maybe | Usually low-value unless initial content is meaningful. |
-| `moveOpportunity` | `DEAL_STAGE_CHANGED` | Yes | Preserve before/after stage and actor. |
-| `updateOpportunity` | `DEAL_FIELDS_UPDATED` | Conditional | Emit changed-field diff; suppress no-op updates. |
-| `updateDueDateWithLog` | `DEAL_DUE_DATE_CHANGED` | Yes | Avoid producing a second logical event from its system log. |
-| `addActivityLog` | `ACTIVITY_CREATED` or `REPLY_CREATED` | Yes | Reply is its own event; parent is bounded context only. |
-| `addSystemLog` | `SYSTEM_ACTIVITY_CREATED` | Conditional | Must distinguish domain-generated logs from canonical domain event to avoid duplication. |
-| `editActivityLog` | `ACTIVITY_EDITED` | Yes | Requires immutable source revision and superseding summary. |
-| `deleteActivityLog` | `ACTIVITY_DELETED` | Audit/retract | Must become tombstone/soft delete before AI release. |
-| `addTeamMember` | `DEAL_MEMBER_ADDED` | Conditional | Likely audit/important only when ownership responsibility changes. |
-| `removeTeamMember` | `DEAL_MEMBER_REMOVED` | Conditional | Preserve actor and removed member. |
-| `deleteOpportunity` | `DEAL_DELETED` | Audit/retract | Determine retention/legal policy before implementation. |
-| `createNote` | `NOTE_CREATED` | Later decision | Note may be private/operational; permissions need review. |
-| `deleteNote` | `NOTE_DELETED` | Audit/retract | Current raw retention behavior needs inspection. |
-| `togglePinNote` | `NOTE_PIN_CHANGED` | No by default | Audit event only. |
+| Current action         | Candidate domain event                | User-facing Event Summary? | Notes                                                                                    |
+| ---------------------- | ------------------------------------- | -------------------------: | ---------------------------------------------------------------------------------------- |
+| `createOpportunity`    | `DEAL_CREATED`                        |                      Maybe | Usually low-value unless initial content is meaningful.                                  |
+| `moveOpportunity`      | `DEAL_STAGE_CHANGED`                  |                        Yes | Preserve before/after stage and actor.                                                   |
+| `updateOpportunity`    | `DEAL_FIELDS_UPDATED`                 |                Conditional | Emit changed-field diff; suppress no-op updates.                                         |
+| `updateDueDateWithLog` | `DEAL_DUE_DATE_CHANGED`               |                        Yes | Avoid producing a second logical event from its system log.                              |
+| `addActivityLog`       | `ACTIVITY_CREATED` or `REPLY_CREATED` |                        Yes | Reply is its own event; parent is bounded context only.                                  |
+| `addSystemLog`         | `SYSTEM_ACTIVITY_CREATED`             |                Conditional | Must distinguish domain-generated logs from canonical domain event to avoid duplication. |
+| `editActivityLog`      | `ACTIVITY_EDITED`                     |                        Yes | Requires immutable source revision and superseding summary.                              |
+| `deleteActivityLog`    | `ACTIVITY_DELETED`                    |              Audit/retract | Must become tombstone/soft delete before AI release.                                     |
+| `addTeamMember`        | `DEAL_MEMBER_ADDED`                   |                Conditional | Likely audit/important only when ownership responsibility changes.                       |
+| `removeTeamMember`     | `DEAL_MEMBER_REMOVED`                 |                Conditional | Preserve actor and removed member.                                                       |
+| `deleteOpportunity`    | `DEAL_DELETED`                        |              Audit/retract | Determine retention/legal policy before implementation.                                  |
+| `createNote`           | `NOTE_CREATED`                        |             Later decision | Note may be private/operational; permissions need review.                                |
+| `deleteNote`           | `NOTE_DELETED`                        |              Audit/retract | Current raw retention behavior needs inspection.                                         |
+| `togglePinNote`        | `NOTE_PIN_CHANGED`                    |              No by default | Audit event only.                                                                        |
 
 ## Known current-code risks
 
@@ -694,6 +702,7 @@ The safe offline Phase 1 foundation is complete. Further progress requires a con
 - **Status**: Verified and Production Ready (No broken code or type errors)
 
 ## Completed Work in this Slice
+
 1. **Dead Code Elimination (7,351 LOC deleted)**:
    - Deleted obsolete Event Ledger (`src/lib/event-ledger/`, 19 files).
    - Deleted obsolete Fact Graph and background workers (`fact-lifecycle.ts`, `fact-resolver.ts`, `circuit-breaker.ts`, `processor.ts`, `timeline.ts`, `budget.ts`, `context-builder.ts`, `dispatch.ts`, `pricing.ts`, `authorization.ts`, `capabilities.ts`, `visibility.ts`, `manager/`, `prompts/`).
@@ -731,7 +740,7 @@ The safe offline Phase 1 foundation is complete. Further progress requires a con
 8. **Icon & Typography Refinement**:
    - Replaced magic wand icon (`Wand2`) with the standard `Bot` icon in sidebar menu tabs, header icon, and sub-tab pills.
    - Removed numbered circles in "Recommended Next Steps", unifying them with subtle lime-green bullet points (`#C7F33C`).
-   - Upgraded all tiny `text-xs` typography to `text-sm` across Summary cards, subtitles, Prompt Settings textareas, and action buttons.
+   - Upgraded all tiny `text-xs` typography to `text-xs` across Summary cards, subtitles, Prompt Settings textareas, and action buttons.
 
 9. **JSON Schema Editor & Dynamic Dimensions Rendering**:
    - Added Block 3: "3. JSON Schema (Structured Output Definition)" to Prompt Settings tab with live syntax validation on Save.
@@ -740,7 +749,7 @@ The safe offline Phase 1 foundation is complete. Further progress requires a con
    - "Copy Summary" dynamically captures and formats all custom dimensions into clipboard text.
 
 ## Verification Results
+
 - `npx tsc --noEmit`: Exited with code 0 (0 errors).
 - Unit Tests (`gateway.test.ts`, `pipeline-activity-cache.test.ts`): 4 tests passed, 0 failures.
 - Zero unauthorized git commits made.
-

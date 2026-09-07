@@ -22,7 +22,7 @@ const ACCOUNT_TYPES = [
 export default function ContactLoading() {
   return (
     <div className="flex flex-col w-full h-full bg-[#252728]">
-      <main className="flex-1 overflow-hidden hide-scrollbar p-6 flex flex-col">
+      <main className="flex-1 overflow-hidden hide-scrollbar p-2 flex flex-col">
         <div className="max-w-[1400px] mx-auto w-full flex flex-col h-full gap-4 min-h-0">
           {/* Top Bar: Qualification Tabs & Search & Add Button */}
           <div className="flex flex-wrap items-center justify-between gap-4 shrink-0">

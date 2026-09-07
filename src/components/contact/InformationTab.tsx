@@ -426,7 +426,7 @@ export function InformationTab({
                   value={formData.name}
                   onChange={handleInputChange}
                   placeholder="e.g. John Doe"
-                  className="bg-[#252728] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                  className="bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
                 />
               </div>
 
@@ -441,7 +441,7 @@ export function InformationTab({
                   value={formData.role}
                   onChange={handleInputChange}
                   placeholder="e.g. Procurement Lead, Managing Director"
-                  className="bg-[#252728] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                  className="bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
                 />
               </div>
 
@@ -456,7 +456,7 @@ export function InformationTab({
                   value={formData.contactDepartment}
                   onChange={handleInputChange}
                   placeholder="e.g. HR, Purchasing, Procurement, Marketing"
-                  className="bg-[#252728] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                  className="bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
                 />
               </div>
 
@@ -465,7 +465,7 @@ export function InformationTab({
                   <Tag className="w-3.5 h-3.5 text-[#C7F33C]" />
                   <span>Account Type</span>
                 </label>
-                <div className="bg-[#252728] rounded-xl px-3 py-2 text-sm text-slate-300 border-0 flex items-center gap-2">
+                <div className="bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-300 border-0 flex items-center gap-2">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C]" />
                   <span className="capitalize">{((contact.company.type || formData.type || "CUSTOMER") as string).toLowerCase()}</span>
                   <span className="text-[10px] text-slate-500 font-normal ml-auto">From Account</span>
@@ -595,7 +595,7 @@ export function InformationTab({
 
             <div className="flex items-center justify-between pt-1">
               <div>
-                <span className="font-bold text-sm text-slate-100 block">
+                <span className="font-bold text-xs text-slate-100 block">
                   {contact.company.name}
                 </span>
                 {contact.company.country && (
@@ -631,7 +631,7 @@ export function InformationTab({
               type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="px-5 py-2 rounded-xl text-sm font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-2"
+              className="px-5 py-2 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-2"
             >
               {isSaving ? (
                 <Loader2 className="w-4 h-4 animate-spin text-black" />

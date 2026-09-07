@@ -58,7 +58,7 @@ export function SearchableSelect({
           setIsOpen(!isOpen);
           setSearch("");
         }}
-        className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-4 text-left text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors text-sm flex items-center justify-between"
+        className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-4 text-left text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors text-xs flex items-center justify-between"
       >
         <span className={selectedOption ? "text-slate-100 truncate" : "text-slate-500 truncate"}>
           {selectedOption ? selectedOption.label : placeholder}
@@ -93,13 +93,13 @@ export function SearchableSelect({
                 placeholder="Search..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2 pl-9 pr-4 text-sm text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors"
+                className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2 pl-9 pr-4 text-xs text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors"
               />
             </div>
           </div>
           <div className="overflow-y-auto custom-scrollbar flex-1 p-1">
             {filteredOptions.length === 0 ? (
-              <div className="p-4 text-center text-sm text-slate-500">No results found.</div>
+              <div className="p-4 text-center text-xs text-slate-500">No results found.</div>
             ) : (
               filteredOptions.map(opt => (
                 <button
@@ -109,7 +109,7 @@ export function SearchableSelect({
                     onChange(opt.value);
                     setIsOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm rounded-lg transition-colors ${
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-xs rounded-lg transition-colors ${
                     opt.value === value ? "bg-[#C7F33C]/10 text-[#C7F33C] font-semibold" : "text-slate-300 hover:bg-[#3A3B3C]"
                   }`}
                 >

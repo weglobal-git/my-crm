@@ -54,6 +54,9 @@ export interface SharedMediaTabProps {
   companyId?: string;
   onImageClick?: (url: string, index?: number, allUrls?: string[]) => void;
   groupByDeal?: boolean;
+  activeSubTab?: TabType;
+  onSubTabChange?: (tab: TabType) => void;
+  hideHeader?: boolean;
 }
 
 type TabType = "images" | "links" | "files";
@@ -88,8 +91,13 @@ export function SharedMediaTab({
   companyId,
   onImageClick,
   groupByDeal = false,
+  activeSubTab: externalActiveSubTab,
+  onSubTabChange: externalOnSubTabChange,
+  hideHeader = false,
 }: SharedMediaTabProps) {
-  const [activeSubTab, setActiveSubTab] = useState<TabType>("images");
+  const [internalActiveSubTab, setInternalActiveSubTab] = useState<TabType>("images");
+  const activeSubTab = externalActiveSubTab || internalActiveSubTab;
+  const setActiveSubTab = externalOnSubTabChange || setInternalActiveSubTab;
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   // 1. Account Mode SWR Fetcher (cache-first, 0ms render when preloaded)
@@ -383,55 +391,52 @@ export function SharedMediaTab({
 
   return (
     <div className="flex flex-col h-full bg-[#252728]">
-      {/* Sticky Sub-Tab Header */}
-      <div className="pb-0 shrink-0">
-        <h3 className="text-lg font-bold text-slate-100 flex items-center gap-2 mb-3.5">
-          <Folder className="w-5 h-5 text-[#C7F33C]" />
-          Shared Media
-        </h3>
-
-        <div className="flex gap-1 bg-[#1C1C1D] p-1 rounded-xl w-full">
-          <button
-            type="button"
-            onClick={() => setActiveSubTab("images")}
-            className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-              activeSubTab === "images"
-                ? "bg-[#3A3B3C] text-white"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <ImageIcon className="w-3.5 h-3.5" />
-            <span>Photos</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSubTab("links")}
-            className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-              activeSubTab === "links"
-                ? "bg-[#3A3B3C] text-white"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Link2 className="w-3.5 h-3.5" />
-            <span>Links</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveSubTab("files")}
-            className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
-              activeSubTab === "files"
-                ? "bg-[#3A3B3C] text-white"
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>Files</span>
-          </button>
+      {/* Optional Sticky Sub-Tab Header (shown only when hideHeader is false) */}
+      {!hideHeader && (
+        <div className="pb-2 shrink-0">
+          <div className="flex gap-1 bg-[#1C1C1D] p-1 rounded-xl w-full">
+            <button
+              type="button"
+              onClick={() => setActiveSubTab("images")}
+              className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === "images"
+                  ? "bg-[#3A3B3C] text-white"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Photos</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab("links")}
+              className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === "links"
+                  ? "bg-[#3A3B3C] text-white"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              <span>Links</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab("files")}
+              className={`flex-1 justify-center px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                activeSubTab === "files"
+                  ? "bg-[#3A3B3C] text-white"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Files</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto pt-4 custom-scrollbar">
+      <div className={`flex-1 overflow-y-auto ${hideHeader ? "pt-1" : "pt-4"} custom-scrollbar`}>
         {/* 1. PHOTOS SUB-TAB */}
         {activeSubTab === "images" && (
           <div className="flex flex-col gap-4">

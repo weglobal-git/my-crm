@@ -22,7 +22,7 @@ export default async function ProductPage() {
 
   return (
     <div className="flex flex-col w-full h-full bg-black">
-      <main className="flex-1 overflow-y-auto hide-scrollbar p-6 flex flex-col items-center justify-center">
+      <main className="flex-1 overflow-y-auto hide-scrollbar p-2 flex flex-col items-center justify-center">
         <div className="bg-[#3A3B3C] border border-[#4E4F50] rounded-[2rem] p-12 flex flex-col items-center max-w-md text-center">
           <div className="w-20 h-20 bg-black border border-[#4E4F50] rounded-full flex items-center justify-center mb-6">
             <PackageOpen className="w-10 h-10 text-slate-300" />

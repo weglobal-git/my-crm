@@ -239,7 +239,7 @@ export function MenuStructureBuilder({ menus: initialMenus }: MenuStructureBuild
   return (
     <div className="flex flex-col relative min-h-[500px]">
       {isSaving && (
-        <div className="absolute top-4 right-6 flex items-center gap-2 text-slate-400 text-sm font-medium">
+        <div className="absolute top-4 right-6 flex items-center gap-2 text-slate-400 text-xs font-medium">
           <Loader2 className="w-4 h-4 animate-spin" /> Saving...
         </div>
       )}
@@ -332,7 +332,7 @@ export function MenuStructureBuilder({ menus: initialMenus }: MenuStructureBuild
             </div>
             <div className="space-y-4 mb-8">
               <div>
-                <label className="block text-sm font-semibold text-slate-300 mb-1.5">Label</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Label</label>
                 <input 
                   type="text" 
                   value={editModal.label} 
@@ -343,7 +343,7 @@ export function MenuStructureBuilder({ menus: initialMenus }: MenuStructureBuild
               </div>
               {editModal.isSubMenu && (
                 <div>
-                  <label className="block text-sm font-semibold text-slate-300 mb-1.5">Description</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">Description</label>
                   <input 
                     type="text" 
                     value={editModal.description} 
@@ -354,7 +354,7 @@ export function MenuStructureBuilder({ menus: initialMenus }: MenuStructureBuild
                 </div>
               )}
               <div>
-                <label className="block text-sm font-semibold text-slate-300 mb-1.5">Icon</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">Icon</label>
                 <div className="grid grid-cols-6 gap-2 max-h-48 overflow-y-auto custom-scrollbar p-1">
                   {Object.entries(IconMap).map(([iconName, IconComponent]) => (
                     <button
@@ -433,7 +433,7 @@ function SortableMainMenuBucket({ mainMenu, subMenus, onEdit, onEditSub, onDelet
         <div className="flex flex-col gap-3 flex-1">
           {subMenus.length === 0 ? (
             <div className="flex-1 flex items-center justify-center border-2 border-dashed border-[#4E4F50] rounded-xl bg-[#252728]">
-              <span className="text-slate-400 text-sm font-medium">Drop items here</span>
+              <span className="text-slate-400 text-xs font-medium">Drop items here</span>
             </div>
           ) : (
             subMenus.map((subMenu) => <SortableSubMenu key={subMenu.id} menu={subMenu} onEdit={() => onEditSub(subMenu)} />)
@@ -473,7 +473,7 @@ function SubMenuCard({ menu, isDragging, isOverlay, onEdit }: { menu: MenuItemTy
         <GripVertical className="w-4 h-4" />
       </div>
       {Icon && <Icon className="w-4 h-4 text-slate-400" />}
-      <span className="font-semibold text-slate-300 text-sm flex-1">{menu.label}</span>
+      <span className="font-semibold text-slate-300 text-xs flex-1">{menu.label}</span>
       {onEdit && (
         <div className="absolute right-2 opacity-0 group-hover:opacity-100 flex gap-1 bg-[#3A3B3C] p-1 rounded-md border border-[#4E4F50]">
           <button onPointerDown={(e) => { e.stopPropagation(); onEdit(); }} className="p-1 text-slate-400 hover:text-[#C7F33C] transition-colors">

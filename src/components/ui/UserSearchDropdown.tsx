@@ -71,7 +71,7 @@ export function UserSearchDropdown({
           placeholder="Search user..." 
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full px-3 py-2 bg-[#252728] border border-transparent rounded-lg text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C] transition-colors"
+          className="w-full px-3 py-2 bg-[#252728] border border-transparent rounded-lg text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C] transition-colors"
         />
       </div>
       <div className="max-h-40 overflow-y-auto custom-scrollbar flex flex-col gap-1">
@@ -80,7 +80,7 @@ export function UserSearchDropdown({
             <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
               <img src={u.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${u.name || u.email || u.id}`} alt="Avatar" className="w-8 h-8 rounded-full shrink-0 bg-[#4E4F50]" />
               <div className="flex flex-col min-w-0 flex-1">
-                <span className="text-sm font-medium text-slate-100 truncate">{u.name}</span>
+                <span className="text-xs font-medium text-slate-100 truncate">{u.name}</span>
                 {u.department?.name && (
                   <span className="text-[10px] text-slate-400 font-semibold truncate uppercase tracking-wider">{u.department.name}</span>
                 )}

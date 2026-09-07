@@ -1,6 +1,6 @@
 "use client";
 
-import { X, MoreHorizontal, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Settings, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Building2, Pencil, Briefcase } from "lucide-react";
+import { X, Menu, MoreHorizontal, MoreVertical, Activity, MessageSquare, Trash2, Search, Users, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Settings, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Building2, Pencil, Briefcase, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { DealTypeIcon } from "./DealTypeBadge";
 import imageCompression from 'browser-image-compression';
@@ -20,9 +20,12 @@ import { User, OpportunityType } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
 import { useDialog } from "@/providers/DialogProvider";
-import { CustomerTab } from "./CustomerTab";
+import { CustomerTab, type CustomerTabRef } from "./CustomerTab";
 import { NotesTab } from "./NotesTab";
 import { SharedMediaTab } from "./SharedMediaTab";
+import { EditDealMainBar } from "./EditDealMainBar";
+import { EditDealSubBar, SubBarTab, SubBarActionItem } from "./EditDealSubBar";
+import { WonLostModal } from "./WonLostModal";
 import { ChatAttachmentButton } from "./ChatAttachmentButton";
 import { HighlightText } from "@/components/ui/HighlightText";
 import { pusherClient } from "@/lib/pusher";
@@ -37,6 +40,15 @@ import {
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
+};
+
+const formatShortDueDate = (date: Date | string) => {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const day = d.getDate();
+  const month = d.toLocaleDateString('en-GB', { month: 'short' });
+  const year = String(d.getFullYear()).slice(-2);
+  return `${day}${month}${year}`;
 };
 
 const renderCommentText = (text: string, highlight: string = '') => {
@@ -316,7 +328,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
           <div className="flex items-center gap-2">
             <div className="bg-[#3A3B3C] rounded-2xl p-3 inline-block self-start relative w-full max-w-[85%] sm:max-w-md">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-bold text-slate-100">{log.user?.name || 'Unknown User'}</span>
+                <span className="text-xs font-bold text-slate-100">{log.user?.name || 'Unknown User'}</span>
                 {dueDateMatch && (
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${dueDateMatch[1] === 'Removed' ? 'text-slate-300 bg-slate-600 border-slate-500' : 'text-pink-400 bg-pink-900/30 border-pink-900/50'}`}>
                     {dueDateMatch[1] === 'Removed' ? 'Due Date Removed' : `Due: ${dueDateMatch[1]}`}
@@ -329,7 +341,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                   <textarea
                     value={editContent}
                     onChange={e => setEditContent(e.target.value)}
-                    className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg p-2 text-sm min-h-[60px]"
+                    className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg p-2 text-xs min-h-[60px]"
                   />
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => setIsEditing(false)} className="text-xs text-slate-300 hover:underline">Cancel</button>
@@ -361,7 +373,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                     return (
                       <>
                         {cleanText && (
-                          <div className="text-sm text-slate-300 whitespace-pre-wrap break-words leading-relaxed">
+                          <div className="text-xs text-slate-300 whitespace-pre-wrap break-words leading-relaxed">
                             {renderCommentText(cleanText, searchQuery)}
                           </div>
                         )}
@@ -374,7 +386,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                                   <Paperclip className="w-5 h-5 text-slate-400" />
                                 </div>
                                 <div className="flex flex-col flex-1 min-w-0">
-                                  <span className="text-sm font-semibold text-slate-200 truncate">{file.filename || "Attached file"}</span>
+                                  <span className="text-xs font-semibold text-slate-200 truncate">{file.filename || "Attached file"}</span>
                                   <span className="text-[10px] text-slate-500 uppercase">File</span>
                                 </div>
                                 <Download className="w-4 h-4 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -417,7 +429,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                 </button>
 
                 {showMenu && (
-                  <div className="absolute top-full left-0 mt-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-lg shadow-sm flex flex-col py-1 w-24 z-10">
+                  <div className="absolute top-full left-0 mt-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-lg flex flex-col py-1 w-24 z-10">
                     <button
                       onClick={() => { setIsEditing(true); setShowMenu(false); }}
                       className="text-left px-3 py-1.5 hover:bg-[#4E4F50] text-slate-300 text-xs font-normal"
@@ -480,7 +492,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                     onChange={e => setReplyContent(e.target.value)}
                     placeholder="Write a reply..."
                     autoFocus
-                    className="w-full bg-transparent text-sm text-slate-100 focus:outline-none resize-none"
+                    className="w-full bg-transparent text-xs text-slate-100 focus:outline-none resize-none"
                     rows={2}
                   />
                 </div>
@@ -510,9 +522,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const { mutate } = useSWRConfig();
   const [newLog, setNewLog] = useState("");
   const [activitySearchQuery, setActivitySearchQuery] = useState("");
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [isSubmittingLog, setIsSubmittingLog] = useState(false);
-  const { visibleRightMenus, canSee } = usePermissions();
+  const { visibleRightMenus, canSee, isAdmin: isPermAdmin } = usePermissions();
   const canUseSalesDeal = canSee("pipeline.information");
   const rawRightMenus = visibleRightMenus("pipeline");
   const rightMenus = rawRightMenus.filter(m => {
@@ -596,22 +608,64 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showCalendar]);
 
-  // Auto-focus the activity textarea when the panel opens to the activity tab
+  const [isSearching, setIsSearching] = useState(false);
+  const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
+  const hamburgerMenuRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (isOpen && activeTab === 'activity') {
-      inputRef.current?.focus();
+    const handleHamburgerClickOutside = (e: MouseEvent) => {
+      if (hamburgerMenuRef.current && !hamburgerMenuRef.current.contains(e.target as Node)) {
+        setShowHamburgerMenu(false);
+      }
+    };
+    if (showHamburgerMenu) {
+      document.addEventListener('mousedown', handleHamburgerClickOutside);
     }
-  }, [isOpen, activeTab]);
+    return () => document.removeEventListener('mousedown', handleHamburgerClickOutside);
+  }, [showHamburgerMenu]);
 
   // Users state for ownership transfer
   const [users, setUsers] = useState<Awaited<ReturnType<typeof getAllUsers>>>([]);
   const [isTransferring, setIsTransferring] = useState(false);
+  const [prevDealId, setPrevDealId] = useState(deal.id);
+  const [dealType, setDealType] = useState(deal.type);
+
+  if (deal.id !== prevDealId) {
+    setPrevDealId(deal.id);
+    setDealType(deal.type);
+  }
+
   const { data: session } = useSession();
-  const isOwner = session?.user?.email === deal.owner.email;
-  const isTeamMember = deal.teamMembers?.some(tm => tm.email === session?.user?.email);
-  const canInvite = isOwner || isTeamMember;
-  const canEditDueDate = isOwner || (session?.user as Record<string, unknown>)?.role === "ADMIN";
-  const canAnswerAccelerators = isOwner || (session?.user as Record<string, unknown>)?.role === "ADMIN";
+  const isAdmin = Boolean(isPermAdmin || (session?.user as Record<string, unknown>)?.role === "ADMIN");
+  const isOwner = Boolean(
+    (session?.user?.id && (session.user.id === deal.ownerId || session.user.id === deal.owner?.id)) ||
+    (session?.user?.email && deal.owner?.email && session.user.email.toLowerCase() === deal.owner.email.toLowerCase())
+  );
+  const isTeamMember = Boolean(
+    deal.teamMembers?.some(tm => 
+      (session?.user?.id && tm.id === session.user.id) ||
+      (session?.user?.email && tm.email && session.user.email.toLowerCase() === tm.email.toLowerCase())
+    )
+  );
+  const canInvite = isOwner || isTeamMember || isAdmin;
+  const canDelete = isAdmin || isOwner;
+  const canCloseDeal = isAdmin || isOwner;
+  const canConvert = dealType === 'INTERNAL_TASK' && (canUseSalesDeal || isAdmin);
+  const canEditDueDate = isOwner || isAdmin;
+  const canAnswerAccelerators = isOwner || isAdmin;
+
+  // Won / Lost Modal State
+  const [wonLostModalState, setWonLostModalState] = useState<{ isOpen: boolean; status: "WON" | "LOST" }>({
+    isOpen: false,
+    status: "WON",
+  });
+
+  // Tab Sub-States
+  const [sharedMediaSubTab, setSharedMediaSubTab] = useState<"images" | "links" | "files">("images");
+  const [noteSearchQuery, setNoteSearchQuery] = useState("");
+  const [isSearchingNotes, setIsSearchingNotes] = useState(false);
+  const customerTabRef = useRef<CustomerTabRef>(null);
+  const [isSavingCustomerTab, setIsSavingCustomerTab] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setActiveTab(allowedInitialTab), 0);
@@ -681,13 +735,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const [editingAnswerQuestionId, setEditingAnswerQuestionId] = useState<string | null>(null);
   const [editCustomAnswers, setEditCustomAnswers] = useState<Record<string, string>>({});
   const [showEditCustomInput, setShowEditCustomInput] = useState<Record<string, boolean>>({});
-  const [prevDealId, setPrevDealId] = useState(deal.id);
-  const [dealType, setDealType] = useState(deal.type);
-
-  if (deal.id !== prevDealId) {
-    setPrevDealId(deal.id);
-    setDealType(deal.type);
-  }
 
   const [isConverting, setIsConverting] = useState(false);
 
@@ -789,7 +836,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   };
 
   // Admin Prompt Configuration State
-  const isAdmin = session?.user?.role === 'ADMIN';
   const [summaryViewMode, setSummaryViewMode] = useState<'summary' | 'prompt'>('summary');
   const [systemInstructionInput, setSystemInstructionInput] = useState('');
   const [taskInstructionInput, setTaskInstructionInput] = useState('');
@@ -1218,7 +1264,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   };
 
   const handleTransfer = async (newOwnerId: string) => {
-    if (deal.ownerId === newOwnerId || !isOwner) return;
+    if (deal.ownerId === newOwnerId || (!isOwner && !isAdmin)) return;
     setIsTransferring(true);
     try {
       await requestDealTransfer(deal.id, newOwnerId);
@@ -1356,10 +1402,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         onClick={onClose}
       />
 
-      <div className={`fixed inset-y-4 right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] origin-right ${internalIsOpen ? "opacity-100 translate-x-0 scale-100" : "opacity-0 translate-x-8 scale-[0.97] pointer-events-none"}`}>
-        <div className="flex shadow-2xl h-full rounded-2xl overflow-hidden border border-[#3A3B3C]">
-          {/* Tab Sidebar */}
-          <div className="w-16 bg-[#252728] border-r border-[#1C1C1D] flex flex-col items-center py-3 gap-3 z-10">
+      <div className={`fixed inset-0 md:inset-y-4 md:inset-x-4 md:w-[620px] md:mx-auto lg:inset-y-4 lg:right-4 lg:left-auto lg:mx-0 w-full lg:w-[600px] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-center lg:origin-right ${internalIsOpen ? "opacity-100 translate-y-0 lg:translate-x-0 scale-100" : "opacity-0 translate-y-4 lg:translate-y-0 lg:translate-x-8 scale-[0.97] pointer-events-none"}`}>
+        <div className="flex flex-col md:flex-row w-full h-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C]">
+          {/* Tab Sidebar (desktop only) */}
+          <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-3 gap-3 z-10 shrink-0">
           {rightMenus.map(menu => {
             const tabId = menu.key.split('.').pop() as TabType;
             const Icon = tabId === 'summary' || menu.key === 'pipeline.summary' 
@@ -1384,247 +1430,239 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         </div>
 
         {/* Main Panel Content */}
-        <div className="w-[750px] max-w-[90vw] bg-[#252728] flex flex-col">
-          <div className="flex items-center justify-between p-3 border-b border-[#1C1C1D] shrink-0">
-            <div className="flex flex-col flex-1 pr-4 min-w-0">
-              <div className="flex items-center gap-2">
-                {/* Card Type Indicator Icon */}
-                <div title={dealType === "SALES_DEAL" ? "Sales Deal" : "Internal Task"} className="shrink-0">
-                  <DealTypeIcon type={dealType} size="md" />
-                </div>
+        <div className="w-full flex-1 bg-[#252728] flex flex-col min-w-0 h-full">
+          {/* Main Bar (Card-level controls & actions) */}
+          <EditDealMainBar
+            dealType={dealType}
+            topic={topic}
+            onTopicSave={async (newTopic) => {
+              await updateOpportunity(deal.id, { topic: newTopic });
+              await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`);
+              setTopic(newTopic);
+              toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
+            }}
+            canEditTopic={canEditDueDate}
+            companyName={deal.company?.name}
+            companyDisplayName={deal.company?.displayName}
+            canCloseDeal={canCloseDeal}
+            onCloseAsWon={() => setWonLostModalState({ isOpen: true, status: "WON" })}
+            onCloseAsLost={() => setWonLostModalState({ isOpen: true, status: "LOST" })}
+            canConvert={canConvert}
+            isConverting={isConverting}
+            onConvert={handleConvertToSalesDeal}
+            canDelete={canDelete}
+            onDelete={async () => {
+              const isConfirmed = await confirm({
+                title: "Delete Deal",
+                description: "Are you sure you want to permanently delete this deal? This action cannot be undone.",
+                confirmText: "Delete",
+                cancelText: "Cancel",
+                variant: "danger"
+              });
+              if (isConfirmed) {
+                try {
+                  await deleteOpportunity(deal.id);
+                  toast({ title: 'Deleted', description: 'Opportunity deleted permanently', type: 'success' });
+                  onClose();
+                } catch {
+                  toast({ title: 'Error', description: 'Failed to delete opportunity', type: 'error' });
+                }
+              }
+            }}
+            onClose={onClose}
+          />
 
-                {/* Topic / Title */}
-                {isEditingTopic ? (
-                  <div className="relative flex-1 min-w-0">
-                    <input
-                      autoFocus
-                      type="text"
-                      value={topic}
-                      onChange={(e) => setTopic(e.target.value)}
-                      onBlur={async () => {
-                        if (topic.trim() !== deal.topic) {
-                          setIsSavingTopic(true);
-                          try {
-                            const newTopic = topic.trim();
-                            await updateOpportunity(deal.id, { topic: newTopic });
-                            await addSystemLog(deal.id, `Changed topic from "${deal.topic}" to "${newTopic}".`);
-                            toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
-                          } catch {
-                            toast({ title: 'Error', description: 'Failed to update topic', type: 'error' });
-                            setTopic(deal.topic || 'Untitled Deal');
-                          } finally {
-                            setIsSavingTopic(false);
-                          }
+          {/* Sub Bar (Tab-specific navigation & actions) */}
+          {(() => {
+            if (activeTab === 'activity' || activeTab === 'system') {
+              return (
+                <EditDealSubBar
+                  tabs={[
+                    { id: 'activity', label: 'Activity' },
+                    { id: 'system', label: 'System' },
+                  ]}
+                  activeTab={activeTab}
+                  onTabChange={(tabId) => setActiveTab(tabId as TabType)}
+                  search={{
+                    isActive: isSearching,
+                    query: activitySearchQuery,
+                    placeholder: 'Search updates...',
+                    onToggle: () => setIsSearching(prev => !prev),
+                    onChange: setActivitySearchQuery,
+                    onClear: () => setActivitySearchQuery(''),
+                  }}
+                />
+              );
+            }
+
+            if (activeTab === 'collaborate') {
+              const collaborateActions: SubBarActionItem[] = [];
+              if (canInvite) {
+                collaborateActions.push({
+                  id: 'add',
+                  label: 'Add',
+                  icon: UserPlus,
+                  onClick: () => {
+                    setShowInviteDropdown(true);
+                    setShowTransferDropdown(false);
+                  },
+                });
+              }
+              if (isOwner || isAdmin) {
+                collaborateActions.push({
+                  id: 'transfer',
+                  label: 'Transfer',
+                  icon: ArrowRightLeft,
+                  onClick: () => {
+                    setShowTransferDropdown(true);
+                    setShowInviteDropdown(false);
+                  },
+                });
+              }
+
+              return (
+                <EditDealSubBar
+                  leftContent={<div />}
+                  actions={collaborateActions.length > 0 ? collaborateActions : undefined}
+                  customActionSlot={
+                    <>
+                      {canInvite && (
+                        <div className="relative">
+                          <UserSearchDropdown
+                            users={users}
+                            isOpen={showInviteDropdown}
+                            onClose={() => setShowInviteDropdown(false)}
+                            onSelect={handleAddMember}
+                            actionLabel="Invite"
+                            excludeUserIds={[deal.ownerId, ...(localTeamMembers?.map(tm => tm.id) || [])]}
+                            align="right"
+                          />
+                        </div>
+                      )}
+                      {(isOwner || isAdmin) && (
+                        <div className="relative">
+                          <UserSearchDropdown
+                            users={users}
+                            isOpen={showTransferDropdown}
+                            onClose={() => setShowTransferDropdown(false)}
+                            onSelect={handleTransfer}
+                            actionLabel="Transfer"
+                            isLoading={isTransferring}
+                            excludeUserIds={[deal.ownerId]}
+                            align="right"
+                          />
+                        </div>
+                      )}
+                    </>
+                  }
+                />
+              );
+            }
+
+            if (activeTab === 'information') {
+              return (
+                <EditDealSubBar
+                  leftContent={<div />}
+                  actions={[
+                    {
+                      id: 'save',
+                      label: isSavingCustomerTab ? 'Saving...' : 'Save',
+                      icon: Save,
+                      loading: isSavingCustomerTab,
+                      onClick: async () => {
+                        setIsSavingCustomerTab(true);
+                        try {
+                          await customerTabRef.current?.save();
+                        } finally {
+                          setIsSavingCustomerTab(false);
                         }
-                        setIsEditingTopic(false);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') e.currentTarget.blur();
-                        if (e.key === 'Escape') {
-                          setTopic(deal.topic || 'Untitled Deal');
-                          setIsEditingTopic(false);
-                        }
-                      }}
-                      disabled={isSavingTopic}
-                      className="w-full bg-[#1C1C1D] border border-[#4E4F50] rounded-lg px-3 py-1 text-xl font-bold text-slate-100 focus:outline-none focus:border-[#C7F33C]"
-                    />
-                  </div>
-                ) : (
-                  <h2
-                    className={`text-xl font-bold text-slate-100 line-clamp-1 flex-1 min-w-0 ${canEditDueDate ? 'cursor-text hover:text-white' : ''}`}
-                    onClick={() => canEditDueDate && setIsEditingTopic(true)}
-                    title={canEditDueDate ? "Click to edit title" : undefined}
-                  >
-                    {topic}
-                  </h2>
-                )}
-              </div>
+                      },
+                    }
+                  ]}
+                />
+              );
+            }
 
-              {/* Customer / Company Row (Replacing old Card Type position) */}
-              {(deal.company?.displayName || deal.company?.name) && (
-                <div className="mt-1.5 flex items-center gap-1.5 text-xs text-slate-400 font-medium pl-0.5" title={deal.company.name}>
-                  <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span className="truncate">{deal.company.displayName || deal.company.name}</span>
-                  {deal.company.displayName && deal.company.displayName !== deal.company.name && (
-                    <span className="text-[11px] text-slate-500 truncate">({deal.company.name})</span>
-                  )}
-                </div>
-              )}
-            </div>
+            if (activeTab === 'notes') {
+              return (
+                <EditDealSubBar
+                  leftContent={<div />}
+                  search={{
+                    isActive: isSearchingNotes,
+                    query: noteSearchQuery,
+                    placeholder: 'Search notes...',
+                    onToggle: () => setIsSearchingNotes(prev => !prev),
+                    onChange: setNoteSearchQuery,
+                    onClear: () => setNoteSearchQuery(''),
+                  }}
+                />
+              );
+            }
 
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Convert to Sale Deal Button (Only for Internal Task, and only for users with Sale Deal permission) */}
-              {dealType === 'INTERNAL_TASK' && canUseSalesDeal && (
-                <button
-                  type="button"
-                  onClick={handleConvertToSalesDeal}
-                  disabled={isConverting}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#C7F33C]/10 border border-[#C7F33C]/40 text-[#C7F33C] hover:bg-[#C7F33C] hover:text-black rounded-full text-xs font-bold transition-all disabled:opacity-50 mr-1 cursor-pointer"
-                  title="Convert this Internal Task to a Sales Deal"
-                >
-                  <Briefcase className="w-3.5 h-3.5" />
-                  {isConverting ? "Converting..." : "Convert to Sale Deal"}
-                </button>
-              )}
-              {deal.dueDate && (
-                <div className="text-[11px] font-bold text-[#111111] bg-[#C7F33C] px-3 py-1 rounded-full whitespace-nowrap mr-2">
-                  DUE: {new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}
-                </div>
-              )}
-              {((session?.user as Record<string, unknown>)?.role === "ADMIN") && (
-                <button
-                  onClick={async () => {
-                    const isConfirmed = await confirm({
-                      title: "Delete Deal",
-                      description: "Are you sure you want to permanently delete this deal? This action cannot be undone.",
-                      confirmText: "Delete",
-                      cancelText: "Cancel",
-                      variant: "danger"
-                    });
-                    if (isConfirmed) {
-                      try {
-                        await deleteOpportunity(deal.id);
-                        toast({ title: 'Deleted', description: 'Opportunity deleted permanently', type: 'success' });
-                        onClose();
-                        // router.refresh(); removed for Optimistic UI
-                      } catch {
-                        toast({ title: 'Error', description: 'Failed to delete opportunity', type: 'error' });
-                      }
+            if (activeTab === 'sharedMedia') {
+              return (
+                <EditDealSubBar
+                  tabs={[
+                    { id: 'images', label: 'Photos', icon: ImageIcon },
+                    { id: 'links', label: 'Links', icon: Link2 },
+                    { id: 'files', label: 'Files', icon: FileText },
+                  ]}
+                  activeTab={sharedMediaSubTab}
+                  onTabChange={(tabId) => setSharedMediaSubTab(tabId as "images" | "links" | "files")}
+                />
+              );
+            }
+
+            if (activeTab === 'summary') {
+              const summaryActions: SubBarActionItem[] = [
+                {
+                  id: 'copy',
+                  label: isCopiedSummary ? 'Copied' : 'Copy',
+                  icon: isCopiedSummary ? Check : Copy,
+                  onClick: handleCopySummary,
+                },
+                {
+                  id: 'resummarize',
+                  label: isGeneratingSummary ? 'Re-summarizing...' : 'Re-Summarize',
+                  icon: RefreshCw,
+                  loading: isGeneratingSummary,
+                  disabled: isGeneratingSummary,
+                  onClick: handleGenerateSummary,
+                },
+                {
+                  id: 'rescan',
+                  label: isGeneratingAccelerators ? 'Scanning...' : 'Rescan',
+                  icon: RefreshCw,
+                  loading: isGeneratingAccelerators,
+                  disabled: isGeneratingAccelerators,
+                  onClick: handleRefreshAccelerators,
+                },
+              ];
+
+              const summaryTabs: SubBarTab[] = [
+                { id: 'summary', label: 'Summary' },
+              ];
+              if (isAdmin) {
+                summaryTabs.push({ id: 'prompt', label: 'Prompt Settings' });
+              }
+
+              return (
+                <EditDealSubBar
+                  tabs={summaryTabs}
+                  activeTab={summaryViewMode}
+                  onTabChange={(tabId) => {
+                    setSummaryViewMode(tabId as "summary" | "prompt");
+                    if (tabId === 'prompt') {
+                      void handleLoadPromptConfig();
                     }
                   }}
-                  className="p-2 hover:bg-rose-500/20 rounded-full transition-colors text-slate-400 hover:text-rose-500"
-                  title="Permanently Delete (Admin Only)"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
-              )}
-              <button
-                onClick={onClose}
-                type="button"
-                aria-label="Close card panel"
-                className="p-2 hover:bg-[#3A3B3C] rounded-full transition-colors text-slate-400"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
+                  actions={summaryViewMode === 'summary' ? summaryActions : undefined}
+                />
+              );
+            }
 
-          {/* Sticky Tabs for Activity/System/Summary */}
-          {(activeTab === 'activity' || activeTab === 'system' || activeTab === 'summary') && (
-            <div className="px-6 pt-6 pb-2 bg-[#252728] shrink-0 z-10">
-              <div className="flex items-center justify-between w-full mb-2">
-                <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                  {activeTab === 'summary' ? (
-                    <Bot className="w-5 h-5 text-[#C7F33C]" />
-                  ) : (
-                    <Activity className="w-5 h-5 text-[#C7F33C]" />
-                  )}
-                  {activeTab === 'summary' ? 'AI Summary' : 'Activity Log'}
-                </h3>
-
-                {activeTab !== 'summary' ? (
-                  <div className="flex items-center gap-2 overflow-x-auto" role="tablist" aria-label="Deal activity views">
-                    <button
-                      onClick={() => setActiveTab('activity')}
-                      role="tab"
-                      aria-selected={activeTab === 'activity'}
-                      className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                        activeTab === 'activity'
-                          ? 'bg-[#C7F33C] text-black'
-                          : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                      }`}
-                    >
-                      <MessageSquare className="w-4 h-4" /> Activity
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('system')}
-                      role="tab"
-                      aria-selected={activeTab === 'system'}
-                      className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors ${
-                        activeTab === 'system'
-                          ? 'bg-[#C7F33C] text-black'
-                          : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                      }`}
-                    >
-                      <MessageSquare className="w-4 h-4" /> System
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2" role="tablist" aria-label="AI Summary views">
-                    <button
-                      type="button"
-                      onClick={() => setSummaryViewMode('summary')}
-                      role="tab"
-                      aria-selected={summaryViewMode === 'summary'}
-                      className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors cursor-pointer ${
-                        summaryViewMode === 'summary'
-                          ? 'bg-[#C7F33C] text-black font-semibold'
-                          : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                      }`}
-                    >
-                      <Bot className="w-4 h-4" /> Summary
-                    </button>
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSummaryViewMode('prompt');
-                          handleLoadPromptConfig();
-                        }}
-                        role="tab"
-                        aria-selected={summaryViewMode === 'prompt'}
-                        className={`px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors cursor-pointer ${
-                          summaryViewMode === 'prompt'
-                            ? 'bg-[#C7F33C] text-black font-semibold'
-                            : 'bg-[#3A3B3C] text-slate-300 hover:bg-[#4E4F50]'
-                        }`}
-                      >
-                        <Settings className="w-4 h-4" /> Prompt Settings
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-              {activeTab === 'summary' && (
-                <div className="flex items-center gap-2 mt-1 flex-wrap w-full justify-end">
-                  <p className="text-sm text-slate-400">
-                    {summaryViewMode === 'prompt'
-                      ? ""
-                      : dealSummaryResponse?.generatedAt
-                        ? `Last summarized: ${formatDateTime(dealSummaryResponse.generatedAt)}`
-                        : "Summarize deal status, key highlights, and next steps in one click."}
-                  </p>
-                  {summaryViewMode === 'summary' && dealSummaryResponse?.data && dealSummaryResponse?.generatedAt && (
-                    dealSummaryResponse.isOutdated ? (
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#3A3B3C] text-slate-200 border border-[#C7F33C]/60 text-xs font-medium flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] animate-pulse" />
-                        New updates available
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#3A3B3C] text-slate-300 border border-[#4E4F50] text-xs font-medium flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C]" />
-                        Up to date
-                      </span>
-                    )
-                  )}
-                </div>
-              )}
-
-              {/* Search Bar (เฉพาะแท็บ Activity และ System) */}
-              {activeTab !== 'summary' && (
-                <div className="relative mt-3 mb-2">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    type="text"
-                    placeholder="Search updates..."
-                    value={activitySearchQuery}
-                    onChange={(e) => setActivitySearchQuery(e.target.value)}
-                    className="w-full bg-[#3A3B3C] hover:bg-[#4E4F50] border border-[#4E4F50] rounded-full pl-10 pr-4 py-2 text-sm text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors placeholder:text-slate-400"
-                  />
-                </div>
-              )}
-            </div>
-          )}
+            return null;
+          })()}
 
           <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 flex flex-col gap-8 custom-scrollbar">
 
@@ -1669,7 +1707,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           if (comments.length === 0) {
                             return (
                               <div className="text-center py-10 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
-                                <p className="text-sm text-slate-300 font-medium">{activitySearchQuery.trim() ? "No updates found." : "No updates yet."}</p>
+                                <p className="text-xs text-slate-300 font-medium">{activitySearchQuery.trim() ? "No updates found." : "No updates yet."}</p>
                                 <p className="text-xs text-slate-400 mt-1">{activitySearchQuery.trim() ? "Try searching for something else." : "Be the first to post an update on this deal."}</p>
                               </div>
                             );
@@ -1730,7 +1768,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                               {/* 1. System Instruction */}
                               <div className="flex flex-col gap-2 p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
                                     1. System Instruction (Core Rules & Persona)
                                   </span>
@@ -1742,7 +1780,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                     setSystemInstructionInput(e.target.value);
                                     autoResizeTextarea(e.target);
                                   }}
-                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-sm text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
+                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-xs text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
                                   placeholder="Enter system prompt instruction..."
                                 />
                               </div>
@@ -1750,7 +1788,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                               {/* 2. Task Instruction */}
                               <div className="flex flex-col gap-2 p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
                                     2. Task Instructions (Analysis Topics & Guidelines)
                                   </span>
@@ -1762,7 +1800,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                     setTaskInstructionInput(e.target.value);
                                     autoResizeTextarea(e.target);
                                   }}
-                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-sm text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
+                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-xs text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
                                   placeholder="Enter task instruction and topics..."
                                 />
                               </div>
@@ -1770,7 +1808,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                               {/* 3. JSON Schema (Structured Output Definition) */}
                               <div className="flex flex-col gap-2 p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
                                     3. JSON Schema (Structured Output Definition)
                                   </span>
@@ -1783,7 +1821,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                     autoResizeTextarea(e.target);
                                   }}
                                   rows={12}
-                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-sm text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
+                                  className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl p-3.5 text-xs text-slate-100 font-mono leading-relaxed focus:border-[#C7F33C] focus:outline-none transition-colors resize-none overflow-hidden"
                                   placeholder="Enter JSON Schema..."
                                 />
                               </div>
@@ -1794,7 +1832,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                   type="button"
                                   onClick={handleResetPrompt}
                                   disabled={isSavingPrompt || isLoadingPrompt}
-                                  className="px-4 py-2 text-sm font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                                  className="px-4 py-2 text-xs font-medium text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
                                 >
                                   Reset to Default
                                 </button>
@@ -1803,7 +1841,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                   type="button"
                                   onClick={handleSavePrompt}
                                   disabled={isSavingPrompt || isLoadingPrompt}
-                                  className="px-6 py-2.5 text-sm font-bold bg-[#C7F33C] hover:bg-[#b0d635] text-black rounded-xl transition-colors flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                                  className="px-6 py-2.5 text-xs font-bold bg-[#C7F33C] hover:bg-[#b0d635] text-black rounded-xl transition-colors flex items-center gap-2 disabled:opacity-50 cursor-pointer"
                                 >
                                   {isSavingPrompt ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                                   <span>{isSavingPrompt ? "Saving..." : "Save Prompt"}</span>
@@ -1826,7 +1864,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                   className="flex items-center gap-2.5 text-left group cursor-pointer focus:outline-none"
                                 >
                                   <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
-                                  <span className="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                                  <span className="text-xs font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
                                     <span>AI Deal Accelerators</span>
                                   </span>
                                   {pendingQuestionsCount > 0 ? (
@@ -1846,17 +1884,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       <ChevronDown className="w-4 h-4" />
                                     )}
                                   </div>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={handleRefreshAccelerators}
-                                  disabled={isGeneratingAccelerators}
-                                  className="px-3 py-1.5 rounded-full bg-[#252728] hover:bg-[#4E4F50] text-xs font-semibold text-slate-200 hover:text-white border border-[#4E4F50] flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                                  title="Re-scan and identify bottlenecks"
-                                >
-                                  <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingAccelerators ? 'animate-spin text-[#C7F33C]' : ''}`} />
-                                  <span>{isGeneratingAccelerators ? 'Scanning...' : 'Rescan'}</span>
                                 </button>
                               </div>
 
@@ -1898,27 +1925,27 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                             if (e.key === 'Escape') setIsEditingGoal(false);
                                           }}
                                           placeholder="Define the primary goal of this deal..."
-                                          className="flex-1 bg-[#3A3B3C] border border-[#C7F33C] rounded-full px-4 py-2 text-sm text-slate-100 outline-none"
+                                          className="flex-1 bg-[#3A3B3C] border border-[#C7F33C] rounded-full px-4 py-2 text-xs text-slate-100 outline-none"
                                           autoFocus
                                         />
                                         <button
                                           type="button"
                                           onClick={handleSaveGoal}
                                           disabled={isSavingGoal}
-                                          className="px-4 py-2 rounded-full bg-[#C7F33C] text-black text-sm font-bold hover:bg-[#b0d635] transition-colors cursor-pointer disabled:opacity-50"
+                                          className="px-4 py-2 rounded-full bg-[#C7F33C] text-black text-xs font-bold hover:bg-[#b0d635] transition-colors cursor-pointer disabled:opacity-50"
                                         >
                                           {isSavingGoal ? 'Saving...' : 'Save'}
                                         </button>
                                         <button
                                           type="button"
                                           onClick={() => setIsEditingGoal(false)}
-                                          className="px-3 py-2 text-sm text-slate-400 hover:text-slate-200 cursor-pointer"
+                                          className="px-3 py-2 text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
                                         >
                                           Cancel
                                         </button>
                                       </div>
                                     ) : (
-                                      <p className="text-sm text-slate-200 font-medium leading-relaxed">
+                                      <p className="text-xs text-slate-200 font-medium leading-relaxed">
                                         {acceleratorsState?.targetGoal || (isLoadingAccelerators ? 'Loading goal...' : `Deliver results for ${deal.topic}`)}
                                       </p>
                                     )}
@@ -1983,7 +2010,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                 <div className="flex flex-col flex-1 min-w-0">
                                                   <div className="flex items-center justify-between gap-2">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                      <span className="text-sm font-bold text-slate-100">AI Agent</span>
+                                                      <span className="text-xs font-bold text-slate-100">AI Agent</span>
                                                       <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] font-semibold border border-[#C7F33C]/20">
                                                         Bot
                                                       </span>
@@ -1999,12 +2026,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                     </span>
                                                   </div>
 
-                                                  <p className="text-sm text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
+                                                  <p className="text-xs text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
                                                     {q.question}
                                                   </p>
 
                                                   {q.reason && (
-                                                    <div className="mt-1 text-sm text-slate-400 flex items-center gap-1.5">
+                                                    <div className="mt-1 text-xs text-slate-400 flex items-center gap-1.5">
                                                       <span>💡</span>
                                                       <span>{q.reason}</span>
                                                     </div>
@@ -2023,7 +2050,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                           type="button"
                                                           disabled={isAnsweringQuestionId === q.id}
                                                           onClick={() => handleAnswerAccelerator(q.id, choice)}
-                                                          className="w-full text-left px-4 py-2.5 rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] text-sm font-medium text-slate-200 hover:text-white border border-[#4E4F50] hover:border-[#C7F33C] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group"
+                                                          className="w-full text-left px-4 py-2.5 rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] text-xs font-medium text-slate-200 hover:text-white border border-[#4E4F50] hover:border-[#C7F33C] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group"
                                                         >
                                                           <span>{choice}</span>
                                                           <span className="opacity-0 group-hover:opacity-100 text-[#C7F33C] text-xs font-bold transition-opacity">
@@ -2053,13 +2080,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                             if (e.key === 'Enter') handleAnswerAccelerator(q.id, customAnswers[q.id] || '');
                                                           }}
                                                           placeholder="Type your reply..."
-                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C]"
+                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C]"
                                                         />
                                                         <button
                                                           type="button"
                                                           disabled={isAnsweringQuestionId === q.id || !customAnswers[q.id]?.trim()}
                                                           onClick={() => handleAnswerAccelerator(q.id, customAnswers[q.id] || '')}
-                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-sm font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
                                                         >
                                                           Reply
                                                         </button>
@@ -2109,7 +2136,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                 <div className="flex flex-col flex-1 min-w-0">
                                                   <div className="flex items-center justify-between gap-2">
                                                     <div className="flex items-center gap-2 flex-wrap">
-                                                      <span className="text-sm font-bold text-slate-100">AI Agent</span>
+                                                      <span className="text-xs font-bold text-slate-100">AI Agent</span>
                                                       <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] font-semibold border border-[#C7F33C]/20">
                                                         Bot
                                                       </span>
@@ -2125,12 +2152,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                     </span>
                                                   </div>
 
-                                                  <p className="text-sm text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
+                                                  <p className="text-xs text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
                                                     {q.question}
                                                   </p>
 
                                                   {q.reason && (
-                                                    <div className="mt-1 text-sm text-slate-400 flex items-center gap-1.5">
+                                                    <div className="mt-1 text-xs text-slate-400 flex items-center gap-1.5">
                                                       <span>💡</span>
                                                       <span>{q.reason}</span>
                                                     </div>
@@ -2152,7 +2179,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                             await handleAnswerAccelerator(q.id, choice);
                                                             setEditingAnswerQuestionId(null);
                                                           }}
-                                                          className={`w-full text-left px-4 py-2.5 rounded-full text-sm font-medium border transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group ${
+                                                          className={`w-full text-left px-4 py-2.5 rounded-full text-xs font-medium border transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group ${
                                                             q.answer === choice
                                                               ? 'bg-[#C7F33C]/20 text-[#C7F33C] border-[#C7F33C]'
                                                               : 'bg-[#3A3B3C] hover:bg-[#4E4F50] text-slate-200 hover:text-white border-[#4E4F50] hover:border-[#C7F33C]'
@@ -2198,7 +2225,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                             }
                                                           }}
                                                           placeholder="Type updated reply..."
-                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-sm text-slate-100 outline-none focus:border-[#C7F33C]"
+                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C]"
                                                         />
                                                         <button
                                                           type="button"
@@ -2208,7 +2235,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                             await handleAnswerAccelerator(q.id, val);
                                                             setEditingAnswerQuestionId(null);
                                                           }}
-                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-sm font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
                                                         >
                                                           Save
                                                         </button>
@@ -2232,7 +2259,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                       </div>
                                                       <div className="flex flex-col flex-1 min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                          <span className="text-sm font-bold text-slate-200">
+                                                          <span className="text-xs font-bold text-slate-200">
                                                             {q.answeredBy || 'User'}
                                                           </span>
                                                           {q.answeredAt && (
@@ -2242,7 +2269,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                                           )}
                                                         </div>
                                                         <div className="mt-1.5 inline-block">
-                                                          <div className="px-4 py-2 rounded-full bg-[#3A3B3C] border border-[#4E4F50] text-sm text-[#C7F33C] font-medium leading-normal inline-block">
+                                                          <div className="px-4 py-2 rounded-full bg-[#3A3B3C] border border-[#4E4F50] text-xs text-[#C7F33C] font-medium leading-normal inline-block">
                                                             &quot;{q.answer}&quot;
                                                           </div>
                                                         </div>
@@ -2273,7 +2300,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       </div>
                                     ) : (
                                       <div className="p-4 rounded-2xl bg-[#252728] border border-[#4E4F50]/40 text-center">
-                                        <p className="text-sm text-slate-400">No answered questions yet.</p>
+                                        <p className="text-xs text-slate-400">No answered questions yet.</p>
                                       </div>
                                     )
                                   )}
@@ -2337,7 +2364,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                 type="button"
                                 onClick={handleGenerateSummary}
                                 disabled={isGeneratingSummary}
-                                className="px-6 py-2.5 rounded-full bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                                className="px-6 py-2.5 rounded-full bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-xs flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
                               >
                                 <Sparkles className="w-4 h-4" />
                                 ✨ Summarize Deal
@@ -2395,11 +2422,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                 <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2">
                                   <div className="flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
-                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                    <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">
                                       CURRENT STATUS
                                     </span>
                                   </div>
-                                  <p className="text-sm text-slate-100 leading-relaxed whitespace-pre-wrap font-normal">
+                                  <p className="text-xs text-slate-100 leading-relaxed whitespace-pre-wrap font-normal">
                                     {dealSummaryResponse.data.overview}
                                   </p>
                                 </div>
@@ -2410,13 +2437,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                 <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
                                   <div className="flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
-                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                    <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">
                                       KEY HIGHLIGHTS
                                     </span>
                                   </div>
                                   <ul className="flex flex-col gap-2">
                                     {dealSummaryResponse.data.keyHighlights.map((point, idx) => (
-                                      <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                      <li key={idx} className="text-xs text-slate-100 leading-relaxed flex items-start gap-2.5">
                                         <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] mt-1.5 shrink-0" />
                                         <span>{point}</span>
                                       </li>
@@ -2430,13 +2457,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                 <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
                                   <div className="flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-rose-400" />
-                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                    <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">
                                       BLOCKERS & RISKS
                                     </span>
                                   </div>
                                   <ul className="flex flex-col gap-2">
                                     {dealSummaryResponse.data.blockers.map((blocker, idx) => (
-                                      <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                      <li key={idx} className="text-xs text-slate-100 leading-relaxed flex items-start gap-2.5">
                                         <span className="w-1.5 h-1.5 rounded-full bg-rose-400 mt-1.5 shrink-0" />
                                         <span>{blocker}</span>
                                       </li>
@@ -2450,13 +2477,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                 <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
                                   <div className="flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
-                                    <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                    <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">
                                       RECOMMENDED NEXT STEPS
                                     </span>
                                   </div>
                                   <ul className="flex flex-col gap-2">
                                     {dealSummaryResponse.data.nextSteps.map((step, idx) => (
-                                      <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                      <li key={idx} className="text-xs text-slate-100 leading-relaxed flex items-start gap-2.5">
                                         <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] mt-2 shrink-0" />
                                         <span>{step}</span>
                                       </li>
@@ -2482,14 +2509,14 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                   <div key={key} className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-2.5">
                                     <div className="flex items-center gap-2">
                                       <span className="w-2 h-2 rounded-full bg-[#C7F33C]" />
-                                      <span className="text-sm font-bold text-slate-100 uppercase tracking-wider">
+                                      <span className="text-xs font-bold text-slate-100 uppercase tracking-wider">
                                         {formattedTitle}
                                       </span>
                                     </div>
                                     {Array.isArray(value) ? (
                                       <ul className="flex flex-col gap-2">
                                         {value.map((item, idx) => (
-                                          <li key={idx} className="text-sm text-slate-100 leading-relaxed flex items-start gap-2.5">
+                                          <li key={idx} className="text-xs text-slate-100 leading-relaxed flex items-start gap-2.5">
                                             <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] mt-2 shrink-0" />
                                             <span>{typeof item === 'object' ? JSON.stringify(item) : String(item)}</span>
                                           </li>
@@ -2500,7 +2527,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                         {JSON.stringify(value, null, 2)}
                                       </pre>
                                     ) : (
-                                      <p className="text-sm text-slate-100 leading-relaxed whitespace-pre-wrap font-normal">
+                                      <p className="text-xs text-slate-100 leading-relaxed whitespace-pre-wrap font-normal">
                                         {String(value)}
                                       </p>
                                     )}
@@ -2524,28 +2551,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       </span>
                                     </div>
                                   )}  
-                                  <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={handleCopySummary}
-                                    className="px-4 py-2 rounded-xl bg-[#3A3B3C] hover:bg-[#4E4F50] text-sm font-medium text-slate-200 hover:text-white flex items-center gap-2 transition-colors cursor-pointer border border-[#4E4F50]"
-                                    title="Copy summary to clipboard"
-                                  >
-                                    {isCopiedSummary ? <Check className="w-4 h-4 text-[#C7F33C]" /> : <Copy className="w-4 h-4 text-slate-400" />}
-                                    <span>{isCopiedSummary ? "Copied" : "Copy"}</span>
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    disabled={isGeneratingSummary}
-                                    onClick={handleGenerateSummary}
-                                    className="px-5 py-2 rounded-xl bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
-                                    title="Re-analyze and update summary"
-                                  >
-                                    <RefreshCw className={`w-4 h-4 ${isGeneratingSummary ? 'animate-spin' : ''}`} />
-                                    <span>{isGeneratingSummary ? 'Re-summarizing...' : 'Re-Summarize'}</span>
-                                  </button>
-                                  </div>  
                                 </div>
                               </div>
                             </div>
@@ -2587,7 +2592,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         if (sysLogs.length === 0) {
                           return (
                             <div className="text-center py-10 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50]">
-                              <p className="text-sm text-slate-300 font-medium">{activitySearchQuery.trim() ? "No system logs found." : "No system logs."}</p>
+                              <p className="text-xs text-slate-300 font-medium">{activitySearchQuery.trim() ? "No system logs found." : "No system logs."}</p>
                             </div>
                           );
                         }
@@ -2629,7 +2634,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       {isLoadingMore ? (
                         <Loader2 className="w-6 h-6 animate-spin text-[#C7F33C]" />
                       ) : (
-                        <span className="text-sm text-slate-400">Scroll for more</span>
+                        <span className="text-xs text-slate-400">Scroll for more</span>
                       )}
                     </div>
                   )}
@@ -2640,38 +2645,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             {activeTab === 'collaborate' && (
               <div className="flex flex-col gap-8">
 
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <h3 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                        <Users className="w-5 h-5 text-[#C7F33C]" />
-                        Collaborate
-                      </h3>
-                    </div>
-                    {canInvite && (
-                      <div className="relative">
-                        <button
-                          onClick={() => {
-                            setShowInviteDropdown(!showInviteDropdown);
-                            setShowTransferDropdown(false);
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-[#3A3B3C] text-slate-300 rounded-lg text-xs font-semibold transition-colors border border-[#4E4F50] hover:border-slate-400 hover:text-white"
-                        >
-                          + Add
-                        </button>
-                        <UserSearchDropdown
-                          users={users}
-                          isOpen={showInviteDropdown}
-                          onClose={() => setShowInviteDropdown(false)}
-                          onSelect={handleAddMember}
-                          actionLabel="Invite"
-                          excludeUserIds={[deal.ownerId, ...(localTeamMembers?.map(tm => tm.id) || [])]}
-                          align="right"
-                        />
-                      </div>
-                    )}
-                  </div>
-
+                <div className="flex flex-col gap-4">
                   <div className="flex flex-col gap-6">
                     {(() => {
                       const allMembers = [deal.owner, ...(localTeamMembers || []).filter(tm => tm.id !== deal.ownerId)];
@@ -2695,46 +2669,20 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                       <img src={tm.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${tm.name || tm.email || tm.id}`} alt="Avatar" className="w-full h-full object-cover" />
                                     </div>
                                     <div className="flex flex-col">
-                                      <span className="text-sm font-semibold text-slate-100">{tm.name || 'Unknown'}</span>
+                                      <span className="text-xs font-semibold text-slate-100">{tm.name || 'Unknown'}</span>
                                       <span className="text-xs text-slate-300">{isRowOwner ? 'Owner' : 'Member'}</span>
                                     </div>
                                   </div>
 
                                   <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {isRowOwner ? (
-                                      isOwner && (
-                                        <div className="relative">
-                                          <button
-                                            onClick={() => {
-                                              setShowTransferDropdown(!showTransferDropdown);
-                                              setShowInviteDropdown(false);
-                                            }}
-                                            className="px-3 py-1 text-xs font-semibold bg-[#4E4F50] border border-transparent text-slate-300 hover:bg-slate-500 hover:text-white rounded-lg transition-colors"
-                                          >
-                                            Transfer
-                                          </button>
-                                          <UserSearchDropdown
-                                            users={users}
-                                            isOpen={showTransferDropdown}
-                                            onClose={() => setShowTransferDropdown(false)}
-                                            onSelect={handleTransfer}
-                                            actionLabel="Transfer"
-                                            isLoading={isTransferring}
-                                            excludeUserIds={[deal.ownerId]}
-                                            align="right"
-                                          />
-                                        </div>
-                                      )
-                                    ) : (
-                                      (isOwner || tm.email === session?.user?.email) && (
-                                        <button
-                                          onClick={() => handleRemoveMember(tm.id)}
-                                          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-50"
-                                          title={isOwner ? "Remove from team" : "Leave team"}
-                                        >
-                                          <X className="w-4 h-4" />
-                                        </button>
-                                      )
+                                    {!isRowOwner && (isOwner || isAdmin || (session?.user?.id && tm.id === session.user.id) || (session?.user?.email && tm.email && session.user.email.toLowerCase() === tm.email.toLowerCase())) && (
+                                      <button
+                                        onClick={() => handleRemoveMember(tm.id)}
+                                        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 transition-colors disabled:opacity-50 cursor-pointer"
+                                        title={isOwner || isAdmin ? "Remove from team" : "Leave team"}
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </button>
                                     )}
                                   </div>
                                 </div>
@@ -2751,15 +2699,22 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             )}
 
             {activeTab === 'information' && (
-              <CustomerTab deal={deal} onClose={onClose} />
+              <CustomerTab ref={customerTabRef} deal={deal} onClose={onClose} />
             )}
 
             {activeTab === 'notes' && (
-              <NotesTab deal={deal} />
+              <NotesTab deal={deal} searchQuery={noteSearchQuery} />
             )}
 
             {['sharedMedia'].includes(activeTab) && (
-              <SharedMediaTab deal={deal} activityLogs={localActivityLogs} onImageClick={handleOpenPreview} />
+              <SharedMediaTab
+                deal={deal}
+                activityLogs={localActivityLogs}
+                onImageClick={handleOpenPreview}
+                activeSubTab={sharedMediaSubTab}
+                onSubTabChange={setSharedMediaSubTab}
+                hideHeader={true}
+              />
             )}
           </div>
 
@@ -2769,7 +2724,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
               {/* Mini Calendar Popup */}
               {canEditDueDate && showCalendar && (
-                <div ref={calendarRef} className="absolute bottom-[100%] left-4 mb-2 bg-[#3A3B3C] border border-[#4E4F50] rounded-2xl shadow-xl p-4 z-50 w-[280px]">
+                <div ref={calendarRef} className="absolute bottom-[100%] left-4 mb-2 bg-[#3A3B3C] border border-[#4E4F50] rounded-2xl p-4 z-50 w-[280px]">
                   <div className="flex items-center justify-between mb-4">
                     <button
                       onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
@@ -2854,83 +2809,137 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 </div>
               )}
 
-              <div {...getRootProps()} className={`flex gap-3 bg-[#3A3B3C] p-2 rounded-2xl border transition-colors ${isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
+              {/* Attachments / Due Date Preview */}
+              {(pendingDueDate || pendingAttachments.length > 0) && (
+                <div className="px-2 pb-1.5 flex flex-wrap gap-2 items-center">
+                  {pendingDueDate && (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-black text-[#d4ff3a] border border-[#C7F33C]/20">
+                      <BellRing className="w-3 h-3" />
+                      {pendingDueDate === 'REMOVE' ? 'Remove Due Date' : `Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(pendingDueDate)}`}
+                      <button onClick={() => setPendingDueDate(null)} className="ml-1 opacity-70 hover:opacity-100 transition-opacity">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  )}
+                  {pendingAttachments.map((file, idx) => {
+                     const isImg = file.type.startsWith('image/');
+                     const objectUrl = isImg ? URL.createObjectURL(file) : null;
+                     return (
+                       <div key={idx} className="relative group/att rounded-lg overflow-hidden border border-[#4E4F50] bg-[#252728] flex items-center justify-center">
+                         {isImg && objectUrl ? (
+                           <img src={objectUrl} alt="preview" className="h-10 w-10 object-cover" />
+                         ) : (
+                           <div className="h-10 w-10 flex items-center justify-center text-slate-400">
+                             <Paperclip className="w-4 h-4" />
+                           </div>
+                         )}
+                         <button
+                           onClick={() => setPendingAttachments(prev => prev.filter((_, i) => i !== idx))}
+                           className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/att:opacity-100 transition-opacity scale-75 hover:scale-100"
+                         >
+                           <X className="w-3 h-3" />
+                         </button>
+                       </div>
+                     );
+                  })}
+                </div>
+              )}
+
+              {/* Single Row Chat Input (LINE / WhatsApp style) */}
+              <div {...getRootProps()} className={`flex items-center gap-2 bg-[#3A3B3C] px-3 py-1.5 rounded-full border transition-colors ${isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
                 <input {...getInputProps()} />
-                <div className="w-10 h-10 rounded-full bg-[#4E4F50] shrink-0 overflow-hidden mt-1 ml-1">
-                  <img src={session?.user?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${session?.user?.name || session?.user?.email || "User"}`} alt="Avatar" className="w-full h-full object-cover" />
-                </div>
-                <div className="flex-1 flex flex-col">
-                  {/* Previews and Pending Due Date */}
-                  <div className="px-2 pt-1 pb-1 flex flex-wrap gap-2">
-                    {pendingDueDate && (
-                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-black text-[#d4ff3a]">
-                        <BellRing className="w-3 h-3" />
-                        {pendingDueDate === 'REMOVE' ? 'Remove Due Date' : `Selected Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(pendingDueDate)}`}
-                        <button onClick={() => setPendingDueDate(null)} className="ml-1 opacity-70 hover:opacity-100 transition-opacity">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </span>
-                    )}
-                    {pendingAttachments.map((file, idx) => {
-                       const isImg = file.type.startsWith('image/');
-                       const objectUrl = isImg ? URL.createObjectURL(file) : null;
-                       return (
-                         <div key={idx} className="relative group/att rounded-lg overflow-hidden border border-[#4E4F50] bg-[#252728] flex items-center justify-center">
-                           {isImg && objectUrl ? (
-                             <img src={objectUrl} alt="preview" className="h-12 w-12 object-cover" />
-                           ) : (
-                             <div className="h-12 w-12 flex items-center justify-center text-slate-400">
-                               <Paperclip className="w-4 h-4" />
-                             </div>
-                           )}
-                           <button
-                             onClick={() => setPendingAttachments(prev => prev.filter((_, i) => i !== idx))}
-                             className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover/att:opacity-100 transition-opacity scale-75 hover:scale-100 shadow-lg"
-                           >
-                             <X className="w-3 h-3" />
-                           </button>
-                         </div>
-                       );
-                    })}
-                  </div>
 
-                  <textarea
-                    ref={inputRef}
-                    value={newLog}
-                    onChange={e => setNewLog(e.target.value)}
-                    placeholder={isDragActive ? "Drop files here..." : "Write an update..."}
-                    className="w-full bg-transparent border-none rounded-xl text-white px-2 py-2 text-sm min-h-[40px] focus:outline-none resize-none custom-scrollbar"
-                    rows={newLog.split('\n').length > 1 ? Math.min(newLog.split('\n').length, 12) : 1}
-                  />
-
-                  <div className="flex justify-between items-center mt-2 pr-1 pb-1">
-                    <div className="flex items-center gap-1">
-                      {session?.user?.id && (
-                        <ChatAttachmentButton
-                          onFileSelect={(files) => setPendingAttachments(prev => [...prev, ...files])}
-                        />
-                      )}
-                      {canEditDueDate && (
-                        <button
-                          onClick={() => setShowCalendar(!showCalendar)}
-                          title="Set Due Date"
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ml-1 ${(pendingDueDate && pendingDueDate !== 'REMOVE') || (!pendingDueDate && deal.dueDate) ? 'bg-[#C7F33C] text-black' : 'hover:bg-[#3A3B3C] text-slate-100'}`}
-                        >
-                          <BellRing className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                    <button
-                      onClick={handleAddLog}
-                      disabled={isSubmittingLog || (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate)}
-                      className="flex items-center gap-2 bg-[#C7F33C] text-black px-4 py-1.5 rounded-full text-xs font-bold hover:bg-[#b0d635] transition-colors disabled:opacity-50 "
-                    >
-                      {isSubmittingLog ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                      {isSubmittingLog ? "Posting..." : "Post"}
-                    </button>
-                  </div>
+                {/* Left Action Buttons: Attach & Due Date */}
+                <div className="flex items-center gap-1 shrink-0">
+                  {session?.user?.id && (
+                    <ChatAttachmentButton
+                      onFileSelect={(files) => setPendingAttachments(prev => [...prev, ...files])}
+                    />
+                  )}
+                  {canEditDueDate && (() => {
+                    const activeDueDate = (pendingDueDate && pendingDueDate !== 'REMOVE')
+                      ? pendingDueDate
+                      : (!pendingDueDate && deal.dueDate ? deal.dueDate : null);
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setShowCalendar(!showCalendar)}
+                        title={activeDueDate ? `Due: ${formatShortDueDate(activeDueDate)} (Click to change)` : "Set Due Date"}
+                        className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                          activeDueDate
+                            ? 'bg-[#C7F33C] text-black font-bold text-[11px] px-2.5 gap-1.5'
+                            : 'w-7 px-0 hover:bg-[#4E4F50] text-slate-300'
+                        }`}
+                      >
+                        <BellRing className="w-3.5 h-3.5 shrink-0" />
+                        {activeDueDate && (
+                          <span className="whitespace-nowrap tracking-tight">{formatShortDueDate(activeDueDate)}</span>
+                        )}
+                      </button>
+                    );
+                  })()}
                 </div>
+
+                {/* Single-row Input with Enter to Post */}
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={newLog}
+                  onChange={e => setNewLog(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (!isSubmittingLog && (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate)) {
+                        handleAddLog();
+                      }
+                    }
+                  }}
+                  placeholder={isDragActive ? "Drop files here..." : "Write an update..."}
+                  className="flex-1 bg-transparent border-none text-white text-xs focus:outline-none placeholder:text-slate-400 min-w-0"
+                />
+
+                {/* Send Button / Indicator */}
+                {isSubmittingLog ? (
+                  <Loader2 className="w-4 h-4 text-[#C7F33C] animate-spin shrink-0 mr-1" />
+                ) : (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate) ? (
+                  <button
+                    type="button"
+                    onClick={handleAddLog}
+                    className="shrink-0 p-1 rounded-full text-[#C7F33C] hover:bg-black/20 transition-colors cursor-pointer mr-0.5"
+                    title="Send (Enter)"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                ) : null}
               </div>
+            </div>
+          )}
+
+          {/* Mobile Bottom Tab Bar (Icons only - no text) */}
+          {rightMenus.length > 0 && (
+            <div className="flex md:hidden w-full h-12 border-t border-[#1C1C1D] bg-[#252728] items-center justify-around px-3 shrink-0 z-10">
+              {rightMenus.map(menu => {
+                const tabId = menu.key.split('.').pop() as TabType;
+                const Icon = tabId === 'summary' || menu.key === 'pipeline.summary' 
+                  ? Bot 
+                  : (menu.iconName ? IconMap[menu.iconName] || MessageSquare : MessageSquare);
+                const isActive = activeTab === tabId || (activeTab === 'system' && tabId === 'activity');
+                return (
+                  <button
+                    key={menu.key}
+                    type="button"
+                    onClick={() => setActiveTab(tabId)}
+                    title={menu.label}
+                    className={`flex items-center justify-center h-9 w-9 rounded-full transition-all duration-200 cursor-pointer ${
+                      isActive
+                        ? "bg-[#3A3B3C] text-[#C7F33C]"
+                        : "text-slate-400 hover:bg-[#3A3B3C]/50 hover:text-slate-200"
+                    }`}
+                  >
+                    <Icon className="h-5 w-5" strokeWidth={isActive ? 2.5 : 2} />
+                  </button>
+                );
+              })}
             </div>
           )}
 
@@ -2956,7 +2965,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
             <button
               type="button"
-              className="p-2.5 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer pointer-events-auto shadow-lg"
+              className="p-2.5 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer pointer-events-auto"
               onClick={() => setPreviewLightbox(null)}
               title="Close (Esc)"
             >
@@ -2968,7 +2977,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           {previewLightbox.images.length > 1 && (
             <button
               type="button"
-              className="absolute left-6 z-10 p-3 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer backdrop-blur-md shadow-2xl hover:scale-105 active:scale-95"
+              className="absolute left-6 z-10 p-3 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer backdrop-blur-md hover:scale-105 active:scale-95"
               onClick={(e) => {
                 e.stopPropagation();
                 setPreviewLightbox(prev => {
@@ -2988,7 +2997,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             <img
               key={previewLightbox.images[previewLightbox.currentIndex]}
               src={previewLightbox.images[previewLightbox.currentIndex]}
-              className="max-w-[90vw] max-h-[85vh] object-contain rounded-xl shadow-2xl transition-all"
+              className="max-w-[90vw] max-h-[85vh] object-contain rounded-xl transition-all"
               onClick={e => e.stopPropagation()}
               alt={`Preview ${previewLightbox.currentIndex + 1}`}
             />
@@ -2998,7 +3007,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
           {previewLightbox.images.length > 1 && (
             <button
               type="button"
-              className="absolute right-6 z-10 p-3 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer backdrop-blur-md shadow-2xl hover:scale-105 active:scale-95"
+              className="absolute right-6 z-10 p-3 rounded-full bg-[#1C1C1D]/80 border border-[#3A3B3C] text-slate-200 hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer backdrop-blur-md hover:scale-105 active:scale-95"
               onClick={(e) => {
                 e.stopPropagation();
                 setPreviewLightbox(prev => {
@@ -3019,7 +3028,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               className="absolute bottom-6 inset-x-0 flex justify-center items-center gap-2 z-10 pointer-events-auto px-4 overflow-x-auto max-w-full"
               onClick={e => e.stopPropagation()}
             >
-              <div className="bg-[#1C1C1D]/80 border border-[#3A3B3C] p-1.5 rounded-2xl flex items-center gap-2 backdrop-blur-md shadow-xl">
+              <div className="bg-[#1C1C1D]/80 border border-[#3A3B3C] p-1.5 rounded-2xl flex items-center gap-2 backdrop-blur-md">
                 {previewLightbox.images.map((imgUrl, idx) => (
                   <button
                     key={idx}
@@ -3027,7 +3036,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     onClick={() => setPreviewLightbox(prev => prev ? { ...prev, currentIndex: idx } : null)}
                     className={`w-10 h-10 rounded-lg overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
                       idx === previewLightbox.currentIndex
-                        ? "border-[#C7F33C] scale-105 shadow-md"
+                        ? "border-[#C7F33C] scale-105"
                         : "border-transparent opacity-50 hover:opacity-100 hover:border-slate-500"
                     }`}
                   >
@@ -3038,6 +3047,21 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             </div>
           )}
         </div>
+      )}
+
+      {/* Won / Lost Modal */}
+      {wonLostModalState.isOpen && (
+        <WonLostModal
+          deal={deal}
+          status={wonLostModalState.status}
+          onClose={() => setWonLostModalState((prev) => ({ ...prev, isOpen: false }))}
+          onSuccess={() => {
+            setWonLostModalState((prev) => ({ ...prev, isOpen: false }));
+            mutate((key) => typeof key === "string" && key.startsWith("pipeline-opportunities"));
+            mutate(["opportunity", deal.id]);
+            onClose();
+          }}
+        />
       )}
     </>
   );

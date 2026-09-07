@@ -28,7 +28,7 @@ function AuthErrorContent() {
       
       <Link 
         href="/"
-        className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-3.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors "
+        className="flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-5 py-3.5 text-xs font-medium text-white hover:bg-slate-800 transition-colors "
       >
         <ArrowLeft className="w-4 h-4" />
         Back to Login

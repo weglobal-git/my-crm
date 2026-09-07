@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { ContactType, ContactStatus } from "@prisma/client";
 import { 
@@ -18,7 +18,7 @@ import {
   Check,
   X
 } from "lucide-react";
-import useSWR, { preload } from "swr";
+import useSWR, { preload, mutate } from "swr";
 import { pusherClient } from "@/lib/pusher";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { 
@@ -46,6 +46,43 @@ const CreateAccountPanel = dynamic(loadCreateAccountPanel, { ssr: false });
 // Canonical fetcher shared across SWR hooks and hover preload
 const fetchAccountOverview = ([, compId]: [string, string]) =>
   getAccountOverview(compId, { includeAddresses: true, includeLogs: false });
+
+// Canonical fetcher shared across SWR filter cache and hover/idle preloading
+const fetchCompaniesFilter = ([, status, type, country, search]: readonly [
+  string,
+  "QUALIFIED" | "UNQUALIFIED",
+  ContactType,
+  string,
+  string
+]) =>
+  getCompaniesWithContacts({
+    status,
+    type,
+    country: country === "ALL" ? "" : country,
+    search,
+    page: 1,
+    pageSize: 20,
+  });
+
+function CompanyCardSkeleton() {
+  return (
+    <div className="p-2.5 px-3 rounded-2xl bg-[#2E3033]/60 animate-pulse select-none border-0">
+      <div className="flex items-center justify-between gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="w-7 h-7 rounded-lg bg-[#3A3B3C] shrink-0" />
+          <div className="flex flex-col min-w-0 flex-1 gap-1.5">
+            <div className="h-3 w-28 bg-[#3A3B3C] rounded" />
+            <div className="h-2.5 w-16 bg-[#3A3B3C]/70 rounded" />
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
+          <div className="h-3.5 w-12 bg-[#3A3B3C] rounded-full" />
+          <div className="h-2.5 w-14 bg-[#3A3B3C]/70 rounded" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const ACCOUNT_TYPES: { label: string; value: ContactType }[] = [
   { label: "Customer", value: "CUSTOMER" },
@@ -83,7 +120,6 @@ export function ContactView({
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(initialTotal > initialCompanies.length);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
   const [stats, setStats] = useState(initialStats);
   const [totalCompanies, setTotalCompanies] = useState(initialTotal);
 
@@ -180,62 +216,71 @@ export function ContactView({
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  const isInitialMount = useRef(true);
+  // Memoized fallback filter data for initial SSR state
+  const fallbackFilterData = useMemo(() => ({
+    companies: initialCompanies,
+    total: initialTotal,
+    page: 1,
+    pageSize: 20,
+    hasMore: initialTotal > initialCompanies.length,
+    stats: initialStats,
+  }), [initialCompanies, initialTotal, initialStats]);
 
-  // Fetch initial batch whenever filters or search change
-  const fetchFilteredCompanies = useCallback(async () => {
-    setIsSearching(true);
-    pageRef.current = 1;
+  // SWR-Managed Filter Cache
+  const currentFilterKey = `${activeTab}|${activeType}|${selectedCountry}|${debouncedSearch}`;
+  const [appliedFilterKey, setAppliedFilterKey] = useState(
+    `QUALIFIED|CUSTOMER|ALL|`
+  );
+
+  const isInitialFilter =
+    activeTab === "QUALIFIED" &&
+    activeType === "CUSTOMER" &&
+    selectedCountry === "ALL" &&
+    !debouncedSearch;
+
+  const {
+    data: filterData,
+    isLoading: isFilterLoading,
+    mutate: mutateFilter,
+  } = useSWR(
+    ["companies-filter", activeTab, activeType, selectedCountry, debouncedSearch] as const,
+    fetchCompaniesFilter,
+    {
+      fallbackData: isInitialFilter ? fallbackFilterData : undefined,
+      dedupingInterval: 30_000,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: true,
+    }
+  );
+
+  // Synchronize filterData with companies state when filter changes or data arrives
+  if (appliedFilterKey !== currentFilterKey && filterData) {
+    setAppliedFilterKey(currentFilterKey);
+    setCompanies(filterData.companies);
     setPage(1);
+    setHasMore(filterData.hasMore);
+    setStats(filterData.stats);
+    setTotalCompanies(filterData.total);
 
+    // Auto-select first company or maintain selection if present
+    if (filterData.companies.length > 0) {
+      if (!filterData.companies.some((c) => c.id === selectedCompanyId)) {
+        setSelectedCompanyId(filterData.companies[0].id);
+      }
+    } else {
+      setSelectedCompanyId(null);
+    }
+  }
+
+  // Reset scroll to top when applied filter changes
+  useEffect(() => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
+  }, [appliedFilterKey]);
 
-    try {
-      const res = await getCompaniesWithContacts({
-        status: activeTab,
-        type: activeType,
-        country: selectedCountry === "ALL" ? "" : selectedCountry,
-        search: debouncedSearch,
-        page: 1,
-        pageSize: 20,
-      });
-
-      setCompanies(res.companies);
-      setPage(1);
-      pageRef.current = 1;
-      setHasMore(res.hasMore);
-      hasMoreRef.current = res.hasMore;
-      setStats(res.stats);
-      setTotalCompanies(res.total);
-
-      // Auto-select first company if previous selection is not in list
-      if (res.companies.length > 0) {
-        setSelectedCompanyId((prev) => {
-          if (prev && res.companies.some((c: CompanyMasterItem) => c.id === prev)) {
-            return prev;
-          }
-          return res.companies[0].id;
-        });
-      } else {
-        setSelectedCompanyId(null);
-      }
-    } catch (err) {
-      console.error("Failed to fetch companies:", err);
-    } finally {
-      setIsSearching(false);
-    }
-  }, [activeTab, activeType, selectedCountry, debouncedSearch, setSelectedCompanyId]);
-
-  // Trigger re-fetch when filter changes (skip initial mount to avoid duplicate fetch of SSR data)
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    void fetchFilteredCompanies();
-  }, [fetchFilteredCompanies]);
+  const isFilterTransitioning =
+    appliedFilterKey !== currentFilterKey || (isFilterLoading && !filterData);
 
   // Idle Background Preloading: warm-fills SWR cache for top visible accounts (0ms transition on click)
   useEffect(() => {
@@ -248,6 +293,21 @@ export function ContactView({
     }, 200);
     return () => clearTimeout(timer);
   }, [companies]);
+
+  // Idle Background Preloading: warm-fills SWR filter cache for adjacent tabs (Trader & Unqualified)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void preload(
+        ["companies-filter", "QUALIFIED", "TRADER", "ALL", ""] as const,
+        fetchCompaniesFilter
+      );
+      void preload(
+        ["companies-filter", "UNQUALIFIED", "CUSTOMER", "ALL", ""] as const,
+        fetchCompaniesFilter
+      );
+    }, 800);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Load more function for Infinite Scroll
   const loadMoreCompanies = useCallback(async () => {
@@ -493,6 +553,12 @@ export function ContactView({
     // 2. Fire Server Action in background
     try {
       await toggleCompanyStatus(compId, nextStatus);
+      // Invalidate SWR filter caches to keep all tabs fresh
+      void mutate(
+        (key) => Array.isArray(key) && key[0] === "companies-filter",
+        undefined,
+        { revalidate: true }
+      );
     } catch (err) {
       console.error("Failed to toggle company status:", err);
       // Only rollback if this is still the most recent toggle request for this company
@@ -575,6 +641,12 @@ export function ContactView({
           <button
             type="button"
             onClick={() => setActiveTab("QUALIFIED")}
+            onPointerEnter={() => {
+              void preload(
+                ["companies-filter", "QUALIFIED", activeType, selectedCountry, debouncedSearch] as const,
+                fetchCompaniesFilter
+              );
+            }}
             className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-2 cursor-pointer ${
               activeTab === "QUALIFIED"
                 ? "bg-[#C7F33C] text-black"
@@ -597,6 +669,12 @@ export function ContactView({
           <button
             type="button"
             onClick={() => setActiveTab("UNQUALIFIED")}
+            onPointerEnter={() => {
+              void preload(
+                ["companies-filter", "UNQUALIFIED", activeType, selectedCountry, debouncedSearch] as const,
+                fetchCompaniesFilter
+              );
+            }}
             className={`px-4 py-1.5 text-xs font-bold rounded-full transition-all flex items-center gap-2 cursor-pointer ${
               activeTab === "UNQUALIFIED"
                 ? "bg-[#C7F33C] text-black"
@@ -650,6 +728,12 @@ export function ContactView({
             key={item.value}
             type="button"
             onClick={() => setActiveType(item.value)}
+            onPointerEnter={() => {
+              void preload(
+                ["companies-filter", activeTab, item.value, selectedCountry, debouncedSearch] as const,
+                fetchCompaniesFilter
+              );
+            }}
             className={`px-3.5 py-1 rounded-full text-xs font-semibold transition-colors shrink-0 cursor-pointer ${
               activeType === item.value
                 ? "bg-[#C7F33C] text-black font-bold"
@@ -733,6 +817,12 @@ export function ContactView({
                         setSelectedCountry("ALL");
                         setIsCountryDropdownOpen(false);
                       }}
+                      onPointerEnter={() => {
+                        void preload(
+                          ["companies-filter", activeTab, activeType, "ALL", debouncedSearch] as const,
+                          fetchCompaniesFilter
+                        );
+                      }}
                       className={`w-full px-2.5 py-1.5 rounded-xl text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
                         selectedCountry === "ALL"
                           ? "bg-[#C7F33C] text-black font-bold"
@@ -759,6 +849,12 @@ export function ContactView({
                           onClick={() => {
                             setSelectedCountry(c.country);
                             setIsCountryDropdownOpen(false);
+                          }}
+                          onPointerEnter={() => {
+                            void preload(
+                              ["companies-filter", activeTab, activeType, c.country, debouncedSearch] as const,
+                              fetchCompaniesFilter
+                            );
                           }}
                           className={`w-full px-2.5 py-1.5 rounded-xl text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
                             selectedCountry === c.country
@@ -805,9 +901,12 @@ export function ContactView({
             onScroll={handleScroll}
             className="flex-1 overflow-y-auto hide-scrollbar p-3 space-y-2.5"
           >
-            {isSearching ? (
-              <div className="flex items-center justify-center p-12">
-                <Loader2 className="w-6 h-6 text-[#C7F33C] animate-spin" />
+            {isFilterTransitioning ? (
+              <div className="space-y-2.5">
+                <CompanyCardSkeleton />
+                <CompanyCardSkeleton />
+                <CompanyCardSkeleton />
+                <CompanyCardSkeleton />
               </div>
             ) : companies.length === 0 ? (
               <div className="text-center p-8 text-slate-500 text-xs">
@@ -1057,7 +1156,7 @@ export function ContactView({
         isOpen={isCreateAccountOpen}
         onClose={() => setIsCreateAccountOpen(false)}
         onAccountCreated={(newAcc) => {
-          fetchFilteredCompanies();
+          void mutateFilter();
           setSelectedCompanyId(newAcc.id);
         }}
       />

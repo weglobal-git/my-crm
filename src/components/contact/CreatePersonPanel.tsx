@@ -230,7 +230,7 @@ export function CreatePersonPanel({
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
                 Target Account
               </span>
-              <span className="text-sm font-bold text-slate-100 truncate block">
+              <span className="text-xs font-bold text-slate-100 truncate block">
                 {prefillCompany?.name || "No Account Selected"}
               </span>
             </div>
@@ -324,7 +324,7 @@ export function CreatePersonPanel({
                 onChange={handleChange}
                 placeholder="e.g. Somchai Suksan"
                 required
-                className="bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               />
             </div>
 
@@ -340,7 +340,7 @@ export function CreatePersonPanel({
                 value={form.role}
                 onChange={handleChange}
                 placeholder="e.g. Procurement Lead / MD"
-                className="bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               />
             </div>
 
@@ -356,7 +356,7 @@ export function CreatePersonPanel({
                 value={form.contactDepartment}
                 onChange={handleChange}
                 placeholder="e.g. HR, Purchasing, Procurement, Marketing"
-                className="bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+                className="bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
               />
             </div>
 
@@ -459,7 +459,7 @@ export function CreatePersonPanel({
                 name="status"
                 value={form.status}
                 onChange={handleChange}
-                className="bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0 cursor-pointer"
+                className="bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0 cursor-pointer"
               >
                 <option value="UNQUALIFIED">Unqualified</option>
                 <option value="QUALIFIED">Qualified</option>
@@ -480,7 +480,7 @@ export function CreatePersonPanel({
           <button
             type="submit"
             disabled={isSubmitting}
-            className="px-6 py-2.5 rounded-xl text-sm font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-2 disabled:opacity-50"
+            className="px-6 py-2.5 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-2 disabled:opacity-50"
           >
             {isSubmitting ? (
               <Loader2 className="w-4 h-4 animate-spin text-black" />

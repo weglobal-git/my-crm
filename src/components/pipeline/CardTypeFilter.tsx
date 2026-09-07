@@ -8,9 +8,10 @@ export type CardTypeFilterValue = "ALL" | "SALES_DEAL" | "INTERNAL_TASK";
 interface CardTypeFilterProps {
   value: CardTypeFilterValue;
   onChange: (value: CardTypeFilterValue) => void;
+  variant?: "dropdown" | "segmented";
 }
 
-export function CardTypeFilter({ value, onChange }: CardTypeFilterProps) {
+export function CardTypeFilter({ value, onChange, variant = "dropdown" }: CardTypeFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -30,6 +31,49 @@ export function CardTypeFilter({ value, onChange }: CardTypeFilterProps) {
     onChange(newValue);
     setIsOpen(false);
   };
+
+  if (variant === "segmented") {
+    return (
+      <div className="grid grid-cols-3 gap-1.5 bg-[#1C1C1D] p-1 rounded-xl">
+        <button
+          type="button"
+          onClick={() => onChange("ALL")}
+          className={`py-2 px-1 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            value === "ALL"
+              ? "bg-[#3A3B3C] text-slate-100"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">All Cards</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange("SALES_DEAL")}
+          className={`py-2 px-1 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            value === "SALES_DEAL"
+              ? "bg-[#3A3B3C] text-slate-100"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <Briefcase className={`w-3.5 h-3.5 shrink-0 ${value === "SALES_DEAL" ? "text-[#C7F33C]" : ""}`} />
+          <span className="truncate">Sales</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange("INTERNAL_TASK")}
+          className={`py-2 px-1 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            value === "INTERNAL_TASK"
+              ? "bg-[#3A3B3C] text-slate-100"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <Wrench className={`w-3.5 h-3.5 shrink-0 ${value === "INTERNAL_TASK" ? "text-[#C7F33C]" : ""}`} />
+          <span className="truncate">Tasks</span>
+        </button>
+      </div>
+    );
+  }
 
   const getLabelAndIcon = () => {
     switch (value) {
@@ -62,7 +106,7 @@ export function CardTypeFilter({ value, onChange }: CardTypeFilterProps) {
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer shadow-sm ${
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${
           current.isActive
             ? "bg-[#252728] text-slate-100 border-[#C7F33C]/60 hover:bg-[#3A3B3C]"
             : "bg-[#252728] text-slate-300 border-[#3A3B3C] hover:bg-[#3A3B3C] hover:text-slate-100 hover:border-[#4E4F50]"
@@ -82,7 +126,7 @@ export function CardTypeFilter({ value, onChange }: CardTypeFilterProps) {
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-44 bg-[#252728] border border-[#3A3B3C] rounded-2xl p-1.5 shadow-2xl z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md">
+        <div className="absolute right-0 top-full mt-2 w-44 bg-[#252728] border border-[#3A3B3C] rounded-2xl p-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md">
           <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-[#3A3B3C]/60 mb-1">
             Card Type
           </div>

@@ -118,7 +118,7 @@ export default function UserProfileClient() {
               <input 
                 type="text" 
                 placeholder="Search..." 
-                className="w-full bg-[#3A3B3C] border border-transparent rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-all"
+                className="w-full bg-[#3A3B3C] border border-transparent rounded-lg pl-9 pr-3 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-all"
               />
             </div>
           }
@@ -173,7 +173,7 @@ export default function UserProfileClient() {
                   </div>
                   <div className="flex flex-col">
                     <span className="font-semibold text-slate-100">Profile Picture</span>
-                    <span className="text-sm text-slate-400">Click to select an avatar.</span>
+                    <span className="text-xs text-slate-400">Click to select an avatar.</span>
                   </div>
                 </div>
               </SettingsRow>
@@ -200,7 +200,7 @@ export default function UserProfileClient() {
                         {isUpdatingAvatar ? "Uploading..." : "Upload Photo"}
                       </button>
                     </div>
-                    <button onClick={() => setIsAvatarModalOpen(false)} className="text-sm text-slate-400 hover:text-slate-300">Close</button>
+                    <button onClick={() => setIsAvatarModalOpen(false)} className="text-xs text-slate-400 hover:text-slate-300">Close</button>
                   </div>
                   <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-3 overflow-y-auto custom-scrollbar p-1">
                     {PREDEFINED_AVATARS.slice(0, avatarLimit).map((url, idx) => (
@@ -232,7 +232,7 @@ export default function UserProfileClient() {
                 <div className="flex items-center justify-between w-full py-1">
                   <div className="flex flex-col w-1/3">
                     <span className="font-semibold text-slate-100">Nickname</span>
-                    <span className="text-sm text-slate-400 hidden sm:block">How you appear to others</span>
+                    <span className="text-xs text-slate-400 hidden sm:block">How you appear to others</span>
                   </div>
                   <div className="flex-1 flex justify-end">
                     <input 
@@ -270,18 +270,18 @@ export default function UserProfileClient() {
                 <div className="flex items-center justify-between w-full py-1">
                   <div className="flex flex-col">
                     <span className="font-semibold text-slate-100">Display Language</span>
-                    <span className="text-sm text-slate-400">Change the system interface language</span>
+                    <span className="text-xs text-slate-400">Change the system interface language</span>
                   </div>
                   <div className="flex bg-[#252728] p-1 rounded-lg">
                     <button 
                       onClick={() => setLanguage('EN')}
-                      className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${language === 'EN' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
+                      className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${language === 'EN' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
                     >
                       English (EN)
                     </button>
                     <button 
                       onClick={() => setLanguage('TH')}
-                      className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${language === 'TH' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
+                      className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${language === 'TH' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
                     >
                       ภาษาไทย (TH)
                     </button>
@@ -299,24 +299,24 @@ export default function UserProfileClient() {
                 <div className="flex items-center justify-between w-full py-1">
                   <div className="flex flex-col">
                     <span className="font-semibold text-slate-100">Theme Mode</span>
-                    <span className="text-sm text-slate-400">Select your preferred color scheme</span>
+                    <span className="text-xs text-slate-400">Select your preferred color scheme</span>
                   </div>
                   <div className="flex bg-[#252728] p-1 rounded-lg">
                     <button 
                       onClick={() => setTheme('light')}
-                      className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${theme === 'light' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
+                      className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${theme === 'light' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
                     >
                       Light
                     </button>
                     <button 
                       onClick={() => setTheme('dark')}
-                      className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${theme === 'dark' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
+                      className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${theme === 'dark' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
                     >
                       Dark
                     </button>
                     <button 
                       onClick={() => setTheme('system')}
-                      className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${theme === 'system' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
+                      className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${theme === 'system' ? 'bg-[#4E4F50] text-slate-100' : 'text-slate-400 hover:text-slate-300'}`}
                     >
                       System
                     </button>
@@ -334,9 +334,9 @@ export default function UserProfileClient() {
                 <div className="flex items-center justify-between w-full py-1">
                   <div className="flex flex-col">
                     <span className="font-semibold text-slate-100">LINE Notify</span>
-                    <span className="text-sm text-slate-400">Receive system alerts via LINE messaging</span>
+                    <span className="text-xs text-slate-400">Receive system alerts via LINE messaging</span>
                   </div>
-                  <button className="flex items-center gap-2 bg-[#00B900] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#009900] transition-colors">
+                  <button className="flex items-center gap-2 bg-[#00B900] text-white px-4 py-2 rounded-lg text-xs font-medium hover:bg-[#009900] transition-colors">
                     <div className="w-4 h-4 bg-white rounded-full flex items-center justify-center">
                       <div className="w-2.5 h-2.5 bg-[#00B900] rounded-full"></div>
                     </div>

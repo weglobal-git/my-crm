@@ -183,7 +183,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
               {user.image ? (
                 <Image src={user.image} alt={user.name || "User"} width={40} height={40} unoptimized className="w-full h-full object-cover" />
               ) : (
-                <span className="font-bold text-sm">
+                <span className="font-bold text-xs">
                   {user.name?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase() || "?"}
                 </span>
               )}
@@ -281,7 +281,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
         </SettingsRow>
       ))}
       {userList.length === 0 && (
-        <div className="py-10 text-center text-slate-300 text-sm">
+        <div className="py-10 text-center text-slate-300 text-xs">
           No users found.
         </div>
       )}
@@ -299,16 +299,16 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
           </div>
           <div className="p-6 flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-semibold text-slate-300">Name</label>
-              <input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#C7F33C]" placeholder="Enter full name" autoFocus/>
+              <label className="text-xs font-semibold text-slate-300">Name</label>
+              <input type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[#C7F33C]" placeholder="Enter full name" autoFocus/>
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-semibold text-slate-300">Email</label>
-              <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#C7F33C]" placeholder="Email address"/>
+              <label className="text-xs font-semibold text-slate-300">Email</label>
+              <input type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[#C7F33C]" placeholder="Email address"/>
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-semibold text-slate-300">Role</label>
-              <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})} className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#C7F33C]">
+              <label className="text-xs font-semibold text-slate-300">Role</label>
+              <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value as Role})} className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[#C7F33C]">
                 <option value="GENERAL">GENERAL</option>
                 <option value="MANAGEMENT">MANAGEMENT</option>
                 <option value="ADMIN">ADMIN</option>
@@ -316,11 +316,11 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
             </div>
             {addingUserToDeptId === 'ALL' && (
               <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-slate-300">Department</label>
+                <label className="text-xs font-semibold text-slate-300">Department</label>
                 <select 
                   value={newUser.departmentIds[0] || ""} 
                   onChange={e => setNewUser({...newUser, departmentIds: e.target.value ? [e.target.value] : []})} 
-                  className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#C7F33C]"
+                  className="w-full bg-[#252728] border border-[#4E4F50] text-slate-100 rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-[#C7F33C]"
                 >
                   <option value="">No Department</option>
                   {departments.map(d => (
@@ -331,8 +331,8 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
             )}
           </div>
           <div className="px-6 py-4 border-t border-[#4E4F50] bg-[#252728] flex items-center justify-end gap-3">
-            <button onClick={() => setAddingUserToDeptId(null)} className="px-4 py-2 text-sm font-medium text-slate-300 hover:text-white transition-colors">Cancel</button>
-            <button onClick={handleCreateUser} disabled={isCreatingUser || !newUser.name.trim() || !newUser.email.trim()} className="bg-[#C7F33C] text-black px-4 py-2 rounded-lg text-sm font-bold hover:bg-[#b5dc35] disabled:opacity-50 transition-colors">Add Member</button>
+            <button onClick={() => setAddingUserToDeptId(null)} className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white transition-colors">Cancel</button>
+            <button onClick={handleCreateUser} disabled={isCreatingUser || !newUser.name.trim() || !newUser.email.trim()} className="bg-[#C7F33C] text-black px-4 py-2 rounded-lg text-xs font-bold hover:bg-[#b5dc35] disabled:opacity-50 transition-colors">Add Member</button>
           </div>
         </div>
       </div>
@@ -350,7 +350,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
               <input 
                 type="text" 
                 placeholder="Search..." 
-                className="w-full bg-[#3A3B3C] text-slate-100 placeholder-slate-400 border border-[#4E4F50] rounded-full pl-9 pr-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-[#C7F33C] focus:border-[#C7F33C]"
+                className="w-full bg-[#3A3B3C] text-slate-100 placeholder-slate-400 border border-[#4E4F50] rounded-full pl-9 pr-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-[#C7F33C] focus:border-[#C7F33C]"
               />
             </div>
           }
@@ -390,7 +390,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
                 value={newDeptName}
                 onChange={e => setNewDeptName(e.target.value)}
                 placeholder="New Department..."
-                className="w-full bg-[#3A3B3C] text-slate-100 placeholder-slate-400 border border-[#4E4F50] rounded-full px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-[#C7F33C] focus:border-[#C7F33C]"
+                className="w-full bg-[#3A3B3C] text-slate-100 placeholder-slate-400 border border-[#4E4F50] rounded-full px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-[#C7F33C] focus:border-[#C7F33C]"
                 onKeyDown={e => e.key === 'Enter' && handleCreateDept()}
               />
             </div>
@@ -408,7 +408,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
               />
             ))}
             {departments.length === 0 && (
-              <div className="px-2 py-4 text-sm text-slate-300">
+              <div className="px-2 py-4 text-xs text-slate-300">
                 No departments created yet.
               </div>
             )}
@@ -432,7 +432,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
                 action={isAdmin ? (
                   <button 
                     onClick={() => { setAddingUserToDeptId("ALL"); setNewUser({name: "", email: "", role: "GENERAL", departmentIds: []}); }}
-                    className="flex items-center gap-1.5 bg-[#C7F33C] text-black px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-[#b5dc35] transition-colors"
+                    className="flex items-center gap-1.5 bg-[#C7F33C] text-black px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#b5dc35] transition-colors"
                   >
                     <Plus className="w-4 h-4" /> Add Member
                   </button>
@@ -468,7 +468,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
                           type="text"
                           value={editDeptName}
                           onChange={e => setEditDeptName(e.target.value)}
-                          className="bg-[#252728] text-slate-100 border border-[#4E4F50] rounded-md px-3 py-1.5 text-sm outline-none focus:border-[#C7F33C] w-48 md:w-64"
+                          className="bg-[#252728] text-slate-100 border border-[#4E4F50] rounded-md px-3 py-1.5 text-xs outline-none focus:border-[#C7F33C] w-48 md:w-64"
                           autoFocus
                           onKeyDown={e => e.key === 'Enter' && saveDeptName(dept.id)}
                         />
@@ -477,7 +477,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
                       </div>
                     ) : (
                       <>
-                        <span className="text-sm text-slate-300">
+                        <span className="text-xs text-slate-300">
                           {deptUsers.filter(u => u.role === "MANAGEMENT").length} Managers, {deptUsers.filter(u => u.role === "GENERAL").length} General
                         </span>
                         {isAdmin && (
@@ -494,7 +494,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
                             </button>
                             <button 
                               onClick={() => { setAddingUserToDeptId(dept.id); setNewUser({name: "", email: "", role: "GENERAL", departmentIds: [dept.id]}); }}
-                              className="flex items-center gap-1.5 bg-[#C7F33C] text-black px-3 py-1.5 rounded-lg text-sm font-bold hover:bg-[#b5dc35] transition-colors ml-2"
+                              className="flex items-center gap-1.5 bg-[#C7F33C] text-black px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#b5dc35] transition-colors ml-2"
                             >
                               <Plus className="w-4 h-4" /> Add Member
                             </button>
@@ -508,7 +508,7 @@ export function UserManagementClient({ initialUsers, initialDepartments, current
                 {deptUsers.length > 0 || addingUserToDeptId === dept.id ? (
                   renderUserGroup(deptUsers, true)
                 ) : (
-                  <p className="text-slate-300 text-sm mb-6 text-center py-8">No users in this department.</p>
+                  <p className="text-slate-300 text-xs mb-6 text-center py-8">No users in this department.</p>
                 )}
               </SettingsContent>
             );

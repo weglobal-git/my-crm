@@ -120,7 +120,7 @@ export function DealTypeSelector({
 
       {/* Custom CRM Standard Dropdown (matching Header.tsx layout) */}
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-52 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 p-2 shadow-xl animate-fade-in-up">
+        <div className="absolute top-full left-0 mt-2 w-52 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 p-2 animate-fade-in-up">
           <div className="px-3 py-1.5 border-b border-[#4E4F50]/60 mb-1 flex items-center justify-between">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
               Card Type
@@ -140,7 +140,7 @@ export function DealTypeSelector({
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <DealTypeIcon type="SALES_DEAL" size="sm" />
-                <span className="text-sm">Sales Deal</span>
+                <span className="text-xs">Sales Deal</span>
               </div>
               {isSales && <Check className="w-4 h-4 text-[#C7F33C] shrink-0" />}
             </button>
@@ -157,7 +157,7 @@ export function DealTypeSelector({
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <DealTypeIcon type="INTERNAL_TASK" size="sm" />
-                <span className="text-sm">Internal Task</span>
+                <span className="text-xs">Internal Task</span>
               </div>
               {!isSales && <Check className="w-4 h-4 text-[#C7F33C] shrink-0" />}
             </button>

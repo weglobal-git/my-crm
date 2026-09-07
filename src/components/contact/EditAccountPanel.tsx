@@ -925,7 +925,7 @@ export function EditAccountPanel({
                           value={displayName}
                           onChange={(e) => setDisplayName(e.target.value)}
                           placeholder="e.g. SB Interlab"
-                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
                         />
                       </div>
 
@@ -939,7 +939,7 @@ export function EditAccountPanel({
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           placeholder="e.g. SB Interlab Co., Ltd."
-                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
+                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
                         />
                       </div>
 
@@ -983,7 +983,7 @@ export function EditAccountPanel({
                           value={phone}
                           onChange={(e) => setPhone(e.target.value)}
                           placeholder="e.g. 02 123 4567 ext. 12"
-                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
+                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
                         />
                       </div>
                     </div>
@@ -1001,7 +1001,7 @@ export function EditAccountPanel({
                         value={notes}
                         onChange={(e) => setNotes(e.target.value)}
                         placeholder="Internal account notes, commercial terms, or company information..."
-                        className="w-full bg-[#252728] rounded-xl p-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 resize-none"
+                        className="w-full bg-[#252728] rounded-xl p-3 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 resize-none"
                       />
                     </div>
                   </div>
@@ -1847,7 +1847,7 @@ export function EditAccountPanel({
                 <div className="p-12 text-center bg-[#3A3B3C] rounded-2xl flex flex-col items-center justify-center gap-3">
                   <Users className="w-10 h-10 text-slate-600" />
                   <div>
-                    <span className="text-sm font-semibold text-slate-200 block">
+                    <span className="text-xs font-semibold text-slate-200 block">
                       No persons registered under {name}
                     </span>
                     <span className="text-xs text-slate-400 block mt-1">

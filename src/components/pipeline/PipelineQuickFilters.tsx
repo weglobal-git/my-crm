@@ -132,7 +132,7 @@ export function PipelineQuickFilters({
             onClick={() => handleToggle(filter)}
             className={`group relative flex items-center px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer border transition-all select-none ${
               isActive
-                ? "bg-[#C7F33C] text-slate-950 border-[#C7F33C] shadow-sm shadow-[#C7F33C]/20"
+                ? "bg-[#C7F33C] text-slate-950 border-[#C7F33C]"
                 : "bg-[#252728] text-slate-300 border-[#3A3B3C] hover:bg-[#3A3B3C] hover:text-slate-100 hover:border-[#4E4F50]"
             }`}
             title={isActive ? `Click to clear "${filter}" filter` : `Filter by "${filter}"`}
@@ -158,7 +158,7 @@ export function PipelineQuickFilters({
 
       {/* Inline Add Input */}
       {isAdding ? (
-        <div className="flex items-center gap-1 bg-[#1E1F20] border border-[#C7F33C] rounded-full px-2 py-0.5 shadow-sm">
+        <div className="flex items-center gap-1 bg-[#1E1F20] border border-[#C7F33C] rounded-full px-2 py-0.5">
           <input
             ref={inputRef}
             type="text"

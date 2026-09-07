@@ -95,7 +95,7 @@ export function ProjectsTab({
       {/* Header Info */}
       <div className="flex items-center justify-between pb-4 border-b border-[#3A3B3C]">
         <div>
-          <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+          <h3 className="text-xs font-bold text-slate-100 flex items-center gap-2">
             <Briefcase className="w-4 h-4 text-[#C7F33C]" />
             Deals / Projects for Account: {companyName}
           </h3>
@@ -153,7 +153,7 @@ export function ProjectsTab({
               {/* Top line: Topic & Status */}
               <div className="flex items-start justify-between gap-3">
                 <div className="flex flex-col flex-1 min-w-0">
-                  <span className="text-sm font-bold text-slate-100 truncate">
+                  <span className="text-xs font-bold text-slate-100 truncate">
                     {deal.topic}
                   </span>
                   {deal.stage && (

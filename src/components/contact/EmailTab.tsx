@@ -58,7 +58,7 @@ export function EmailTab({
       {/* Top Header */}
       <div className="flex items-center justify-between pb-4 border-b border-[#3A3B3C]">
         <div>
-          <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+          <h3 className="text-xs font-bold text-slate-100 flex items-center gap-2">
             <Mail className="w-4 h-4 text-[#C7F33C]" />
             Email Communications
           </h3>
@@ -116,7 +116,7 @@ export function EmailTab({
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               placeholder="e.g. Quotation Update & Shipping Schedule"
-              className="bg-[#252728] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
+              className="bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors border-0"
             />
           </div>
 
@@ -127,7 +127,7 @@ export function EmailTab({
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder="Write your email here..."
-              className="bg-[#252728] rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors resize-none border-0"
+              className="bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] transition-colors resize-none border-0"
             />
           </div>
 

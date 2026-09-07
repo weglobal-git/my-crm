@@ -321,13 +321,13 @@ export function AccountAISummaryPanel({
 
       {/* Slide-over Container */}
       <div
-        className={`fixed inset-y-4 right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] origin-right ${
+        className={`fixed inset-0 md:inset-y-4 md:inset-x-4 md:w-[620px] md:mx-auto lg:inset-y-4 lg:right-4 lg:left-auto lg:mx-0 w-full lg:w-[600px] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-center lg:origin-right ${
           internalIsOpen
-            ? "opacity-100 translate-x-0 scale-100"
-            : "opacity-0 translate-x-8 scale-[0.97] pointer-events-none"
+            ? "opacity-100 translate-y-0 lg:translate-x-0 scale-100"
+            : "opacity-0 translate-y-4 lg:translate-y-0 lg:translate-x-8 scale-[0.97] pointer-events-none"
         }`}
       >
-        <div className="w-[620px] max-w-[95vw] bg-[#252728] border border-[#3A3B3C] flex flex-col h-full rounded-2xl overflow-hidden">
+        <div className="w-full flex-1 bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden">
           
           {/* Header */}
           <div className="px-6 py-5 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
@@ -448,7 +448,7 @@ export function AccountAISummaryPanel({
                       <Sparkles className="w-6 h-6 animate-spin" />
                     </div>
                     <div className="space-y-1">
-                      <h4 className="text-sm font-bold text-slate-100">
+                      <h4 className="text-xs font-bold text-slate-100">
                         Analyzing Account Context & Deal History...
                       </h4>
                       <p className="text-xs text-slate-400 max-w-sm">
@@ -847,7 +847,7 @@ export function AccountAISummaryPanel({
                     type="button"
                     onClick={handleCopyAnalysis}
                     disabled={!analysis}
-                    className="px-4 py-2 rounded-xl bg-[#3A3B3C] hover:bg-[#4E4F50] text-sm font-medium text-slate-200 hover:text-white flex items-center gap-2 transition-colors cursor-pointer border border-[#4E4F50] disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="px-4 py-2 rounded-xl bg-[#3A3B3C] hover:bg-[#4E4F50] text-xs font-medium text-slate-200 hover:text-white flex items-center gap-2 transition-colors cursor-pointer border border-[#4E4F50] disabled:opacity-40 disabled:cursor-not-allowed"
                     title="Copy summary to clipboard"
                   >
                     {isCopied ? (
@@ -862,7 +862,7 @@ export function AccountAISummaryPanel({
                     type="button"
                     disabled={isAnalyzing}
                     onClick={handleRunAnalysis}
-                    className="px-5 py-2 rounded-xl bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-sm flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+                    className="px-5 py-2 rounded-xl bg-[#C7F33C] hover:bg-[#b0d635] text-black font-bold text-xs flex items-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
                     title="Re-analyze and update summary"
                   >
                     <RefreshCw className={`w-4 h-4 ${isAnalyzing ? "animate-spin" : ""}`} />

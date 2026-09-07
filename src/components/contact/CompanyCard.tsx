@@ -43,7 +43,7 @@ export function CompanyCard({
 
           <div className="flex flex-col min-w-0 flex-1">
             <span
-              className={`font-semibold text-xs sm:text-sm truncate leading-snug ${
+              className={`font-semibold text-xs sm:text-xs truncate leading-snug ${
                 isSelected ? "text-black" : "text-slate-100"
               }`}
               title={company.name}

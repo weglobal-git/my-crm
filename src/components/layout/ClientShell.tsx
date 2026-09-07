@@ -5,6 +5,7 @@ import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { ReactNode, useEffect } from "react";
 import { PermissionProvider } from "@/providers/PermissionProvider";
+import { SidebarProvider } from "./SidebarContext";
 
 export function ClientShell({ children }: { children: ReactNode }) {
   const { data: session, status } = useSession();
@@ -29,13 +30,15 @@ export function ClientShell({ children }: { children: ReactNode }) {
 
   return (
     <PermissionProvider>
-      {session && session.user && <Sidebar />}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {session && session.user && <Header />}
-        <main className="flex-1 flex flex-col h-full overflow-hidden">
-          {children}
-        </main>
-      </div>
+      <SidebarProvider>
+        {session && session.user && <Sidebar />}
+        <div className="flex flex-1 flex-col overflow-hidden w-full">
+          {session && session.user && <Header />}
+          <main className="flex-1 flex flex-col h-full overflow-hidden">
+            {children}
+          </main>
+        </div>
+      </SidebarProvider>
     </PermissionProvider>
   );
 }

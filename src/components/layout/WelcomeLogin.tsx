@@ -44,7 +44,7 @@ export function WelcomeLogin() {
             </p>
           </div>
 
-          <div className="flex gap-4 text-white/40 text-sm font-medium">
+          <div className="flex gap-4 text-white/40 text-xs font-medium">
             <span>© 2026 SB Interlab Co., Ltd.</span>
             <span>•</span>
             <span>Internal Use Only</span>
@@ -65,7 +65,7 @@ export function WelcomeLogin() {
             <h1 className="text-[36px] font-bold text-[#1d1d1f] tracking-tight mb-2">
               Welcome
             </h1>
-            <p className="text-slate-500 text-sm">Sign in with your company Google Workspace account to continue.</p>
+            <p className="text-slate-500 text-xs">Sign in with your company Google Workspace account to continue.</p>
           </div>
 
           <div className="space-y-4">

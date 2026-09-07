@@ -10,6 +10,7 @@ import { useSearchParams } from "next/navigation";
 import { PipelineStage } from "@prisma/client";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
+import { useSidebar } from "@/components/layout/SidebarContext";
 
 interface PipelineViewProps {
   userId: string;
@@ -25,6 +26,7 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
   const [tab, setTab] = useState(searchParams.get('tab') || initialTab);
   const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || '');
   const [cardType, setCardType] = useState<CardTypeFilterValue>('ALL');
+  const { setPageManageContent, setHasActiveFilters, setPageSearchConfig } = useSidebar();
   
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -57,22 +59,97 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
     updateUrl(tab, newSearch);
   };
 
+  const hasFilters = Boolean(searchQuery.trim() || (cardType && cardType !== 'ALL') || tab !== 'workspace');
+  useEffect(() => {
+    setHasActiveFilters(hasFilters);
+  }, [hasFilters, setHasActiveFilters]);
+
+  // Connect Card Search to Mobile/Global Search (Find button)
+  useEffect(() => {
+    setPageSearchConfig({
+      query: searchQuery,
+      onSearch: handleSearchChange,
+      placeholder: "Search cards...",
+    });
+    return () => setPageSearchConfig(null);
+  }, [searchQuery, setPageSearchConfig]);
+
+  // Register mobile Manage modal content
+  useEffect(() => {
+    setPageManageContent(
+      <div className="flex flex-col gap-4 select-none">
+        {/* Top Primary Action: + New Deal */}
+        {tab === 'workspace' && (
+          <div className="w-full">
+            <CreateDealButton 
+              stages={stages} 
+              companies={companies} 
+            />
+          </div>
+        )}
+
+        {/* Section: View / Tabs */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            View
+          </label>
+          <div className="grid grid-cols-2 gap-2 bg-[#1C1C1D] p-1 rounded-xl">
+            <button 
+              onClick={() => handleTabChange('workspace')}
+              className={`py-2 text-xs font-semibold rounded-lg transition-all ${tab === 'workspace' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              My Workspace
+            </button>
+            <button 
+              onClick={() => handleTabChange('completed')}
+              className={`py-2 text-xs font-semibold rounded-lg transition-all ${tab === 'completed' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              Completed
+            </button>
+          </div>
+        </div>
+
+        {/* Section: Card Type */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Card Type
+          </label>
+          <CardTypeFilter value={cardType} onChange={setCardType} variant="segmented" />
+        </div>
+
+        {/* Section: Quick Filters */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Quick Filters
+          </label>
+          <PipelineQuickFilters
+            userId={userId}
+            activeFilter={searchQuery}
+            onSelectFilter={handleSearchChange}
+          />
+        </div>
+      </div>
+    );
+    return () => setPageManageContent(null);
+  }, [tab, searchQuery, cardType, stages, companies, userId, setPageManageContent]);
+
   return (
     <WorkspaceLayout scrollMode={tab === "completed" ? "auto" : "hidden"}>
           
-          <div className="flex justify-between items-center mb-4 gap-3 flex-wrap">
+          {/* Desktop Toolbar (Hidden on Mobile) */}
+          <div className="hidden md:flex justify-between items-center mb-4 gap-3 flex-wrap">
             <div className="flex gap-2 bg-[#252728] p-1 rounded-full shrink-0">
               <button 
                 onClick={() => handleTabChange('workspace')}
-                className={`px-5 py-2 text-sm font-semibold flex items-center gap-2 rounded-full transition-all ${tab === 'workspace' ? 'bg-[#3A3B3C] text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all ${tab === 'workspace' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
               >
-                My Workspace
+                ACTIVE
               </button>
               <button 
                 onClick={() => handleTabChange('completed')}
-                className={`px-5 py-2 text-sm font-semibold flex items-center gap-2 rounded-full transition-all ${tab === 'completed' ? 'bg-[#3A3B3C] text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all ${tab === 'completed' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
               >
-                Completed Projects
+                ARCHIVED
               </button>
             </div>
 

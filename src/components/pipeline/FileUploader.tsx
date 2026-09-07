@@ -128,7 +128,7 @@ export default function FileUploader({ opportunityId, onUploadSuccess }: FileUpl
       >
         <input {...getInputProps()} />
         <Upload className={`w-8 h-8 mb-3 ${isDragActive ? 'text-[#C7F33C]' : 'text-slate-400'}`} />
-        <h4 className="text-sm font-semibold text-slate-200 mb-1">
+        <h4 className="text-xs font-semibold text-slate-200 mb-1">
           {isDragActive ? "Drop files here..." : "Click or drag files to upload"}
         </h4>
         <p className="text-xs text-slate-400">
@@ -142,7 +142,7 @@ export default function FileUploader({ opportunityId, onUploadSuccess }: FileUpl
             <div key={`${file.name}-${idx}`} className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]">
               <div className="flex items-center gap-2 overflow-hidden">
                 {file.name.match(/\.(jpeg|jpg|png|gif|webp)$/i) ? <ImageIcon className="w-4 h-4 text-sky-400 shrink-0" /> : <File className="w-4 h-4 text-slate-400 shrink-0" />}
-                <span className="text-sm text-slate-200 truncate">{file.name}</span>
+                <span className="text-xs text-slate-200 truncate">{file.name}</span>
               </div>
               <div className="shrink-0 ml-2">
                 {file.status === 'uploading' && <Loader2 className="w-4 h-4 text-[#C7F33C] animate-spin" />}

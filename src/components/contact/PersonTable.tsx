@@ -118,7 +118,7 @@ export function PersonTable({
                   <div className="flex flex-col items-center justify-center gap-2.5">
                     <Users className="w-9 h-9 text-slate-600" />
                     <div>
-                      <span className="font-semibold text-slate-200 block text-sm">
+                      <span className="font-semibold text-slate-200 block text-xs">
                         No persons under {companyName}
                       </span>
                       <span className="text-xs text-slate-400 block mt-0.5">
@@ -165,7 +165,7 @@ export function PersonTable({
                           )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <span className="font-bold text-sm text-slate-100 block group-hover:text-white transition-colors truncate">
+                          <span className="font-bold text-xs text-slate-100 block group-hover:text-white transition-colors truncate">
                             {contact.name}
                           </span>
                         </div>

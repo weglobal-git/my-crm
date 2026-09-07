@@ -2,17 +2,17 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Bell, Search } from "lucide-react";
+import { Bell, PanelLeft, Check, X as XIcon } from "lucide-react";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
 import { useEffect, useState, useRef } from "react";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { MenuDefinition } from "@/lib/menu-registry";
+import { useSidebar } from "./SidebarContext";
 
 import { getActiveUsers, pingActiveStatus } from "@/lib/actions/users";
 import { getMyNotifications, respondToNotification } from "@/lib/actions/notification";
 import { pusherClient } from "@/lib/pusher";
-import { Check, X as XIcon } from "lucide-react";
 
 type ActiveUser = Awaited<ReturnType<typeof getActiveUsers>>[number];
 type NotificationItem = Awaited<ReturnType<typeof getMyNotifications>>[number];
@@ -21,8 +21,9 @@ export function Header() {
   const pathname = usePathname();
   const { data: session, status } = useSession();
   const { visibleMainMenus, visibleSubMenus } = usePermissions();
+  const { toggleTabletSidebar } = useSidebar();
 
-  let currentMainMenu = null;
+  let currentMainMenu: MenuDefinition | null = null;
   let subMenus: MenuDefinition[] = [];
 
   for (const main of visibleMainMenus) {
@@ -33,6 +34,8 @@ export function Header() {
       break;
     }
   }
+
+  const currentSubMenu = subMenus.find(sub => sub.href && (pathname === sub.href || (sub.href !== '/' && pathname.startsWith(`${sub.href}/`))));
   
   const [activeUsers, setActiveUsers] = useState<Awaited<ReturnType<typeof getActiveUsers>>>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -158,50 +161,33 @@ export function Header() {
   };
 
   return (
-    <header className="flex w-full items-center justify-between px-6 py-1 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
+    <header className="flex w-full items-center justify-between p-1 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
       
-      {/* Left: Quick Nav Pills */}
-      <div className="flex items-center gap-4">
-        {currentMainMenu && (
-          <>
-            <span className="font-semibold text-slate-100">{currentMainMenu.label}</span>
-            {subMenus.length > 0 && <span className="text-slate-600">|</span>}
-            <div className="flex items-center gap-2">
-              {subMenus.map(sub => {
-                const isActive = sub.href && (pathname === sub.href || (sub.href !== '/' && pathname.startsWith(`${sub.href}/`)));
-                return (
-                  <Link 
-                    key={sub.key}
-                    href={sub.href || "#"}
-                    prefetch={false}
-                    className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                      isActive 
-                        ? "bg-[#C7F33C] text-black" 
-                        : "bg-[#3A3B3C] text-slate-300 hover:bg-slate-600"
-                    }`}
-                  >
-                    {sub.label}
-                  </Link>
-                );
-              })}
-            </div>
-          </>
-        )}
+      {/* Left: Tablet/Mobile Toggle & Page Title */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={toggleTabletSidebar}
+          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-[#3A3B3C] transition-colors focus:outline-none lg:hidden"
+          title="Toggle Navigation"
+          aria-label="Toggle Navigation"
+        >
+          <PanelLeft className="w-5 h-5" />
+        </button>
+
+        <div className="flex items-center gap-2">
+          {currentMainMenu && (
+            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-[#3A3B3C] text-slate-400 hidden sm:inline-block">
+              {currentMainMenu.label}
+            </span>
+          )}
+          <span className="font-semibold text-xs md:text-base text-slate-100">
+            {currentSubMenu?.label || currentMainMenu?.label || "Overview"}
+          </span>
+        </div>
       </div>
       
-      {/* Right: Search, Team Avatars & User Profile */}
-      <div className="flex items-center gap-4">
-        
-        <div className="hidden lg:flex items-center w-64 xl:w-80 bg-[#3A3B3C] hover:bg-[#4E4F50] rounded-full p-1.5 pl-4 border border-[#4E4F50] focus-within:border-[#C7F33C] focus-within:ring-1 focus-within:ring-[#C7F33C] focus-within:bg-[#252728] transition-all">
-          <Search className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
-          <input 
-            type="text" 
-            placeholder="Search CRM..." 
-            className="flex-1 bg-transparent border-none outline-none text-sm placeholder:text-slate-400 text-slate-100"
-          />
-        </div>
-
-        <div className="h-6 w-px bg-slate-600 hidden lg:block"></div>
+      {/* Right: Team Avatars & User Profile */}
+      <div className="flex items-center gap-1">
 
         {/* Team Avatars */}
         <div className="hidden md:flex items-center relative" ref={dropdownRef}>
@@ -210,7 +196,7 @@ export function Header() {
             className="flex items-center hover:opacity-80 transition-opacity focus:outline-none"
             title="View Online Users"
           >
-            <div className="flex -space-x-3 mr-4">
+            <div className="flex -space-x-3">
               {displayUsers.map((user: ActiveUser, index: number) => (
                 <div 
                   key={user.id} 
@@ -232,7 +218,7 @@ export function Header() {
                 </div>
               )}
               {activeUsers.length === 0 && (
-                <div className="text-sm font-medium text-slate-400 mr-2 z-10">No users online</div>
+                <div className="text-xs font-medium text-slate-400 mr-2 z-10">No users online</div>
               )}
             </div>
           </button>
@@ -248,7 +234,7 @@ export function Header() {
               </div>
               <div className="max-h-80 overflow-y-auto p-2">
                 {activeUsers.length === 0 ? (
-                  <div className="p-4 text-center text-sm text-slate-500">No one is online right now.</div>
+                  <div className="p-4 text-center text-xs text-slate-500">No one is online right now.</div>
                 ) : (
                   activeUsers.map((user: ActiveUser) => (
                     <div key={user.id} className="flex items-center gap-3 p-2 hover:bg-[#4E4F50] rounded-xl transition-colors">
@@ -262,7 +248,7 @@ export function Header() {
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold text-slate-100 truncate">
+                        <div className="text-xs font-semibold text-slate-100 truncate">
                           {user.name || "Unknown"} {session?.user?.id === user.id && "(You)"}
                         </div>
                         <div className="text-xs text-slate-300 truncate">
@@ -280,7 +266,7 @@ export function Header() {
         <div className="h-8 w-px bg-slate-200 mx-2 hidden md:block"></div>
 
         {/* Notifications & Profile */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1">
           
           <div className="relative flex items-center" ref={notifDropdownRef}>
             <button 
@@ -305,7 +291,7 @@ export function Header() {
                 </div>
                 <div className="max-h-80 overflow-y-auto p-2">
                   {notifications.length === 0 ? (
-                    <div className="p-6 text-center text-sm text-slate-500 flex flex-col items-center gap-2">
+                    <div className="p-6 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
                       <Bell className="w-8 h-8 text-slate-200" />
                       <p>No new notifications</p>
                     </div>
@@ -316,7 +302,7 @@ export function Header() {
                           <div className="w-8 h-8 rounded-full bg-[#252728] overflow-hidden shrink-0">
                                   <img src={notif.sender?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${notif.sender?.name || notif.senderId}`} alt="Avatar" className="w-full h-full object-cover" />
                           </div>
-                          <div className="flex-1 text-sm text-slate-300">
+                          <div className="flex-1 text-xs text-slate-300">
                             <span className="font-bold text-slate-100">{notif.sender?.name || 'User'}</span> {notif.message}
                           </div>
                         </div>
@@ -362,23 +348,23 @@ export function Header() {
                     className="object-cover"
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center bg-[#111111] text-white font-bold text-sm hover:text-[#d4ff3a] transition-colors">
+                  <div className="w-full h-full flex items-center justify-center bg-[#111111] text-white font-bold text-xs hover:text-[#d4ff3a] transition-colors">
                     {session.user.name?.charAt(0).toUpperCase() || session.user.email?.charAt(0).toUpperCase() || "U"}
                   </div>
                 )}
               </button>
 
               {showProfileDropdown && (
-                <div className="absolute top-full right-0 mt-3 w-60 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up py-2 shadow-lg">
+                <div className="absolute top-full right-0 mt-3 w-60 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up py-2">
                   <div className="px-4 py-2 border-b border-[#4E4F50] mb-2">
-                    <p className="text-sm font-bold text-white truncate">{session.user.name}</p>
+                    <p className="text-xs font-bold text-white truncate">{session.user.name}</p>
                     <p className="text-xs text-slate-400 truncate">{session.user.email}</p>
                   </div>
                   <Link
                     href="/profile"
                     prefetch={false}
                     onClick={() => setShowProfileDropdown(false)}
-                    className="block px-4 py-2 text-sm text-slate-200 hover:bg-[#4E4F50] transition-colors"
+                    className="block px-4 py-2 text-xs text-slate-200 hover:bg-[#4E4F50] transition-colors"
                   >
                     My Profile
                   </Link>
@@ -387,7 +373,7 @@ export function Header() {
                       setShowProfileDropdown(false);
                       signOut({ callbackUrl: "/" });
                     }}
-                    className="w-full text-left block px-4 py-2 text-sm text-red-400 hover:bg-[#4E4F50] hover:text-red-300 transition-colors"
+                    className="w-full text-left block px-4 py-2 text-xs text-red-400 hover:bg-[#4E4F50] hover:text-red-300 transition-colors"
                   >
                     Sign Out
                   </button>

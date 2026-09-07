@@ -223,14 +223,14 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
             <table className="w-full text-left border-collapse min-w-max">
             <thead className="sticky top-0 z-30 bg-[#252728]">
               <tr className="bg-[#252728] border-b-2 border-[#4E4F50]">
-                <th className="p-5 font-semibold text-slate-400 text-sm tracking-wider uppercase w-48 sticky left-0 top-0 bg-[#252728] z-40 border-r border-[#4E4F50]">
+                <th className="p-5 font-semibold text-slate-400 text-xs tracking-wider uppercase w-48 sticky left-0 top-0 bg-[#252728] z-40 border-r border-[#4E4F50]">
                   Main Menu
                 </th>
-                <th className="p-5 font-semibold text-slate-400 text-sm tracking-wider uppercase w-48 sticky left-[192px] top-0 bg-[#252728] z-40 border-r border-[#4E4F50]">
+                <th className="p-5 font-semibold text-slate-400 text-xs tracking-wider uppercase w-48 sticky left-[192px] top-0 bg-[#252728] z-40 border-r border-[#4E4F50]">
                   Sub Menu
                 </th>
                 {initialDepartments.map(dept => (
-                  <th key={dept.id} className="p-5 font-semibold text-slate-300 text-center min-w-[140px] uppercase text-sm tracking-wider border-r border-[#4E4F50]">
+                  <th key={dept.id} className="p-5 font-semibold text-slate-300 text-center min-w-[140px] uppercase text-xs tracking-wider border-r border-[#4E4F50]">
                     {dept.name}
                   </th>
                 ))}
@@ -247,7 +247,7 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                       <td className="p-4 font-bold bg-[#252728] group-hover:bg-[#2b2d2e] border-r border-[#4E4F50] align-top w-48 sticky left-0 z-10 text-xs tracking-widest uppercase text-slate-100 transition-colors">
                         {mainMenu.label}
                       </td>
-                      <td className="p-4 bg-[#252728] group-hover:bg-[#2b2d2e] border-r border-[#4E4F50] text-slate-400 italic text-sm w-48 sticky left-[192px] z-10 transition-colors">
+                      <td className="p-4 bg-[#252728] group-hover:bg-[#2b2d2e] border-r border-[#4E4F50] text-slate-400 italic text-xs w-48 sticky left-[192px] z-10 transition-colors">
                         No sub-menus
                       </td>
                       <td colSpan={initialDepartments.length} className="bg-transparent"></td>
@@ -301,7 +301,7 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                         const description = sideMenu.description || (sideMenu.key === "pipeline.information" ? "Sale Deal card allowed" : null);
                         return (
                         <tr key={sideMenu.id} className="border-b border-[#4E4F50] bg-transparent hover:bg-white/[0.03] transition-colors group">
-                          <td className="p-4 font-medium text-slate-400 italic text-sm text-right bg-[#252728] group-hover:bg-[#2b2d2e] border-r border-[#4E4F50] w-48 sticky left-[192px] z-10 transition-colors">
+                          <td className="p-4 font-medium text-slate-400 italic text-xs text-right bg-[#252728] group-hover:bg-[#2b2d2e] border-r border-[#4E4F50] w-48 sticky left-[192px] z-10 transition-colors">
                             <div className="flex flex-col items-end">
                               <div className="flex items-center justify-end gap-2">
                                 {isLocked ? (

@@ -168,13 +168,13 @@ export function AccountAnalyticsCard({
                   <span className="text-3xl sm:text-4xl font-extrabold text-slate-100 tracking-tight leading-none">
                     {winRate}%
                   </span>
-                  <span className="text-xs sm:text-sm font-bold text-slate-200 mt-1.5">
+                  <span className="text-xs sm:text-xs font-bold text-slate-200 mt-1.5">
                     {wonCount}/{totalDeals > 0 ? totalDeals : totalCompleted}
                   </span>
                   <span className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">
                     success rate
                   </span>
-                  <span className="text-xs sm:text-sm font-bold text-[#C7F33C] mt-1.5 truncate max-w-full">
+                  <span className="text-xs sm:text-xs font-bold text-[#C7F33C] mt-1.5 truncate max-w-full">
                     {totalWonValue.toLocaleString()} THB
                   </span>
                 </>
@@ -202,7 +202,7 @@ export function AccountAnalyticsCard({
                 <div className="flex flex-col min-w-0 flex-1">
                   {isDataReady ? (
                     <>
-                      <span className="text-sm font-medium text-slate-200 truncate">
+                      <span className="text-xs font-medium text-slate-200 truncate">
                         {prod.name}
                       </span>
                       <span className="text-[11px] font-bold text-slate-100">
@@ -314,7 +314,7 @@ export function AccountAnalyticsCard({
                   : "พิมพ์ข้อมูลลักษณะธุรกิจ สินค้า หรือบริบทสำคัญของลูกค้ารายนี้ได้ทันที..."
               }
               disabled={!isDataReady}
-              className={`w-full flex-1 bg-transparent border-0 p-0 text-sm text-slate-300 placeholder:text-slate-600 leading-relaxed resize-none focus:outline-none focus:text-slate-100 transition-colors font-sans selection:bg-[#C7F33C]/20 ${!isDataReady ? "opacity-40 cursor-wait" : ""}`}
+              className={`w-full flex-1 bg-transparent border-0 p-0 text-xs text-slate-300 placeholder:text-slate-600 leading-relaxed resize-none focus:outline-none focus:text-slate-100 transition-colors font-sans selection:bg-[#C7F33C]/20 ${!isDataReady ? "opacity-40 cursor-wait" : ""}`}
             />
           </div>
         </div>

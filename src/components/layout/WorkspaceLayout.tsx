@@ -36,10 +36,10 @@ export function WorkspaceLayout({
       <main
         className={`flex-1 ${
           scrollMode === "auto" ? "overflow-y-auto" : "overflow-hidden"
-        } hide-scrollbar p-6 flex flex-col`}
+        } hide-scrollbar p-2 flex flex-col`}
       >
         <div
-          className={`max-w-[1400px] mx-auto w-full flex flex-col h-full gap-4 min-h-0 ${className}`}
+          className={`max-w-[1400px] mx-auto w-full flex flex-col h-full min-h-0 min-w-0 ${className}`}
         >
           {children}
         </div>

@@ -44,7 +44,7 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
   };
 
   return (
-    <div className="relative hidden lg:block w-28 xl:w-36 shrink-0">
+    <div className="relative hidden md:block w-28 xl:w-36 shrink-0">
       <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
         <Search className="h-3.5 w-3.5 text-slate-400" />
       </div>

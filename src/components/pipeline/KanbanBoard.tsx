@@ -7,7 +7,8 @@ import {
   DragOverlay, 
   closestCenter, 
   KeyboardSensor, 
-  PointerSensor, 
+  MouseSensor,
+  TouchSensor, 
   useSensor, 
   useSensors,
   DragStartEvent,
@@ -22,6 +23,7 @@ import { getPendingAcceleratorsMap } from "@/lib/actions/ai-accelerator";
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
+import { useSidebar } from "@/components/layout/SidebarContext";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { pusherClient } from "@/lib/pusher";
@@ -63,7 +65,7 @@ export function DropZone({ id, label, activeClass }: { id: string, label: string
   return (
     <div 
       ref={setNodeRef} 
-      className={`flex-1 rounded-xl border-4 border-dashed flex items-center justify-center font-bold text-3xl transition-all duration-200 backdrop-blur-md shadow-2xl
+      className={`flex-1 rounded-xl border-4 border-dashed flex items-center justify-center font-bold text-3xl transition-all duration-200 backdrop-blur-md
         ${isOver ? activeClass : 'border-slate-600/50 bg-slate-800/80 text-slate-500'}
       `}
     >
@@ -98,6 +100,7 @@ export function KanbanBoard({
   cardTypeFilter = 'ALL',
 }: KanbanBoardProps) {
   const { toast } = useDialog();
+  const { setColumnNavConfig } = useSidebar();
   const searchParams = useSearchParams();
   
   const tab = activeTab || searchParams.get('tab') || 'workspace';
@@ -446,7 +449,8 @@ export function KanbanBoard({
   }, [isCompletedTab, hasMoreCompleted, loadMoreCompleted]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
@@ -569,6 +573,83 @@ export function KanbanBoard({
     }
   }, [findColumnOfDeal, toast, activeDeal, deals, mutate]);
 
+  const boardContainerRef = useRef<HTMLDivElement>(null);
+  const columnRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [activeColumnIndex, setActiveColumnIndex] = useState(0);
+
+  const scrollToColumn = useCallback((index: number) => {
+    const clamped = Math.max(0, Math.min(initialStages.length - 1, index));
+    const stage = initialStages[clamped];
+    if (stage && columnRefs.current[stage.id]) {
+      columnRefs.current[stage.id]?.scrollIntoView({
+        behavior: "smooth",
+        inline: "center",
+        block: "nearest",
+      });
+      setActiveColumnIndex(clamped);
+    }
+  }, [initialStages]);
+
+  // Sync activeColumnIndex when user swipes on touchscreen
+  useEffect(() => {
+    const container = boardContainerRef.current;
+    if (!container || isCompletedTab) return;
+
+    let scrollTimeout: NodeJS.Timeout;
+    const handleScroll = () => {
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        const containerRect = container.getBoundingClientRect();
+        const containerCenter = containerRect.left + containerRect.width / 2;
+
+        let closestIndex = 0;
+        let minDistance = Infinity;
+
+        initialStages.forEach((stage, idx) => {
+          const el = columnRefs.current[stage.id];
+          if (el) {
+            const rect = el.getBoundingClientRect();
+            const elCenter = rect.left + rect.width / 2;
+            const dist = Math.abs(containerCenter - elCenter);
+            if (dist < minDistance) {
+              minDistance = dist;
+              closestIndex = idx;
+            }
+          }
+        });
+
+        setActiveColumnIndex(closestIndex);
+      }, 50);
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      clearTimeout(scrollTimeout);
+    };
+  }, [initialStages, isCompletedTab]);
+
+  // Register column navigation with SidebarContext for floating buttons
+  useEffect(() => {
+    if (isCompletedTab || initialStages.length === 0) {
+      setColumnNavConfig(null);
+      return;
+    }
+
+    const currentStage = initialStages[activeColumnIndex];
+    setColumnNavConfig({
+      hasPrev: activeColumnIndex > 0,
+      hasNext: activeColumnIndex < initialStages.length - 1,
+      onPrev: () => scrollToColumn(activeColumnIndex - 1),
+      onNext: () => scrollToColumn(activeColumnIndex + 1),
+      currentTitle: currentStage?.name || "",
+      currentIndex: activeColumnIndex,
+      totalColumns: initialStages.length,
+    });
+
+    return () => setColumnNavConfig(null);
+  }, [isCompletedTab, initialStages, activeColumnIndex, scrollToColumn, setColumnNavConfig]);
+
   if (isLoading && !rawOpportunities && (!initialOpportunities || initialOpportunities.length === 0)) {
     return (
       <div className="flex w-full h-[calc(100vh-140px)] items-center justify-center">
@@ -583,7 +664,10 @@ export function KanbanBoard({
   return (
     <PendingAcceleratorsContext.Provider value={pendingAcceleratorsMap}>
       <KanbanClockProvider>
-        <div className={`flex gap-2 overflow-x-auto pb-8 hide-scrollbar mx-auto ${isCompletedTab ? 'w-full' : 'w-fit h-[calc(100vh-140px)]'}`}>
+        <div 
+          ref={boardContainerRef}
+          className={`flex gap-3 md:gap-3 overflow-x-auto hide-scrollbar snap-x snap-mandatory scroll-smooth w-full max-w-full min-w-0 px-2 sm:px-4 ${isCompletedTab ? '' : 'xl:w-fit xl:mx-auto h-[calc(100vh-140px)]'}`}
+        >
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
             {(() => {
@@ -637,18 +721,23 @@ export function KanbanBoard({
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
           >
-            {initialStages.map(col => (
-              <KanbanColumn 
-                key={col.id} 
-                id={col.id} 
-                title={col.name} 
-                deals={deals[col.id] || []} 
-                onDealClick={(deal, tab) => handleOpenPanel(deal, (tab || 'activity') as TabType)}
-                isScrollable={true}
-                currentUserId={currentUserId}
-                currentUserRole={currentUserRole}
-                onDealIntent={preloadEditDealPanel}
-              />
+            {initialStages.map((col) => (
+              <div
+                key={col.id}
+                ref={(el) => { columnRefs.current[col.id] = el; }}
+                className="shrink-0 snap-center snap-always md:snap-start md:snap-always"
+              >
+                <KanbanColumn 
+                  id={col.id} 
+                  title={col.name} 
+                  deals={deals[col.id] || []} 
+                  onDealClick={(deal, tab) => handleOpenPanel(deal, (tab || 'activity') as TabType)}
+                  isScrollable={true}
+                  currentUserId={currentUserId}
+                  currentUserRole={currentUserRole}
+                  onDealIntent={preloadEditDealPanel}
+                />
+              </div>
             ))}
 
             <DragOverlay dropAnimation={null}>
