@@ -231,7 +231,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   return (
     <div
       className={`
-        flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card min-h-[175px] md:h-[220px]
+        flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card h-[220px]
         ${isOrange ? "bg-[#F59E0B]" : highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
       `}

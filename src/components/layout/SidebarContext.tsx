@@ -17,6 +17,7 @@ export interface ColumnNavConfig {
   currentTitle?: string;
   currentIndex?: number;
   totalColumns?: number;
+  currentCount?: number;
 }
 
 interface SidebarContextType {

@@ -1,11 +1,11 @@
 "use client";
 
-import { X, MoreHorizontal, MessageSquare, Trash2, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Pencil, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, PhoneCall, AlertTriangle } from "lucide-react";
+import { X, MoreHorizontal, MessageSquare, Trash2, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, Zap, Target, ChevronLeft, ChevronRight, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, PhoneCall } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
 
-import { addActivityLog, removeTeamMember, addTeamMember, addTeamMembers, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
+import { addActivityLog, removeTeamMember, addTeamMembers, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity } from "@/lib/actions/opportunity";
 import { getLatestDealSummary, generateDealSummary, getDealSummaryPromptConfig, saveDealSummaryPromptConfig, resetDealSummaryPromptConfig } from "@/lib/actions/deal-summary";
 import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, updateDealTargetGoal, createManagerCallQuestion, deleteDealAcceleratorQuestion, type DealAcceleratorsState, type AcceleratorQuestion } from "@/lib/actions/ai-accelerator";
 import { getAllUsers } from "@/lib/actions/users";
@@ -51,17 +51,6 @@ const formatShortDueDate = (date: Date | string) => {
   const month = d.toLocaleDateString('en-GB', { month: 'short' });
   const year = String(d.getFullYear()).slice(-2);
   return `${day}${month}${year}`;
-};
-
-const formatQuestionDate = (date: Date | string) => {
-  const d = new Date(date);
-  if (isNaN(d.getTime())) return '';
-  const day = d.getDate();
-  const month = d.toLocaleDateString('en-GB', { month: 'short' });
-  const year = String(d.getFullYear()).slice(-2);
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  return `${day}${month}${year}, ${hours}:${minutes}`;
 };
 
 const renderCommentText = (text: string, highlight: string = '') => {
@@ -365,7 +354,6 @@ function ActivityComment({
       || acceleratorsState?.questions?.find(q => q.id === qId && q.status === 'PENDING')
       || acceleratorsState?.questions?.find(q => q.id === qId);
     const replyLog = log.replies?.find(r => r.content.startsWith('[URGENT_REPLY:'));
-    const replyText = replyLog ? replyLog.content.replace(/^\[URGENT_REPLY:[^\]]+\]\s*/, '') : '';
 
     if (!targetQ) {
       // Fallback for optimistic logs or first-time sends before acceleratorsState finishes populating
@@ -829,7 +817,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   const canConvert = deal.status === "OPEN" && dealType === 'INTERNAL_TASK' && (isOwner || isAdmin || isManagerOfOwner) && (canUseSalesDeal || isAdmin);
   const hasCardActions = Boolean(canCloseDeal || canConvert || canDelete);
   const canEditDueDate = isOwner || isAdmin;
-  const canAnswerAccelerators = isOwner || isTeamMember || isAdmin || isManagerOfOwner;
   const canUseManagerCall = Boolean(isAdmin || isManagerOfOwner);
 
   const [isManagerCallMode, setIsManagerCallMode] = useState(false);
@@ -902,7 +889,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   const {
     data: acceleratorsResponse,
     mutate: mutateAccelerators,
-    isLoading: isLoadingAccelerators,
   } = useSWR(
     isOpen ? ['deal-accelerators', deal.id] : null,
     ([, id]) => getDealAccelerators(id),
@@ -923,8 +909,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   const [isGeneratingAccelerators, setIsGeneratingAccelerators] = useState(false);
   const [isAnsweringQuestionId, setIsAnsweringQuestionId] = useState<string | null>(null);
   const [isDeletingQuestionId, setIsDeletingQuestionId] = useState<string | null>(null);
-  const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
-  const [showCustomInput, setShowCustomInput] = useState<Record<string, boolean>>({});
   const [goalInput, setGoalInput] = useState('');
   const [isSavingGoal, setIsSavingGoal] = useState(false);
   const goalTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -937,10 +921,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     }
   }, []);
 
-  useEffect(() => {
-    const currentGoal = acceleratorsState?.targetGoal || deal.topic || '';
+  // Sync goalInput during render when source goal updates (avoids cascading render effect)
+  const currentGoal = acceleratorsState?.targetGoal || deal.topic || '';
+  const [prevSourceGoal, setPrevSourceGoal] = useState(currentGoal);
+  if (currentGoal !== prevSourceGoal) {
+    setPrevSourceGoal(currentGoal);
     setGoalInput(currentGoal);
-  }, [acceleratorsState?.targetGoal, deal.topic]);
+  }
 
   useLayoutEffect(() => {
     if (activeTab === 'manager-call') {
@@ -955,50 +942,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     }
   }, [isOpen, activeTab, mutateAccelerators, acceleratorsResponse?.data]);
 
-  const [isAcceleratorsExpanded, setIsAcceleratorsExpanded] = useState(true);
   const [acceleratorTab, setAcceleratorTab] = useState<'pending' | 'answered'>('pending');
-  const [editingAnswerQuestionId, setEditingAnswerQuestionId] = useState<string | null>(null);
-  const [editCustomAnswers, setEditCustomAnswers] = useState<Record<string, string>>({});
-  const [showEditCustomInput, setShowEditCustomInput] = useState<Record<string, boolean>>({});
-
-  const [isConverting, setIsConverting] = useState(false);
-
-  const handleConvertToSalesDeal = async () => {
-    const isConfirmed = await confirm({
-      title: "Convert to Sale Deal",
-      description: "Are you sure you want to convert this card to a Sales Deal? Once converted, this deal cannot be reverted back to an Internal Task.",
-      confirmText: "Convert to Sale Deal",
-      cancelText: "Cancel",
-      variant: "primary"
-    });
-
-    if (!isConfirmed) return;
-
-    setIsConverting(true);
-    const prevType = dealType;
-    setDealType(OpportunityType.SALES_DEAL);
-
-    // Optimistic cache update
-    mutate(
-      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
-      (currentData: OpportunityWithRelations[] | undefined) =>
-        currentData?.map(opp => opp.id === deal.id ? { ...opp, type: OpportunityType.SALES_DEAL } : opp),
-      { revalidate: false }
-    );
-
-    try {
-      await updateOpportunity(deal.id, { type: 'SALES_DEAL' });
-      await addSystemLog(deal.id, "Converted opportunity type from Internal Task to Sales Deal.");
-      toast({ title: "Converted to Sale Deal", description: "This card is now a Sales Deal.", type: "success" });
-      setActiveTab('information');
-    } catch (e: unknown) {
-      setDealType(prevType);
-      mutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
-      toast({ title: "Error", description: e instanceof Error ? e.message : "Failed to convert to Sales Deal", type: "error" });
-    } finally {
-      setIsConverting(false);
-    }
-  };
 
   // Deduplicate pending and answered questions so no duplicate cards ever render in the Manager tab
   const { pendingQuestions, answeredQuestions } = useMemo(() => {
@@ -1034,20 +978,21 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   }, [acceleratorsState?.questions]);
   const pendingQuestionsCount = pendingQuestions.length;
 
-  // Smart transition: when entering Manager tab or when pending reaches 0, default to answered tab if history exists
-  useEffect(() => {
-    if (activeTab === 'manager-call') {
-      if (pendingQuestions.length === 0 && answeredQuestions.length > 0) {
-        setAcceleratorTab('answered');
-      }
+  // Smart transition: when pending reaches 0, default to answered tab if history exists (render-time synchronization)
+  const [prevPendingCount, setPrevPendingCount] = useState(pendingQuestions.length);
+  if (pendingQuestions.length !== prevPendingCount) {
+    setPrevPendingCount(pendingQuestions.length);
+    if (pendingQuestions.length === 0 && answeredQuestions.length > 0) {
+      setAcceleratorTab('answered');
     }
-  }, [activeTab, pendingQuestions.length, answeredQuestions.length]);
+  }
 
-  const [, setAnnouncementTick] = useState(0);
+  // Pure clock state for live elapsed wait timer
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   useEffect(() => {
     if (pendingQuestions.length === 0) return;
     const interval = setInterval(() => {
-      setAnnouncementTick(t => t + 1);
+      setCurrentTime(Date.now());
     }, 30000);
     return () => clearInterval(interval);
   }, [pendingQuestions.length]);
@@ -1064,7 +1009,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       }
     }
     if (!earliestCreatedAt) return '';
-    const diffMs = Math.max(0, Date.now() - earliestCreatedAt.getTime());
+    const diffMs = Math.max(0, currentTime - earliestCreatedAt.getTime());
     const diffSec = Math.floor(diffMs / 1000);
     const days = Math.floor(diffSec / (24 * 3600));
     const hours = Math.floor((diffSec % (24 * 3600)) / 3600);
@@ -1800,7 +1745,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     if (!isOpen) return;
     if (!session?.user?.id) return;
     const channelName = `private-pipeline-${session.user.id}`;
-    console.log(`[PANEL-PUSHER] Subscribing to: "${channelName}" for deal: "${deal.topic}" (id=${deal.id})`);
+    console.log(`[PANEL-PUSHER] Subscribing to: "${channelName}" for deal (id=${deal.id})`);
     const channel = pusherClient.subscribe(channelName);
 
     const onSubSucceeded = () => {
@@ -1970,7 +1915,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handleUpdate);
     };
-  }, [deal.id, isOpen, loadActivityLogs, mutate, session?.user?.id]);
+  }, [deal.id, isOpen, loadActivityLogs, mutate, mutateAccelerators, session?.user?.id]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {
     if (!uniqueLogsMap.has(log.id)) {
@@ -2311,10 +2256,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     }
   };
 
-  const handleAddMember = async (userId: string) => {
-    await handleAddMembers([userId]);
-  };
-
   const handleRemoveMember = async (userId: string) => {
     const originalTeamMembers = deal.teamMembers || [];
     const userToRemove = localTeamMembers.find(u => u.id === userId) || deal.teamMembers.find(u => u.id === userId);
@@ -2477,6 +2418,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                 {
                   id: 'manager-call',
                   label: 'Manager',
+                  badge: pendingCount > 0 ? (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-[#F59E0B] text-slate-950">
+                      {pendingCount}
+                    </span>
+                  ) : undefined,
                 },
               ];
 

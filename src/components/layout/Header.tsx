@@ -2,7 +2,8 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Bell, PanelLeft, Check, X as XIcon } from "lucide-react";
+import { Bell, PanelLeft } from "lucide-react";
+import { NotificationDrawer } from "./NotificationDrawer";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
 import { useEffect, useState, useRef, useMemo } from "react";
@@ -22,7 +23,7 @@ export function Header() {
   const pathname = usePathname();
   const { data: session, status } = useSession();
   const { visibleMainMenus, visibleSubMenus } = usePermissions();
-  const { toggleTabletSidebar } = useSidebar();
+  const { toggleTabletSidebar, columnNavConfig } = useSidebar();
 
   let currentMainMenu: MenuDefinition | null = null;
   let subMenus: MenuDefinition[] = [];
@@ -43,8 +44,7 @@ export function Header() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [notifications, setNotifications] = useState<Awaited<ReturnType<typeof getMyNotifications>>>([]);
-  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
-  const notifDropdownRef = useRef<HTMLDivElement>(null);
+  const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
 
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
@@ -183,9 +183,6 @@ export function Header() {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowDropdown(false);
       }
-      if (notifDropdownRef.current && !notifDropdownRef.current.contains(event.target as Node)) {
-        setShowNotifDropdown(false);
-      }
       if (profileDropdownRef.current && !profileDropdownRef.current.contains(event.target as Node)) {
         setShowProfileDropdown(false);
       }
@@ -256,6 +253,28 @@ export function Header() {
         </div>
       </div>
       
+      {/* Center: Mobile Active Column Pill (Floating at Navbar on Mobile) */}
+      {columnNavConfig?.currentTitle ? (
+        <div className="md:hidden flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              if (columnNavConfig.hasNext) {
+                columnNavConfig.onNext();
+              } else if (columnNavConfig.hasPrev) {
+                columnNavConfig.onPrev();
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1C1C1D] border border-[#3A3B3C] text-xs font-semibold text-slate-200 shadow-sm active:scale-95 transition-all cursor-pointer select-none"
+            title="Switch column"
+          >
+            <span className="max-w-[110px] truncate">{columnNavConfig.currentTitle}</span>
+            <span className="text-slate-500 font-normal">|</span>
+            <span className="text-[#C7F33C] font-bold">{columnNavConfig.currentCount ?? 0}</span>
+          </button>
+        </div>
+      ) : null}
+
       {/* Right: Team Avatars & User Profile */}
       <div className="flex items-center gap-1">
 
@@ -338,67 +357,24 @@ export function Header() {
         {/* Notifications & Profile */}
         <div className="flex items-center gap-1">
           
-          <div className="relative flex items-center" ref={notifDropdownRef}>
-            <button 
-              onClick={() => setShowNotifDropdown(!showNotifDropdown)}
-              className="w-11 h-11 flex items-center justify-center rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] transition-all relative"
-            >
-              <Bell className="w-5 h-5 text-slate-300" />
-              {uniqueNotifications.length > 0 && (
-                <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-[#252728]"></span>
-              )}
-            </button>
-            
-            {showNotifDropdown && (
-              <div className="absolute top-full right-0 mt-3 w-80 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up">
-                <div className="p-4 border-b border-[#4E4F50] flex justify-between items-center">
-                  <h3 className="font-semibold text-slate-100">Notifications</h3>
-                  {uniqueNotifications.length > 0 && (
-                    <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full">
-                      {uniqueNotifications.length} new
-                    </span>
-                  )}
-                </div>
-                <div className="max-h-80 overflow-y-auto p-2">
-                  {uniqueNotifications.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
-                      <Bell className="w-8 h-8 text-slate-200" />
-                      <p>No new notifications</p>
-                    </div>
-                  ) : (
-                    uniqueNotifications.map((notif: NotificationItem) => (
-                      <div key={notif.id} className="flex flex-col gap-2 p-3 hover:bg-[#4E4F50] rounded-xl transition-colors">
-                        <div className="flex gap-3">
-                          <div className="w-8 h-8 rounded-full bg-[#252728] overflow-hidden shrink-0">
-                                  <img src={notif.sender?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${notif.sender?.name || notif.senderId}`} alt="Avatar" className="w-full h-full object-cover" />
-                          </div>
-                          <div className="flex-1 text-xs text-slate-300">
-                            <span className="font-bold text-slate-100">{notif.sender?.name || 'User'}</span> {notif.message}
-                          </div>
-                        </div>
-                        {['DEAL_TRANSFER_REQUEST', 'TEAM_INVITE_REQUEST'].includes(notif.type) && (
-                          <div className="flex gap-2 mt-1 ml-11">
-                            <button 
-                              onClick={() => handleRespond(notif.id, true)}
-                              className="flex-1 flex items-center justify-center gap-1 bg-black text-white px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-slate-800 transition-colors"
-                            >
-                              <Check className="w-3 h-3" /> Accept
-                            </button>
-                            <button 
-                              onClick={() => handleRespond(notif.id, false)}
-                              className="flex-1 flex items-center justify-center gap-1 bg-[#3A3B3C] border border-[#4E4F50] text-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#4E4F50] transition-colors"
-                            >
-                              <XIcon className="w-3 h-3" /> Reject
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
+          <button 
+            type="button"
+            onClick={() => setIsNotificationDrawerOpen(true)}
+            className="w-11 h-11 flex items-center justify-center rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] transition-all relative cursor-pointer"
+            aria-label="Open notifications"
+          >
+            <Bell className="w-5 h-5 text-slate-300" />
+            {uniqueNotifications.length > 0 && (
+              <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-[#252728]"></span>
             )}
-          </div>
+          </button>
+
+          <NotificationDrawer
+            isOpen={isNotificationDrawerOpen}
+            onClose={() => setIsNotificationDrawerOpen(false)}
+            notifications={uniqueNotifications}
+            onRespond={handleRespond}
+          />
 
           {status === "loading" ? (
             <div className="w-11 h-11 rounded-full bg-[#3A3B3C] animate-pulse"></div>

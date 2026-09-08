@@ -185,6 +185,22 @@ export function KanbanBoard({
   useEffect(() => {
     rawOpportunitiesRef.current = rawOpportunities;
   }, [rawOpportunities]);
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+  const initialTabRef = useRef(initialTab);
+  useEffect(() => {
+    initialTabRef.current = initialTab;
+  }, [initialTab]);
+  const initialOpportunitiesRef = useRef(initialOpportunities);
+  useEffect(() => {
+    initialOpportunitiesRef.current = initialOpportunities;
+  }, [initialOpportunities]);
+  const mutatePendingAcceleratorsRef = useRef(mutatePendingAccelerators);
+  useEffect(() => {
+    mutatePendingAcceleratorsRef.current = mutatePendingAccelerators;
+  }, [mutatePendingAccelerators]);
 
   const preloadEditDealPanel = useCallback(() => {
     void loadEditDealPanel();
@@ -371,7 +387,7 @@ export function KanbanBoard({
           }
         }
         if (dealId && typeof pendingCount === 'number') {
-          void mutatePendingAccelerators(
+          void mutatePendingAcceleratorsRef.current(
             (prev) => {
               const next = { ...(prev || {}) };
               if (pendingCount === 0) {
@@ -453,7 +469,7 @@ export function KanbanBoard({
         }
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
-            const source = currentData || (tab === initialTab ? (initialOpportunities || []) : []);
+            const source = currentData || (tabRef.current === initialTabRef.current ? (initialOpportunitiesRef.current || []) : []);
             if (!isCompletedTab && updatedDeal.status !== 'OPEN') {
               return source.filter(opp => opp.id !== updatedDeal.id);
             }
@@ -685,7 +701,7 @@ export function KanbanBoard({
     } finally {
       dragOriginRef.current = null;
     }
-  }, [findColumnOfDeal, toast, activeDeal, deals, mutate]);
+  }, [findColumnOfDeal, toast, mutate]);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const columnRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -711,6 +727,40 @@ export function KanbanBoard({
     }
   }, [initialStages]);
 
+  // Sync activeColumnIndex when boardContainer is scrolled horizontally
+  useEffect(() => {
+    const container = boardContainerRef.current;
+    if (!container || isCompletedTab) return;
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const handleScroll = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (!container) return;
+        const scrollLeft = container.scrollLeft;
+        let closestIndex = 0;
+        let minDiff = Infinity;
+        initialStages.forEach((stage, idx) => {
+          const el = columnRefs.current[stage.id];
+          if (el) {
+            const diff = Math.abs(el.offsetLeft - scrollLeft);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestIndex = idx;
+            }
+          }
+        });
+        setActiveColumnIndex((prev) => (prev !== closestIndex ? closestIndex : prev));
+      }, 50);
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      clearTimeout(timeoutId);
+      container.removeEventListener("scroll", handleScroll);
+    };
+  }, [initialStages, isCompletedTab]);
+
   // Register column navigation with SidebarContext for floating buttons
   useEffect(() => {
     if (isCompletedTab || initialStages.length === 0) {
@@ -719,6 +769,7 @@ export function KanbanBoard({
     }
 
     const currentStage = initialStages[activeColumnIndex];
+    const currentCount = currentStage ? (deals[currentStage.id]?.length ?? 0) : 0;
     setColumnNavConfig({
       hasPrev: activeColumnIndex > 0,
       hasNext: activeColumnIndex < initialStages.length - 1,
@@ -727,10 +778,11 @@ export function KanbanBoard({
       currentTitle: currentStage?.name || "",
       currentIndex: activeColumnIndex,
       totalColumns: initialStages.length,
+      currentCount,
     });
 
     return () => setColumnNavConfig(null);
-  }, [isCompletedTab, initialStages, activeColumnIndex, scrollToColumn, setColumnNavConfig]);
+  }, [isCompletedTab, initialStages, activeColumnIndex, scrollToColumn, setColumnNavConfig, deals]);
 
   if (isLoading && !rawOpportunities && (!initialOpportunities || initialOpportunities.length === 0)) {
     return (

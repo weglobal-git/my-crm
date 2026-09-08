@@ -36,7 +36,6 @@ export function MemberSelectDrawer({
   title,
   subtitle,
   mode,
-  dealId,
   currentOwnerId,
   excludeUserIds = [],
   initialSelectedUserIds,
@@ -50,21 +49,23 @@ export function MemberSelectDrawer({
   const [collapsedDepts, setCollapsedDepts] = useState<Record<string, boolean>>({});
   const drawerRef = useRef<HTMLDivElement>(null);
 
+  // Reset state when opening (render-time synchronization, avoiding cascading renders)
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+  if (isOpen !== prevIsOpen) {
+    setPrevIsOpen(isOpen);
+    if (isOpen) {
+      setSearch("");
+      setSelectedUserIds(initialSelectedUserIds || []);
+      setCollapsedDepts({});
+    }
+  }
+
   // 1. SWR Fetch with 2-minute deduplication and global cache for 0ms instant display
   const { data: allUsers = [], isLoading } = useSWR<UserItem[]>(
     isOpen ? "all-users" : null,
     getAllUsers,
     { revalidateOnFocus: false, dedupingInterval: 120_000 }
   );
-
-  // Reset state when opening
-  useEffect(() => {
-    if (isOpen) {
-      setSearch("");
-      setSelectedUserIds(initialSelectedUserIds || []);
-      setCollapsedDepts({});
-    }
-  }, [isOpen, initialSelectedUserIds]);
 
   // Click outside and Escape key to close
   useEffect(() => {

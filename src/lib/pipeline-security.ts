@@ -195,7 +195,7 @@ export async function notifyPrivatePipelineUpdate(
     }
 
     const channels = [...recipientIds].map(userId => `private-pipeline-${userId}`);
-    const action = (payload as any)?.action || "UNKNOWN";
+    const action = (payload as { action?: string } | null | undefined)?.action || "UNKNOWN";
     console.log(`[PUSHER-SERVER-TRIGGER] Triggering event="pipeline-updated" action="${action}" on ${channels.length} channels:`, channels);
     const response = await pusherServer.trigger(channels, 'pipeline-updated', payload);
     console.log(`[PUSHER-SERVER-TRIGGER] Pusher trigger response status: ${response?.status || 'OK'}`);

@@ -41,7 +41,7 @@ export function KanbanColumn({
       className={`flex flex-col gap-2 w-full shrink-0 ${isScrollable ? 'h-full max-h-full' : ''}`}
     >
       {!hideTitle && (
-        <div className="flex items-center justify-between px-2 py-2 sticky top-0 z-10 bg-[#252728]">
+        <div className="hidden md:flex items-center justify-between px-2 py-2 sticky top-0 z-10 bg-[#252728]">
           <div className="flex items-center gap-2 min-w-0">
             <h3 className="font-semibold text-base md:text-lg text-slate-100 truncate">{title}</h3>
           </div>
@@ -52,7 +52,7 @@ export function KanbanColumn({
         </div>
       )}
 
-      <div className={`flex flex-col gap-3 md:gap-4 flex-1 p-1 md:p-2 rounded-3xl hide-scrollbar ${isScrollable ? 'overflow-y-auto min-h-0' : 'min-h-[500px]'}`}>
+      <div className={`flex flex-col gap-3 md:gap-4 flex-1 p-1 pb-16 md:p-2 hide-scrollbar ${isScrollable ? 'overflow-y-auto min-h-0' : 'min-h-[500px]'}`}>
         <SortableContext items={deals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
           {deals.map((deal) => (
             <KanbanCard
