@@ -2940,7 +2940,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                             <div className="flex flex-col gap-4">
                               {/* Outdated Warning Notice */}
                               {dealSummaryResponse.isOutdated && (
-                                <div className="p-3.5 bg-[#3A3B3C] border border-[#C7F33C]/50 rounded-2xl flex items-center justify-between gap-3">
+                                <div className="p-2 bg-[#3A3B3C] border border-[#C7F33C]/50 rounded-2xl flex items-center justify-between gap-3">
                                   <div className="flex items-center gap-3 min-w-0">
                                     <div className="w-8 h-8 rounded-xl bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C] shrink-0">
                                       <Sparkles className="w-4 h-4" />
@@ -2948,17 +2948,14 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                                     <div className="flex flex-col min-w-0">
                                       <div className="flex items-center gap-2">
                                         <span className="text-xs font-bold text-slate-100">
-                                          มีกิจกรรมใหม่เพิ่มเข้ามาหลังจากการสรุปล่าสุด
+                                          New Activity
                                         </span>
                                         {dealSummaryResponse.newerActivitiesCount && dealSummaryResponse.newerActivitiesCount > 0 ? (
                                           <span className="px-1.5 py-0.5 rounded-full bg-[#C7F33C] text-black font-bold text-xs">
-                                            +{dealSummaryResponse.newerActivitiesCount} new
+                                            +{dealSummaryResponse.newerActivitiesCount}
                                           </span>
                                         ) : null}
                                       </div>
-                                      <p className="text-xs text-slate-400">
-                                        เนื้อหาสรุปด้านล่างยังไม่ได้รวมกิจกรรมล่าสุด กด Re-Summarize เพื่ออัปเดต
-                                      </p>
                                     </div>
                                   </div>
                                   <button

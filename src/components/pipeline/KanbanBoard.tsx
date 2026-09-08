@@ -800,7 +800,7 @@ export function KanbanBoard({
       <KanbanClockProvider>
         <div 
           ref={boardContainerRef}
-          className={`relative flex gap-1 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-hidden xl:overflow-x-auto touch-pan-y xl:touch-auto'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
+          className={`relative flex gap-0 md:gap-1 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-auto xl:overflow-x-auto touch-pan-x xl:touch-auto snap-x snap-mandatory md:snap-none'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
         >
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
@@ -863,7 +863,7 @@ export function KanbanBoard({
               <div
                 key={col.id}
                 ref={(el) => { columnRefs.current[col.id] = el; }}
-                className="w-[calc(100vw-32px)] max-w-[380px] shrink-0 md:w-[320px] lg:shrink lg:w-0 lg:flex-1 lg:min-w-0"
+                className="w-full shrink-0 snap-start md:snap-align-none md:w-[320px] lg:shrink lg:w-0 lg:flex-1 lg:min-w-0"
               >
                 <KanbanColumn 
                   id={col.id} 

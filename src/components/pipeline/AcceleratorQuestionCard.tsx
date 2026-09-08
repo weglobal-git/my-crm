@@ -79,7 +79,6 @@ export function AcceleratorQuestionCard({
                 isPending ? 'bg-[#F59E0B] text-slate-950' : 'bg-[#F59E0B]/20 text-amber-300 border border-[#F59E0B]/30'
               }`}
             >
-              <PhoneCall className="w-3 h-3" />
               <span>Manager Call</span>
             </span>
           ) : (
@@ -97,7 +96,7 @@ export function AcceleratorQuestionCard({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-amber-200/90">
             {question.createdAt ? formatQuestionDate(question.createdAt) : ''}
           </span>
           {canDelete && (

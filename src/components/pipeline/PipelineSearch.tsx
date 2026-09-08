@@ -101,7 +101,7 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
       <input
         ref={inputRef}
         type="text"
-        className="flex-1 bg-transparent border-none outline-none text-xs text-slate-100 placeholder:text-slate-400 min-w-0"
+        className="flex-1 bg-transparent border-none outline-none text-[16px] text-slate-100 placeholder:text-slate-400 min-w-0"
         placeholder="Search..."
         value={term}
         onChange={(e) => setTerm(e.target.value)}
