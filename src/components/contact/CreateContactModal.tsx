@@ -188,7 +188,7 @@ export function CreateContactModal({
                     Account Name <span className="text-red-400">*</span>
                   </label>
                   {prefillCompany && (
-                    <span className="text-[10px] text-[#C7F33C] font-semibold">
+                    <span className="text-xs text-[#C7F33C] font-semibold">
                       Selected Account
                     </span>
                   )}

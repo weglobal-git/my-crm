@@ -1111,7 +1111,7 @@ export function EditAccountPanel({
                             <Building2 className="w-3.5 h-3.5 text-[#C7F33C]" />
                             <span>Office Phone / Landline</span>
                           </span>
-                          <span className="text-[10px] text-slate-400 font-normal">
+                          <span className="text-xs text-slate-400 font-normal">
                             e.g. 02 123 4567 ext. 12 or +66 2 123 4567
                           </span>
                         </label>
@@ -1129,7 +1129,7 @@ export function EditAccountPanel({
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
                         <span>Account Notes & Information</span>
-                        <span className="text-[10px] text-slate-400 font-normal">
+                        <span className="text-xs text-slate-400 font-normal">
                           Internal account documentation
                         </span>
                       </label>
@@ -1156,7 +1156,7 @@ export function EditAccountPanel({
                               <span className="text-xs font-bold text-[#C7F33C]">
                                 {draftAddress.title || `Address #${addresses.length + 1}`}
                               </span>
-                              <span className="text-[10px] uppercase font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+                              <span className="text-xs uppercase font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
                                 Draft (Unsaved)
                               </span>
                             </div>
@@ -1173,7 +1173,7 @@ export function EditAccountPanel({
                           <div className="p-5 space-y-3.5">
                             {/* Autocomplete with Google Places */}
                             <div>
-                              <label className="text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                              <label className="text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
                                 <Sparkles className="w-3.5 h-3.5 text-[#C7F33C]" />
                                 <span>Quick Auto-Fill with Google Places</span>
                               </label>
@@ -1200,7 +1200,7 @@ export function EditAccountPanel({
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                               <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-semibold text-slate-300">
+                                <label className="text-xs font-semibold text-slate-300">
                                   Address Type
                                 </label>
                                 <AddressTypeSelect
@@ -1212,7 +1212,7 @@ export function EditAccountPanel({
                               </div>
 
                               <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-semibold text-slate-300">
+                                <label className="text-xs font-semibold text-slate-300">
                                   Branch Code
                                 </label>
                                 <input
@@ -1227,7 +1227,7 @@ export function EditAccountPanel({
                               </div>
 
                               <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-semibold text-slate-300">
+                                <label className="text-xs font-semibold text-slate-300">
                                   Tax ID
                                 </label>
                                 <input
@@ -1243,7 +1243,7 @@ export function EditAccountPanel({
                             </div>
 
                             <div className="flex flex-col gap-1">
-                              <label className="text-[11px] font-semibold text-slate-300">Country</label>
+                              <label className="text-xs font-semibold text-slate-300">Country</label>
                               <CountrySelect
                                 value={draftAddress.country || country || "Thailand"}
                                 onChange={(val) =>
@@ -1254,7 +1254,7 @@ export function EditAccountPanel({
                             </div>
 
                             <div className="flex flex-col gap-1">
-                              <label className="text-[11px] font-semibold text-slate-300">
+                              <label className="text-xs font-semibold text-slate-300">
                                 Address Line 1 <span className="text-[#C7F33C]">*</span>
                               </label>
                               <input
@@ -1269,7 +1269,7 @@ export function EditAccountPanel({
                             </div>
 
                             <div className="flex flex-col gap-1">
-                              <label className="text-[11px] font-semibold text-slate-300">
+                              <label className="text-xs font-semibold text-slate-300">
                                 Address Line 2
                               </label>
                               <input
@@ -1285,7 +1285,7 @@ export function EditAccountPanel({
 
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                               <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-semibold text-slate-300">Subdistrict</label>
+                                <label className="text-xs font-semibold text-slate-300">Subdistrict</label>
                                 <input
                                   type="text"
                                   value={draftAddress.subdistrict || ""}
@@ -1298,7 +1298,7 @@ export function EditAccountPanel({
                               </div>
 
                               <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-semibold text-slate-300">District</label>
+                                <label className="text-xs font-semibold text-slate-300">District</label>
                                 <input
                                   type="text"
                                   value={draftAddress.district || ""}
@@ -1311,7 +1311,7 @@ export function EditAccountPanel({
                               </div>
 
                               <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-semibold text-slate-300">Province</label>
+                                <label className="text-xs font-semibold text-slate-300">Province</label>
                                 <input
                                   type="text"
                                   value={draftAddress.province || ""}
@@ -1324,7 +1324,7 @@ export function EditAccountPanel({
                               </div>
 
                               <div className="flex flex-col gap-1">
-                                <label className="text-[11px] font-semibold text-slate-300">Postal Code</label>
+                                <label className="text-xs font-semibold text-slate-300">Postal Code</label>
                                 <input
                                   type="text"
                                   value={draftAddress.postalCode || ""}
@@ -1340,7 +1340,7 @@ export function EditAccountPanel({
                             {/* Google Maps URL */}
                             <div className="flex flex-col gap-1">
                               <div className="flex items-center justify-between">
-                                <label className="text-[11px] font-semibold text-slate-300">
+                                <label className="text-xs font-semibold text-slate-300">
                                   Google Maps URL (Optional)
                                 </label>
                                 {draftAddress.googleMapsUrl && (
@@ -1348,7 +1348,7 @@ export function EditAccountPanel({
                                     href={draftAddress.googleMapsUrl}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="text-[10px] text-[#C7F33C] hover:underline flex items-center gap-1"
+                                    className="text-xs text-[#C7F33C] hover:underline flex items-center gap-1"
                                   >
                                     <span>Open Map</span>
                                     <ExternalLink className="w-2.5 h-2.5" />
@@ -1440,12 +1440,12 @@ export function EditAccountPanel({
                                       Address #{idx + 1}
                                     </span>
 
-                                    <span className="text-[10px] text-slate-400 px-2 py-0.5 rounded-full bg-[#252728] w-fit">
+                                    <span className="text-xs text-slate-400 px-2 py-0.5 rounded-full bg-[#252728] w-fit">
                                       {addr.type}
                                     </span>
 
                                     {!isExpanded && summary && (
-                                      <span className="text-[11px] text-slate-400 truncate max-w-xs sm:max-w-md hidden sm:inline ml-1">
+                                      <span className="text-xs text-slate-400 truncate max-w-xs sm:max-w-md hidden sm:inline ml-1">
                                         • {summary}
                                       </span>
                                     )}
@@ -1458,7 +1458,7 @@ export function EditAccountPanel({
                                       e.stopPropagation();
                                       if (!addr.isDefault) handleSetDefaultAddress(addr.id);
                                     }}
-                                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0 ml-1 ${
+                                    className={`px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0 ml-1 ${
                                       addr.isDefault
                                         ? "bg-[#C7F33C] text-black"
                                         : "bg-[#252728] text-slate-400 hover:text-slate-200"
@@ -1501,7 +1501,7 @@ export function EditAccountPanel({
                                 <div className="p-5 space-y-3.5 animate-in fade-in duration-150">
                                   {/* Google Places Autocomplete Auto-Fill */}
                                   <div>
-                                    <label className="text-[11px] font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
+                                    <label className="text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">
                                       <Sparkles className="w-3.5 h-3.5 text-[#C7F33C]" />
                                       <span>Auto-Fill with Google Places</span>
                                     </label>
@@ -1530,7 +1530,7 @@ export function EditAccountPanel({
 
                                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[11px] font-semibold text-slate-300">
+                                      <label className="text-xs font-semibold text-slate-300">
                                         Address Type
                                       </label>
                                       <AddressTypeSelect
@@ -1542,7 +1542,7 @@ export function EditAccountPanel({
                                     </div>
 
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[11px] font-semibold text-slate-300">
+                                      <label className="text-xs font-semibold text-slate-300">
                                         Branch Code
                                       </label>
                                       <input
@@ -1557,7 +1557,7 @@ export function EditAccountPanel({
                                     </div>
 
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[11px] font-semibold text-slate-300">
+                                      <label className="text-xs font-semibold text-slate-300">
                                         Tax ID
                                       </label>
                                       <input
@@ -1571,7 +1571,7 @@ export function EditAccountPanel({
                                   </div>
 
                                   <div className="flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">Country</label>
+                                    <label className="text-xs font-semibold text-slate-300">Country</label>
                                     <CountrySelect
                                       value={addr.country || country || "Thailand"}
                                       onChange={(val) => handleUpdateAddressField(addr.id, "country", val)}
@@ -1580,7 +1580,7 @@ export function EditAccountPanel({
                                   </div>
 
                                   <div className="flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">
+                                    <label className="text-xs font-semibold text-slate-300">
                                       Address Line 1 <span className="text-[#C7F33C]">*</span>
                                     </label>
                                     <input
@@ -1595,7 +1595,7 @@ export function EditAccountPanel({
                                   </div>
 
                                   <div className="flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">
+                                    <label className="text-xs font-semibold text-slate-300">
                                       Address Line 2
                                     </label>
                                     <input
@@ -1611,7 +1611,7 @@ export function EditAccountPanel({
 
                                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[11px] font-semibold text-slate-300">Subdistrict</label>
+                                      <label className="text-xs font-semibold text-slate-300">Subdistrict</label>
                                       <input
                                         type="text"
                                         value={addr.subdistrict || ""}
@@ -1624,7 +1624,7 @@ export function EditAccountPanel({
                                     </div>
 
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[11px] font-semibold text-slate-300">District</label>
+                                      <label className="text-xs font-semibold text-slate-300">District</label>
                                       <input
                                         type="text"
                                         value={addr.district || ""}
@@ -1637,7 +1637,7 @@ export function EditAccountPanel({
                                     </div>
 
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[11px] font-semibold text-slate-300">Province</label>
+                                      <label className="text-xs font-semibold text-slate-300">Province</label>
                                       <input
                                         type="text"
                                         value={addr.province || ""}
@@ -1650,7 +1650,7 @@ export function EditAccountPanel({
                                     </div>
 
                                     <div className="flex flex-col gap-1">
-                                      <label className="text-[11px] font-semibold text-slate-300">Postal Code</label>
+                                      <label className="text-xs font-semibold text-slate-300">Postal Code</label>
                                       <input
                                         type="text"
                                         value={addr.postalCode || ""}
@@ -1665,7 +1665,7 @@ export function EditAccountPanel({
 
                                   <div className="flex flex-col gap-1">
                                     <div className="flex items-center justify-between">
-                                      <label className="text-[11px] font-semibold text-slate-300">
+                                      <label className="text-xs font-semibold text-slate-300">
                                         Google Maps URL (Optional)
                                       </label>
                                       {addr.googleMapsUrl && (
@@ -1673,7 +1673,7 @@ export function EditAccountPanel({
                                           href={addr.googleMapsUrl}
                                           target="_blank"
                                           rel="noreferrer"
-                                          className="text-[10px] text-[#C7F33C] hover:underline flex items-center gap-1"
+                                          className="text-xs text-[#C7F33C] hover:underline flex items-center gap-1"
                                         >
                                           <span>Open Map</span>
                                           <ExternalLink className="w-2.5 h-2.5" />
@@ -1736,7 +1736,7 @@ export function EditAccountPanel({
                             )}
                           </div>
                           <div className="flex flex-col flex-1 justify-center min-w-0">
-                            <span className="text-[11px] text-slate-400 mb-0.5 font-medium">
+                            <span className="text-xs text-slate-400 mb-0.5 font-medium">
                               <strong className="text-slate-200 font-semibold">{log.user?.name || "System"}</strong> •{" "}
                               {formatDateTime(log.createdAt)}
                             </span>
@@ -1821,7 +1821,7 @@ export function EditAccountPanel({
                         <button
                           type="button"
                           onClick={() => setNewPersonEmails((prev) => [...prev, ""])}
-                          className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                          className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
                         >
                           + Add Email
                         </button>
@@ -1863,7 +1863,7 @@ export function EditAccountPanel({
                         <button
                           type="button"
                           onClick={() => setNewPersonPhones((prev) => [...prev, ""])}
-                          className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                          className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
                         >
                           + Add Phone
                         </button>
@@ -1984,13 +1984,13 @@ export function EditAccountPanel({
                               <span className="text-xs font-bold text-slate-100 truncate">
                                 {c.name}
                               </span>
-                              <span className="text-[11px] text-slate-400 truncate">
+                              <span className="text-xs text-slate-400 truncate">
                                 {c.role || "No Role"}
                                 {c.contactDepartment ? ` • ${c.contactDepartment}` : ""}
                               </span>
 
                               {!isExpanded && (
-                                <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1">
+                                <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
                                   {c.email && (
                                     <span className="flex items-center gap-1 truncate max-w-[180px]">
                                       <Mail className="w-3 h-3 text-slate-500 shrink-0" />
@@ -2062,7 +2062,7 @@ export function EditAccountPanel({
                               <div className="space-y-3.5 pt-1">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                   <div className="sm:col-span-2 flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">
+                                    <label className="text-xs font-semibold text-slate-300">
                                       Full Name <span className="text-[#C7F33C]">*</span>
                                     </label>
                                     <input
@@ -2079,7 +2079,7 @@ export function EditAccountPanel({
                                   </div>
 
                                   <div className="flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">
+                                    <label className="text-xs font-semibold text-slate-300">
                                       Role / Position
                                     </label>
                                     <input
@@ -2096,7 +2096,7 @@ export function EditAccountPanel({
                                   </div>
 
                                   <div className="flex flex-col gap-1">
-                                    <label className="text-[11px] font-semibold text-slate-300">
+                                    <label className="text-xs font-semibold text-slate-300">
                                       Department
                                     </label>
                                     <input
@@ -2115,7 +2115,7 @@ export function EditAccountPanel({
                                   {/* Multi-Email Addresses */}
                                   <div className="flex flex-col gap-1.5 sm:col-span-2">
                                     <div className="flex items-center justify-between">
-                                      <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                                      <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
                                         <Mail className="w-3.5 h-3.5 text-slate-400" />
                                         <span>Email Addresses</span>
                                       </label>
@@ -2134,7 +2134,7 @@ export function EditAccountPanel({
                                             };
                                           });
                                         }}
-                                        className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                                        className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
                                       >
                                         + Add Email
                                       </button>
@@ -2189,7 +2189,7 @@ export function EditAccountPanel({
                                   {/* Multi-Phone Numbers */}
                                   <div className="flex flex-col gap-1.5 sm:col-span-2">
                                     <div className="flex items-center justify-between">
-                                      <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                                      <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
                                         <Phone className="w-3.5 h-3.5 text-slate-400" />
                                         <span>Phone Numbers</span>
                                       </label>
@@ -2205,7 +2205,7 @@ export function EditAccountPanel({
                                             },
                                           }));
                                         }}
-                                        className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                                        className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
                                       >
                                         + Add Phone
                                       </button>
@@ -2303,13 +2303,13 @@ export function EditAccountPanel({
                                               className="w-full h-full object-cover"
                                             />
                                           ) : (
-                                            <span className="text-[10px] font-bold text-[#C7F33C]">
+                                            <span className="text-xs font-bold text-[#C7F33C]">
                                               {(log.user?.name || "System").slice(0, 2).toUpperCase()}
                                             </span>
                                           )}
                                         </div>
                                         <div className="flex flex-col flex-1 justify-center min-w-0">
-                                          <span className="text-[10px] text-slate-400 mb-0.5 font-medium">
+                                          <span className="text-xs text-slate-400 mb-0.5 font-medium">
                                             <strong className="text-slate-200 font-semibold">
                                               {log.user?.name || "System"}
                                             </strong>{" "}

@@ -7,8 +7,16 @@ import { ReactNode, useEffect } from "react";
 import { PermissionProvider } from "@/providers/PermissionProvider";
 import { SidebarProvider } from "./SidebarContext";
 
+import { initPusherConnectionHygiene } from "@/lib/pusher-connection-manager";
+
 export function ClientShell({ children }: { children: ReactNode }) {
   const { data: session, status } = useSession();
+
+  useEffect(() => {
+    if (session?.user) {
+      initPusherConnectionHygiene();
+    }
+  }, [session?.user]);
 
   useEffect(() => {
     if (session && (session as unknown as Record<string, unknown>).error === "SessionInvalidated") {
@@ -16,8 +24,10 @@ export function ClientShell({ children }: { children: ReactNode }) {
     }
   }, [session]);
 
-  // Optionally, return a full-screen loading state if status === "loading"
-  if (status === "loading" || (session && (session as unknown as Record<string, unknown>).error === "SessionInvalidated")) {
+  // Only show the full-screen loading state on initial mount when there is no session yet.
+  // Avoid tearing down the UI during background session revalidation if session already exists.
+  const isInitialLoading = status === "loading" && !session;
+  if (isInitialLoading || (session && (session as unknown as Record<string, unknown>).error === "SessionInvalidated")) {
     return (
       <div className="w-full h-screen flex items-center justify-center bg-[#252728]">
         <svg className="animate-spin h-8 w-8 text-[#C7F33C]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

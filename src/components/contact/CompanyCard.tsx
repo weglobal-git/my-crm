@@ -52,7 +52,7 @@ export function CompanyCard({
             </span>
             {company.displayName && company.displayName !== company.name && (
               <span
-                className={`text-[10px] truncate leading-tight ${
+                className={`text-xs truncate leading-tight ${
                   isSelected ? "text-black/70 font-medium" : "text-slate-400"
                 }`}
                 title={company.name}
@@ -79,7 +79,7 @@ export function CompanyCard({
               ))}
               {starRating > 0 && (
                 <span
-                  className={`text-[10px] ml-1 font-bold ${
+                  className={`text-xs ml-1 font-bold ${
                     isSelected ? "text-black/80" : "text-amber-400"
                   }`}
                 >
@@ -94,7 +94,7 @@ export function CompanyCard({
         <div className="flex flex-col items-end gap-1 shrink-0">
           {company.country ? (
             <span
-              className={`text-[10px] px-2 py-0.5 rounded-full shrink-0 flex items-center gap-1 font-semibold ${
+              className={`text-xs px-2 py-0.5 rounded-full shrink-0 flex items-center gap-1 font-semibold ${
                 isSelected
                   ? "bg-black/15 text-black"
                   : "bg-[#252728] text-slate-400"
@@ -110,7 +110,7 @@ export function CompanyCard({
           {/* Compact Symbols: Person Count & Deal Count */}
           <div className="flex items-center gap-2 pr-0.5">
             <span
-              className={`flex items-center gap-1 text-[10px] font-semibold ${
+              className={`flex items-center gap-1 text-xs font-semibold ${
                 isSelected ? "text-black/80" : "text-slate-400"
               }`}
               title={`${contactCount} ${contactCount === 1 ? "Person" : "Persons"}`}
@@ -125,7 +125,7 @@ export function CompanyCard({
 
             {oppCount > 0 && (
               <span
-                className={`flex items-center gap-1 text-[10px] font-bold ${
+                className={`flex items-center gap-1 text-xs font-bold ${
                   isSelected ? "text-black" : "text-[#C7F33C]"
                 }`}
                 title={`${oppCount} Deals`}

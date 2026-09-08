@@ -19,7 +19,7 @@ import {
 import { sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext } from "./KanbanCard";
-import { getPendingAcceleratorsMap, type DealAcceleratorsState } from "@/lib/actions/ai-accelerator";
+import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
@@ -27,11 +27,12 @@ import { useSidebar } from "@/components/layout/SidebarContext";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { pusherClient } from "@/lib/pusher";
-import useSWR, { mutate as globalMutate } from "swr";
+import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
+import useSWR, { mutate as globalMutate, preload } from "swr";
+import { getAllUsers } from "@/lib/actions/users";
 
 const loadEditDealPanel = () => import("./EditDealPanel");
 const EditDealPanel = dynamic(() => loadEditDealPanel().then(mod => mod.EditDealPanel), { ssr: false });
-const WonLostModal = dynamic(() => import("./WonLostModal").then(mod => mod.WonLostModal), { ssr: false });
 
 const activeClass = "border-[#C7F33C] bg-[#252728] text-[#C7F33C]";
 
@@ -39,6 +40,7 @@ type PipelineUpdateEvent = {
   action?: string;
   dealId?: string;
   user?: User;
+  users?: User[];
   userId?: string;
   activityLog?: OpportunityWithRelations['activityLogs'][number] & { parentId?: string | null };
   logId?: string;
@@ -62,32 +64,20 @@ export function DroppablePlaceholder({ id, label }: { id: string, label: string 
   );
 }
 
-export function DropZone({ id, label, activeClass }: { id: string, label: string, activeClass: string }) {
-  const { setNodeRef, isOver } = useDroppable({ id });
-  return (
-    <div 
-      ref={setNodeRef} 
-      className={`flex-1 rounded-xl border-4 border-dashed flex items-center justify-center font-bold text-3xl transition-all duration-200 backdrop-blur-md
-        ${isOver ? activeClass : 'border-slate-600/50 bg-slate-800/80 text-slate-500'}
-      `}
-    >
-      {label}
-    </div>
-  );
-}
-
 import type { TabType } from "./EditDealPanel";
 
-export interface KanbanBoardProps {
+interface KanbanBoardProps {
   currentUserId: string;
-  currentUserRole: string;
+  currentUserRole?: string;
   initialStages: PipelineStage[];
   initialOpportunities?: OpportunityWithRelations[];
+  initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
   isCompletedTab?: boolean;
   initialTab?: string;
   activeTab?: string;
   activeSearch?: string;
   cardTypeFilter?: string;
+  ownerFilter?: string;
 }
 
 export function KanbanBoard({ 
@@ -95,11 +85,13 @@ export function KanbanBoard({
   currentUserRole, 
   isCompletedTab, 
   initialStages, 
-  initialOpportunities,
+  initialOpportunities, 
+  initialPendingAccelerators, 
   initialTab = 'workspace',
   activeTab,
   activeSearch,
   cardTypeFilter = 'ALL',
+  ownerFilter = 'ALL',
 }: KanbanBoardProps) {
   const { toast } = useDialog();
   const { setColumnNavConfig } = useSidebar();
@@ -119,7 +111,7 @@ export function KanbanBoard({
       // The initial snapshot was fetched by the Server Component. Avoid an
       // immediate duplicate Server Action after hydration.
       revalidateOnMount: !(tab === initialTab && initialOpportunities !== undefined),
-      revalidateOnFocus: true,
+      revalidateOnFocus: false,
       revalidateOnReconnect: true,
       focusThrottleInterval: 15_000,
       dedupingInterval: 5_000,
@@ -143,10 +135,15 @@ export function KanbanBoard({
     return ids;
   }, [rawOpportunities, initialOpportunities, tab, initialTab, isCompletedTab, completedDeals]);
 
-  const { data: pendingAcceleratorsMap = {}, mutate: mutatePendingAccelerators } = useSWR(
+  const { data: pendingAcceleratorsMap = initialPendingAccelerators || {}, mutate: mutatePendingAccelerators } = useSWR(
     allDealIds.length > 0 ? ['pending-accelerators', allDealIds.slice(0, 100).sort().join(',')] : null,
     () => getPendingAcceleratorsMap(allDealIds),
-    { revalidateOnFocus: true, dedupingInterval: 2000 }
+    { 
+      fallbackData: initialPendingAccelerators,
+      revalidateOnMount: !initialPendingAccelerators,
+      revalidateOnFocus: false, 
+      dedupingInterval: 10_000 
+    }
   );
 
   // Group opportunities by stageId
@@ -155,6 +152,9 @@ export function KanbanBoard({
     let stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
     if (cardTypeFilter && cardTypeFilter !== 'ALL') {
       stageDeals = stageDeals.filter(o => o.type === cardTypeFilter);
+    }
+    if (ownerFilter && ownerFilter !== 'ALL') {
+      stageDeals = stageDeals.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
     }
     stageDeals.sort((a, b) => {
       const aInfo = pendingAcceleratorsMap[a.id];
@@ -172,7 +172,7 @@ export function KanbanBoard({
     });
     acc[stage.id] = stageDeals;
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, pendingAcceleratorsMap]);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, pendingAcceleratorsMap]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
   const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
@@ -188,6 +188,7 @@ export function KanbanBoard({
 
   const preloadEditDealPanel = useCallback(() => {
     void loadEditDealPanel();
+    void preload("all-users", getAllUsers);
   }, []);
 
   const handleOpenPanel = useCallback(async (deal: OpportunityWithRelations, tab: TabType) => {
@@ -205,23 +206,35 @@ export function KanbanBoard({
     setClosingTimeout(t);
   }, []);
 
-  const [wonLostModal, setWonLostModal] = useState<{deal: OpportunityWithRelations, status: "WON" | "LOST"} | null>(null);
-
   // Real-time updates via Pusher
   useEffect(() => {
     if (isCompletedTab) return;
     
     const channelName = `private-pipeline-${currentUserId}`;
+    console.log(`[KANBAN-PUSHER] Subscribing to: "${channelName}" (isCompletedTab=${isCompletedTab})`);
     const channel = pusherClient.subscribe(channelName);
+
+    const onSubSucceeded = () => {
+      console.log(`[KANBAN-PUSHER] Subscribed successfully to: "${channelName}"`);
+    };
+    const onSubError = (status: unknown) => {
+      console.warn(`[KANBAN-PUSHER] Subscription issue for channel "${channelName}":`, status);
+    };
+    channel.bind('pusher:subscription_succeeded', onSubSucceeded);
+    channel.bind('pusher:subscription_error', onSubError);
+
     let hasConnectedOnce = pusherClient.connection.state === 'connected';
     const handleConnected = () => {
       if (hasConnectedOnce) {
+        console.log(`[KANBAN-PUSHER] Pusher re-connected, triggering SWR mutate()`);
         void mutate();
       } else {
         hasConnectedOnce = true;
       }
     };
     const handlePipelineUpdate = (data?: PipelineUpdateEvent) => {
+      console.log(`[KANBAN-PUSHER] Received event "pipeline-updated": action="${data?.action}", dealId="${data?.dealId}"`, data);
+      broadcastEventAcrossTabs(channelName, 'pipeline-updated', data);
       if (data?.action === 'MEMBER_ADDED' && data.dealId && data.user) {
         const addedUser = data.user;
 
@@ -241,6 +254,30 @@ export function KanbanBoard({
                 const isExisting = (opp.teamMembers || []).some(u => u.id === addedUser.id);
                 if (!isExisting) {
                   return { ...opp, teamMembers: [...(opp.teamMembers || []), addedUser] };
+                }
+              }
+              return opp;
+            });
+          },
+          { revalidate: false }
+        );
+      } else if (data?.action === 'MEMBERS_ADDED' && data.dealId && data.users) {
+        const addedUsers = data.users;
+        const dealExists = rawOpportunitiesRef.current?.some(opp => opp.id === data.dealId);
+        if (!dealExists) {
+          mutate();
+          return;
+        }
+
+        mutate(
+          (currentData: OpportunityWithRelations[] | undefined) => {
+            if (!currentData) return currentData;
+            return currentData.map(opp => {
+              if (opp.id === data.dealId) {
+                const currentMembers = opp.teamMembers || [];
+                const newMembers = addedUsers.filter(u => !currentMembers.some(existing => existing.id === u.id));
+                if (newMembers.length > 0) {
+                  return { ...opp, teamMembers: [...currentMembers, ...newMembers] };
                 }
               }
               return opp;
@@ -325,6 +362,7 @@ export function KanbanBoard({
       } else if (data?.action === 'DEAL_ACCELERATORS_UPDATED') {
         const dealId = data.dealId;
         const pendingCount = data.pendingCount;
+        console.log(`[KANBAN-PUSHER] Handling DEAL_ACCELERATORS_UPDATED: dealId="${dealId}", pendingCount=${pendingCount}`);
         if (dealId) {
           if (data.state) {
             void globalMutate(['deal-accelerators', dealId], { success: true, data: data.state }, false);
@@ -356,8 +394,32 @@ export function KanbanBoard({
             },
             false
           );
+          void globalMutate(
+            key => Array.isArray(key) && key[0] === 'pending-accelerators',
+            (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+              if (!prevMap) return prevMap;
+              const next = { ...prevMap };
+              if (pendingCount === 0) {
+                delete next[dealId];
+              } else {
+                const current = next[dealId];
+                if (typeof current === 'object' && current !== null) {
+                  next[dealId] = {
+                    ...current,
+                    count: pendingCount,
+                  };
+                } else {
+                  next[dealId] = {
+                    count: pendingCount,
+                    earliestPendingAt: new Date().toISOString(),
+                  };
+                }
+              }
+              return next;
+            },
+            false
+          );
         }
-        void mutatePendingAccelerators();
         return;
       } else if (data?.action?.startsWith('ACTIVITY_')) {
         // Ignore activity log updates for the board, as they don't affect Kanban columns directly.
@@ -379,21 +441,30 @@ export function KanbanBoard({
         );
       } else if (data?.action === 'OPPORTUNITY_UPDATED' && data.deal) {
         const updatedDeal = data.deal;
+        if (!isCompletedTab && updatedDeal.status !== 'OPEN') {
+          // Deal was closed (WON/LOST) - immediately remove from all active board columns
+          setDeals(prev => {
+            const next = { ...prev };
+            for (const colId in next) {
+              next[colId] = next[colId].filter(opp => opp.id !== updatedDeal.id);
+            }
+            return next;
+          });
+        }
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            // If on workspace tab and the updated deal is no longer OPEN, remove it immediately
+            const source = currentData || (tab === initialTab ? (initialOpportunities || []) : []);
             if (!isCompletedTab && updatedDeal.status !== 'OPEN') {
-              return currentData.filter(opp => opp.id !== updatedDeal.id);
+              return source.filter(opp => opp.id !== updatedDeal.id);
             }
-            return currentData.map(opp => {
+            return source.map(opp => {
               if (opp.id === updatedDeal.id) {
                 return updatedDeal;
               }
               return opp;
             });
           },
-          { revalidate: false }
+          { revalidate: true }
         );
       } else if (data?.action === 'OPPORTUNITY_DELETED' && data.dealId) {
         mutate(
@@ -414,6 +485,8 @@ export function KanbanBoard({
     return () => {
       // This channel is shared with EditDealPanel. Only remove this component's
       // handler; unsubscribing the channel here would disconnect the panel too.
+      channel.unbind('pusher:subscription_succeeded', onSubSucceeded);
+      channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handlePipelineUpdate);
       pusherClient.connection.unbind('connected', handleConnected);
     };
@@ -567,14 +640,6 @@ export function KanbanBoard({
     const activeId = active.id as string;
     const overId = over.id as string;
 
-    if (overId === "zone-won" || overId === "zone-lost") {
-      const deal = activeDeal || deals[findColumnOfDeal(activeId) || ""]?.find(d => d.id === activeId);
-      if (deal) {
-        setWonLostModal({ deal, status: overId === "zone-won" ? "WON" : "LOST" });
-      }
-      return;
-    }
-
     const columnId = findColumnOfDeal(activeId);
     if (!columnId) return;
 
@@ -688,9 +753,13 @@ export function KanbanBoard({
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
             {(() => {
-              const dealsToDisplay = cardTypeFilter && cardTypeFilter !== 'ALL'
-                ? completedDeals.filter(d => d.type === cardTypeFilter)
-                : completedDeals;
+              let dealsToDisplay = completedDeals;
+              if (cardTypeFilter && cardTypeFilter !== 'ALL') {
+                dealsToDisplay = dealsToDisplay.filter(d => d.type === cardTypeFilter);
+              }
+              if (ownerFilter && ownerFilter !== 'ALL') {
+                dealsToDisplay = dealsToDisplay.filter(d => d.ownerId === ownerFilter || d.owner?.id === ownerFilter);
+              }
               const grouped = dealsToDisplay.reduce((acc, deal) => {
                 // Determine completion date by goodsLoadingDate or fallback to updated/createdAt
                 const date = deal.goodsLoadingDate || deal.updatedAt || deal.createdAt;
@@ -768,32 +837,26 @@ export function KanbanBoard({
         )}
       </div>
 
-      {activeDeal && !isCompletedTab && (
-        <div className="fixed bottom-0 left-0 right-0 h-32 p-4 z-50 flex gap-4 animate-in slide-in-from-bottom-10 duration-200">
-          <DropZone id="zone-won" label="WON" activeClass="border-emerald-500 bg-emerald-500/20 text-emerald-400" />
-          <DropZone id="zone-lost" label="LOST" activeClass="border-rose-500 bg-rose-500/20 text-rose-400" />
-        </div>
-      )}
-
       {activePanelDeal && (
         <EditDealPanel
           deal={activePanelDeal.deal}
           initialTab={activePanelDeal.tab}
           isOpen={panelOpen}
           onClose={handleClosePanel}
-        />
-      )}
-
-      {wonLostModal && (
-        <WonLostModal
-          deal={wonLostModal.deal}
-          status={wonLostModal.status}
-          onClose={() => setWonLostModal(null)}
-          onSuccess={() => {
-            const dealId = wonLostModal.deal.id;
-            setWonLostModal(null);
-            mutate(
-              (currentData: OpportunityWithRelations[] | undefined) => currentData?.filter(d => d.id !== dealId),
+          onDealClosed={(dealId) => {
+            // Optimistically remove from active board columns immediately
+            setDeals(prev => {
+              const next = { ...prev };
+              for (const colId in next) {
+                next[colId] = next[colId].filter(d => d.id !== dealId);
+              }
+              return next;
+            });
+            void mutate(
+              (currentData: OpportunityWithRelations[] | undefined) => {
+                const source = currentData || (tab === initialTab ? (initialOpportunities || []) : []);
+                return source.filter(d => d.id !== dealId);
+              },
               { revalidate: true }
             );
           }}

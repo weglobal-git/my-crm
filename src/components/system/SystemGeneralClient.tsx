@@ -372,7 +372,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
 
           <div className="flex items-center gap-8">
             <div className="flex flex-col min-w-[120px]">
-              <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Role</span>
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Role</span>
               <div className="relative group">
                 <select
                   value={user.role}
@@ -390,7 +390,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
 
             {!hideDepartment && (
               <div className="flex flex-col min-w-[140px]">
-                <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Department</span>
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Department</span>
                 <div className="relative group">
                   <select
                     value={user.departments[0]?.id || ""}

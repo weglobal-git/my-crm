@@ -335,7 +335,7 @@ export function PhoneInputWithCountry({
 
         {validationInfo.isValid === true && (
           <span
-            className="text-[10px] font-bold text-[#C7F33C] bg-[#C7F33C]/10 border border-[#C7F33C]/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
+            className="text-xs font-bold text-[#C7F33C] bg-[#C7F33C]/10 border border-[#C7F33C]/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
             title="Valid phone number format according to international telecom standards"
           >
             <Check className="w-2.5 h-2.5 text-[#C7F33C]" />
@@ -345,7 +345,7 @@ export function PhoneInputWithCountry({
 
         {validationInfo.isValid === false && validationInfo.rawLength >= 7 && (
           <span
-            className="text-[10px] font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
+            className="text-xs font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
             title="Check number length or prefix for selected country"
           >
             <ShieldAlert className="w-2.5 h-2.5 text-amber-400" />

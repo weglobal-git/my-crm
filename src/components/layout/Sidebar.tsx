@@ -295,7 +295,7 @@ export function Sidebar() {
                     <span className="text-xs font-semibold text-slate-100 truncate">
                       SB Interlab
                     </span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#3A3B3C] text-slate-300 font-medium">
+                    <span className="text-xs font-mono px-1.5 py-0.2 rounded bg-[#3A3B3C] text-slate-300 font-medium">
                       CRM
                     </span>
                   </div>
@@ -337,7 +337,7 @@ export function Sidebar() {
                 className="flex-1 bg-transparent border-none outline-none text-xs text-slate-100 placeholder-slate-400 min-w-0"
               />
               {!desktopFilterQuery && (
-                <span className="text-[10px] font-mono px-1 py-0.2 rounded bg-[#4E4F50] text-slate-300">
+                <span className="text-xs font-mono px-1 py-0.2 rounded bg-[#4E4F50] text-slate-300">
                   F
                 </span>
               )}
@@ -463,7 +463,7 @@ export function Sidebar() {
                 <span className="text-xs font-semibold text-slate-100 truncate">
                   {session?.user?.name || "User"}
                 </span>
-                <span className="text-[10px] text-slate-400 truncate">
+                <span className="text-xs text-slate-400 truncate">
                   {session?.user?.email || "Admin"}
                 </span>
               </div>
@@ -553,7 +553,7 @@ export function Sidebar() {
                   handleMobileClearAndClose();
                 }}
                 onClick={handleMobileClearAndClose}
-                className="text-[11px] font-medium text-slate-400 hover:text-slate-100 active:text-white px-2 py-0.5 rounded-full hover:bg-[#3A3B3C] transition-colors shrink-0 cursor-pointer"
+                className="text-xs font-medium text-slate-400 hover:text-slate-100 active:text-white px-2 py-0.5 rounded-full hover:bg-[#3A3B3C] transition-colors shrink-0 cursor-pointer"
                 title="Clear search"
               >
                 Clear
@@ -678,7 +678,7 @@ export function Sidebar() {
               <div className="w-7 h-7 rounded-md bg-gradient-to-tr from-purple-600 to-indigo-500 flex items-center justify-center text-white font-bold text-xs">
                 SB
               </div>
-              <span className="font-semibold text-slate-100 text-xs">
+              <span className="font-semibold text-slate-100 text-base">
                 SB Interlab CRM
               </span>
             </div>
@@ -714,7 +714,7 @@ export function Sidebar() {
                     <div className="flex flex-col">
                       <span className="font-medium text-xs text-slate-100">{item.label}</span>
                       {item.parentLabel && (
-                        <span className="text-[11px] text-slate-400">{item.parentLabel}</span>
+                        <span className="text-xs text-slate-400">{item.parentLabel}</span>
                       )}
                     </div>
                   </div>
@@ -786,7 +786,7 @@ export function Sidebar() {
                           {item.label}
                         </span>
                         {item.parentLabel && (
-                          <span className="text-[11px] text-slate-400 truncate">
+                          <span className="text-xs text-slate-400 truncate">
                             {item.parentLabel}
                           </span>
                         )}
@@ -810,7 +810,7 @@ export function Sidebar() {
           <div className="sticky top-0 z-10 bg-[#252728] flex items-center justify-between pt-4 pb-4 border-b border-[#1C1C1D] mb-4 shrink-0">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-[#C7F33C]" />
-              <span className="font-semibold text-slate-100 text-xs">
+              <span className="font-semibold text-slate-100 text-base">
                 Manage & Filters
               </span>
             </div>

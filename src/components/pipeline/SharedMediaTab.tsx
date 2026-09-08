@@ -202,7 +202,7 @@ export function SharedMediaTab({
           title={`Open in Google Drive: ${media.fileName || media.filename}`}
         >
           <Cloud className="w-7 h-7 text-sky-400 group-hover:scale-110 transition-transform mb-1.5" />
-          <span className="text-[11px] font-semibold text-slate-200 truncate w-full">
+          <span className="text-xs font-semibold text-slate-200 truncate w-full">
             {media.fileName || media.filename}
           </span>
           <span className="text-[9px] text-sky-400/90 font-medium">Google Drive</span>
@@ -247,7 +247,7 @@ export function SharedMediaTab({
       >
         <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 p-2">
           <ImageIcon className="w-7 h-7 mb-1" />
-          <span className="text-[10px] text-slate-400 truncate w-full text-center">
+          <span className="text-xs text-slate-400 truncate w-full text-center">
             {media.fileName || media.filename}
           </span>
         </div>
@@ -279,7 +279,7 @@ export function SharedMediaTab({
         </div>
         <div className="flex flex-col overflow-hidden min-w-0 flex-1">
           <span className="text-xs font-medium text-slate-100 truncate">{link.url}</span>
-          <span className="text-[11px] text-slate-400">{formattedDate}</span>
+          <span className="text-xs text-slate-400">{formattedDate}</span>
         </div>
         <ExternalLink className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 shrink-0" />
       </a>
@@ -316,7 +316,7 @@ export function SharedMediaTab({
             <span className="text-xs font-semibold text-slate-100 truncate">
               {file.fileName || file.filename}
             </span>
-            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
               <span>{formatBytes(file.size)}</span>
               <span>•</span>
               <span>{formattedDate}</span>
@@ -349,7 +349,7 @@ export function SharedMediaTab({
           <Briefcase className="w-3.5 h-3.5 text-[#C7F33C] shrink-0" />
           <span className="text-xs font-bold text-slate-200 truncate">{dealTopic}</span>
           <span
-            className={`text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0 uppercase ${
+            className={`text-xs px-2 py-0.5 rounded-full font-semibold shrink-0 uppercase ${
               dealStatus === "WON"
                 ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                 : dealStatus === "LOST"
@@ -360,7 +360,7 @@ export function SharedMediaTab({
             {dealStatus}
           </span>
         </div>
-        <span className="text-[11px] text-slate-400 font-medium shrink-0">
+        <span className="text-xs text-slate-400 font-medium shrink-0">
           {itemCount} {itemCount === 1 ? "item" : "items"}
         </span>
       </div>

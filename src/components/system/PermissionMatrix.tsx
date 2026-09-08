@@ -316,7 +316,7 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                                 <span>{sideMenu.label}</span>
                               </div>
                               {description && (
-                                <span className="text-[10px] text-slate-400/80 not-italic font-normal tracking-tight mt-0.5">
+                                <span className="text-xs text-slate-400/80 not-italic font-normal tracking-tight mt-0.5">
                                   {description}
                                 </span>
                               )}

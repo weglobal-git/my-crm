@@ -1,16 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { SlidersHorizontal } from "lucide-react";
 import { KanbanBoard } from "@/components/pipeline/KanbanBoard";
 import { PipelineSearch } from "@/components/pipeline/PipelineSearch";
 import { CreateDealButton } from "@/components/pipeline/CreateDealButton";
-import { CardTypeFilter, CardTypeFilterValue } from "@/components/pipeline/CardTypeFilter";
-import { PipelineQuickFilters } from "@/components/pipeline/PipelineQuickFilters";
+import { CardTypeFilterValue } from "@/components/pipeline/CardTypeFilter";
+import { PipelineFiltersDrawer, PipelineFilterContent } from "@/components/pipeline/PipelineFiltersDrawer";
 import { useSearchParams } from "next/navigation";
 import { PipelineStage } from "@prisma/client";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
+import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 
 interface PipelineViewProps {
   userId: string;
@@ -18,14 +20,25 @@ interface PipelineViewProps {
   stages: PipelineStage[];
   companies?: { id: string; name: string; displayName?: string | null; contacts?: { id: string; name: string }[] }[];
   initialOpportunities?: OpportunityWithRelations[];
+  initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
   initialTab?: string;
 }
 
-export function PipelineView({ userId, role, stages, companies, initialOpportunities, initialTab = 'workspace' }: PipelineViewProps) {
+export function PipelineView({ 
+  userId, 
+  role, 
+  stages, 
+  companies, 
+  initialOpportunities, 
+  initialPendingAccelerators,
+  initialTab = 'workspace' 
+}: PipelineViewProps) {
   const searchParams = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') || initialTab);
   const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || '');
   const [cardType, setCardType] = useState<CardTypeFilterValue>('ALL');
+  const [ownerFilter, setOwnerFilter] = useState<string>('ALL');
+  const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const { setPageManageContent, setHasActiveFilters, setPageSearchConfig } = useSidebar();
   
   useEffect(() => {
@@ -59,7 +72,18 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
     updateUrl(tab, newSearch);
   }, [tab, updateUrl]);
 
-  const hasFilters = Boolean(searchQuery.trim() || (cardType && cardType !== 'ALL') || tab !== 'workspace');
+  const handleResetFilters = useCallback(() => {
+    setCardType('ALL');
+    setOwnerFilter('ALL');
+    handleSearchChange('');
+    handleTabChange('workspace');
+  }, [handleSearchChange, handleTabChange]);
+
+  const activeFilterCount = 
+    (cardType !== 'ALL' ? 1 : 0) + 
+    (ownerFilter !== 'ALL' ? 1 : 0);
+
+  const hasFilters = activeFilterCount > 0;
   useEffect(() => {
     setHasActiveFilters(hasFilters);
   }, [hasFilters, setHasActiveFilters]);
@@ -74,120 +98,127 @@ export function PipelineView({ userId, role, stages, companies, initialOpportuni
     return () => setPageSearchConfig(null);
   }, [handleSearchChange, searchQuery, setPageSearchConfig]);
 
-  // Register mobile Manage modal content
+  // Register mobile Manage modal content (100% shared component with Desktop)
   useEffect(() => {
     setPageManageContent(
-      <div className="flex flex-col gap-4 select-none">
-        {/* Top Primary Action: + New Deal */}
-        {tab === 'workspace' && (
-          <div className="w-full">
-            <CreateDealButton 
-              stages={stages} 
-              companies={companies} 
-            />
-          </div>
-        )}
-
-        {/* Section: View / Tabs */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            View
-          </label>
-          <div className="grid grid-cols-2 gap-2 bg-[#1C1C1D] p-1 rounded-xl">
-            <button 
-              onClick={() => handleTabChange('workspace')}
-              className={`py-2 text-xs font-semibold rounded-lg transition-all ${tab === 'workspace' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
-            >
-              My Workspace
-            </button>
-            <button 
-              onClick={() => handleTabChange('completed')}
-              className={`py-2 text-xs font-semibold rounded-lg transition-all ${tab === 'completed' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
-            >
-              Completed
-            </button>
-          </div>
-        </div>
-
-        {/* Section: Card Type */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            Card Type
-          </label>
-          <CardTypeFilter value={cardType} onChange={setCardType} variant="segmented" />
-        </div>
-
-        {/* Section: Quick Filters */}
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-            Quick Filters
-          </label>
-          <PipelineQuickFilters
-            userId={userId}
-            activeFilter={searchQuery}
-            onSelectFilter={handleSearchChange}
-          />
-        </div>
-      </div>
+      <PipelineFilterContent
+        tab={tab}
+        onTabChange={handleTabChange}
+        cardType={cardType}
+        onCardTypeChange={setCardType}
+        ownerFilter={ownerFilter}
+        onOwnerFilterChange={setOwnerFilter}
+        searchQuery={searchQuery}
+        onSearchChange={handleSearchChange}
+        userId={userId}
+        stages={stages}
+        companies={companies}
+        activeFilterCount={activeFilterCount}
+        onResetFilters={handleResetFilters}
+      />
     );
     return () => setPageManageContent(null);
-  }, [tab, searchQuery, cardType, stages, companies, userId, handleSearchChange, handleTabChange, setPageManageContent]);
+  }, [
+    tab, 
+    searchQuery, 
+    cardType, 
+    ownerFilter, 
+    stages, 
+    companies, 
+    userId, 
+    activeFilterCount, 
+    handleSearchChange, 
+    handleTabChange, 
+    handleResetFilters, 
+    setPageManageContent
+  ]);
 
   return (
     <WorkspaceLayout scrollMode={tab === "completed" ? "auto" : "hidden"}>
-          
-          {/* Desktop Toolbar (Hidden on Mobile) */}
-          <div className="hidden md:flex justify-between items-center mb-4 gap-3 flex-wrap">
-            <div className="flex gap-2 bg-[#252728] p-1 rounded-full shrink-0">
-              <button 
-                onClick={() => handleTabChange('workspace')}
-                className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all ${tab === 'workspace' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
-              >
-                ACTIVE
-              </button>
-              <button 
-                onClick={() => handleTabChange('completed')}
-                className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all ${tab === 'completed' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
-              >
-                ARCHIVED
-              </button>
-            </div>
+      {/* Desktop Toolbar (Hidden on Mobile) */}
+      <div className="hidden md:flex justify-between items-center mb-4 gap-3 flex-wrap">
+        <div className="flex gap-2 bg-[#252728] p-1 rounded-full shrink-0">
+          <button 
+            type="button"
+            onClick={() => handleTabChange('workspace')}
+            className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all cursor-pointer ${tab === 'workspace' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            ACTIVE
+          </button>
+          <button 
+            type="button"
+            onClick={() => handleTabChange('completed')}
+            className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all cursor-pointer ${tab === 'completed' ? 'bg-[#3A3B3C] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            ARCHIVED
+          </button>
+        </div>
 
-            <div className="flex items-center gap-2.5 shrink-0 ml-auto flex-wrap">
-              {/* Quick Filters (Left of Search) */}
-              <PipelineQuickFilters
-                userId={userId}
-                activeFilter={searchQuery}
-                onSelectFilter={handleSearchChange}
-              />
+        <div className="flex items-center gap-2.5 shrink-0 ml-auto flex-wrap">
+          {/* Expanding Search Component */}
+          <PipelineSearch initialSearch={searchQuery} onSearch={handleSearchChange} />
 
-              {/* Search */}
-              <PipelineSearch initialSearch={searchQuery} onSearch={handleSearchChange} />
+          {/* Centralized Filters Button */}
+          <button
+            type="button"
+            onClick={() => setIsFiltersOpen(true)}
+            className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-2 border transition-all cursor-pointer ${
+              activeFilterCount > 0
+                ? "bg-[#C7F33C]/10 border-[#C7F33C] text-[#C7F33C]"
+                : "bg-[#252728] border-[#3A3B3C] text-slate-300 hover:text-white hover:bg-[#3A3B3C]"
+            }`}
+            title="Filters & Manage"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Filters</span>
+            {activeFilterCount > 0 && (
+              <span className="w-4 h-4 rounded-full bg-[#C7F33C] text-black text-[10px] font-bold flex items-center justify-center">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
 
-              {/* Card Type Filter (Left of New Card) */}
-              <CardTypeFilter value={cardType} onChange={setCardType} />
-
-              {/* New Card Button */}
-              {tab === 'workspace' && (
-                <CreateDealButton 
-                  stages={stages} 
-                  companies={companies} 
-                />
-              )}
-            </div>
-          </div>
-
-          <KanbanBoard 
-            currentUserId={userId} 
-            currentUserRole={role}
-            initialStages={stages} 
-            initialOpportunities={initialOpportunities}
-            initialTab={initialTab}
-            isCompletedTab={tab === 'completed'}
-            activeTab={tab}
-            activeSearch={searchQuery}
-            cardTypeFilter={cardType}
+          {/* New Card Button (Always rendered, disabled in Completed view to prevent layout shift) */}
+          <CreateDealButton 
+            stages={stages} 
+            companies={companies} 
+            disabled={tab === 'completed'}
           />
+        </div>
+      </div>
+
+      {/* Centralized Pipeline Filters Drawer (matches CreateDealButton floating modal design) */}
+      <PipelineFiltersDrawer
+        isOpen={isFiltersOpen}
+        onClose={() => setIsFiltersOpen(false)}
+        tab={tab}
+        onTabChange={handleTabChange}
+        cardType={cardType}
+        onCardTypeChange={setCardType}
+        ownerFilter={ownerFilter}
+        onOwnerFilterChange={setOwnerFilter}
+        searchQuery={searchQuery}
+        onSearchChange={handleSearchChange}
+        userId={userId}
+        stages={stages}
+        companies={companies}
+        activeFilterCount={activeFilterCount}
+        onResetFilters={handleResetFilters}
+      />
+
+      <KanbanBoard 
+        currentUserId={userId} 
+        currentUserRole={role}
+        initialStages={stages} 
+        initialOpportunities={initialOpportunities}
+        initialPendingAccelerators={initialPendingAccelerators}
+        initialTab={initialTab}
+        isCompletedTab={tab === 'completed'}
+        activeTab={tab}
+        activeSearch={searchQuery}
+        cardTypeFilter={cardType}
+        ownerFilter={ownerFilter}
+      />
     </WorkspaceLayout>
   );
 }

@@ -32,6 +32,7 @@ export async function createOpportunity(data: {
   type?: OpportunityType;
   companyId?: string;
   pipelineStageId: string;
+  teamMemberIds?: string[];
 }) {
   const actor = await requirePipelineActor();
   const topic = data.topic.trim();
@@ -42,6 +43,9 @@ export async function createOpportunity(data: {
   if ((data.type || 'SALES_DEAL') === 'SALES_DEAL' && !data.companyId) {
     throw new Error('Customer is required for Sales Deals');
   }
+
+  const validMemberIds = (data.teamMemberIds || []).filter(id => id && id !== actor.id);
+
   const result = await prisma.opportunity.create({
     data: {
       topic,
@@ -49,7 +53,12 @@ export async function createOpportunity(data: {
       companyId: data.companyId || null,
       ownerId: actor.id,
       pipelineStageId: data.pipelineStageId,
-      status: "OPEN"
+      status: "OPEN",
+      ...(validMemberIds.length > 0 ? {
+        teamMembers: {
+          connect: validMemberIds.map(id => ({ id }))
+        }
+      } : {})
     }
   });
 
@@ -63,6 +72,33 @@ export async function createOpportunity(data: {
       content: `Created this opportunity as a ${typeLabel}.`
     }
   });
+
+  // Batch notifications for invited team members
+  if (validMemberIds.length > 0) {
+    try {
+      const notifications = await prisma.$transaction(
+        validMemberIds.map(recipientId =>
+          prisma.notification.create({
+            data: {
+              type: "SYSTEM_ALERT",
+              senderId: actor.id,
+              recipientId,
+              referenceId: result.id,
+              title: "Added to Team",
+              message: `Added you to the team for deal: ${result.topic}`,
+            },
+            include: { sender: true }
+          })
+        )
+      );
+      notifications.forEach(n => {
+        void triggerNotification(n.recipientId, n);
+      });
+    } catch (err) {
+      console.warn("[createOpportunity] Failed to send notifications:", err);
+    }
+  }
+
   const fullDeal = await prisma.opportunity.findUnique({
     where: { id: result.id },
     select: pipelineOpportunitySelect
@@ -172,7 +208,11 @@ type SafeOpportunityUpdate = {
 };
 
 export async function updateOpportunity(id: string, data: SafeOpportunityUpdate) {
-  await requireOpportunityAccess(id);
+  if (data.type !== undefined) {
+    await requireOpportunityAccess(id, { ownerOrAdmin: true });
+  } else {
+    await requireOpportunityAccess(id);
+  }
   if (data.topic !== undefined && (data.topic.trim().length === 0 || data.topic.length > 500)) {
     throw new Error('Invalid topic');
   }
@@ -564,7 +604,7 @@ export async function deleteActivityLog(logId: string, actorOverride?: PipelineA
 // Reaction actions removed
 
 export async function addTeamMember(opportunityId: string, userId: string) {
-  const { actor } = await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
+  const { actor } = await requireOpportunityAccess(opportunityId);
   
   const result = await prisma.opportunity.update({
     where: { id: opportunityId },
@@ -597,8 +637,72 @@ export async function addTeamMember(opportunityId: string, userId: string) {
   return result;
 }
 
+export async function addTeamMembers(opportunityId: string, userIds: string[]) {
+  if (!userIds || userIds.length === 0) return null;
+  const { actor } = await requireOpportunityAccess(opportunityId);
+  
+  const result = await prisma.opportunity.update({
+    where: { id: opportunityId },
+    data: {
+      teamMembers: {
+        connect: userIds.map(id => ({ id }))
+      }
+    },
+    include: {
+      teamMembers: {
+        where: { id: { in: userIds } },
+        select: { id: true, name: true, image: true, email: true, role: true }
+      }
+    }
+  });
+
+  // Create notifications in batch for added users (except actor)
+  const usersToNotify = userIds.filter(id => id !== actor.id);
+  if (usersToNotify.length > 0) {
+    try {
+      const notifications = await prisma.$transaction(
+        usersToNotify.map(recipientId =>
+          prisma.notification.create({
+            data: {
+              type: "SYSTEM_ALERT",
+              senderId: actor.id,
+              recipientId,
+              referenceId: opportunityId,
+              title: "Added to Team",
+              message: `Added you to the team for deal: ${result.topic}`,
+            },
+            include: { sender: true }
+          })
+        )
+      );
+      notifications.forEach(n => {
+        void triggerNotification(n.recipientId, n);
+      });
+    } catch (err) {
+      console.warn("[addTeamMembers] Failed to send notifications:", err);
+    }
+  }
+
+  await notifyPrivatePipelineUpdate(opportunityId, {
+    action: 'MEMBERS_ADDED',
+    dealId: opportunityId,
+    users: result.teamMembers
+  }).catch(() => {});
+
+  revalidatePath('/pipeline');
+  return result;
+}
+
 export async function removeTeamMember(opportunityId: string, userId: string) {
-  await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
+  const { actor, opportunity } = await requireOpportunityAccess(opportunityId);
+  const isOwner = opportunity.ownerId === actor.id;
+  const isAdmin = ['ADMIN', 'MANAGEMENT'].includes(actor.role);
+  const isSelf = userId === actor.id;
+
+  if (!isOwner && !isAdmin && !isSelf) {
+    throw new Error('Forbidden');
+  }
+
   const previousRecipientIds = await getPipelineRecipientUserIds(opportunityId);
   const result = await prisma.opportunity.update({
     where: { id: opportunityId },

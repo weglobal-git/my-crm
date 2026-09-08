@@ -565,7 +565,7 @@ export function ContactView({
             >
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
               <span>Qualified</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#252728] text-slate-300 font-semibold">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-[#252728] text-slate-300 font-semibold">
                 {stats.qualifiedCount}
               </span>
             </button>
@@ -580,7 +580,7 @@ export function ContactView({
             >
               <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
               <span>Unqualified</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#252728] text-slate-300 font-semibold">
+              <span className="text-xs px-1.5 py-0.2 rounded-full bg-[#252728] text-slate-300 font-semibold">
                 {stats.unqualifiedCount}
               </span>
             </button>
@@ -770,7 +770,7 @@ export function ContactView({
           >
             <span>QUALIFIED</span>
             <span
-              className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+              className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
                 activeTab === "QUALIFIED"
                   ? "bg-[#252728] text-slate-200"
                   : "bg-[#1C1C1D] text-slate-400"
@@ -797,7 +797,7 @@ export function ContactView({
           >
             <span>UNQUALIFIED</span>
             <span
-              className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+              className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
                 activeTab === "UNQUALIFIED"
                   ? "bg-[#252728] text-slate-200"
                   : "bg-[#1C1C1D] text-slate-400"
@@ -965,7 +965,7 @@ export function ContactView({
                           <span className="truncate pr-2">{c.country}</span>
                           <div className="flex items-center gap-1.5 shrink-0">
                             <span
-                              className={`text-[10px] px-1.5 py-0.2 rounded-full font-semibold ${
+                              className={`text-xs px-1.5 py-0.2 rounded-full font-semibold ${
                                 selectedCountry === c.country
                                   ? "bg-black/20 text-black"
                                   : "bg-[#3A3B3C] text-slate-400"
@@ -985,7 +985,7 @@ export function ContactView({
                         .toLowerCase()
                         .includes(countrySearchInput.toLowerCase().trim())
                     ).length === 0 && (
-                      <div className="text-[11px] text-slate-500 text-center py-3">
+                      <div className="text-xs text-slate-500 text-center py-3">
                         No countries found
                       </div>
                     )}
@@ -1045,7 +1045,7 @@ export function ContactView({
                     </div>
                   )}
                   {!hasMore && companies.length > 0 && (
-                    <span className="text-[10px] text-slate-500 font-medium">
+                    <span className="text-xs text-slate-500 font-medium">
                       All {totalCompanies} accounts loaded
                     </span>
                   )}
@@ -1068,7 +1068,7 @@ export function ContactView({
                       {selectedCompany.displayName || selectedCompany.name}
                     </h3>
                     {selectedCompany.country && (
-                      <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-[#3A3B3C] text-slate-200 font-bold shrink-0 tracking-wide">
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#3A3B3C] text-slate-200 font-bold shrink-0 tracking-wide">
                         {selectedCompany.country}
                       </span>
                     )}
@@ -1114,7 +1114,7 @@ export function ContactView({
                           </button>
                         );
                       })}
-                      <span className="text-[10px] text-amber-400 font-bold ml-1 min-w-[12px] text-center">
+                      <span className="text-xs text-amber-400 font-bold ml-1 min-w-[12px] text-center">
                         {hoverRating !== null
                           ? hoverRating
                           : selectedCompany.starRating || 0}
@@ -1125,7 +1125,7 @@ export function ContactView({
                       <button
                         type="button"
                         onClick={() => handleSetStarRating(0)}
-                        className="text-[10px] text-slate-500 hover:text-slate-300 px-1.5 py-0.5 rounded bg-[#1C1C1D]/60 hover:bg-[#3A3B3C] transition-colors cursor-pointer"
+                        className="text-xs text-slate-500 hover:text-slate-300 px-1.5 py-0.5 rounded bg-[#1C1C1D]/60 hover:bg-[#3A3B3C] transition-colors cursor-pointer"
                         title="Clear star rating (0 stars)"
                       >
                         Reset

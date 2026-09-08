@@ -132,7 +132,7 @@ export function WelcomeLogin() {
                       <UserCheck className="w-4 h-4 text-[#C7F33C]" />
                       <span>{devLoadingEmail === "jakkaphan.jindarug@gmail.com" ? "Signing in..." : "Sign in as Light (jakkaphan)"}</span>
                     </span>
-                    <span className="text-[10px] text-white/70 bg-white/10 px-2 py-0.5 rounded font-mono">Light</span>
+                    <span className="text-xs text-white/70 bg-white/10 px-2 py-0.5 rounded font-mono">Light</span>
                   </button>
 
                   <button
@@ -145,7 +145,7 @@ export function WelcomeLogin() {
                       <ShieldCheck className="w-4 h-4 text-indigo-600" />
                       <span>{devLoadingEmail === "weglobal.server@gmail.com" ? "Signing in..." : "Sign in as System Admin"}</span>
                     </span>
-                    <span className="text-[10px] text-slate-500 bg-slate-200 px-2 py-0.5 rounded font-mono">Admin</span>
+                    <span className="text-xs text-slate-500 bg-slate-200 px-2 py-0.5 rounded font-mono">Admin</span>
                   </button>
                 </div>
               </div>

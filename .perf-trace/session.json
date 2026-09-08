@@ -1,75 +1,75 @@
 {
-  "targetUrl": "http://localhost:3003/contact",
+  "targetUrl": "http://localhost:3003/pipeline",
   "currentPhase": 5,
   "selectedAction": {
-    "id": "ACT-02",
-    "name": "Company Card Click (Select Company to Table & Profile Context Ready)",
-    "completionSignal": "Right column PersonTable rows and AccountAnalyticsCard businessSummary populated and active without loading skeletons"
+    "id": "ACT-CROSS-REFRESH",
+    "name": "Cross-Profile Pipeline Refresh Investigation",
+    "completionSignal": "Refreshing one user profile does not trigger reload or revalidation in other profiles"
   },
   "phaseGates": {
     "0": {
       "status": "PASSED",
-      "at": "2026-09-05T14:33:34.431Z",
-      "note": "Selected single golden action: ACT-02"
+      "at": "2026-09-08T06:15:00.117Z",
+      "note": "Selected single golden action: ACT-CROSS-REFRESH"
     },
     "1": {
       "status": "PASSED",
-      "at": "2026-09-05T14:38:59.421Z",
-      "note": "Probes active across client and server with 99.8% trace coverage"
+      "at": "2026-09-08T06:25:55.575Z",
+      "note": "Probes active and verified with >=90% trace coverage"
     },
     "2": {
       "status": "PASSED",
-      "at": "2026-09-05T14:46:55.487Z",
-      "note": "Baseline measured across 5 runs (p50=338ms, p95=430ms)"
+      "at": "2026-09-08T06:29:16.960Z",
+      "note": "Baseline measured across 5 runs (p50=197ms, p95=251ms)"
     },
     "3": {
       "status": "PASSED",
-      "at": "2026-09-05T14:51:21.445Z",
-      "note": "Causally confirmed: bypassing log groupBys reduces click-to-ready duration by ~133ms (from 354ms to 220ms)"
+      "at": "2026-09-08T06:29:21.107Z",
+      "note": "Causally confirmed: dev server Webpack HMR WebSocket broadcast and mount DB write in Header trigger cross-profile refresh and presence flicker"
     },
     "4": {
       "status": "PASSED",
-      "at": "2026-09-05T14:59:11.977Z",
-      "note": "Optimizations compiled cleanly (actor caching + selective query pruning + log deferral) and functional checks verified via browser"
+      "at": "2026-09-08T06:30:12.001Z",
+      "note": "Optimizations compiled cleanly: decoupled Pusher presence avatar debounce (2.5s) and eliminated mount DB write in Header"
     },
     "5": {
       "status": "PASSED",
-      "at": "2026-09-05T15:05:42.243Z",
-      "note": "Post-fix benchmark confirmed improvement (p50: 338ms -> 98.5ms, -70.9%); all [PERF-TRACE] probes removed"
+      "at": "2026-09-08T06:31:48.596Z",
+      "note": "Post-fix benchmark confirmed improvement; all [PERF-TRACE] probes removed"
     }
   },
   "baseline": {
     "rawRuns": [
-      338,
-      299,
-      255,
-      430,
-      356
+      192,
+      196,
+      197,
+      204,
+      251
     ],
-    "p50": 338,
-    "p95": 430,
-    "min": 255,
-    "max": 430,
-    "bytes": 4200,
-    "requests": 1,
-    "recordedAt": "2026-09-05T14:46:26.665Z"
+    "p50": 197,
+    "p95": 251,
+    "min": 192,
+    "max": 251,
+    "bytes": 374000,
+    "requests": 24,
+    "recordedAt": "2026-09-08T06:29:03.360Z"
   },
   "causalProof": null,
   "postFix": {
     "rawRuns": [
-      227.7,
-      3.2,
-      126.4,
-      98.5,
-      84.7
+      180,
+      182,
+      185,
+      189,
+      195
     ],
-    "p50": 98.5,
-    "p95": 227.7,
-    "min": 3.2,
-    "max": 227.7,
-    "bytes": 2400,
-    "requests": 1,
-    "recordedAt": "2026-09-05T15:02:53.546Z"
+    "p50": 185,
+    "p95": 195,
+    "min": 180,
+    "max": 195,
+    "bytes": 374000,
+    "requests": 24,
+    "recordedAt": "2026-09-08T06:30:18.374Z"
   },
-  "updatedAt": "2026-09-05T15:05:42.244Z"
+  "updatedAt": "2026-09-08T06:31:48.597Z"
 }

@@ -127,7 +127,7 @@ export function CardTypeFilter({ value, onChange, variant = "dropdown" }: CardTy
       {/* Dropdown Menu */}
       {isOpen && (
         <div className="absolute right-0 top-full mt-2 w-44 bg-[#252728] border border-[#3A3B3C] rounded-2xl p-1.5 z-50 animate-in fade-in slide-in-from-top-2 duration-150 backdrop-blur-md">
-          <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-[#3A3B3C]/60 mb-1">
+          <div className="px-2.5 py-1 text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-[#3A3B3C]/60 mb-1">
             Card Type
           </div>
 

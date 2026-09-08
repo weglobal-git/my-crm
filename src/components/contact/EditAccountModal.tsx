@@ -339,7 +339,7 @@ export function EditAccountModal({
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
                     <span>Account Notes & Information</span>
-                    <span className="text-[10px] text-slate-500 font-normal">
+                    <span className="text-xs text-slate-500 font-normal">
                       Includes preserved legacy records
                     </span>
                   </label>
@@ -393,7 +393,7 @@ export function EditAccountModal({
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                       {/* Title */}
                       <div className="sm:col-span-2">
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Address Title / Branch Name
                         </label>
                         <input
@@ -407,7 +407,7 @@ export function EditAccountModal({
 
                       {/* Type */}
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Address Type
                         </label>
                         <AddressTypeSelect
@@ -418,7 +418,7 @@ export function EditAccountModal({
 
                       {/* Branch Code */}
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Branch Code
                         </label>
                         <input
@@ -434,7 +434,7 @@ export function EditAccountModal({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {/* Tax ID */}
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Tax ID
                         </label>
                         <input
@@ -448,7 +448,7 @@ export function EditAccountModal({
 
                       {/* Google Maps URL */}
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Google Maps URL (Optional)
                         </label>
                         <input
@@ -464,7 +464,7 @@ export function EditAccountModal({
                     {/* Address Line 1 & Line 2 */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Address Line 1 <span className="text-red-400">*</span>
                         </label>
                         <input
@@ -477,7 +477,7 @@ export function EditAccountModal({
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Address Line 2
                         </label>
                         <input
@@ -493,7 +493,7 @@ export function EditAccountModal({
                     {/* Sub-district, District, Province, Postal Code */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Subdistrict
                         </label>
                         <input
@@ -506,7 +506,7 @@ export function EditAccountModal({
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           District
                         </label>
                         <input
@@ -519,7 +519,7 @@ export function EditAccountModal({
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Province
                         </label>
                         <input
@@ -532,7 +532,7 @@ export function EditAccountModal({
                       </div>
 
                       <div>
-                        <label className="block text-[11px] font-semibold text-slate-400 mb-1">
+                        <label className="block text-xs font-semibold text-slate-400 mb-1">
                           Postal Code
                         </label>
                         <input
@@ -598,17 +598,17 @@ export function EditAccountModal({
                             <span className="font-bold text-xs text-slate-100">
                               {addr.title || "Address"}
                             </span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#3A3B3C] text-slate-300 uppercase">
+                            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#3A3B3C] text-slate-300 uppercase">
                               {addr.type}
                             </span>
                             {addr.isDefault && (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] flex items-center gap-1">
+                              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] flex items-center gap-1">
                                 <Star className="w-2.5 h-2.5 fill-current" />
                                 Primary
                               </span>
                             )}
                             {addr.branchNumber && (
-                              <span className="text-[10px] text-slate-400">
+                              <span className="text-xs text-slate-400">
                                 สาขา {addr.branchNumber}
                               </span>
                             )}
@@ -619,7 +619,7 @@ export function EditAccountModal({
                           </p>
 
                           {addr.taxId && (
-                            <span className="text-[11px] text-slate-400 block font-mono">
+                            <span className="text-xs text-slate-400 block font-mono">
                               Tax ID: {addr.taxId}
                             </span>
                           )}

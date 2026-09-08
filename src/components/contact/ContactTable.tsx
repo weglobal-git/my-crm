@@ -66,25 +66,25 @@ export function ContactTable({
     switch (type) {
       case "CUSTOMER":
         return (
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-400 border border-blue-800/40 uppercase">
+          <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-950/60 text-blue-400 border border-blue-800/40 uppercase">
             Customer
           </span>
         );
       case "SUPPLIER":
         return (
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-400 border border-purple-800/40 uppercase">
+          <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-purple-950/60 text-purple-400 border border-purple-800/40 uppercase">
             Supplier
           </span>
         );
       case "PARTNER":
         return (
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-800/40 uppercase">
+          <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-800/40 uppercase">
             Partner
           </span>
         );
       default:
         return (
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 uppercase">
+          <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 uppercase">
             Other
           </span>
         );
@@ -116,7 +116,7 @@ export function ContactTable({
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-[#3A3B3C] bg-[#1C1C1D]/80 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+            <tr className="border-b border-[#3A3B3C] bg-[#1C1C1D]/80 text-xs font-bold text-slate-400 uppercase tracking-wider">
               <th className="py-3.5 px-4 pl-6">Contact / Person</th>
               <th className="py-3.5 px-4">Company & Country</th>
               <th className="py-3.5 px-4">Department</th>
@@ -167,7 +167,7 @@ export function ContactTable({
                         {c.company.name}
                       </span>
                       {c.company.country && (
-                        <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                        <span className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
                           <Globe className="w-3 h-3 text-slate-500 shrink-0" />
                           <span className="truncate">{c.company.country}</span>
                         </span>
@@ -178,11 +178,11 @@ export function ContactTable({
                   {/* Department */}
                   <td className="py-3 px-4">
                     {c.department ? (
-                      <span className="inline-block px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#3A3B3C] text-slate-300 border border-[#4E4F50]">
+                      <span className="inline-block px-2.5 py-1 rounded-full text-xs font-medium bg-[#3A3B3C] text-slate-300 border border-[#4E4F50]">
                         {c.department.name}
                       </span>
                     ) : (
-                      <span className="text-slate-500 text-[11px]">-</span>
+                      <span className="text-slate-500 text-xs">-</span>
                     )}
                   </td>
 
@@ -190,7 +190,7 @@ export function ContactTable({
                   <td className="py-3 px-4">
                     <div className="flex flex-col gap-0.5">
                       {c.email ? (
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-300">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-300">
                           <Mail className="w-3 h-3 text-slate-400 shrink-0" />
                           <span className={c.isMasked ? "font-mono text-slate-400" : ""}>
                             {c.email}
@@ -213,7 +213,7 @@ export function ContactTable({
                       ) : null}
 
                       {c.phone ? (
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400">
                           <Phone className="w-3 h-3 text-slate-500 shrink-0" />
                           <span className={c.isMasked ? "font-mono text-slate-400" : ""}>
                             {c.phone}
@@ -236,7 +236,7 @@ export function ContactTable({
                       ) : null}
 
                       {!c.email && !c.phone && (
-                        <span className="text-slate-500 text-[11px]">-</span>
+                        <span className="text-slate-500 text-xs">-</span>
                       )}
                     </div>
                   </td>
@@ -247,7 +247,7 @@ export function ContactTable({
                       type="button"
                       onClick={(e) => handleStatusToggle(e, c.id)}
                       disabled={togglingId === c.id}
-                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all ${
                         c.status === "QUALIFIED"
                           ? "bg-[#C7F33C] text-black hover:bg-[#b5dc35]"
                           : "bg-[#3A3B3C] text-slate-400 hover:text-slate-200 hover:bg-[#4E4F50]"

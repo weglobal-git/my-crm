@@ -171,7 +171,7 @@ export function AccountAnalyticsCard({
                   <span className="text-xs sm:text-xs font-bold text-slate-200 mt-1.5">
                     {wonCount}/{totalDeals > 0 ? totalDeals : totalCompleted}
                   </span>
-                  <span className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">
+                  <span className="text-xs text-slate-400 font-medium tracking-wide uppercase">
                     success rate
                   </span>
                   <span className="text-xs sm:text-xs font-bold text-[#C7F33C] mt-1.5 truncate max-w-full">
@@ -182,7 +182,7 @@ export function AccountAnalyticsCard({
                 <div className="flex flex-col items-center justify-center animate-pulse gap-1.5">
                   <div className="h-8 w-16 bg-[#2E3033] rounded-lg" />
                   <div className="h-3.5 w-12 bg-[#2E3033] rounded mt-0.5" />
-                  <span className="text-[10px] text-slate-500 font-medium tracking-wide uppercase">
+                  <span className="text-xs text-slate-500 font-medium tracking-wide uppercase">
                     success rate
                   </span>
                   <div className="h-3.5 w-20 bg-[#2E3033] rounded mt-0.5" />
@@ -205,7 +205,7 @@ export function AccountAnalyticsCard({
                       <span className="text-xs font-medium text-slate-200 truncate">
                         {prod.name}
                       </span>
-                      <span className="text-[11px] font-bold text-slate-100">
+                      <span className="text-xs font-bold text-slate-100">
                         {prod.share}
                       </span>
                     </>
@@ -223,12 +223,12 @@ export function AccountAnalyticsCard({
           {/* Underneath Top 5 Products: Horizontal Top Contributors (Max 3) */}
           <div className="w-full pt-2.5 mt-2 border-t border-[#3A3B3C]/50">
             <div className="flex items-center justify-between mb-1.5 px-0.5">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+              <span className="text-xs uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
                 <Users className="w-3 h-3 text-[#C7F33C]" />
                 <span>Top Contributors</span>
               </span>
               {isDataReady && topThreeContributors.length > 0 && (
-                <span className="text-[10px] text-slate-500 font-medium">
+                <span className="text-xs text-slate-500 font-medium">
                   {topThreeContributors.length} active
                 </span>
               )}
@@ -264,10 +264,10 @@ export function AccountAnalyticsCard({
                       )}
                     </div>
                     <div className="flex flex-col min-w-0 flex-1 leading-tight">
-                      <span className="text-[11px] font-medium text-slate-200 truncate">
+                      <span className="text-xs font-medium text-slate-200 truncate">
                         {c.name}
                       </span>
-                      <span className="text-[10px] font-bold text-[#C7F33C]">
+                      <span className="text-xs font-bold text-[#C7F33C]">
                         {c.share}
                       </span>
                     </div>
@@ -275,7 +275,7 @@ export function AccountAnalyticsCard({
                 ))}
               </div>
             ) : (
-              <div className="py-1 flex min-h-10 items-center justify-center gap-1.5 text-slate-500 text-[11px]">
+              <div className="py-1 flex min-h-10 items-center justify-center gap-1.5 text-slate-500 text-xs">
                 <User className="w-3.5 h-3.5 text-slate-600" />
                 <span>No team activity recorded yet</span>
               </div>
@@ -294,7 +294,7 @@ export function AccountAnalyticsCard({
               </span>
             </div>
             {isSaving && (
-              <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="text-xs text-slate-400 flex items-center gap-1">
                 <Loader2 className="w-3 h-3 animate-spin text-[#C7F33C]" />
                 <span>Saving...</span>
               </span>

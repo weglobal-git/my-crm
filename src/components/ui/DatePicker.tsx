@@ -71,7 +71,7 @@ export function DatePicker({ value, onChange, placeholder = "mm/dd/yyyy", classN
           
           <div className="grid grid-cols-7 gap-1 text-center mb-2">
             {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
-              <div key={day} className="text-[10px] font-bold text-slate-400">{day}</div>
+              <div key={day} className="text-xs font-bold text-slate-400">{day}</div>
             ))}
           </div>
           

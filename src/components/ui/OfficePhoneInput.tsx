@@ -370,7 +370,7 @@ export function OfficePhoneInput({
 
       {/* Extension (เบอร์ต่อ) */}
       <div className="flex items-center pl-2 pr-1 border-l border-[#4E4F50]/40 shrink-0 select-none">
-        <span className="text-[10px] text-slate-400 font-medium mr-1" title="เบอร์ต่อสำนักงาน (Extension)">
+        <span className="text-xs text-slate-400 font-medium mr-1" title="เบอร์ต่อสำนักงาน (Extension)">
           Ext:
         </span>
         <input
@@ -400,7 +400,7 @@ export function OfficePhoneInput({
 
         {validationInfo.isValid === true && (
           <span
-            className="text-[10px] font-bold text-[#C7F33C] bg-[#C7F33C]/10 border border-[#C7F33C]/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
+            className="text-xs font-bold text-[#C7F33C] bg-[#C7F33C]/10 border border-[#C7F33C]/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
             title="Valid landline/office number format"
           >
             <Check className="w-2.5 h-2.5 text-[#C7F33C]" />
@@ -416,7 +416,7 @@ export function OfficePhoneInput({
 
         {validationInfo.isValid === false && validationInfo.rawLength >= 7 && (
           <span
-            className="text-[10px] font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
+            className="text-xs font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
             title={validationInfo.hint || "Check number length or prefix for selected country"}
           >
             <ShieldAlert className="w-2.5 h-2.5 text-amber-400" />

@@ -218,7 +218,7 @@ export function NotesTab({ deal, searchQuery: externalSearchQuery }: NotesTabPro
                     )}
                     <div>
                       <p className="text-xs font-semibold text-slate-100">{note.author.name}</p>
-                      <p className="text-[11px] text-slate-400">
+                      <p className="text-xs text-slate-400">
                         {format(new Date(note.createdAt), "MMM d, yyyy • HH:mm")}
                       </p>
                     </div>

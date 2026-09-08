@@ -18,6 +18,54 @@ export async function pingActiveStatus() {
   }
 }
 
+export async function pingAndGetActiveUsers() {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return [];
+
+  const activeThreshold = new Date(Date.now() - 90 * 1000);
+
+  try {
+    const updatePromise = session.user.id
+      ? prisma.user.update({
+          where: { id: session.user.id },
+          data: { lastActive: new Date() },
+        }).catch(err => {
+          console.error("Failed to update lastActive in pingAndGetActiveUsers:", err);
+        })
+      : Promise.resolve();
+
+    const findPromise = prisma.user.findMany({
+      where: {
+        lastActive: {
+          gte: activeThreshold,
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        image: true,
+        role: true,
+        departments: {
+          select: {
+            name: true,
+          }
+        },
+        lastActive: true,
+      },
+      orderBy: {
+        lastActive: 'desc',
+      }
+    });
+
+    const [, activeUsers] = await Promise.all([updatePromise, findPromise]);
+    return activeUsers;
+  } catch (error) {
+    console.error("Failed to ping and get active users:", error);
+    return [];
+  }
+}
+
 export async function getActiveUsers() {
   const session = await getServerSession(authOptions);
   if (!session?.user) return [];

@@ -75,7 +75,7 @@ export function AcceleratorQuestionCard({
         <div className="flex items-center gap-2 flex-wrap min-w-0">
           {isManager ? (
             <span
-              className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 ${
+              className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-1 shrink-0 ${
                 isPending ? 'bg-[#F59E0B] text-slate-950' : 'bg-[#F59E0B]/20 text-amber-300 border border-[#F59E0B]/30'
               }`}
             >
@@ -84,7 +84,7 @@ export function AcceleratorQuestionCard({
             </span>
           ) : (
             <span
-              className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 ${
+              className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-1 shrink-0 ${
                 isPending
                   ? 'bg-purple-600 text-white'
                   : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
@@ -97,7 +97,7 @@ export function AcceleratorQuestionCard({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[10px] text-slate-400">
+          <span className="text-xs text-slate-400">
             {question.createdAt ? formatQuestionDate(question.createdAt) : ''}
           </span>
           {canDelete && (
@@ -232,7 +232,7 @@ export function AcceleratorQuestionCard({
                 </span>
               </div>
               {question.answeredAt && (
-                <span className="text-[10px] text-slate-400 font-normal shrink-0">
+                <span className="text-xs text-slate-400 font-normal shrink-0">
                   {formatQuestionDate(question.answeredAt)}
                 </span>
               )}

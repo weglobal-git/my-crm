@@ -40,8 +40,18 @@ async function getPipelineActorFromSession(): Promise<PipelineActor> {
   return { id: userId, role, departments };
 }
 
+// In-memory TTL caches to optimize latency and eliminate duplicate queries
+const pipelinePermissionCache = new Map<string, { expiresAt: number; allowed: boolean }>();
+const pipelineRecipientCache = new Map<string, { expiresAt: number; userIds: string[] }>();
+
 async function hasPipelinePermission(actor: PipelineActor) {
   if (actor.role === 'ADMIN') return true;
+
+  const now = Date.now();
+  const cached = pipelinePermissionCache.get(actor.id);
+  if (cached && cached.expiresAt > now) {
+    return cached.allowed;
+  }
 
   const pipelinePermission = await prisma.departmentMenuPermission.findFirst({
     where: {
@@ -51,7 +61,9 @@ async function hasPipelinePermission(actor: PipelineActor) {
     },
     select: { id: true },
   });
-  return Boolean(pipelinePermission);
+  const allowed = Boolean(pipelinePermission);
+  pipelinePermissionCache.set(actor.id, { expiresAt: now + 30_000, allowed });
+  return allowed;
 }
 
 export async function requirePipelineActor(actorOverride?: PipelineActor): Promise<PipelineActor> {
@@ -95,14 +107,28 @@ export async function requireOpportunityAccess(
 
   if (!pipelineAllowed || !opportunity) throw new Error('Forbidden');
   if (options.adminOnly && actor.role !== 'ADMIN') throw new Error('Forbidden');
-  if (options.ownerOrAdmin && actor.role !== 'ADMIN' && opportunity.ownerId !== actor.id) {
+  if (options.ownerOrAdmin && !['ADMIN', 'MANAGEMENT'].includes(actor.role) && opportunity.ownerId !== actor.id) {
     throw new Error('Forbidden');
   }
 
   return { actor, opportunity };
 }
 
+export function invalidatePipelineRecipientCache(opportunityId?: string) {
+  if (opportunityId) {
+    pipelineRecipientCache.delete(opportunityId);
+  } else {
+    pipelineRecipientCache.clear();
+  }
+}
+
 export async function getPipelineRecipientUserIds(opportunityId: string): Promise<string[]> {
+  const now = Date.now();
+  const cached = pipelineRecipientCache.get(opportunityId);
+  if (cached && cached.expiresAt > now) {
+    return cached.userIds;
+  }
+
   const opportunity = await prisma.opportunity.findUnique({
     where: { id: opportunityId },
     select: {
@@ -132,20 +158,23 @@ export async function getPipelineRecipientUserIds(opportunityId: string): Promis
     ...(opportunity.teamMembers || []).map((m: { id: string }) => m.id),
   ];
 
+  // Include ADMINs, direct deal owners/members, and all colleagues in the deal's departments
   const users = await prisma.user.findMany({
     where: {
       OR: [
         { role: 'ADMIN' },
         ...(directUserIds.length > 0 ? [{ id: { in: directUserIds } }] : []),
         ...(departmentIds.size > 0
-          ? [{ role: 'MANAGEMENT' as const, departments: { some: { id: { in: [...departmentIds] } } } }]
+          ? [{ departments: { some: { id: { in: [...departmentIds] } } } }]
           : []),
       ],
     },
     select: { id: true },
   });
 
-  return users.map((user: { id: string }) => user.id);
+  const userIds = users.map((user: { id: string }) => user.id);
+  pipelineRecipientCache.set(opportunityId, { expiresAt: now + 10_000, userIds });
+  return userIds;
 }
 
 export async function notifyPrivatePipelineUpdate(
@@ -154,15 +183,23 @@ export async function notifyPrivatePipelineUpdate(
   additionalRecipientIds: string[] = [],
 ) {
   try {
+    const rawRecipients = await getPipelineRecipientUserIds(opportunityId);
     const recipientIds = new Set([
-      ...(await getPipelineRecipientUserIds(opportunityId)),
+      ...rawRecipients,
       ...additionalRecipientIds,
     ]);
-    if (recipientIds.size === 0) return;
+    console.log(`[PUSHER-SERVER-TRIGGER] notifyPrivatePipelineUpdate for deal="${opportunityId}", recipients count=${recipientIds.size}:`, [...recipientIds]);
+    if (recipientIds.size === 0) {
+      console.warn(`[PUSHER-SERVER-TRIGGER] No recipients found for deal="${opportunityId}", aborting trigger.`);
+      return;
+    }
 
     const channels = [...recipientIds].map(userId => `private-pipeline-${userId}`);
-    await pusherServer.trigger(channels, 'pipeline-updated', payload);
+    const action = (payload as any)?.action || "UNKNOWN";
+    console.log(`[PUSHER-SERVER-TRIGGER] Triggering event="pipeline-updated" action="${action}" on ${channels.length} channels:`, channels);
+    const response = await pusherServer.trigger(channels, 'pipeline-updated', payload);
+    console.log(`[PUSHER-SERVER-TRIGGER] Pusher trigger response status: ${response?.status || 'OK'}`);
   } catch (error) {
-    console.error('Private pipeline Pusher trigger error:', error);
+    console.error('[PUSHER-SERVER-TRIGGER] Private pipeline Pusher trigger error:', error);
   }
 }

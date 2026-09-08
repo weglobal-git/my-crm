@@ -75,7 +75,7 @@ export function ContactCard({
   const getTypeBadge = (type: ContactType) => {
     if (isSelected) {
       return (
-        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-black/15 text-black uppercase">
+        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-black/15 text-black uppercase">
           {type}
         </span>
       );
@@ -84,25 +84,25 @@ export function ContactCard({
     switch (type) {
       case "CUSTOMER":
         return (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#252728] text-blue-400 uppercase">
+          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#252728] text-blue-400 uppercase">
             Customer
           </span>
         );
       case "SUPPLIER":
         return (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#252728] text-purple-400 uppercase">
+          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#252728] text-purple-400 uppercase">
             Supplier
           </span>
         );
       case "PARTNER":
         return (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#252728] text-emerald-400 uppercase">
+          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#252728] text-emerald-400 uppercase">
             Partner
           </span>
         );
       default:
         return (
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#252728] text-slate-400 uppercase">
+          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#252728] text-slate-400 uppercase">
             Other
           </span>
         );
@@ -152,7 +152,7 @@ export function ContactCard({
             </div>
             {contact.department && (
               <span
-                className={`text-[11px] ${
+                className={`text-xs ${
                   isSelected ? "text-black/70" : "text-slate-400"
                 }`}
               >
@@ -167,7 +167,7 @@ export function ContactCard({
           type="button"
           onClick={handleToggleStatus}
           disabled={isToggling}
-          className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all shrink-0 flex items-center gap-1 ${
+          className={`px-2.5 py-1 rounded-full text-xs font-bold transition-all shrink-0 flex items-center gap-1 ${
             isSelected
               ? contact.status === "QUALIFIED"
                 ? "bg-black text-[#C7F33C]"
@@ -291,7 +291,7 @@ export function ContactCard({
 
         {!contact.email && !contact.phone && (
           <span
-            className={`text-[11px] italic ${
+            className={`text-xs italic ${
               isSelected ? "text-black/60" : "text-slate-500"
             }`}
           >

@@ -173,7 +173,7 @@ export function EmailTab({
                 board.
               </p>
             </div>
-            <div className="flex justify-end text-[10px] text-slate-500 pt-1">
+            <div className="flex justify-end text-xs text-slate-500 pt-1">
               Synchronized via CRM system
             </div>
           </div>

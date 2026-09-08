@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Building2, Menu, X, Trophy, XCircle, Briefcase, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Building2, Menu, X } from "lucide-react";
 import { DealTypeIcon } from "./DealTypeBadge";
 import { OpportunityType } from "@prisma/client";
 
@@ -12,14 +12,8 @@ export interface EditDealMainBarProps {
   canEditTopic: boolean;
   companyName?: string | null;
   companyDisplayName?: string | null;
-  canCloseDeal: boolean;
-  onCloseAsWon: () => void;
-  onCloseAsLost: () => void;
-  canConvert?: boolean;
-  isConverting?: boolean;
-  onConvert?: () => void;
-  canDelete?: boolean;
-  onDelete?: () => void;
+  hasActions?: boolean;
+  onOpenActions: () => void;
   onClose: () => void;
 }
 
@@ -30,21 +24,13 @@ export function EditDealMainBar({
   canEditTopic,
   companyName,
   companyDisplayName,
-  canCloseDeal,
-  onCloseAsWon,
-  onCloseAsLost,
-  canConvert = false,
-  isConverting = false,
-  onConvert,
-  canDelete = false,
-  onDelete,
+  hasActions = true,
+  onOpenActions,
   onClose,
 }: EditDealMainBarProps) {
   const [isEditingTopic, setIsEditingTopic] = useState(false);
   const [topicValue, setTopicValue] = useState(topic);
   const [isSavingTopic, setIsSavingTopic] = useState(false);
-  const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
-  const hamburgerMenuRef = useRef<HTMLDivElement>(null);
 
   // Sync external topic changes during render (avoid cascading renders)
   const [prevTopic, setPrevTopic] = useState(topic);
@@ -52,21 +38,6 @@ export function EditDealMainBar({
     setPrevTopic(topic);
     setTopicValue(topic);
   }
-
-  // Click outside to close hamburger menu
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (hamburgerMenuRef.current && !hamburgerMenuRef.current.contains(event.target as Node)) {
-        setShowHamburgerMenu(false);
-      }
-    }
-    if (showHamburgerMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [showHamburgerMenu]);
 
   const handleCommitTopic = async () => {
     const trimmed = topicValue.trim();
@@ -85,8 +56,6 @@ export function EditDealMainBar({
       setIsEditingTopic(false);
     }
   };
-
-  const hasAnyActions = canCloseDeal || canConvert || canDelete;
 
   return (
     <div className="flex items-center justify-between px-4 py-3 border-b border-[#1C1C1D] shrink-0 min-h-[56px] relative bg-[#252728]">
@@ -138,106 +107,26 @@ export function EditDealMainBar({
             <Building2 className="w-3 h-3 text-slate-500 shrink-0" />
             <span className="truncate">{companyDisplayName || companyName}</span>
             {companyDisplayName && companyDisplayName !== companyName && (
-              <span className="text-[10px] text-slate-500 truncate">({companyName})</span>
+              <span className="text-xs text-slate-500 truncate">({companyName})</span>
             )}
           </div>
         )}
       </div>
 
-      {/* Right: Hamburger Menu & Close */}
+      {/* Right: Hamburger Menu Button & Close Button */}
       <div className="flex items-center gap-1.5 shrink-0 relative">
-        {/* Hamburger Action Menu */}
-        <div className="relative" ref={hamburgerMenuRef}>
+        {/* Hamburger Action Menu Button (opens standard DealActionsDrawer) */}
+        {hasActions && (
           <button
             type="button"
-            onClick={() => setShowHamburgerMenu((prev) => !prev)}
-            className={`p-2 rounded-full transition-colors cursor-pointer ${
-              showHamburgerMenu
-                ? "text-white bg-[#3A3B3C]"
-                : "text-slate-400 hover:text-slate-200 hover:bg-[#3A3B3C]"
-            }`}
+            onClick={onOpenActions}
+            className="p-2 rounded-full transition-colors cursor-pointer text-slate-400 hover:text-slate-200 hover:bg-[#3A3B3C]"
             title="Card actions"
             aria-label="Card actions menu"
           >
             <Menu className="w-4 h-4" />
           </button>
-
-          {showHamburgerMenu && (
-            <div className="absolute right-0 top-full mt-1.5 min-w-[200px] bg-[#252728] border border-[#3A3B3C] rounded-xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150">
-              {/* Close as Won / Close as Lost (card owner or admin only) */}
-              {canCloseDeal && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowHamburgerMenu(false);
-                      onCloseAsWon();
-                    }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 rounded-lg transition-colors text-left cursor-pointer"
-                  >
-                    <Trophy className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>Close as Won</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowHamburgerMenu(false);
-                      onCloseAsLost();
-                    }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-lg transition-colors text-left cursor-pointer"
-                  >
-                    <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                    <span>Close as Lost</span>
-                  </button>
-                </>
-              )}
-
-              {/* Convert to Sale Deal */}
-              {canConvert && onConvert && (
-                <>
-                  {canCloseDeal && <div className="my-1 border-t border-[#3A3B3C]" />}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowHamburgerMenu(false);
-                      onConvert();
-                    }}
-                    disabled={isConverting}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-[#3A3B3C] hover:text-white rounded-lg transition-colors text-left cursor-pointer disabled:opacity-50"
-                  >
-                    <Briefcase className="w-4 h-4 text-[#C7F33C] shrink-0" />
-                    <span>{isConverting ? "Converting..." : "Convert to Sale Deal"}</span>
-                  </button>
-                </>
-              )}
-
-              {/* Delete Deal (card owner or admin only) */}
-              {canDelete && onDelete && (
-                <>
-                  {(canCloseDeal || canConvert) && <div className="my-1 border-t border-[#3A3B3C]" />}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowHamburgerMenu(false);
-                      onDelete();
-                    }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 rounded-lg transition-colors text-left cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
-                    <span>Delete Deal</span>
-                  </button>
-                </>
-              )}
-
-              {!hasAnyActions && (
-                <div className="px-3 py-2 text-xs text-slate-500 text-center">
-                  No actions available
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Close Button */}
         <button

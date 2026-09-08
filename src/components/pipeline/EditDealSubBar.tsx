@@ -151,7 +151,7 @@ export function EditDealSubBar({
       <div className="flex items-center gap-2 shrink-0 relative">
         {/* Filter Pill if query exists but not expanded */}
         {search && search.query && (
-          <div className="hidden sm:flex items-center gap-1 text-[11px] text-[#C7F33C] bg-[#1C1C1D] px-2 py-0.5 rounded-full border border-[#C7F33C]/30">
+          <div className="hidden sm:flex items-center gap-1 text-xs text-[#C7F33C] bg-[#1C1C1D] px-2 py-0.5 rounded-full border border-[#C7F33C]/30">
             <Search className="w-3 h-3" />
             <span className="truncate max-w-[100px]">&quot;{search.query}&quot;</span>
             <button

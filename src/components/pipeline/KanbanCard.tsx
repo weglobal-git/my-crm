@@ -178,9 +178,9 @@ function RedTimer({ threshold }: { threshold: Date }) {
   const pad = (n: number) => n.toString().padStart(2, '0');
   
   if (days > 0) {
-    return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{days}DAY | {pad(hours)}:{pad(minutes)}</span>;
+    return <span className="text-slate-700 tabular-nums font-medium text-xs tracking-wide">{days}DAY | {pad(hours)}:{pad(minutes)}</span>;
   }
-  return <span className="text-slate-700 tabular-nums font-medium text-[10px] tracking-wide">{pad(hours)}:{pad(minutes)}</span>;
+  return <span className="text-slate-700 tabular-nums font-medium text-xs tracking-wide">{pad(hours)}:{pad(minutes)}</span>;
 }
 
 import React from 'react';
@@ -203,6 +203,10 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   const pendingCount = typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
   const isOrange = pendingCount > 0;
   const highlight = checkIsRedCard(deal);
+
+  if (deal.topic?.includes("Light Test Deal") || deal.topic?.toLowerCase().includes("test")) {
+    console.log(`[CARD-RENDER] "${deal.topic}" (id=${deal.id}) -> pendingCount=${pendingCount}, isOrange=${isOrange}, highlight=${highlight}`);
+  }
   
   const handlePrefetch = () => {
     onPanelIntent?.();
@@ -245,7 +249,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                 e.stopPropagation(); 
                 if (canView('collaborate')) onOpenPanel?.('collaborate'); 
               }}
-              className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer transition-all relative ${isOrange ? 'border-[#F59E0B]' : highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}
+              className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer hover:border-black/50 hover:border-solid transition-all relative ${isOrange ? 'border-[#F59E0B]' : highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}
             >
               <img 
                 src={deal.owner.image ? getOptimizedCloudinaryUrl(deal.owner.image, 100) : `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
@@ -266,7 +270,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
               </div>
             )}
             
-            <div className={`absolute -bottom-1 -left-1 w-6 h-6 rounded-full flex items-center justify-center z-20 ${isOrange ? 'border-[#F59E0B]' : highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}>
+            <div className={`absolute -bottom-1 -left-1 w-6 h-6 rounded-full flex items-center justify-center z-20 ${isOrange ? 'border-[#F59E0B]' : highlight ? 'border-[#a7cc31]' : 'border-[#3A3B3C]'}`}>
               <DealTypeIcon type={deal.type} size="sm" highlight={highlight} isOrange={isOrange} />
             </div>
           </div>
@@ -274,7 +278,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             <div className="flex items-center gap-1.5 mb-1">
               <div className={`font-semibold text-[13px] leading-tight truncate ${isOrange ? 'text-slate-950 font-bold' : highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
             </div>
-            <div className={`flex items-center text-[11px] truncate ${isOrange ? 'text-slate-900 font-medium' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>
+            <div className={`flex items-center text-xs truncate ${isOrange ? 'text-slate-900 font-medium' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>
               {contactName}
             </div>
           </div>
@@ -315,7 +319,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
               </button>
               {pendingCount > 0 && (
                 <span 
-                  className={`absolute -top-1 -right-1 w-4 h-4 rounded-full font-black text-[11px] leading-none flex items-center justify-center animate-bounce pointer-events-none ${isOrange ? 'bg-slate-950 text-amber-400 ring-1 ring-amber-400' : 'bg-amber-400 text-slate-950'}`}
+                  className={`absolute -top-1 -right-1 w-4 h-4 rounded-full font-black text-xs leading-none flex items-center justify-center animate-bounce pointer-events-none ${isOrange ? 'bg-slate-950 text-amber-400 ring-1 ring-amber-400' : 'bg-amber-400 text-slate-950'}`}
                   title="Manager Call รอคำตอบด่วน"
                 >
                   !
@@ -350,7 +354,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             <div className="flex flex-col gap-2 mt-1 flex-1 overflow-hidden">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
-                  <span className={`pl-4 text-[10px] font-medium ${isOrange ? 'text-slate-900 font-semibold' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>{formatDateTime(latestLog.createdAt)}</span>
+                  <span className={`pl-4 text-xs font-medium ${isOrange ? 'text-slate-900 font-semibold' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>{formatDateTime(latestLog.createdAt)}</span>
                 </div>
                 <div className="flex items-start gap-2 px-2">
                   <div className={`w-5 h-5 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${isOrange ? 'bg-black/25' : highlight ? 'bg-white/40' : 'bg-[#4E4F50]'}`}>
@@ -364,7 +368,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                   </div>
                   <div className="flex-1 min-w-0 flex flex-col gap-1 overflow-hidden">
                     {cleanText && (
-                      <div className={`text-[11px] font-medium ${images.length > 0 ? 'line-clamp-2' : 'line-clamp-4'} leading-tight mt-0.5 ${isOrange ? 'text-slate-950 font-medium' : highlight ? 'text-slate-800' : 'text-slate-300'}`}>
+                      <div className={`text-xs font-medium ${images.length > 0 ? 'line-clamp-2' : 'line-clamp-4'} leading-tight mt-0.5 ${isOrange ? 'text-slate-950 font-medium' : highlight ? 'text-slate-800' : 'text-slate-300'}`}>
                         {cleanText}
                       </div>
                     )}
@@ -388,7 +392,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                           </div>
                         ))}
                         {images.length > 3 && (
-                          <div className={`${cleanText ? 'w-10 h-10' : 'w-12 h-12'} rounded-lg bg-[#252728] border border-[#4E4F50] flex items-center justify-center text-[10px] font-bold text-slate-300 shrink-0`}>
+                          <div className={`${cleanText ? 'w-10 h-10' : 'w-12 h-12'} rounded-lg bg-[#252728] border border-[#4E4F50] flex items-center justify-center text-xs font-bold text-slate-300 shrink-0`}>
                             +{images.length - 3}
                           </div>
                         )}
@@ -396,7 +400,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                     )}
 
                     {images.length === 0 && otherFiles.length > 0 && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-slate-300 bg-[#252728] px-2 py-1 rounded-md border border-[#4E4F50]/60 w-fit max-w-full mt-0.5">
+                      <div className="flex items-center gap-1.5 text-xs text-slate-300 bg-[#252728] px-2 py-1 rounded-md border border-[#4E4F50]/60 w-fit max-w-full mt-0.5">
                         <FileText className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                         <span className="truncate">{otherFiles[0].filename}</span>
                       </div>
@@ -424,7 +428,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                   onOpenPanel?.('activity');
                 }
               }}
-              className={`px-3 py-1.5 rounded-full text-[11px] font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[150px]
+              className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[150px]
                 ${isOrange ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/30 text-slate-900 font-semibold" : highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
               `}
               title={customerName}
@@ -441,7 +445,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                 e.stopPropagation();
                 onOpenPanel?.('manager-call');
               }}
-              className="px-2.5 py-1 rounded-full bg-slate-950 text-amber-400 font-bold text-[10px] tracking-wide flex items-center gap-1 shadow-sm ml-auto cursor-pointer hover:bg-slate-900"
+              className="px-2.5 py-1 rounded-full bg-slate-950 text-amber-400 font-bold text-xs tracking-wide flex items-center gap-1 shadow-sm ml-auto cursor-pointer hover:bg-slate-900"
               title="ดูและตอบ Manager Call"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />

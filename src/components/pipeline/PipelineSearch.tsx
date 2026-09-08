@@ -1,7 +1,7 @@
 "use client";
 
-import { Search, X } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { Search } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 interface PipelineSearchProps {
   initialSearch?: string;
@@ -12,15 +12,22 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
   const [term, setTerm] = useState(initialSearch);
   const [prevInitialSearch, setPrevInitialSearch] = useState(initialSearch);
   const [lastEmitted, setLastEmitted] = useState(initialSearch);
+  const [isExpanded, setIsExpanded] = useState(Boolean(initialSearch.trim()));
   const initialMount = useRef(true);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Sync external search changes (e.g. from quick filter clicks or URL changes)
   if (initialSearch !== prevInitialSearch) {
     setPrevInitialSearch(initialSearch);
     setTerm(initialSearch);
     setLastEmitted(initialSearch);
+    if (initialSearch.trim()) {
+      setIsExpanded(true);
+    }
   }
-  
+
+  // Debounce search emit
   useEffect(() => {
     if (initialMount.current) {
       initialMount.current = false;
@@ -37,35 +44,85 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
     return () => clearTimeout(delayDebounceFn);
   }, [term, lastEmitted, onSearch]);
 
-  const handleClear = () => {
+  // Focus input on expand
+  useEffect(() => {
+    if (isExpanded) {
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isExpanded]);
+
+  const handleClearAndClose = useCallback(() => {
     setTerm("");
     setLastEmitted("");
     onSearch("");
-  };
+    setIsExpanded(false);
+  }, [onSearch]);
+
+  // Click outside listener: collapse if input is empty
+  useEffect(() => {
+    if (!isExpanded) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        if (!term.trim()) {
+          setIsExpanded(false);
+        }
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isExpanded, term]);
+
+  if (!isExpanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsExpanded(true)}
+        className={`hidden md:flex items-center justify-center w-8 h-8 rounded-full transition-all shrink-0 cursor-pointer ${
+          term.trim()
+            ? "bg-[#252728] border border-[#C7F33C] text-[#C7F33C] shadow-sm"
+            : "bg-[#3A3B3C] hover:bg-[#4E4F50] text-slate-300 hover:text-white"
+        }`}
+        title="Search cards"
+      >
+        <Search className="w-3.5 h-3.5" />
+      </button>
+    );
+  }
 
   return (
-    <div className="relative hidden md:block w-28 xl:w-36 shrink-0">
-      <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
-        <Search className="h-3.5 w-3.5 text-slate-400" />
-      </div>
+    <div
+      ref={containerRef}
+      className="hidden md:flex items-center bg-[#252728] border border-[#C7F33C] rounded-full py-1 pl-3 pr-1.5 gap-1.5 w-48 xl:w-56 shrink-0 transition-all duration-300 ease-out shadow-lg animate-in fade-in zoom-in-95"
+    >
+      <Search className="w-3.5 h-3.5 text-[#C7F33C] shrink-0" />
       <input
+        ref={inputRef}
         type="text"
-        className="block w-full bg-[#3A3B3C] text-slate-200 placeholder-slate-500 hover:bg-[#4E4F50] rounded-full py-1.5 pl-8 pr-6 border border-transparent focus:outline-none focus:border-[#C7F33C] focus:bg-[#3A3B3C] transition-all text-xs"
+        className="flex-1 bg-transparent border-none outline-none text-xs text-slate-100 placeholder:text-slate-400 min-w-0"
         placeholder="Search..."
         value={term}
         onChange={(e) => setTerm(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            handleClearAndClose();
+          }
+        }}
       />
-      {term && (
-        <button
-          type="button"
-          onClick={handleClear}
-          className="absolute inset-y-0 right-0 pr-2 flex items-center text-slate-400 hover:text-slate-200"
-          title="Clear search"
-        >
-          <X className="h-3 w-3" />
-        </button>
-      )}
+      <button
+        type="button"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          handleClearAndClose();
+        }}
+        onClick={handleClearAndClose}
+        className="text-xs font-medium text-slate-400 hover:text-slate-100 active:text-white px-2 py-0.5 rounded-full hover:bg-[#3A3B3C] transition-colors shrink-0 cursor-pointer"
+        title="Clear search"
+      >
+        Clear
+      </button>
     </div>
   );
 }
-

@@ -5,14 +5,15 @@ import Link from "next/link";
 import { Bell, PanelLeft, Check, X as XIcon } from "lucide-react";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { MenuDefinition } from "@/lib/menu-registry";
 import { useSidebar } from "./SidebarContext";
 
-import { getActiveUsers, pingActiveStatus } from "@/lib/actions/users";
+import { getActiveUsers, pingAndGetActiveUsers } from "@/lib/actions/users";
 import { getMyNotifications, respondToNotification } from "@/lib/actions/notification";
 import { pusherClient } from "@/lib/pusher";
+import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
 
 type ActiveUser = Awaited<ReturnType<typeof getActiveUsers>>[number];
 type NotificationItem = Awaited<ReturnType<typeof getMyNotifications>>[number];
@@ -66,19 +67,29 @@ export function Header() {
         setActiveUsers([currentUserData as unknown as ActiveUser]);
       });
 
-      // 2. Initial fetches & ping
-      pingActiveStatus();
-      getActiveUsers().then(users => {
+      // 2. Initial fetches & ping (single unified server round-trip)
+      pingAndGetActiveUsers().then(users => {
         if (users && users.length > 0) {
           setActiveUsers(users);
         }
       });
-      getMyNotifications().then(setNotifications);
+      getMyNotifications().then(items => {
+        if (!Array.isArray(items)) return;
+        setNotifications(prev => {
+          const map = new Map<string, NotificationItem>();
+          for (const item of prev) {
+            if (item?.id) map.set(item.id, item);
+          }
+          for (const item of items) {
+            if (item?.id) map.set(item.id, item as NotificationItem);
+          }
+          return Array.from(map.values());
+        });
+      });
 
       // Heartbeat ping every 45s
       const pingInterval = setInterval(() => {
-        pingActiveStatus();
-        getActiveUsers().then(users => {
+        pingAndGetActiveUsers().then(users => {
           if (users && users.length > 0) {
             setActiveUsers(users);
           }
@@ -113,10 +124,43 @@ export function Header() {
 
       // 4. Setup Pusher Private Channel for Notifications
       try {
-        const privateChannel = pusherClient.subscribe(`private-user-${session.user.id}`);
+        const userChannelName = `private-user-${session.user.id}`;
+        console.log(`[HEADER-PUSHER] Subscribing to: ${userChannelName} for user: "${session.user.name}" (${session.user.email})`);
+        
+        const handleStateChange = (states: { previous: string; current: string }) => {
+          console.log(`[PUSHER-CONNECTION] State changed: ${states.previous} -> ${states.current}`);
+        };
+        const handleConnError = (err: unknown) => {
+          const e = err as { type?: string; error?: { data?: { code?: number; message?: string } } };
+          const code = e?.error?.data?.code;
+          const msg = e?.error?.data?.message;
+          if (code === 4004) {
+            console.warn(`[PUSHER-CONNECTION] Pusher quota exceeded (code 4004: Account over quota). Fallback polling active.`);
+          } else {
+            console.warn(`[PUSHER-CONNECTION] Connection issue${code ? ` (${code})` : ''}:`, msg || err);
+          }
+        };
+
+        pusherClient.connection.bind('state_change', handleStateChange);
+        pusherClient.connection.bind('error', handleConnError);
+
+        const privateChannel = pusherClient.subscribe(userChannelName);
+        
+        privateChannel.bind('pusher:subscription_succeeded', () => {
+          console.log(`[HEADER-PUSHER] Subscribed successfully to: ${userChannelName}`);
+        });
+        privateChannel.bind('pusher:subscription_error', (status: unknown) => {
+          console.warn(`[HEADER-PUSHER] Subscription status for ${userChannelName}:`, status);
+        });
         
         privateChannel.bind('new-notification', (newNotif: NotificationItem) => {
-          setNotifications((prev: NotificationItem[]) => [newNotif, ...prev]);
+          console.log(`[HEADER-PUSHER] Received 'new-notification':`, newNotif);
+          broadcastEventAcrossTabs(userChannelName, 'new-notification', newNotif);
+          if (!newNotif?.id) return;
+          setNotifications((prev: NotificationItem[]) => {
+            if (prev.some(n => n?.id === newNotif.id)) return prev;
+            return [newNotif, ...prev];
+          });
         });
       } catch (err) {
         console.warn("[Header] Pusher notification error:", err);
@@ -125,6 +169,8 @@ export function Header() {
       return () => {
         clearInterval(pingInterval);
         try {
+          pusherClient.connection.unbind('state_change');
+          pusherClient.connection.unbind('error');
           pusherClient.unsubscribe('presence-global');
           pusherClient.unsubscribe(`private-user-${session.user.id}`);
         } catch {}
@@ -148,8 +194,32 @@ export function Header() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const displayUsers = activeUsers.slice(0, 3);
-  const remainingCount = Math.max(0, activeUsers.length - 3);
+  const uniqueActiveUsers = useMemo(() => {
+    const seen = new Set<string>();
+    const unique: ActiveUser[] = [];
+    for (const user of activeUsers) {
+      if (!user?.id) continue;
+      if (seen.has(user.id)) continue;
+      seen.add(user.id);
+      unique.push(user);
+    }
+    return unique;
+  }, [activeUsers]);
+
+  const uniqueNotifications = useMemo(() => {
+    const seen = new Set<string>();
+    const unique: NotificationItem[] = [];
+    for (const notif of notifications) {
+      if (!notif?.id) continue;
+      if (seen.has(notif.id)) continue;
+      seen.add(notif.id);
+      unique.push(notif);
+    }
+    return unique;
+  }, [notifications]);
+
+  const displayUsers = uniqueActiveUsers.slice(0, 3);
+  const remainingCount = Math.max(0, uniqueActiveUsers.length - 3);
 
   const handleRespond = async (id: string, accept: boolean) => {
     try {
@@ -180,7 +250,7 @@ export function Header() {
               {currentMainMenu.label}
             </span>
           )}
-          <span className="font-semibold text-xs md:text-base text-slate-100">
+          <span className="font-semibold text-base text-slate-100">
             {currentSubMenu?.label || currentMainMenu?.label || "Overview"}
           </span>
         </div>
@@ -217,7 +287,7 @@ export function Header() {
                   +{remainingCount}
                 </div>
               )}
-              {activeUsers.length === 0 && (
+              {uniqueActiveUsers.length === 0 && (
                 <div className="text-xs font-medium text-slate-400 mr-2 z-10">No users online</div>
               )}
             </div>
@@ -229,14 +299,14 @@ export function Header() {
               <div className="p-4 border-b border-[#4E4F50] flex justify-between items-center">
                 <h3 className="font-semibold text-slate-100">Online Team</h3>
                 <span className="bg-green-100 text-green-700 text-xs font-bold px-2 py-0.5 rounded-full">
-                  {activeUsers.length} active
+                  {uniqueActiveUsers.length} active
                 </span>
               </div>
               <div className="max-h-80 overflow-y-auto p-2">
-                {activeUsers.length === 0 ? (
+                {uniqueActiveUsers.length === 0 ? (
                   <div className="p-4 text-center text-xs text-slate-500">No one is online right now.</div>
                 ) : (
-                  activeUsers.map((user: ActiveUser) => (
+                  uniqueActiveUsers.map((user: ActiveUser) => (
                     <div key={user.id} className="flex items-center gap-3 p-2 hover:bg-[#4E4F50] rounded-xl transition-colors">
                       <div className="w-10 h-10 rounded-full bg-[#252728] overflow-hidden relative shrink-0">
                         {user.image ? (
@@ -274,7 +344,7 @@ export function Header() {
               className="w-11 h-11 flex items-center justify-center rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] transition-all relative"
             >
               <Bell className="w-5 h-5 text-slate-300" />
-              {notifications.length > 0 && (
+              {uniqueNotifications.length > 0 && (
                 <span className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-[#252728]"></span>
               )}
             </button>
@@ -283,20 +353,20 @@ export function Header() {
               <div className="absolute top-full right-0 mt-3 w-80 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] z-50 animate-fade-in-up">
                 <div className="p-4 border-b border-[#4E4F50] flex justify-between items-center">
                   <h3 className="font-semibold text-slate-100">Notifications</h3>
-                  {notifications.length > 0 && (
+                  {uniqueNotifications.length > 0 && (
                     <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-0.5 rounded-full">
-                      {notifications.length} new
+                      {uniqueNotifications.length} new
                     </span>
                   )}
                 </div>
                 <div className="max-h-80 overflow-y-auto p-2">
-                  {notifications.length === 0 ? (
+                  {uniqueNotifications.length === 0 ? (
                     <div className="p-6 text-center text-xs text-slate-500 flex flex-col items-center gap-2">
                       <Bell className="w-8 h-8 text-slate-200" />
                       <p>No new notifications</p>
                     </div>
                   ) : (
-                    notifications.map((notif: NotificationItem) => (
+                    uniqueNotifications.map((notif: NotificationItem) => (
                       <div key={notif.id} className="flex flex-col gap-2 p-3 hover:bg-[#4E4F50] rounded-xl transition-colors">
                         <div className="flex gap-3">
                           <div className="w-8 h-8 rounded-full bg-[#252728] overflow-hidden shrink-0">

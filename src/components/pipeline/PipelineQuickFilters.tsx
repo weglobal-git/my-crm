@@ -191,7 +191,7 @@ export function PipelineQuickFilters({
             title="Add quick filter (max 5)"
           >
             <Plus className="w-3.5 h-3.5" />
-            {filters.length === 0 && <span className="text-[11px]">Filter</span>}
+            {filters.length === 0 && <span className="text-xs">Filter</span>}
           </button>
         )
       )}

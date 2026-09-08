@@ -106,7 +106,7 @@ export function CountrySelect({
             <>
               {showFlag && <span className="text-base leading-none">{selectedCountry.flag}</span>}
               <span className="text-slate-100 font-medium truncate">{selectedCountry.name}</span>
-              <span className="text-[10px] text-slate-400 uppercase font-mono px-1.5 py-0.5 rounded bg-[#3A3B3C]">
+              <span className="text-xs text-slate-400 uppercase font-mono px-1.5 py-0.5 rounded bg-[#3A3B3C]">
                 {selectedCountry.code}
               </span>
             </>
@@ -185,7 +185,7 @@ export function CountrySelect({
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] text-slate-400 font-mono px-1.5 py-0.5 rounded bg-[#1C1C1D]">
+                      <span className="text-xs text-slate-400 font-mono px-1.5 py-0.5 rounded bg-[#1C1C1D]">
                         {country.code}
                       </span>
                       {isSelected && <Check className="w-3.5 h-3.5 text-[#C7F33C]" />}

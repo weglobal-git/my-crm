@@ -54,8 +54,8 @@ export function DealTypeIcon({
       <div
         className={`${sizeClasses} rounded-full flex items-center justify-center transition-all ${
           highlight
-            ? "bg-[#C7F33C] text-slate-900 border border-[#C7F33C]"
-            : "bg-[#C7F33C] text-black border border-[#C7F33C]/40"
+            ? "bg-[#C7F33C] text-slate-900 border border-[#a7cc31] shadow-sm"
+            : "bg-[#C7F33C] text-black border border-[#a7cc31]/40 shadow-sm"
         } ${className}`}
         title="Sales Deal"
       >
@@ -69,8 +69,8 @@ export function DealTypeIcon({
     <div
       className={`${sizeClasses} rounded-full flex items-center justify-center transition-all ${
         highlight
-          ? "bg-[#C7F33C] text-slate-900 border border-[#C7F33C]"
-          : "bg-slate-700 text-slate-200 border border-slate-600"
+          ? "bg-[#C7F33C] text-slate-900 border border-[#C7F33C] shadow-sm"
+          : "bg-slate-700 text-slate-200 border border-slate-600 shadow-sm"
       } ${className}`}
       title="Internal Task"
     >

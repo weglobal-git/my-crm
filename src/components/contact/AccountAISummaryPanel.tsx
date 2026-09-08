@@ -409,7 +409,7 @@ export function AccountAISummaryPanel({
 
                   {analysis?.generatedAt && (
                     <span
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1.5 ${
+                      className={`px-2.5 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1.5 ${
                         isUpToDate
                           ? "bg-[#3A3B3C] text-slate-300 border border-[#4E4F50]"
                           : "bg-amber-500/10 text-amber-300 border border-amber-500/30"
@@ -539,7 +539,7 @@ export function AccountAISummaryPanel({
                           </span>
                         )}
                         {analysis.companyProfile?.isUserEdited && (
-                          <span className="px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] text-[10px] font-semibold border border-[#C7F33C]/30">
+                          <span className="px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] text-xs font-semibold border border-[#C7F33C]/30">
                             User Verified
                           </span>
                         )}
@@ -593,28 +593,28 @@ export function AccountAISummaryPanel({
 
                       <div className="grid grid-cols-2 gap-2.5">
                         <div className="p-3 bg-[#252728] rounded-xl border border-[#4E4F50]/60 space-y-1">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Order Frequency</span>
+                          <span className="text-xs uppercase font-bold text-slate-400 block tracking-wider">Order Frequency</span>
                           <span className="text-xs font-semibold text-slate-100 block">
                             {analysis.purchasingPattern?.orderFrequency || "-"}
                           </span>
                         </div>
 
                         <div className="p-3 bg-[#252728] rounded-xl border border-[#4E4F50]/60 space-y-1">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Decision Cycle</span>
+                          <span className="text-xs uppercase font-bold text-slate-400 block tracking-wider">Decision Cycle</span>
                           <span className="text-xs font-semibold text-slate-100 block">
                             {analysis.purchasingPattern?.cycleTime || "-"}
                           </span>
                         </div>
 
                         <div className="p-3 bg-[#252728] rounded-xl border border-[#4E4F50]/60 space-y-1">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Price Sensitivity</span>
+                          <span className="text-xs uppercase font-bold text-slate-400 block tracking-wider">Price Sensitivity</span>
                           <span className="text-xs font-semibold text-slate-100 block">
                             {analysis.purchasingPattern?.priceSensitivity || "-"}
                           </span>
                         </div>
 
                         <div className="p-3 bg-[#252728] rounded-xl border border-[#4E4F50]/60 space-y-1">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wider">Avg Deal Size</span>
+                          <span className="text-xs uppercase font-bold text-slate-400 block tracking-wider">Avg Deal Size</span>
                           <span className="text-xs font-semibold text-slate-100 block text-[#C7F33C]">
                             {analysis.purchasingPattern?.avgDealSize || "-"}
                           </span>
@@ -634,7 +634,7 @@ export function AccountAISummaryPanel({
                       <div className="space-y-2.5">
                         {/* Strengths */}
                         <div>
-                          <span className="text-[11px] font-bold text-[#C7F33C] block mb-1">
+                          <span className="text-xs font-bold text-[#C7F33C] block mb-1">
                             Strengths & Partnership Leverage
                           </span>
                           <ul className="space-y-1.5">
@@ -649,7 +649,7 @@ export function AccountAISummaryPanel({
 
                         {/* Weaknesses */}
                         <div>
-                          <span className="text-[11px] font-bold text-amber-400 block mb-1">
+                          <span className="text-xs font-bold text-amber-400 block mb-1">
                             Weaknesses & Account Constraints
                           </span>
                           <ul className="space-y-1.5">
@@ -664,7 +664,7 @@ export function AccountAISummaryPanel({
 
                         {/* Risks */}
                         <div>
-                          <span className="text-[11px] font-bold text-rose-400 block mb-1">
+                          <span className="text-xs font-bold text-rose-400 block mb-1">
                             Risks & Market Threats
                           </span>
                           <ul className="space-y-1.5">
@@ -689,14 +689,14 @@ export function AccountAISummaryPanel({
                       </div>
 
                       <div className="p-3 bg-[#252728] rounded-xl border border-[#4E4F50]/60 space-y-1.5">
-                        <span className="text-[10px] font-bold text-[#C7F33C] uppercase tracking-wider block">Recommended Stance</span>
+                        <span className="text-xs font-bold text-[#C7F33C] uppercase tracking-wider block">Recommended Stance</span>
                         <p className="text-xs text-slate-200 leading-relaxed">
                           {analysis.negotiationPlaybook?.strategy || "-"}
                         </p>
                       </div>
 
                       <div className="space-y-1.5">
-                        <span className="text-[11px] font-bold text-slate-300 block">Key Talking Points for Next Meeting</span>
+                        <span className="text-xs font-bold text-slate-300 block">Key Talking Points for Next Meeting</span>
                         <ul className="space-y-1.5">
                           {analysis.negotiationPlaybook?.talkingPoints?.map((tp, idx) => (
                             <li key={idx} className="text-xs text-slate-200 flex items-start gap-2 leading-relaxed">
@@ -718,14 +718,14 @@ export function AccountAISummaryPanel({
                       </div>
 
                       <div className="p-3 bg-[#252728] rounded-xl border border-[#4E4F50]/60 space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Account Revenue Goal</span>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Account Revenue Goal</span>
                         <p className="text-xs font-bold text-[#C7F33C] leading-relaxed">
                           {analysis.growthOpportunities?.targetGoal || "-"}
                         </p>
                       </div>
 
                       <div className="space-y-1.5">
-                        <span className="text-[11px] font-bold text-slate-300 block">Expansion & Cross-Sell Vectors</span>
+                        <span className="text-xs font-bold text-slate-300 block">Expansion & Cross-Sell Vectors</span>
                         <ul className="space-y-1.5">
                           {analysis.growthOpportunities?.expansionAreas?.map((area, idx) => (
                             <li key={idx} className="text-xs text-slate-200 flex items-start gap-2 leading-relaxed">

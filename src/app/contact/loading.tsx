@@ -31,7 +31,7 @@ export default function ContactLoading() {
               <div className="px-4 py-1.5 text-xs font-bold rounded-full flex items-center gap-2 bg-[#C7F33C] text-black">
                 <ShieldCheck className="w-3.5 h-3.5" />
                 <span>Qualified</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-black/20 text-black">
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-black/20 text-black">
                   ...
                 </span>
               </div>
@@ -39,7 +39,7 @@ export default function ContactLoading() {
               <div className="px-4 py-1.5 text-xs font-bold rounded-full flex items-center gap-2 text-slate-400">
                 <ShieldAlert className="w-3.5 h-3.5" />
                 <span>Unqualified</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-[#252728] text-slate-400">
+                <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-[#252728] text-slate-400">
                   ...
                 </span>
               </div>
@@ -220,7 +220,7 @@ export default function ContactLoading() {
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-center select-none pointer-events-none px-3 gap-1.5 animate-pulse">
                           <div className="h-8 w-16 bg-[#2E3033] rounded-lg" />
                           <div className="h-3.5 w-12 bg-[#2E3033] rounded mt-0.5" />
-                          <span className="text-[10px] text-slate-500 font-medium tracking-wide uppercase">
+                          <span className="text-xs text-slate-500 font-medium tracking-wide uppercase">
                             success rate
                           </span>
                           <div className="h-3.5 w-20 bg-[#2E3033] rounded mt-0.5" />
@@ -244,7 +244,7 @@ export default function ContactLoading() {
 
                       <div className="w-full pt-2.5 mt-2 border-t border-[#3A3B3C]/50">
                         <div className="flex items-center justify-between mb-1.5 px-0.5">
-                          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                          <span className="text-xs uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
                             <Users className="w-3 h-3 text-[#C7F33C]" />
                             <span>Top Contributors</span>
                           </span>
@@ -296,7 +296,7 @@ export default function ContactLoading() {
                         <col className="w-[17%]" />
                       </colgroup>
                       <thead>
-                        <tr className="bg-[#252728]/90 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-0 sticky top-0 z-10 backdrop-blur-md">
+                        <tr className="bg-[#252728]/90 text-xs font-bold uppercase tracking-wider text-slate-400 border-0 sticky top-0 z-10 backdrop-blur-md">
                           <th className="py-3 pl-5 pr-3 w-[25%]">Person</th>
                           <th className="py-3 px-3 w-[18%]">Position</th>
                           <th className="py-3 px-3 w-[18%]">Department</th>

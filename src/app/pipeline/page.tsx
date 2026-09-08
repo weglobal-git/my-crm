@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PipelineView } from "@/components/pipeline/PipelineView";
 import { requirePipelineActor } from '@/lib/pipeline-security';
 import { getPipelineOpportunitiesForActor } from '@/lib/pipeline-opportunities';
+import { getPendingAcceleratorsMap } from '@/lib/actions/ai-accelerator';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,8 @@ export default async function PipelinePage({
     getPipelineOpportunitiesForActor(actor, tab, search || undefined),
   ]);
   const initialOpportunities = JSON.parse(serializedOpportunities);
+  const dealIds = Array.isArray(initialOpportunities) ? initialOpportunities.map((d: { id: string }) => d.id) : [];
+  const initialPendingAccelerators = dealIds.length > 0 ? await getPendingAcceleratorsMap(dealIds) : {};
 
   return (
     <PipelineView 
@@ -36,6 +39,7 @@ export default async function PipelinePage({
       role={actor.role}
       stages={stages}
       initialOpportunities={initialOpportunities}
+      initialPendingAccelerators={initialPendingAccelerators}
       initialTab={tab}
     />
   );

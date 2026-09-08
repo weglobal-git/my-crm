@@ -153,7 +153,7 @@ export function EmailInput({
 
           {isValid === true && (
             <span
-              className="text-[10px] font-bold text-[#C7F33C] bg-[#C7F33C]/10 border border-[#C7F33C]/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
+              className="text-xs font-bold text-[#C7F33C] bg-[#C7F33C]/10 border border-[#C7F33C]/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150"
               title="Valid email syntax format"
             >
               <Check className="w-2.5 h-2.5 text-[#C7F33C]" />
@@ -163,7 +163,7 @@ export function EmailInput({
 
           {trimmed && isValid !== true && (
             <span
-              className={`text-[10px] font-medium px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150 ${
+              className={`text-xs font-medium px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150 ${
                 hasNonAscii
                   ? "text-red-400 bg-red-400/10 border border-red-400/30"
                   : "text-amber-400 bg-amber-400/10 border border-amber-400/20"
@@ -179,7 +179,7 @@ export function EmailInput({
 
       {/* Typo Suggestion Banner */}
       {typoSuggestion && (
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/10 border border-sky-500/30 text-[11px] text-sky-300 animate-in fade-in duration-150">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/10 border border-sky-500/30 text-xs text-sky-300 animate-in fade-in duration-150">
           <Sparkles className="w-3 h-3 text-sky-400 shrink-0" />
           <span className="truncate">
             Did you mean <span className="font-semibold text-white underline">{typoSuggestion}</span>?
@@ -187,7 +187,7 @@ export function EmailInput({
           <button
             type="button"
             onClick={handleApplySuggestion}
-            className="ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 transition-colors shrink-0 cursor-pointer"
+            className="ml-auto px-1.5 py-0.5 text-xs font-bold rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky-200 transition-colors shrink-0 cursor-pointer"
           >
             Apply
           </button>
@@ -197,7 +197,7 @@ export function EmailInput({
       {/* Error / Guidance Notice when invalid (and no typo suggestion) */}
       {trimmed && isValid !== true && errorMessage && !typoSuggestion && (
         <div
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] animate-in fade-in duration-150 ${
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs animate-in fade-in duration-150 ${
             hasNonAscii
               ? "bg-red-500/10 border border-red-500/20 text-red-300"
               : "bg-amber-500/10 border border-amber-500/20 text-amber-300"

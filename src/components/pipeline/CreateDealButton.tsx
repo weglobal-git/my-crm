@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Plus, X, AlignLeft, Info } from "lucide-react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { Plus, X, AlignLeft, Info, UserPlus } from "lucide-react";
 import { OpportunityType, PipelineStage } from "@prisma/client";
 import { createOpportunity } from "@/lib/actions/opportunity";
 import { getCompanies } from "@/lib/actions/company";
+import { getAllUsers } from "@/lib/actions/users";
 import { useDialog } from "@/providers/DialogProvider";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { SearchableSelect } from "../ui/SearchableSelect";
 import { DealTypeIcon } from "./DealTypeBadge";
+import { MemberSelectDrawer, UserItem } from "./MemberSelectDrawer";
 import useSWR, { preload } from "swr";
+import { useSession } from "next-auth/react";
 
 interface CompanyOptionItem {
   id: string;
@@ -21,9 +24,13 @@ interface CompanyOptionItem {
 interface CreateDealButtonProps {
   stages: PipelineStage[];
   companies?: CompanyOptionItem[];
+  disabled?: boolean;
 }
 
-export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
+export function CreateDealButton({ stages, companies, disabled = false }: CreateDealButtonProps) {
+  const { data: session } = useSession();
+  const currentUserId = session?.user?.id;
+
   const { canSee } = usePermissions();
   const canUseSalesDeal = canSee("pipeline.information");
 
@@ -33,12 +40,44 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
   const [selectedType, setSelectedType] = useState<OpportunityType>("SALES_DEAL");
   const type: OpportunityType = canUseSalesDeal ? selectedType : "INTERNAL_TASK";
   const [companyId, setCompanyId] = useState("");
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [isMemberDrawerOpen, setIsMemberDrawerOpen] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (isSubmitting || isMemberDrawerOpen) return;
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isSubmitting && !isMemberDrawerOpen) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, isSubmitting, isMemberDrawerOpen]);
 
   const { data: fetchedCompanies } = useSWR<CompanyOptionItem[]>(
     isOpen ? 'pipeline-companies' : null,
     getCompanies,
     { revalidateOnFocus: false, dedupingInterval: 60_000 }
   );
+
+  const { data: allUsers = [] } = useSWR<UserItem[]>(
+    isOpen ? 'all-users' : null,
+    getAllUsers,
+    { revalidateOnFocus: false, dedupingInterval: 120_000 }
+  );
+  const allUsersMap = useMemo(() => new Map(allUsers.map((u) => [u.id, u])), [allUsers]);
+
   const companyList = useMemo(
     () => companies || fetchedCompanies || [],
     [companies, fetchedCompanies]
@@ -84,12 +123,14 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
         type,
         companyId: companyId || undefined,
         pipelineStageId: firstStage.id,
+        teamMemberIds: selectedMemberIds.length > 0 ? selectedMemberIds : undefined,
       });
       toast({ title: "Created successfully", type: "success" });
       setIsOpen(false);
       setTopic("");
       setSelectedType("SALES_DEAL");
       setCompanyId("");
+      setSelectedMemberIds([]);
     } catch (e: unknown) {
       toast({ title: "Failed to create", description: e instanceof Error ? e.message : "Unknown error", type: "error" });
     } finally {
@@ -100,11 +141,23 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
   return (
     <>
       <button
-        onClick={() => setIsOpen(true)}
-        onMouseEnter={() => preload('pipeline-companies', getCompanies)}
-        className="flex items-center bg-[#C7F33C] text-black px-4 py-2 rounded-full font-semibold hover:bg-[#b0d932] transition-colors text-xs"
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setIsOpen(true)}
+        onMouseEnter={() => {
+          if (!disabled) {
+            void preload('pipeline-companies', getCompanies);
+            void preload('all-users', getAllUsers);
+          }
+        }}
+        className={`flex items-center px-4 py-2 rounded-full font-semibold transition-all text-xs select-none ${
+          disabled
+            ? "bg-[#3A3B3C]/80 text-slate-500 cursor-not-allowed border border-[#4E4F50]/40 shadow-none opacity-60"
+            : "bg-[#C7F33C] text-black hover:bg-[#b0d932] cursor-pointer shadow-sm"
+        }`}
+        title={disabled ? "Disabled in Completed view" : "Create New Card"}
       >
-        <Plus className="w-4 h-4" />
+        <Plus className={`w-4 h-4 mr-0.5 ${disabled ? "text-slate-500" : "text-black"}`} />
         New
       </button>
 
@@ -113,8 +166,8 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
         onClick={() => isSubmitting ? null : setIsOpen(false)}
       />
       
-      <div className={`fixed inset-0 md:inset-y-4 md:right-4 z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${isOpen ? "opacity-100 translate-y-0 md:translate-y-0 md:translate-x-0 scale-100" : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"}`}>
-        <div className="w-full md:w-[450px] md:max-w-[90vw] bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden">
+      <div className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[450px] md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${isOpen ? "opacity-100 translate-y-0 md:translate-x-0 scale-100" : "opacity-0 translate-y-4 md:translate-x-8 scale-[0.97] pointer-events-none"}`}>
+        <div ref={modalRef} className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden">
           <div className="flex items-center justify-between p-6 border-b border-[#1C1C1D] shrink-0">
             <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
               <Plus className="w-5 h-5 text-[#C7F33C]" />
@@ -162,7 +215,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                       </button>
                     </div>
                     {type === "SALES_DEAL" && (
-                      <div className="mt-2.5 flex items-start gap-2 text-[11px] text-slate-400 bg-[#1E1F20] border border-[#3A3B3C] rounded-lg px-3 py-2 leading-relaxed">
+                      <div className="mt-2.5 flex items-start gap-2 text-xs text-slate-400 bg-[#1E1F20] border border-[#3A3B3C] rounded-lg px-3 py-2 leading-relaxed">
                         <Info className="w-3.5 h-3.5 text-[#C7F33C] shrink-0 mt-0.5" />
                         <span>
                           Note: Sales Deals require <strong>Total Value</strong>, <strong>Currency</strong>, <strong>Goods Loading Date</strong>, and <strong>Invoice Number</strong> to be marked as Won.
@@ -199,7 +252,7 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                   Link Account {type === "SALES_DEAL" ? (
                     <span className="text-rose-500">*</span>
                   ) : (
-                    <span className="text-slate-500 text-[11px] font-normal lowercase tracking-normal ml-1">(optional)</span>
+                    <span className="text-slate-500 text-xs font-normal lowercase tracking-normal ml-1">(optional)</span>
                   )}
                 </label>
                 <SearchableSelect
@@ -215,6 +268,59 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
                       : "Select an account (optional)..."
                   }
                 />
+              </div>
+
+              {/* Team Members */}
+              <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider pl-1 flex items-center justify-between">
+                  <span>Team Members</span>
+                  {selectedMemberIds.length > 0 && (
+                    <span className="text-slate-400 text-xs font-normal lowercase tracking-normal">
+                      {selectedMemberIds.length} selected
+                    </span>
+                  )}
+                </label>
+                <div className="bg-[#1E1F20] border border-[#3A3B3C] rounded-xl p-3 min-h-[50px] flex flex-wrap items-center gap-2">
+                  {selectedMemberIds.map((id) => {
+                    const u = allUsersMap.get(id);
+                    if (!u) return null;
+                    return (
+                      <span
+                        key={id}
+                        className="inline-flex items-center gap-1.5 bg-[#252728] border border-[#4E4F50] pl-1 pr-2 py-1 rounded-full text-xs text-slate-200"
+                      >
+                        <div className="w-5 h-5 rounded-full overflow-hidden bg-[#4E4F50] shrink-0">
+                          <img
+                            src={u.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${u.name || u.email || id}`}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <span className="font-medium max-w-[120px] truncate">{u.name || u.email}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedMemberIds((prev) => prev.filter((mId) => mId !== id));
+                          }}
+                          className="text-slate-400 hover:text-rose-400 p-0.5 rounded-full transition-colors cursor-pointer"
+                          title="Remove member"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </span>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={() => setIsMemberDrawerOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-dashed border-[#4E4F50] text-slate-400 hover:text-[#C7F33C] hover:border-[#C7F33C] hover:bg-[#C7F33C]/5 text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>{selectedMemberIds.length > 0 ? "Add more" : "Add team members"}</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -242,6 +348,23 @@ export function CreateDealButton({ stages, companies }: CreateDealButtonProps) {
           </div>
         </div>
       </div>
+
+      {/* Shared Member Select Drawer */}
+      <MemberSelectDrawer
+        isOpen={isMemberDrawerOpen}
+        onClose={() => setIsMemberDrawerOpen(false)}
+        title="Invite Team Members"
+        subtitle="Select department or individual members to add to this card."
+        mode="multiple"
+        currentOwnerId={currentUserId}
+        excludeUserIds={currentUserId ? [currentUserId] : []}
+        initialSelectedUserIds={selectedMemberIds}
+        confirmButtonLabel="Confirm Selection"
+        onConfirmMultiple={(userIds) => {
+          setSelectedMemberIds(userIds);
+          setIsMemberDrawerOpen(false);
+        }}
+      />
     </>
   );
 }

@@ -374,7 +374,7 @@ export function CreateAccountPanel({
                   <Building2 className="w-3.5 h-3.5 text-[#C7F33C]" />
                   <span>Office Phone / Landline</span>
                 </span>
-                <span className="text-[10px] text-slate-400 font-normal">
+                <span className="text-xs text-slate-400 font-normal">
                   e.g. 02 123 4567 ext. 12 or +66 2 123 4567
                 </span>
               </label>
@@ -469,12 +469,12 @@ export function CreateAccountPanel({
                           Address #{idx + 1}
                         </span>
                         
-                        <span className="text-[10px] text-slate-400 px-2 py-0.5 rounded-full bg-[#252728] w-fit">
+                        <span className="text-xs text-slate-400 px-2 py-0.5 rounded-full bg-[#252728] w-fit">
                           {addr.type}
                         </span>
 
                         {!isExpanded && summaryText && (
-                          <span className="text-[11px] text-slate-400 truncate max-w-xs sm:max-w-md hidden sm:inline ml-1">
+                          <span className="text-xs text-slate-400 truncate max-w-xs sm:max-w-md hidden sm:inline ml-1">
                             • {summaryText}
                           </span>
                         )}
@@ -487,7 +487,7 @@ export function CreateAccountPanel({
                           e.stopPropagation();
                           handleSetMainAddress(idx);
                         }}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0 ml-1 ${
+                        className={`px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0 ml-1 ${
                           addr.isDefault
                             ? "bg-[#C7F33C] text-black"
                             : "bg-[#252728] text-slate-400 hover:text-slate-200"
@@ -543,7 +543,7 @@ export function CreateAccountPanel({
                     <div className="p-5 space-y-3.5 animate-in fade-in duration-150 rounded-b-2xl">
                       {/* Global Google Places Autocomplete */}
                       <div className="flex flex-col gap-1">
-                        <label className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                        <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
                           <Sparkles className="w-3.5 h-3.5 text-[#C7F33C]" />
                           <span>Global Address Search (Auto-fill)</span>
                         </label>
@@ -569,7 +569,7 @@ export function CreateAccountPanel({
                       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1">
                         {/* Location Name */}
                         <div className="sm:col-span-2 flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Location Name / Branch Title
                           </label>
                           <input
@@ -583,7 +583,7 @@ export function CreateAccountPanel({
 
                         {/* Address Type */}
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Address Type
                           </label>
                           <AddressTypeSelect
@@ -594,7 +594,7 @@ export function CreateAccountPanel({
 
                         {/* Branch Code */}
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Branch Code
                           </label>
                           <input
@@ -610,7 +610,7 @@ export function CreateAccountPanel({
                       {/* Tax ID & Country */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Tax ID
                           </label>
                           <input
@@ -623,7 +623,7 @@ export function CreateAccountPanel({
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Country
                           </label>
                           <CountrySelect
@@ -636,7 +636,7 @@ export function CreateAccountPanel({
 
                       {/* Address Line 1 */}
                       <div className="flex flex-col gap-1">
-                        <label className="text-[11px] font-semibold text-slate-300">
+                        <label className="text-xs font-semibold text-slate-300">
                           Address Line 1 <span className="text-[#C7F33C]">*</span>
                         </label>
                         <input
@@ -650,7 +650,7 @@ export function CreateAccountPanel({
 
                       {/* Address Line 2 */}
                       <div className="flex flex-col gap-1">
-                        <label className="text-[11px] font-semibold text-slate-300">
+                        <label className="text-xs font-semibold text-slate-300">
                           Address Line 2
                         </label>
                         <input
@@ -665,7 +665,7 @@ export function CreateAccountPanel({
                       {/* Thai Postal Subdivisions */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Subdistrict
                           </label>
                           <input
@@ -678,7 +678,7 @@ export function CreateAccountPanel({
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             District
                           </label>
                           <input
@@ -691,7 +691,7 @@ export function CreateAccountPanel({
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Province / State
                           </label>
                           <input
@@ -704,7 +704,7 @@ export function CreateAccountPanel({
                         </div>
 
                         <div className="flex flex-col gap-1">
-                          <label className="text-[11px] font-semibold text-slate-300">
+                          <label className="text-xs font-semibold text-slate-300">
                             Postal Code
                           </label>
                           <input
@@ -719,7 +719,7 @@ export function CreateAccountPanel({
 
                       {/* Google Maps Link */}
                       <div className="flex flex-col gap-1">
-                        <label className="text-[11px] font-semibold text-slate-300">
+                        <label className="text-xs font-semibold text-slate-300">
                           Google Maps URL (Optional)
                         </label>
                         <input

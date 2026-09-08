@@ -147,7 +147,7 @@ export function AddressAutocomplete({
               <X className="w-3.5 h-3.5" />
             </button>
           )}
-          <span className="text-[10px] uppercase font-bold text-slate-400 px-1.5 py-0.5 rounded bg-[#2E3033] flex items-center gap-1 border border-[#3A3B3C]">
+          <span className="text-xs uppercase font-bold text-slate-400 px-1.5 py-0.5 rounded bg-[#2E3033] flex items-center gap-1 border border-[#3A3B3C]">
             <Globe2 className="w-3 h-3 text-[#C7F33C]" />
             <span>Global</span>
           </span>
@@ -175,7 +175,7 @@ export function AddressAutocomplete({
                       {pred.mainText}
                     </span>
                     {pred.secondaryText && (
-                      <span className="text-[11px] text-slate-400 truncate">
+                      <span className="text-xs text-slate-400 truncate">
                         {pred.secondaryText}
                       </span>
                     )}
@@ -185,7 +185,7 @@ export function AddressAutocomplete({
             })}
           </div>
 
-          <div className="px-3 py-1.5 bg-[#141415] border-t border-[#252728] flex items-center justify-between text-[10px] text-slate-400">
+          <div className="px-3 py-1.5 bg-[#141415] border-t border-[#252728] flex items-center justify-between text-xs text-slate-400">
             <span>Powered by Google Places</span>
             <span>Press Enter to select</span>
           </div>

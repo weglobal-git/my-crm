@@ -70,7 +70,7 @@ export function PersonTable({
             <col className="w-[17%]" />
           </colgroup>
           <thead>
-            <tr className="bg-[#252728]/90 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-0 sticky top-0 z-10 backdrop-blur-md">
+            <tr className="bg-[#252728]/90 text-xs font-bold uppercase tracking-wider text-slate-400 border-0 sticky top-0 z-10 backdrop-blur-md">
               {/* [1] Profile Avatar & Name */}
               <th className="py-3 pl-5 pr-3 w-[25%]">Person</th>
 
@@ -192,7 +192,7 @@ export function PersonTable({
                           </span>
                         )}
                         {hasMultipleEmails && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#3A3B3C] text-slate-400 shrink-0">
+                          <span className="text-xs px-1.5 py-0.2 rounded bg-[#3A3B3C] text-slate-400 shrink-0">
                             +{contact.emails!.length - 1}
                           </span>
                         )}
@@ -209,7 +209,7 @@ export function PersonTable({
                           </span>
                         )}
                         {hasMultiplePhones && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-[#3A3B3C] text-slate-400 shrink-0">
+                          <span className="text-xs px-1.5 py-0.2 rounded bg-[#3A3B3C] text-slate-400 shrink-0">
                             +{contact.phones!.length - 1}
                           </span>
                         )}

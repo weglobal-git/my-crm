@@ -62,25 +62,25 @@ export function ProjectsTab({
     switch (status) {
       case "WON":
         return (
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800/60 flex items-center gap-1">
+          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-950 text-emerald-400 border border-emerald-800/60 flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3" /> WON
           </span>
         );
       case "LOST":
         return (
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-950 text-red-400 border border-red-800/60 flex items-center gap-1">
+          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-red-950 text-red-400 border border-red-800/60 flex items-center gap-1">
             <XCircle className="w-3 h-3" /> LOST
           </span>
         );
       case "COMPLETED":
         return (
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-950 text-blue-400 border border-blue-800/60">
+          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-950 text-blue-400 border border-blue-800/60">
             COMPLETED
           </span>
         );
       default:
         return (
-          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#C7F33C]/20 text-[#C7F33C] border border-[#C7F33C]/40">
+          <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-[#C7F33C]/20 text-[#C7F33C] border border-[#C7F33C]/40">
             OPEN
           </span>
         );
@@ -158,7 +158,7 @@ export function ProjectsTab({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-full bg-[#252728] flex items-center justify-center text-[10px] font-bold text-slate-300">
+                  <div className="w-6 h-6 rounded-full bg-[#252728] flex items-center justify-center text-xs font-bold text-slate-300">
                     {deal.owner?.name ? deal.owner.name.slice(0, 2).toUpperCase() : "U"}
                   </div>
                   <span className="text-slate-400 truncate max-w-[120px]">

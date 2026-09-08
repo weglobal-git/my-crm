@@ -227,7 +227,7 @@ export function CreatePersonPanel({
               <Building2 className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider block">
                 Target Account
               </span>
               <span className="text-xs font-bold text-slate-100 truncate block">
@@ -235,7 +235,7 @@ export function CreatePersonPanel({
               </span>
             </div>
           </div>
-          <span className="text-[11px] px-3 py-1 rounded-full bg-[#C7F33C] text-black font-bold shrink-0">
+          <span className="text-xs px-3 py-1 rounded-full bg-[#C7F33C] text-black font-bold shrink-0">
             Active Account
           </span>
         </div>
@@ -267,9 +267,9 @@ export function CreatePersonPanel({
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold text-slate-200">Contact Avatar / Photo</span>
-              <span className="text-[10px] text-slate-400 font-normal">Optional</span>
+              <span className="text-xs text-slate-400 font-normal">Optional</span>
             </div>
-            <p className="text-[11px] text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-400 mt-0.5">
               Upload face image or photo (Max 5MB)
             </p>
 
@@ -370,7 +370,7 @@ export function CreatePersonPanel({
                 <button
                   type="button"
                   onClick={() => setForm((prev) => ({ ...prev, emails: [...prev.emails, ""] }))}
-                  className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   + Add Email
                 </button>
@@ -415,7 +415,7 @@ export function CreatePersonPanel({
                 <button
                   type="button"
                   onClick={() => setForm((prev) => ({ ...prev, phones: [...prev.phones, ""] }))}
-                  className="text-[11px] font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   + Add Phone
                 </button>

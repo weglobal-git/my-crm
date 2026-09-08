@@ -82,7 +82,7 @@ export function UserSearchDropdown({
               <div className="flex flex-col min-w-0 flex-1">
                 <span className="text-xs font-medium text-slate-100 truncate">{u.name}</span>
                 {u.department?.name && (
-                  <span className="text-[10px] text-slate-400 font-semibold truncate uppercase tracking-wider">{u.department.name}</span>
+                  <span className="text-xs text-slate-400 font-semibold truncate uppercase tracking-wider">{u.department.name}</span>
                 )}
               </div>
             </div>
@@ -93,7 +93,7 @@ export function UserSearchDropdown({
                 onClose();
               }}
               disabled={isLoading}
-              className="px-3 py-1 rounded-md text-[10px] font-bold bg-[#252728] border border-[#4E4F50] text-slate-300 hover:bg-[#C7F33C] hover:text-black hover:border-transparent transition-colors disabled:opacity-50"
+              className="px-3 py-1 rounded-md text-xs font-bold bg-[#252728] border border-[#4E4F50] text-slate-300 hover:bg-[#C7F33C] hover:text-black hover:border-transparent transition-colors disabled:opacity-50"
             >
               {actionLabel}
             </button>

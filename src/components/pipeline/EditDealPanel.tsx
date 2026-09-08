@@ -5,13 +5,13 @@ import { OpportunityWithRelations } from "./KanbanCard";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
 
-import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
+import { addActivityLog, removeTeamMember, addTeamMember, addTeamMembers, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
 import { getLatestDealSummary, generateDealSummary, getDealSummaryPromptConfig, saveDealSummaryPromptConfig, resetDealSummaryPromptConfig } from "@/lib/actions/deal-summary";
 import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, updateDealTargetGoal, createManagerCallQuestion, deleteDealAcceleratorQuestion, type DealAcceleratorsState, type AcceleratorQuestion } from "@/lib/actions/ai-accelerator";
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
-import { UserSearchDropdown } from "../ui/UserSearchDropdown";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { MemberSelectDrawer } from "./MemberSelectDrawer";
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from "react";
 import useSWR, { useSWRConfig, mutate, preload } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
@@ -25,7 +25,7 @@ import { NotesTab } from "./NotesTab";
 import { SharedMediaTab } from "./SharedMediaTab";
 import { EditDealMainBar } from "./EditDealMainBar";
 import { EditDealSubBar, SubBarTab, SubBarActionItem } from "./EditDealSubBar";
-import { WonLostModal } from "./WonLostModal";
+import { DealActionsDrawer } from "./DealActionsDrawer";
 import { ChatAttachmentButton } from "./ChatAttachmentButton";
 import { AcceleratorQuestionCard } from "./AcceleratorQuestionCard";
 import { HighlightText } from "@/components/ui/HighlightText";
@@ -358,9 +358,6 @@ function ActivityComment({
 
   // Urgent Call (Manager Call or AI) Unified Question Card
   if (log.content.startsWith('[URGENT_CALL:')) {
-    // ป้องกันการกระพริบ: ไม่แสดงผลจนกว่า acceleratorsState จะโหลดเสร็จสมบูรณ์
-    if (!acceleratorsState) return null;
-
     const urgentCallMatch = log.content.match(/^\[URGENT_CALL:([^\]]+)\]\s*([\s\S]*)$/);
     const qId = urgentCallMatch ? urgentCallMatch[1] : '';
     const qText = urgentCallMatch ? urgentCallMatch[2].trim() : log.content;
@@ -371,19 +368,23 @@ function ActivityComment({
     const replyText = replyLog ? replyLog.content.replace(/^\[URGENT_REPLY:[^\]]+\]\s*/, '') : '';
 
     if (!targetQ) {
-      targetQ = {
-        id: qId,
-        question: qText,
-        status: replyLog ? 'ANSWERED' : 'PENDING',
-        answer: replyText || undefined,
-        answeredBy: replyLog?.user?.name || undefined,
-        answeredByImage: replyLog?.user?.image || undefined,
-        answeredAt: replyLog?.createdAt ? new Date(replyLog.createdAt).toISOString() : undefined,
-        source: (qId.startsWith('acc_mgr_') ? 'MANAGER' : 'AI') as "MANAGER" | "AI",
-        askedBy: log.user?.name || (qId.startsWith('acc_mgr_') ? 'Manager' : 'AI Assistant'),
-        askedByImage: log.user?.image,
-        createdAt: new Date(log.createdAt).toISOString(),
-      };
+      // Fallback for optimistic logs or first-time sends before acceleratorsState finishes populating
+      const isOptimistic = String(log.id).startsWith('opt_log_') || qId.startsWith('acc_mgr_');
+      if (isOptimistic || !acceleratorsState) {
+        targetQ = {
+          id: qId || String(log.id),
+          question: qText || log.content,
+          reason: "คำถามด่วนจากฝ่ายบริหาร (Manager Call)",
+          status: "PENDING",
+          source: "MANAGER",
+          createdAt: typeof log.createdAt === 'string' ? log.createdAt : new Date(log.createdAt).toISOString(),
+          askedBy: log.user?.name || "Manager",
+          askedByImage: log.user?.image || null,
+        };
+      } else {
+        // หาก acceleratorsState โหลดแล้วและไม่ใช่ optimistic log แสดงว่าคำถามถูกลบหรือตอบไปแล้ว ไม่สร้างขึ้นมาใหม่
+        return null;
+      }
     } else if (!targetQ.answeredByImage && replyLog?.user?.image) {
       targetQ = {
         ...targetQ,
@@ -446,8 +447,8 @@ function ActivityComment({
                 </div>
                 <div className="bg-[#3A3B3C] rounded-2xl rounded-tr-sm p-2.5 text-left border border-[#4E4F50]">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[11px] font-bold text-slate-200">{reply.user?.name || 'User'}</span>
-                    <span className="text-[10px] text-slate-400">{formatDateTime(reply.createdAt)}</span>
+                    <span className="text-xs font-bold text-slate-200">{reply.user?.name || 'User'}</span>
+                    <span className="text-xs text-slate-400">{formatDateTime(reply.createdAt)}</span>
                   </div>
                   <p className="text-xs text-slate-100 leading-normal">{reply.content}</p>
                 </div>
@@ -472,7 +473,7 @@ function ActivityComment({
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-bold text-slate-100">{log.user?.name || 'Unknown User'}</span>
                 {dueDateMatch && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${dueDateMatch[1] === 'Removed' ? 'text-slate-300 bg-slate-600 border-slate-500' : 'text-pink-400 bg-pink-900/30 border-pink-900/50'}`}>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${dueDateMatch[1] === 'Removed' ? 'text-slate-300 bg-slate-600 border-slate-500' : 'text-pink-400 bg-pink-900/30 border-pink-900/50'}`}>
                     {dueDateMatch[1] === 'Removed' ? 'Due Date Removed' : `Due: ${dueDateMatch[1]}`}
                   </span>
                 )}
@@ -529,7 +530,7 @@ function ActivityComment({
                                 </div>
                                 <div className="flex flex-col flex-1 min-w-0">
                                   <span className="text-xs font-semibold text-slate-200 truncate">{file.filename || "Attached file"}</span>
-                                  <span className="text-[10px] text-slate-500 uppercase">File</span>
+                                  <span className="text-xs text-slate-500 uppercase">File</span>
                                 </div>
                                 <Download className="w-4 h-4 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                               </a>
@@ -662,9 +663,10 @@ interface EditDealPanelProps {
   initialTab?: TabType;
   isOpen: boolean;
   onClose: () => void;
+  onDealClosed?: (dealId: string, status: "WON" | "LOST") => void;
 }
 
-export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }: EditDealPanelProps) {
+export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, onDealClosed }: EditDealPanelProps) {
   const { dragOffset, isDragging, isDismissed, swipeHandlers } = useSwipeToClose({
     onClose,
     isOpen,
@@ -698,7 +700,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   });
 
   // Try to find the initial tab matching a visible right menu, fallback to the first one available
-  const allowedInitialTab = rightMenus.find(m => m.key.endsWith(`.${initialTab}`)) ? initialTab : (rightMenus[0]?.key.split('.').pop() as TabType || 'activity');
+  const allowedInitialTab = (initialTab === 'manager-call')
+    ? 'manager-call'
+    : rightMenus.find(m => m.key.endsWith(`.${initialTab}`)) ? initialTab : (rightMenus[0]?.key.split('.').pop() as TabType || 'activity');
   const [activeTab, setActiveTab] = useState<TabType>(allowedInitialTab === ('duedate' as TabType) ? 'activity' : allowedInitialTab);
 
   const { toast, confirm } = useDialog();
@@ -785,9 +789,14 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     return () => document.removeEventListener('mousedown', handleHamburgerClickOutside);
   }, [showHamburgerMenu]);
 
-  // Users state for ownership transfer
+  // Users state for ownership transfer & member invite
   const [users, setUsers] = useState<Awaited<ReturnType<typeof getAllUsers>>>([]);
+  const { data: allCachedUsers } = useSWR<Awaited<ReturnType<typeof getAllUsers>>>("all-users", getAllUsers, {
+    revalidateOnFocus: false,
+    dedupingInterval: 120_000,
+  });
   const [isTransferring, setIsTransferring] = useState(false);
+  const [isAddingMembers, setIsAddingMembers] = useState(false);
   const [prevDealId, setPrevDealId] = useState(deal.id);
   const [dealType, setDealType] = useState(deal.type);
 
@@ -808,19 +817,19 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       (session?.user?.email && tm.email && session.user.email.toLowerCase() === tm.email.toLowerCase())
     )
   );
-  const canInvite = isOwner || isTeamMember || isAdmin;
-  const canDelete = isAdmin || isOwner;
-  const canCloseDeal = isAdmin || isOwner;
-  const canConvert = dealType === 'INTERNAL_TASK' && (canUseSalesDeal || isAdmin);
-  const canEditDueDate = isOwner || isAdmin;
-  const canAnswerAccelerators = isOwner || isAdmin;
-
   const userRole = (session?.user as Record<string, unknown>)?.role as string | undefined;
   const userDepartments = ((session?.user as Record<string, unknown>)?.departments as string[]) || [];
   const isManagerOfOwner = Boolean(
     userRole === "MANAGEMENT" &&
     (deal.owner as { departments?: { id: string; name: string }[] })?.departments?.some(d => userDepartments.includes(d.name))
   );
+  const canInvite = isOwner || isTeamMember || isAdmin;
+  const canDelete = isAdmin || isOwner;
+  const canCloseDeal = (isAdmin || isOwner || isManagerOfOwner) && deal.status === "OPEN";
+  const canConvert = deal.status === "OPEN" && dealType === 'INTERNAL_TASK' && (isOwner || isAdmin || isManagerOfOwner) && (canUseSalesDeal || isAdmin);
+  const hasCardActions = Boolean(canCloseDeal || canConvert || canDelete);
+  const canEditDueDate = isOwner || isAdmin;
+  const canAnswerAccelerators = isOwner || isTeamMember || isAdmin || isManagerOfOwner;
   const canUseManagerCall = Boolean(isAdmin || isManagerOfOwner);
 
   const [isManagerCallMode, setIsManagerCallMode] = useState(false);
@@ -833,11 +842,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     isManagerCallModeRef.current = isManagerCallMode;
   }, [isManagerCallMode]);
 
-  // Won / Lost Modal State
-  const [wonLostModalState, setWonLostModalState] = useState<{ isOpen: boolean; status: "WON" | "LOST" }>({
-    isOpen: false,
-    status: "WON",
-  });
+  // Card Actions Drawer State (Standard Component)
+  const [isActionsDrawerOpen, setIsActionsDrawerOpen] = useState(false);
 
   // Tab Sub-States
   const [sharedMediaSubTab, setSharedMediaSubTab] = useState<"images" | "links" | "files">("images");
@@ -900,16 +906,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   } = useSWR(
     isOpen ? ['deal-accelerators', deal.id] : null,
     ([, id]) => getDealAccelerators(id),
-    { revalidateOnFocus: false, dedupingInterval: 0 }
+    { revalidateOnFocus: false, dedupingInterval: 5000 }
   );
 
-  // Idle Background Preloader: warms caches for Shared Media, AI Summary & Accelerators (0ms tab switch)
+  // Idle Background Preloader: warms caches for Shared Media & AI Summary (0ms tab switch)
   useEffect(() => {
     if (!isOpen || !deal?.id) return;
     const timer = setTimeout(() => {
       void preload(['opportunity-shared-media', deal.id], () => getOpportunitySharedMedia(deal.id));
       void preload(['deal-summary-on-demand', deal.id], () => getLatestDealSummary(deal.id));
-      void preload(['deal-accelerators', deal.id], () => getDealAccelerators(deal.id));
     }, 150);
     return () => clearTimeout(timer);
   }, [isOpen, deal?.id]);
@@ -937,12 +942,19 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     setGoalInput(currentGoal);
   }, [acceleratorsState?.targetGoal, deal.topic]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (activeTab === 'manager-call') {
-      const timer = setTimeout(adjustGoalTextareaHeight, 50);
-      return () => clearTimeout(timer);
+      adjustGoalTextareaHeight();
     }
   }, [activeTab, goalInput, adjustGoalTextareaHeight]);
+
+  // Revalidate accelerators state when entering Manager tab only if data is not yet loaded
+  useEffect(() => {
+    if (isOpen && activeTab === 'manager-call' && !acceleratorsResponse?.data) {
+      void mutateAccelerators();
+    }
+  }, [isOpen, activeTab, mutateAccelerators, acceleratorsResponse?.data]);
+
   const [isAcceleratorsExpanded, setIsAcceleratorsExpanded] = useState(true);
   const [acceleratorTab, setAcceleratorTab] = useState<'pending' | 'answered'>('pending');
   const [editingAnswerQuestionId, setEditingAnswerQuestionId] = useState<string | null>(null);
@@ -988,9 +1000,48 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
   };
 
-  const pendingQuestions = acceleratorsState?.questions?.filter(q => q.status === 'PENDING') || [];
-  const answeredQuestions = acceleratorsState?.questions?.filter(q => q.status === 'ANSWERED') || [];
+  // Deduplicate pending and answered questions so no duplicate cards ever render in the Manager tab
+  const { pendingQuestions, answeredQuestions } = useMemo(() => {
+    const rawQuestions = acceleratorsState?.questions || [];
+
+    // 1. Collect all answered question texts (trimmed, lowercased)
+    const answeredMap = new Map<string, AcceleratorQuestion>();
+    for (const q of rawQuestions) {
+      if (q.status === 'ANSWERED') {
+        const key = q.question.trim().toLowerCase();
+        if (!answeredMap.has(key) || new Date(q.answeredAt || q.createdAt || 0) > new Date(answeredMap.get(key)!.answeredAt || answeredMap.get(key)!.createdAt || 0)) {
+          answeredMap.set(key, q);
+        }
+      }
+    }
+
+    // 2. Pending questions: exclude any question text that was already answered, and keep only 1 pending per question text
+    const pendingMap = new Map<string, AcceleratorQuestion>();
+    for (const q of rawQuestions) {
+      if (q.status === 'PENDING') {
+        const key = q.question.trim().toLowerCase();
+        if (answeredMap.has(key)) continue;
+        if (!pendingMap.has(key) || new Date(q.createdAt || 0) > new Date(pendingMap.get(key)!.createdAt || 0)) {
+          pendingMap.set(key, q);
+        }
+      }
+    }
+
+    return {
+      pendingQuestions: Array.from(pendingMap.values()),
+      answeredQuestions: Array.from(answeredMap.values()),
+    };
+  }, [acceleratorsState?.questions]);
   const pendingQuestionsCount = pendingQuestions.length;
+
+  // Smart transition: when entering Manager tab or when pending reaches 0, default to answered tab if history exists
+  useEffect(() => {
+    if (activeTab === 'manager-call') {
+      if (pendingQuestions.length === 0 && answeredQuestions.length > 0) {
+        setAcceleratorTab('answered');
+      }
+    }
+  }, [activeTab, pendingQuestions.length, answeredQuestions.length]);
 
   const [, setAnnouncementTick] = useState(0);
   useEffect(() => {
@@ -1055,14 +1106,18 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     };
 
     const previousState = acceleratorsResponse;
-    if (acceleratorsState) {
-      const newState = {
-        ...acceleratorsState,
-        questions: [...(acceleratorsState.questions || []), optimisticQuestion],
-        updatedAt: new Date().toISOString(),
-      };
-      void mutateAccelerators({ success: true, data: newState }, false);
-    }
+    const baseState: DealAcceleratorsState = acceleratorsState || {
+      targetGoal: deal.topic || 'บรรลุเป้าหมายการ์ด',
+      goalSource: 'AI_INFERRED',
+      questions: [],
+    };
+    const newState: DealAcceleratorsState = {
+      ...baseState,
+      questions: [...(baseState.questions || []), optimisticQuestion],
+      updatedAt: new Date().toISOString(),
+    };
+    void mutate(['deal-accelerators', deal.id], { success: true, data: newState }, false);
+    void mutateAccelerators({ success: true, data: newState }, false);
 
     const optimisticLog = {
       id: `opt_log_${Date.now()}`,
@@ -1102,23 +1157,18 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       );
     }
 
+    // Optimistically increment badge count preserving object structure
     void mutate(
       key => Array.isArray(key) && key[0] === 'pending-accelerators',
-      (prevMap: Record<string, number> | undefined) => {
-        if (!prevMap) return prevMap;
-        return { ...prevMap, [deal.id]: (prevMap[deal.id] || 0) + 1 };
-      },
-      false
-    );
-    void mutate(
-      'pending-accelerators-map',
       (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
         if (!prevMap) return prevMap;
         const current = prevMap[deal.id];
+        const currentCount = typeof current === 'number' ? current : (current?.count || 0);
+        const nextCount = currentCount + 1;
         return {
           ...prevMap,
           [deal.id]: {
-            count: (current?.count || 0) + 1,
+            count: nextCount,
             earliestPendingAt: current?.earliestPendingAt || new Date().toISOString(),
           },
         };
@@ -1126,15 +1176,42 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       false
     );
 
-    toast({ title: 'ส่ง Manager Call เรียบร้อย', description: 'คำถามถูกส่งเข้าสู่ Activity และแจ้งเตือนแล้ว', type: 'success' });
+    // Rollback helper for pending-accelerators badge
+    const rollbackPendingBadge = () => {
+      void mutate(
+        key => Array.isArray(key) && key[0] === 'pending-accelerators',
+        (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+          if (!prevMap) return prevMap;
+          const current = prevMap[deal.id];
+          const currentCount = typeof current === 'number' ? current : (current?.count || 0);
+          const nextCount = Math.max(0, currentCount - 1);
+          return {
+            ...prevMap,
+            [deal.id]: {
+              count: nextCount,
+              earliestPendingAt: nextCount > 0 ? (current?.earliestPendingAt || null) : null,
+            },
+          };
+        },
+        false
+      );
+    };
 
-    // 3. Fire server action in background (zero UI delay, no redundant re-fetches)
+    // 3. Fire server action in background with deterministic optimisticQId (zero UI delay, no ID mismatch)
     try {
-      const res = await createManagerCallQuestion(deal.id, questionText);
+      console.log('[MGR-CALL-UI] Submitting createManagerCallQuestion:', { dealId: deal.id, questionText, optimisticQId });
+      const res = await createManagerCallQuestion(deal.id, questionText, optimisticQId);
+      console.log('[MGR-CALL-UI] createManagerCallQuestion response:', res);
       if (!res.success) {
-        toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถส่งคำถามได้', type: 'error' });
-        if (previousState) void mutateAccelerators(previousState, false);
+        console.error('Failed to send manager call:', res.error);
+        if (previousState) {
+          void mutate(['deal-accelerators', deal.id], previousState, false);
+          void mutateAccelerators(previousState, false);
+        }
+        rollbackPendingBadge();
         void loadActivityLogs();
+        setNewLog(questionText);
+        toast({ title: 'ส่งคำถามไม่สำเร็จ', description: res.error || 'เกิดข้อผิดพลาดในการส่งคำถามด่วน', type: 'error' });
         return;
       }
       if (res.data) {
@@ -1143,12 +1220,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       }
     } catch (err) {
       console.error('Failed to send manager call:', err);
-      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถส่งคำถามได้', type: 'error' });
       if (previousState) {
         void mutate(['deal-accelerators', deal.id], previousState, false);
         void mutateAccelerators(previousState, false);
       }
+      rollbackPendingBadge();
       void loadActivityLogs();
+      setNewLog(questionText);
+      const errMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการส่งคำถามด่วน';
+      toast({ title: 'ส่งคำถามไม่สำเร็จ', description: errMsg, type: 'error' });
     } finally {
       setIsSendingManagerCall(false);
       isSendingManagerCallRef.current = false;
@@ -1163,8 +1243,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
     // 1. Optimistic UI update (< 10ms)
     if (acceleratorsState) {
-      const updatedQuestions = acceleratorsState.questions.map(q => {
-        if (q.id === questionId) {
+      const targetQ = acceleratorsState.questions?.find(q => q.id === questionId);
+      const targetText = targetQ?.question?.trim()?.toLowerCase();
+
+      const updatedQuestions = (acceleratorsState.questions || []).map(q => {
+        if (q.id === questionId || (targetText && q.question.trim().toLowerCase() === targetText)) {
           return {
             ...q,
             status: 'ANSWERED' as const,
@@ -1177,39 +1260,39 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         return q;
       });
 
+      // Deduplicate answered questions so only 1 entry per question text exists
+      const seen = new Set<string>();
+      const dedupedQuestions: AcceleratorQuestion[] = [];
+      for (const q of updatedQuestions) {
+        if (q.status === 'ANSWERED') {
+          const key = q.question.trim().toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
+        dedupedQuestions.push(q);
+      }
+
       const optimisticState = {
         ...acceleratorsState,
-        questions: updatedQuestions,
+        questions: dedupedQuestions,
         updatedAt: new Date().toISOString(),
       };
       void mutate(['deal-accelerators', deal.id], { success: true, data: optimisticState }, false);
       void mutateAccelerators({ success: true, data: optimisticState }, false);
 
-      // Optimistically decrement pending counter on board
+      // Optimistically decrement pending counter on board preserving object structure
       void mutate(
         key => Array.isArray(key) && key[0] === 'pending-accelerators',
-        (prevMap: Record<string, number> | undefined) => {
-          if (!prevMap) return prevMap;
-          const currentCount = prevMap[deal.id] || 0;
-          return {
-            ...prevMap,
-            [deal.id]: Math.max(0, currentCount - 1),
-          };
-        },
-        false
-      );
-
-      void mutate(
-        'pending-accelerators-map',
         (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
           if (!prevMap) return prevMap;
           const current = prevMap[deal.id];
-          const newCount = Math.max(0, (current?.count || 0) - 1);
+          const currentCount = typeof current === 'number' ? current : (current?.count || 0);
+          const nextCount = Math.max(0, currentCount - 1);
           return {
             ...prevMap,
             [deal.id]: {
-              count: newCount,
-              earliestPendingAt: newCount > 0 ? current?.earliestPendingAt || null : null,
+              count: nextCount,
+              earliestPendingAt: nextCount > 0 ? (current?.earliestPendingAt || null) : null,
             },
           };
         },
@@ -1223,7 +1306,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             if (!currentPages) return currentPages;
             return currentPages.map((page) => ({
               ...page,
-              data: page.data.filter(l => !l.content.startsWith(`[URGENT_CALL:${questionId}]`)),
+              data: page.data.filter(l => {
+                if (l.content.startsWith(`[URGENT_CALL:${questionId}]`)) return false;
+                if (targetQ && l.content.startsWith(`[URGENT_CALL:${targetQ.id}]`)) return false;
+                if (targetText && l.content.startsWith('[URGENT_CALL:') && l.content.toLowerCase().includes(targetText)) return false;
+                return true;
+              }),
             }));
           },
           false
@@ -1231,7 +1319,25 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       }
     }
 
-    toast({ title: 'บันทึกคำตอบเรียบร้อย', description: `ตอบ: "${cleanAnswer}"`, type: 'success' });
+    const rollbackAnswerPendingBadge = () => {
+      void mutate(
+        key => Array.isArray(key) && key[0] === 'pending-accelerators',
+        (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+          if (!prevMap) return prevMap;
+          const current = prevMap[deal.id];
+          const currentCount = typeof current === 'number' ? current : (current?.count || 0);
+          const nextCount = currentCount + 1;
+          return {
+            ...prevMap,
+            [deal.id]: {
+              count: nextCount,
+              earliestPendingAt: current?.earliestPendingAt || new Date().toISOString(),
+            },
+          };
+        },
+        false
+      );
+    };
 
     // 2. Fire server action in background without blocking UI or triggering redundant GET re-fetches
     try {
@@ -1240,20 +1346,25 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
         void mutateAccelerators({ success: true, data: res.data }, false);
       } else {
+        console.error('Failed to answer accelerator:', res.error);
         if (previousState) {
           void mutate(['deal-accelerators', deal.id], previousState, false);
           void mutateAccelerators(previousState, false);
         }
+        rollbackAnswerPendingBadge();
         void loadActivityLogs();
-        toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
+        toast({ title: 'บันทึกคำตอบไม่สำเร็จ', description: res.error || 'เกิดข้อผิดพลาดในการบันทึกคำตอบ', type: 'error' });
       }
-    } catch {
+    } catch (err) {
+      console.error('Failed to answer accelerator:', err);
       if (previousState) {
         void mutate(['deal-accelerators', deal.id], previousState, false);
         void mutateAccelerators(previousState, false);
       }
+      rollbackAnswerPendingBadge();
       void loadActivityLogs();
-      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
+      const errMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการบันทึกคำตอบ';
+      toast({ title: 'บันทึกคำตอบไม่สำเร็จ', description: errMsg, type: 'error' });
     } finally {
       setIsAnsweringQuestionId(null);
     }
@@ -1262,10 +1373,32 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const handleDeleteAcceleratorQuestion = async (questionId: string) => {
     if (isDeletingQuestionId) return;
     setIsDeletingQuestionId(questionId);
+    const targetQ = acceleratorsState?.questions?.find(q => q.id === questionId);
+    const isPendingQ = targetQ?.status === 'PENDING';
+
+    const rollbackDeletePendingBadge = () => {
+      if (!isPendingQ) return;
+      void mutate(
+        key => Array.isArray(key) && key[0] === 'pending-accelerators',
+        (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+          if (!prevMap) return prevMap;
+          const current = prevMap[deal.id];
+          const currentCount = typeof current === 'number' ? current : (current?.count || 0);
+          const nextCount = currentCount + 1;
+          return {
+            ...prevMap,
+            [deal.id]: {
+              count: nextCount,
+              earliestPendingAt: current?.earliestPendingAt || new Date().toISOString(),
+            },
+          };
+        },
+        false
+      );
+    };
+
     try {
       const previousState = acceleratorsResponse;
-      const targetQ = acceleratorsState?.questions?.find(q => q.id === questionId);
-      const isPendingQ = targetQ?.status === 'PENDING';
 
       // 1. Optimistically remove question from Accelerators State
       if (previousState?.data) {
@@ -1275,31 +1408,20 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         void mutateAccelerators({ success: true, data: newState }, false);
       }
 
-      // 2. If it was pending, optimistically decrement badge count
+      // 2. If it was pending, optimistically decrement badge count preserving object structure
       if (isPendingQ) {
         void mutate(
           key => Array.isArray(key) && key[0] === 'pending-accelerators',
-          (prevMap: Record<string, number> | undefined) => {
-            if (!prevMap) return prevMap;
-            const currentCount = prevMap[deal.id] || 0;
-            return {
-              ...prevMap,
-              [deal.id]: Math.max(0, currentCount - 1),
-            };
-          },
-          false
-        );
-        void mutate(
-          'pending-accelerators-map',
           (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
             if (!prevMap) return prevMap;
             const current = prevMap[deal.id];
-            const newCount = Math.max(0, (current?.count || 0) - 1);
+            const currentCount = typeof current === 'number' ? current : (current?.count || 0);
+            const nextCount = Math.max(0, currentCount - 1);
             return {
               ...prevMap,
               [deal.id]: {
-                count: newCount,
-                earliestPendingAt: newCount > 0 ? current?.earliestPendingAt || null : null,
+                count: nextCount,
+                earliestPendingAt: nextCount > 0 ? (current?.earliestPendingAt || null) : null,
               },
             };
           },
@@ -1321,26 +1443,31 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         );
       }
 
-      toast({ title: 'Deleted', description: 'Question deleted successfully', type: 'success' });
-
       // 4. Fire server action in background without re-fetching all deals or logs
       const res = await deleteDealAcceleratorQuestion(deal.id, questionId);
       if (!res.success) {
-        toast({ title: 'Error', description: res.error || 'Failed to delete question', type: 'error' });
+        console.error('Failed to delete question:', res.error);
         if (previousState) {
           void mutate(['deal-accelerators', deal.id], previousState, false);
           void mutateAccelerators(previousState, false);
         }
+        rollbackDeletePendingBadge();
         void loadActivityLogs();
+        toast({ title: 'ลบคำถามไม่สำเร็จ', description: res.error || 'เกิดข้อผิดพลาดในการลบคำถาม', type: 'error' });
       } else if (res.data) {
         void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
         void mutateAccelerators({ success: true, data: res.data }, false);
       }
-    } catch {
-      toast({ title: 'Error', description: 'Failed to delete question', type: 'error' });
-      void mutate(['deal-accelerators', deal.id]);
-      void mutateAccelerators();
+    } catch (err) {
+      console.error('Failed to delete question:', err);
+      if (acceleratorsResponse) {
+        void mutate(['deal-accelerators', deal.id], acceleratorsResponse, false);
+        void mutateAccelerators(acceleratorsResponse, false);
+      }
+      rollbackDeletePendingBadge();
       void loadActivityLogs();
+      const errMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการลบคำถาม';
+      toast({ title: 'ลบคำถามไม่สำเร็จ', description: errMsg, type: 'error' });
     } finally {
       setIsDeletingQuestionId(null);
     }
@@ -1351,16 +1478,91 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     try {
       const res = await generateDealAccelerators(deal.id, acceleratorsState?.targetGoal);
       if (res.success && res.data) {
+        const newAiQuestions = (res.data.questions || []).filter(q => q.source === 'AI' && q.status === 'PENDING');
+        const oldPendingAiIds = new Set(
+          (acceleratorsState?.questions || [])
+            .filter(q => q.source === 'AI' && q.status === 'PENDING')
+            .map(q => q.id)
+        );
+
+        // Optimistically synchronize ActivityLog in memory to prevent duplicate cards during DB roundtrip
+        if (loadActivityLogs) {
+          const newAiLogs = newAiQuestions.map(q => ({
+            id: `synth_log_${q.id}`,
+            content: `[URGENT_CALL:${q.id}] ${q.question}`,
+            type: 'COMMENT',
+            opportunityId: deal.id,
+            userId: session?.user?.id || '',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            isEdited: false,
+            parentId: null,
+            user: {
+              id: session?.user?.id || '',
+              name: 'AI Assistant',
+              image: null,
+              email: null,
+              role: 'ADMIN' as Role,
+            },
+            replies: [],
+          })) as unknown as ActivityLogWithRelations[];
+
+          void loadActivityLogs(
+            (currentPages) => {
+              if (!currentPages || currentPages.length === 0) {
+                return [{ data: newAiLogs }];
+              }
+              const cleanedPages = currentPages.map(page => ({
+                ...page,
+                data: page.data.filter(l => {
+                  if (!l.content.startsWith('[URGENT_CALL:')) return true;
+                  const match = l.content.match(/^\[URGENT_CALL:([^\]]+)\]/);
+                  const id = match ? match[1] : '';
+                  return !oldPendingAiIds.has(id);
+                }),
+              }));
+              cleanedPages[0] = {
+                ...cleanedPages[0],
+                data: [...newAiLogs, ...cleanedPages[0].data],
+              };
+              return cleanedPages;
+            },
+            false
+          );
+        }
+
         void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
         await mutateAccelerators({ success: true, data: res.data }, false);
-        void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
-        if (loadActivityLogs) void loadActivityLogs();
-        toast({ title: 'วิเคราะห์สำเร็จ', description: 'อัปเดตเป้าหมายและจุดคอขวดเรียบร้อยแล้ว', type: 'success' });
+
+        const pendingCount = (res.data.questions || []).filter(q => q.status === 'PENDING').length;
+        void mutate(
+          key => Array.isArray(key) && key[0] === 'pending-accelerators',
+          (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+            if (!prevMap) return prevMap;
+            const current = prevMap[deal.id];
+            if (pendingCount === 0) {
+              const next = { ...prevMap };
+              delete next[deal.id];
+              return next;
+            }
+            return {
+              ...prevMap,
+              [deal.id]: {
+                count: pendingCount,
+                earliestPendingAt: current?.earliestPendingAt || new Date().toISOString(),
+              },
+            };
+          },
+          false
+        );
       } else {
-        toast({ title: 'ไม่สามารถวิเคราะห์ได้', description: res.error || 'โปรดตรวจสอบการเชื่อมต่อ', type: 'error' });
+        console.error('Failed to generate accelerators:', res.error);
+        toast({ title: 'AI Accelerator Error', description: res.error || 'ไม่สามารถสร้างคำถาม AI ได้', type: 'error' });
       }
-    } catch {
-      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถสร้างคำถามเร่งงานได้', type: 'error' });
+    } catch (err) {
+      console.error('Failed to generate accelerators:', err);
+      const errMsg = err instanceof Error ? err.message : 'ไม่สามารถเชื่อมต่อกับ AI ได้';
+      toast({ title: 'AI Accelerator Error', description: errMsg, type: 'error' });
     } finally {
       setIsGeneratingAccelerators(false);
     }
@@ -1519,7 +1721,27 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         generateDealAccelerators(deal.id).then(accRes => {
           if (accRes.success && accRes.data) {
             void mutateAccelerators(accRes, false);
-            void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+            const pCount = (accRes.data.questions || []).filter(q => q.status === 'PENDING').length;
+            void mutate(
+              key => Array.isArray(key) && key[0] === 'pending-accelerators',
+              (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+                if (!prevMap) return prevMap;
+                const current = prevMap[deal.id];
+                if (pCount === 0) {
+                  const next = { ...prevMap };
+                  delete next[deal.id];
+                  return next;
+                }
+                return {
+                  ...prevMap,
+                  [deal.id]: {
+                    count: pCount,
+                    earliestPendingAt: current?.earliestPendingAt || new Date().toISOString(),
+                  },
+                };
+              },
+              false
+            );
           }
         }).catch(() => {});
       }
@@ -1577,9 +1799,31 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   useEffect(() => {
     if (!isOpen) return;
     if (!session?.user?.id) return;
-    const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
+    const channelName = `private-pipeline-${session.user.id}`;
+    console.log(`[PANEL-PUSHER] Subscribing to: "${channelName}" for deal: "${deal.topic}" (id=${deal.id})`);
+    const channel = pusherClient.subscribe(channelName);
 
-    const handleUpdate = (data?: ActivityUpdateEvent & { dealId?: string; action?: string; state?: DealAcceleratorsState; pendingCount?: number }) => {
+    const onSubSucceeded = () => {
+      console.log(`[PANEL-PUSHER] Subscribed successfully to: "${channelName}"`);
+    };
+    const onSubError = (status: unknown) => {
+      console.warn(`[PANEL-PUSHER] Subscription issue for channel "${channelName}":`, status);
+    };
+    channel.bind('pusher:subscription_succeeded', onSubSucceeded);
+    channel.bind('pusher:subscription_error', onSubError);
+
+    const handleUpdate = (data?: ActivityUpdateEvent & {
+      dealId?: string;
+      action?: string;
+      state?: DealAcceleratorsState;
+      pendingCount?: number;
+      question?: AcceleratorQuestion;
+      questions?: AcceleratorQuestion[];
+      deletedQuestionId?: string;
+      questionId?: string;
+      answeredQuestion?: AcceleratorQuestion;
+    }) => {
+      console.log(`[PANEL-PUSHER] Received event: action="${data?.action}" dealId="${data?.dealId}" (current deal.id="${deal.id}")`);
       if (data?.dealId === deal.id) {
         if (data?.action?.startsWith('ACTIVITY_')) {
           loadActivityLogs(pages => applyActivityEvent(pages, data as ActivityUpdateEvent), { revalidate: false });
@@ -1594,8 +1838,125 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             void mutate(['deal-accelerators', deal.id]);
             void mutateAccelerators();
           }
-          if (loadActivityLogs) void loadActivityLogs();
-          void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+
+          // Realtime in-memory Activity feed delta update (0ms sync across all connected clients)
+          if (loadActivityLogs) {
+            const questionToAdd = data?.question || (data?.questions && data.questions[0]);
+            const deletedQId = data?.deletedQuestionId || data?.questionId;
+
+            void loadActivityLogs(
+              (currentPages) => {
+                if (!currentPages || currentPages.length === 0) {
+                  if (questionToAdd && questionToAdd.status === 'PENDING') {
+                    const syntheticLog = {
+                      id: `pusher_log_${questionToAdd.id}`,
+                      content: `[URGENT_CALL:${questionToAdd.id}] ${questionToAdd.question}`,
+                      type: 'COMMENT',
+                      opportunityId: deal.id,
+                      userId: questionToAdd.askedByUserId || '',
+                      createdAt: questionToAdd.createdAt ? new Date(questionToAdd.createdAt) : new Date(),
+                      updatedAt: questionToAdd.createdAt ? new Date(questionToAdd.createdAt) : new Date(),
+                      isEdited: false,
+                      parentId: null,
+                      user: {
+                        id: questionToAdd.askedByUserId || '',
+                        name: questionToAdd.askedBy || (questionToAdd.source === 'MANAGER' ? 'Manager' : 'AI Assistant'),
+                        image: questionToAdd.askedByImage || null,
+                        email: null,
+                        role: (questionToAdd.source === 'MANAGER' ? 'MANAGEMENT' : 'ADMIN') as Role,
+                      },
+                      replies: [],
+                    } as unknown as ActivityLogWithRelations;
+                    return [{ data: [syntheticLog] }];
+                  }
+                  return currentPages;
+                }
+
+                let updatedPages = currentPages;
+                // 1. If a question was deleted or answered, remove its log immediately
+                if (deletedQId) {
+                  updatedPages = updatedPages.map(page => ({
+                    ...page,
+                    data: page.data.filter(l => !l.content.startsWith(`[URGENT_CALL:${deletedQId}]`)),
+                  }));
+                }
+                if (data?.answeredQuestion?.question) {
+                  const answeredText = data.answeredQuestion.question.trim().toLowerCase();
+                  updatedPages = updatedPages.map(page => ({
+                    ...page,
+                    data: page.data.filter(l => {
+                      if (data.answeredQuestion?.id && l.content.startsWith(`[URGENT_CALL:${data.answeredQuestion.id}]`)) return false;
+                      if (l.content.startsWith('[URGENT_CALL:') && l.content.toLowerCase().includes(answeredText)) return false;
+                      return true;
+                    }),
+                  }));
+                }
+
+                // 2. If a new pending question was received, prepend synthetic log if not present
+                if (questionToAdd && questionToAdd.status === 'PENDING') {
+                  const alreadyExists = updatedPages.some(page =>
+                    page.data.some(l => l.content.startsWith(`[URGENT_CALL:${questionToAdd.id}]`))
+                  );
+                  if (!alreadyExists) {
+                    const syntheticLog = {
+                      id: `pusher_log_${questionToAdd.id}`,
+                      content: `[URGENT_CALL:${questionToAdd.id}] ${questionToAdd.question}`,
+                      type: 'COMMENT',
+                      opportunityId: deal.id,
+                      userId: questionToAdd.askedByUserId || '',
+                      createdAt: questionToAdd.createdAt ? new Date(questionToAdd.createdAt) : new Date(),
+                      updatedAt: questionToAdd.createdAt ? new Date(questionToAdd.createdAt) : new Date(),
+                      isEdited: false,
+                      parentId: null,
+                      user: {
+                        id: questionToAdd.askedByUserId || '',
+                        name: questionToAdd.askedBy || (questionToAdd.source === 'MANAGER' ? 'Manager' : 'AI Assistant'),
+                        image: questionToAdd.askedByImage || null,
+                        email: null,
+                        role: (questionToAdd.source === 'MANAGER' ? 'MANAGEMENT' : 'ADMIN') as Role,
+                      },
+                      replies: [],
+                    } as unknown as ActivityLogWithRelations;
+
+                    updatedPages = [
+                      {
+                        ...updatedPages[0],
+                        data: [syntheticLog, ...updatedPages[0].data],
+                      },
+                      ...updatedPages.slice(1),
+                    ];
+                  }
+                }
+
+                return updatedPages;
+              },
+              false
+            );
+          }
+
+          if (typeof data?.pendingCount === 'number') {
+            const nextPendingCount = data.pendingCount;
+            void mutate(
+              key => Array.isArray(key) && key[0] === 'pending-accelerators',
+              (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+                if (!prevMap) return prevMap;
+                const current = prevMap[deal.id];
+                if (nextPendingCount === 0) {
+                  const next = { ...prevMap };
+                  delete next[deal.id];
+                  return next;
+                }
+                return {
+                  ...prevMap,
+                  [deal.id]: {
+                    count: nextPendingCount,
+                    earliestPendingAt: current?.earliestPendingAt || new Date().toISOString(),
+                  },
+                };
+              },
+              false
+            );
+          }
         } else if (data?.action === 'OPPORTUNITY_UPDATED') {
           void mutate(['deal-summary-on-demand', deal.id]);
         }
@@ -1605,6 +1966,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     channel.bind('pipeline-updated', handleUpdate);
 
     return () => {
+      channel.unbind('pusher:subscription_succeeded', onSubSucceeded);
+      channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handleUpdate);
     };
   }, [deal.id, isOpen, loadActivityLogs, mutate, session?.user?.id]);
@@ -1873,7 +2236,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     try {
       await requestDealTransfer(deal.id, newOwnerId);
 
-      const newOwner = users.find((u: { id: string; name?: string | null }) => u.id === newOwnerId);
+      const allKnownUsers = (allCachedUsers && allCachedUsers.length > 0) ? allCachedUsers : users;
+      const newOwner = allKnownUsers.find((u: { id: string; name?: string | null }) => u.id === newOwnerId);
       if (session?.user?.id && newOwner) {
         await addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`);
       }
@@ -1887,41 +2251,53 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
   };
 
-
-
-  const handleAddMember = async (userId: string) => {
+  const handleAddMembers = async (userIds: string[]) => {
+    if (!userIds || userIds.length === 0) return;
+    setIsAddingMembers(true);
     const originalTeamMembers = deal.teamMembers || [];
-    // 1. Optimistic Update (Local Panel State)
-    const userToAdd = users.find((u: { id: string }) => u.id === userId);
-    if (userToAdd) {
-      setLocalTeamMembers(prev => prev.some(u => u.id === userToAdd.id) ? prev : [...prev, userToAdd]);
+    const originalLocalTeamMembers = localTeamMembers;
 
-      // 2. Global Optimistic Update (Kanban Card)
-      mutate(
-        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
-        (currentData: OpportunityWithRelations[] | undefined) => {
-          if (!currentData) return currentData;
-          return currentData.map(opp => {
-            if (opp.id === deal.id) {
-              const isExisting = opp.teamMembers.some(u => u.id === userToAdd.id);
-              if (!isExisting) {
-                return { ...opp, teamMembers: [...opp.teamMembers, userToAdd as unknown as User] };
-              }
-            }
-            return opp;
-          });
-        },
-        { revalidate: false } // Prevent immediate refetch before action finishes
-      );
-    }
+    // 1. Optimistic Update (Local Panel State)
+    const allKnownUsers = (allCachedUsers && allCachedUsers.length > 0) ? allCachedUsers : users;
+    const usersToAdd = allKnownUsers.filter((u: { id: string }) => userIds.includes(u.id));
+    const newMembers = userIds.map(id => {
+      const found = usersToAdd.find(u => u.id === id);
+      return found || { id, name: "User", email: "", image: null, role: "USER" };
+    });
+
+    setLocalTeamMembers(prev => {
+      const existingIds = new Set(prev.map(u => u.id));
+      const toAppend = newMembers.filter(u => !existingIds.has(u.id));
+      return [...prev, ...(toAppend as unknown as TeamMember[])];
+    });
+
+    // 2. Global Optimistic Update (Kanban Card)
+    mutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (currentData: OpportunityWithRelations[] | undefined) => {
+        if (!currentData) return currentData;
+        return currentData.map(opp => {
+          if (opp.id === deal.id) {
+            const currentMembers = opp.teamMembers || [];
+            const existingIds = new Set(currentMembers.map(u => u.id));
+            const toAppend = newMembers.filter(u => !existingIds.has(u.id)) as unknown as OpportunityWithRelations['teamMembers'];
+            return { ...opp, teamMembers: [...currentMembers, ...toAppend] };
+          }
+          return opp;
+        });
+      },
+      { revalidate: false } // Prevent immediate refetch before action finishes
+    );
 
     try {
-      await addTeamMember(deal.id, userId);
-      if (session?.user?.id && userToAdd) {
-        void addSystemLog(deal.id, `Invited ${userToAdd.name} to the team`).catch(console.error);
+      await addTeamMembers(deal.id, userIds);
+      if (session?.user?.id && usersToAdd.length > 0) {
+        const names = usersToAdd.map(u => u.name || "user").join(", ");
+        void addSystemLog(deal.id, `Invited ${names} to the team`).catch(console.error);
       }
+      toast({ title: "Success", description: `Added ${userIds.length} member${userIds.length > 1 ? 's' : ''} to the deal`, type: "success" });
     } catch (e) {
-      setLocalTeamMembers(originalTeamMembers);
+      setLocalTeamMembers(originalLocalTeamMembers);
       mutate(
         (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
         (currentData: OpportunityWithRelations[] | undefined) => currentData?.map(opp =>
@@ -1930,7 +2306,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         { revalidate: false }
       );
       if (e instanceof Error) toast({ title: "Error", description: e.message, type: "error" });
+    } finally {
+      setIsAddingMembers(false);
     }
+  };
+
+  const handleAddMember = async (userId: string) => {
+    await handleAddMembers([userId]);
   };
 
   const handleRemoveMember = async (userId: string) => {
@@ -1975,8 +2357,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
   const [mounted, setMounted] = useState(false);
 
-  const [showTransferDropdown, setShowTransferDropdown] = useState(false);
-  const [showInviteDropdown, setShowInviteDropdown] = useState(false);
+  const [showTransferDrawer, setShowTransferDrawer] = useState(false);
+  const [showInviteDrawer, setShowInviteDrawer] = useState(false);
 
   useEffect(() => {
     const timeout = setTimeout(() => setMounted(true), 0);
@@ -2080,31 +2462,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
             canEditTopic={canEditDueDate}
             companyName={deal.company?.name}
             companyDisplayName={deal.company?.displayName}
-            canCloseDeal={canCloseDeal}
-            onCloseAsWon={() => setWonLostModalState({ isOpen: true, status: "WON" })}
-            onCloseAsLost={() => setWonLostModalState({ isOpen: true, status: "LOST" })}
-            canConvert={canConvert}
-            isConverting={isConverting}
-            onConvert={handleConvertToSalesDeal}
-            canDelete={canDelete}
-            onDelete={async () => {
-              const isConfirmed = await confirm({
-                title: "Delete Deal",
-                description: "Are you sure you want to permanently delete this deal? This action cannot be undone.",
-                confirmText: "Delete",
-                cancelText: "Cancel",
-                variant: "danger"
-              });
-              if (isConfirmed) {
-                try {
-                  await deleteOpportunity(deal.id);
-                  toast({ title: 'Deleted', description: 'Opportunity deleted permanently', type: 'success' });
-                  onClose();
-                } catch {
-                  toast({ title: 'Error', description: 'Failed to delete opportunity', type: 'error' });
-                }
-              }
-            }}
+            hasActions={hasCardActions}
+            onOpenActions={() => setIsActionsDrawerOpen(true)}
             onClose={onClose}
           />
 
@@ -2159,8 +2518,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   label: 'Add',
                   icon: UserPlus,
                   onClick: () => {
-                    setShowInviteDropdown(true);
-                    setShowTransferDropdown(false);
+                    setShowInviteDrawer(true);
+                    setShowTransferDrawer(false);
                   },
                 });
               }
@@ -2170,8 +2529,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   label: 'Transfer',
                   icon: ArrowRightLeft,
                   onClick: () => {
-                    setShowTransferDropdown(true);
-                    setShowInviteDropdown(false);
+                    setShowTransferDrawer(true);
+                    setShowInviteDrawer(false);
                   },
                 });
               }
@@ -2180,37 +2539,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 <EditDealSubBar
                   leftContent={<div />}
                   actions={collaborateActions.length > 0 ? collaborateActions : undefined}
-                  customActionSlot={
-                    <>
-                      {canInvite && (
-                        <div className="relative">
-                          <UserSearchDropdown
-                            users={users}
-                            isOpen={showInviteDropdown}
-                            onClose={() => setShowInviteDropdown(false)}
-                            onSelect={handleAddMember}
-                            actionLabel="Invite"
-                            excludeUserIds={[deal.ownerId, ...(localTeamMembers?.map(tm => tm.id) || [])]}
-                            align="right"
-                          />
-                        </div>
-                      )}
-                      {(isOwner || isAdmin) && (
-                        <div className="relative">
-                          <UserSearchDropdown
-                            users={users}
-                            isOpen={showTransferDropdown}
-                            onClose={() => setShowTransferDropdown(false)}
-                            onSelect={handleTransfer}
-                            actionLabel="Transfer"
-                            isLoading={isTransferring}
-                            excludeUserIds={[deal.ownerId]}
-                            align="right"
-                          />
-                        </div>
-                      )}
-                    </>
-                  }
                 />
               );
             }
@@ -2330,10 +2658,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
                             <PhoneCall className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
                             <span className="font-bold text-xs text-amber-400 shrink-0">Manager Call</span>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shrink-0">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shrink-0">
                               {pendingQuestions.length} Pending
                             </span>
-                            <span className="text-[11px] text-amber-200/90 font-mono font-medium tracking-wide tabular-nums shrink-0">
+                            <span className="text-xs text-amber-200/90 font-mono font-medium tracking-wide tabular-nums shrink-0">
                               {getElapsedWaitText()}
                             </span>
                           </div>
@@ -2385,8 +2713,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                             if (targetQ) {
                               return targetQ.status === 'PENDING';
                             }
-                            const hasReply = log.replies?.some(r => r.content.startsWith('[URGENT_REPLY:'));
-                            return !hasReply;
+                            // หาก acceleratorsState โหลดแล้วและไม่พบคำถามนี้ แสดงว่าคำถามถูกลบแล้ว
+                            return false;
                           });
 
                           // Fallback: หากมีคำถาม AI / Manager Call ที่ยัง PENDING แต่ยังไม่อยู่ใน comments ให้แสดงผลทันที
@@ -2402,7 +2730,16 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                 .filter(Boolean)
                             );
 
-                            const missingQuestions = pendingAccelerators.filter(q => !existingQIds.has(q.id));
+                            const missingQuestions = pendingAccelerators.filter(q => {
+                              if (existingQIds.has(q.id)) return false;
+                              // Match question text to prevent duplicate card if IDs temporarily differ during transitions
+                              const isTextAlreadyPresent = comments.some(log => {
+                                if (!log.content.startsWith('[URGENT_CALL:')) return false;
+                                const match = log.content.match(/^\[URGENT_CALL:[^\]]+\]\s*([\s\S]*)$/);
+                                return match && match[1].trim() === q.question.trim();
+                              });
+                              return !isTextAlreadyPresent;
+                            });
                             if (missingQuestions.length > 0) {
                               const syntheticLogs = missingQuestions.map(q => ({
                                 id: `synth_log_${q.id}`,
@@ -2636,7 +2973,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                     <AlertCircle className="w-4 h-4 shrink-0" />
                                     <span>Alert</span>
                                   </div>
-                                  <p className="text-[11px] leading-relaxed text-slate-300">{summaryError}</p>
+                                  <p className="text-xs leading-relaxed text-slate-300">{summaryError}</p>
                                 </div>
                               )}
 
@@ -2668,12 +3005,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                           มีกิจกรรมใหม่เพิ่มเข้ามาหลังจากการสรุปล่าสุด
                                         </span>
                                         {dealSummaryResponse.newerActivitiesCount && dealSummaryResponse.newerActivitiesCount > 0 ? (
-                                          <span className="px-1.5 py-0.5 rounded-full bg-[#C7F33C] text-black font-bold text-[10px]">
+                                          <span className="px-1.5 py-0.5 rounded-full bg-[#C7F33C] text-black font-bold text-xs">
                                             +{dealSummaryResponse.newerActivitiesCount} new
                                           </span>
                                         ) : null}
                                       </div>
-                                      <p className="text-[11px] text-slate-400">
+                                      <p className="text-xs text-slate-400">
                                         เนื้อหาสรุปด้านล่างยังไม่ได้รวมกิจกรรมล่าสุด กด Re-Summarize เพื่ออัปเดต
                                       </p>
                                     </div>
@@ -2887,7 +3224,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                               )}
                             </div>
                             <div className="flex flex-col flex-1 justify-center">
-                              <span className="text-[11px] text-slate-500 mb-0.5 font-medium">
+                              <span className="text-xs text-slate-500 mb-0.5 font-medium">
                                 <strong className="text-slate-300">{log.user?.name || 'System'}</strong> • {formatDateTime(log.createdAt)}
                               </span>
                               <p className="text-[13px] text-slate-300 font-medium italic whitespace-pre-wrap">
@@ -2922,7 +3259,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                             </span>
                           </div>
                           {isSavingGoal && (
-                            <span className="text-[11px] text-amber-400/80 flex items-center gap-1 font-medium">
+                            <span className="text-xs text-amber-400/80 flex items-center gap-1 font-medium">
                               <Loader2 className="w-3 h-3 animate-spin" />
                               Saving...
                             </span>
@@ -2958,7 +3295,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         >
                           <span>Pending Calls</span>
                           {pendingQuestions.length > 0 && (
-                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                            <span className={`px-1.5 py-0.2 rounded-full text-xs font-bold ${
                               acceleratorTab === 'pending' ? 'bg-slate-950 text-[#F59E0B]' : 'bg-[#F59E0B] text-slate-950'
                             }`}>
                               {pendingQuestions.length}
@@ -2976,7 +3313,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         >
                           <span>Answered History</span>
                           {answeredQuestions.length > 0 && (
-                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                            <span className={`px-1.5 py-0.2 rounded-full text-xs font-bold ${
                               acceleratorTab === 'answered' ? 'bg-slate-950 text-[#F59E0B]' : 'bg-[#4E4F50] text-slate-200'
                             }`}>
                               {answeredQuestions.length}
@@ -3147,7 +3484,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   </div>
                   <div className="grid grid-cols-7 gap-1 text-center mb-2">
                     {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
-                      <div key={day} className="text-[10px] font-bold text-slate-400">{day}</div>
+                      <div key={day} className="text-xs font-bold text-slate-400">{day}</div>
                     ))}
                   </div>
                   <div className="grid grid-cols-7 gap-1">
@@ -3216,7 +3553,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
               {(pendingDueDate || pendingAttachments.length > 0) && (
                 <div className="px-2 pb-1.5 flex flex-wrap gap-2 items-center">
                   {pendingDueDate && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-black text-[#d4ff3a] border border-[#C7F33C]/20">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-black text-[#d4ff3a] border border-[#C7F33C]/20">
                       <BellRing className="w-3 h-3" />
                       {pendingDueDate === 'REMOVE' ? 'Remove Due Date' : `Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(pendingDueDate)}`}
                       <button onClick={() => setPendingDueDate(null)} className="ml-1 opacity-70 hover:opacity-100 transition-opacity">
@@ -3287,7 +3624,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                         title={activeDueDate ? `Due: ${formatShortDueDate(activeDueDate)} (Click to change)` : "Set Due Date"}
                         className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
                           activeDueDate
-                            ? 'bg-[#C7F33C] text-black font-bold text-[11px] px-2.5 gap-1.5'
+                            ? 'bg-[#C7F33C] text-black font-bold text-xs px-2.5 gap-1.5'
                             : 'w-7 px-0 hover:bg-[#4E4F50] text-slate-300'
                         }`}
                       >
@@ -3305,7 +3642,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       title={isManagerCallMode ? "Cancel Manager Call mode" : "Manager Call (Urgent question)"}
                       className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
                         isManagerCallMode
-                          ? 'bg-[#F59E0B] text-slate-950 font-bold text-[11px] px-2.5 gap-1.5 shadow-sm'
+                          ? 'bg-[#F59E0B] text-slate-950 font-bold text-xs px-2.5 gap-1.5 shadow-sm'
                           : 'w-7 px-0 hover:bg-[#4E4F50] text-amber-400'
                       }`}
                     >
@@ -3516,20 +3853,64 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         </div>
       )}
 
-      {/* Won / Lost Modal */}
-      {wonLostModalState.isOpen && (
-        <WonLostModal
-          deal={deal}
-          status={wonLostModalState.status}
-          onClose={() => setWonLostModalState((prev) => ({ ...prev, isOpen: false }))}
-          onSuccess={() => {
-            setWonLostModalState((prev) => ({ ...prev, isOpen: false }));
-            mutate((key) => typeof key === "string" && key.startsWith("pipeline-opportunities"));
-            mutate(["opportunity", deal.id]);
-            onClose();
-          }}
-        />
-      )}
+      {/* Standard Deal Actions Drawer (Won, Lost, Convert, Delete) */}
+      <DealActionsDrawer
+        isOpen={isActionsDrawerOpen && hasCardActions}
+        onClose={() => setIsActionsDrawerOpen(false)}
+        deal={deal}
+        canCloseDeal={canCloseDeal}
+        canConvert={canConvert}
+        canDelete={canDelete}
+        onDealClosed={(dealId, status) => {
+          setIsActionsDrawerOpen(false);
+          onDealClosed?.(dealId, status);
+          onClose();
+        }}
+        onDealConverted={() => {
+          setDealType(OpportunityType.SALES_DEAL);
+          setIsActionsDrawerOpen(false);
+          setActiveTab('information');
+        }}
+        onDealDeleted={(dealId) => {
+          setIsActionsDrawerOpen(false);
+          onDealClosed?.(dealId, "LOST");
+          onClose();
+        }}
+      />
+
+      {/* Invite Members Drawer (Multi-select) */}
+      <MemberSelectDrawer
+        isOpen={showInviteDrawer}
+        onClose={() => setShowInviteDrawer(false)}
+        title="Invite Team Members"
+        subtitle="Select department or individual members to add to this card."
+        mode="multiple"
+        dealId={deal.id}
+        currentOwnerId={deal.ownerId}
+        excludeUserIds={[deal.ownerId, ...(localTeamMembers?.map(tm => tm.id) || [])]}
+        onConfirmMultiple={async (selectedIds) => {
+          await handleAddMembers(selectedIds);
+          setShowInviteDrawer(false);
+        }}
+        isSubmitting={isAddingMembers}
+      />
+
+      {/* Transfer Ownership Drawer (Single-select) */}
+      <MemberSelectDrawer
+        isOpen={showTransferDrawer}
+        onClose={() => setShowTransferDrawer(false)}
+        title="Transfer Ownership"
+        subtitle="Select a new deal owner. You will remain on the deal as a collaborator."
+        mode="single"
+        dealId={deal.id}
+        currentOwnerId={deal.ownerId}
+        excludeUserIds={[deal.ownerId]}
+        onConfirmSingle={async (selectedId) => {
+          await handleTransfer(selectedId);
+          setShowTransferDrawer(false);
+        }}
+        isSubmitting={isTransferring}
+      />
     </>
   );
 }
