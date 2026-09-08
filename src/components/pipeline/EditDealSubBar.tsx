@@ -130,7 +130,7 @@ export function EditDealSubBar({
                   onClick={() => onTabChange(tab.id)}
                   role="tab"
                   aria-selected={isCurrent}
-                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors flex items-center cursor-pointer ${
                     isCurrent
                       ? "bg-[#3A3B3C] text-[#C7F33C]"
                       : "text-slate-400 hover:text-slate-200"

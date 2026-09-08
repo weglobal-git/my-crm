@@ -115,17 +115,28 @@ export async function getPipelineRecipientUserIds(opportunityId: string): Promis
   });
   if (!opportunity) return [];
 
-  const departmentIds = new Set(opportunity.owner.departments.map((department: { id: string }) => department.id));
-  for (const member of opportunity.teamMembers) {
-    for (const department of member.departments) departmentIds.add(department.id);
+  const departmentIds = new Set<string>();
+  if (opportunity.owner?.departments) {
+    for (const d of opportunity.owner.departments) {
+      if (d.id) departmentIds.add(d.id);
+    }
+  }
+  for (const member of opportunity.teamMembers || []) {
+    for (const d of member.departments || []) {
+      if (d.id) departmentIds.add(d.id);
+    }
   }
 
-  const directUserIds = [opportunity.ownerId, ...opportunity.teamMembers.map((member: { id: string }) => member.id)];
+  const directUserIds = [
+    ...(opportunity.ownerId ? [opportunity.ownerId] : []),
+    ...(opportunity.teamMembers || []).map((m: { id: string }) => m.id),
+  ];
+
   const users = await prisma.user.findMany({
     where: {
       OR: [
         { role: 'ADMIN' },
-        { id: { in: directUserIds } },
+        ...(directUserIds.length > 0 ? [{ id: { in: directUserIds } }] : []),
         ...(departmentIds.size > 0
           ? [{ role: 'MANAGEMENT' as const, departments: { some: { id: { in: [...departmentIds] } } } }]
           : []),

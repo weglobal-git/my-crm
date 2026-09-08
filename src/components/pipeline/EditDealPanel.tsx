@@ -1,13 +1,13 @@
 "use client";
 
-import { X, MoreHorizontal, MessageSquare, Trash2, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Pencil, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft } from "lucide-react";
+import { X, MoreHorizontal, MessageSquare, Trash2, BellRing, Send, Paperclip, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, Zap, Target, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Lock, Pencil, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, PhoneCall, AlertTriangle } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import imageCompression from 'browser-image-compression';
 import { useDropzone } from 'react-dropzone';
 
 import { addActivityLog, removeTeamMember, addTeamMember, editActivityLog, deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateDueDateWithLog, updateOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
 import { getLatestDealSummary, generateDealSummary, getDealSummaryPromptConfig, saveDealSummaryPromptConfig, resetDealSummaryPromptConfig } from "@/lib/actions/deal-summary";
-import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, updateDealTargetGoal } from "@/lib/actions/ai-accelerator";
+import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, updateDealTargetGoal, createManagerCallQuestion, deleteDealAcceleratorQuestion, type DealAcceleratorsState, type AcceleratorQuestion } from "@/lib/actions/ai-accelerator";
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { UserSearchDropdown } from "../ui/UserSearchDropdown";
@@ -15,7 +15,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import useSWR, { useSWRConfig, mutate, preload } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
-import { User, OpportunityType } from "@prisma/client";
+import { User, OpportunityType, Role } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
 import { useDialog } from "@/providers/DialogProvider";
@@ -27,6 +27,7 @@ import { EditDealMainBar } from "./EditDealMainBar";
 import { EditDealSubBar, SubBarTab, SubBarActionItem } from "./EditDealSubBar";
 import { WonLostModal } from "./WonLostModal";
 import { ChatAttachmentButton } from "./ChatAttachmentButton";
+import { AcceleratorQuestionCard } from "./AcceleratorQuestionCard";
 import { HighlightText } from "@/components/ui/HighlightText";
 import { pusherClient } from "@/lib/pusher";
 import { useSwipeToClose } from "@/hooks/useSwipeToClose";
@@ -50,6 +51,17 @@ const formatShortDueDate = (date: Date | string) => {
   const month = d.toLocaleDateString('en-GB', { month: 'short' });
   const year = String(d.getFullYear()).slice(-2);
   return `${day}${month}${year}`;
+};
+
+const formatQuestionDate = (date: Date | string) => {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const day = d.getDate();
+  const month = d.toLocaleDateString('en-GB', { month: 'short' });
+  const year = String(d.getFullYear()).slice(-2);
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  return `${day}${month}${year}, ${hours}:${minutes}`;
 };
 
 const renderCommentText = (text: string, highlight: string = '') => {
@@ -161,7 +173,33 @@ function ImageGrid({ images, onImageClick }: { images: {url: string, filename: s
   );
 }
 
-function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onReplyClick, onImageClick, searchQuery = '' }: { log: ActivityLogWithRelations, dealId: string, currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; }, refresh: () => void, mutateLogs?: (data: (currentPages?: ActivityLogPage[]) => ActivityLogPage[] | undefined, opts?: { revalidate: boolean }) => void, onReplyClick?: (username: string) => void, onImageClick?: (url: string, index?: number, allUrls?: string[]) => void, searchQuery?: string }) {
+function ActivityComment({
+  log,
+  dealId,
+  currentUser,
+  refresh,
+  mutateLogs,
+  onReplyClick,
+  onImageClick,
+  searchQuery = '',
+  acceleratorsState,
+  onAnswerQuestion,
+  onDeleteQuestion,
+  canUseManagerCall = false,
+}: {
+  log: ActivityLogWithRelations;
+  dealId: string;
+  currentUser: { id: string; name?: string | null; image?: string | null; email?: string | null; role?: string };
+  refresh: () => void;
+  mutateLogs?: (data: (currentPages?: ActivityLogPage[]) => ActivityLogPage[] | undefined, opts?: { revalidate: boolean }) => void;
+  onReplyClick?: (username: string) => void;
+  onImageClick?: (url: string, index?: number, allUrls?: string[]) => void;
+  searchQuery?: string;
+  acceleratorsState?: DealAcceleratorsState;
+  onAnswerQuestion?: (questionId: string, answer: string) => Promise<void>;
+  onDeleteQuestion?: (questionId: string) => Promise<void> | void;
+  canUseManagerCall?: boolean;
+}) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(log.content);
   const [isReplying, setIsReplying] = useState(false);
@@ -318,6 +356,109 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
     }
   };
 
+  // Urgent Call (Manager Call or AI) Unified Question Card
+  if (log.content.startsWith('[URGENT_CALL:')) {
+    // ป้องกันการกระพริบ: ไม่แสดงผลจนกว่า acceleratorsState จะโหลดเสร็จสมบูรณ์
+    if (!acceleratorsState) return null;
+
+    const urgentCallMatch = log.content.match(/^\[URGENT_CALL:([^\]]+)\]\s*([\s\S]*)$/);
+    const qId = urgentCallMatch ? urgentCallMatch[1] : '';
+    const qText = urgentCallMatch ? urgentCallMatch[2].trim() : log.content;
+    let targetQ = acceleratorsState?.questions?.find(q => q.id === qId && q.question.trim() === qText)
+      || acceleratorsState?.questions?.find(q => q.id === qId && q.status === 'PENDING')
+      || acceleratorsState?.questions?.find(q => q.id === qId);
+    const replyLog = log.replies?.find(r => r.content.startsWith('[URGENT_REPLY:'));
+    const replyText = replyLog ? replyLog.content.replace(/^\[URGENT_REPLY:[^\]]+\]\s*/, '') : '';
+
+    if (!targetQ) {
+      targetQ = {
+        id: qId,
+        question: qText,
+        status: replyLog ? 'ANSWERED' : 'PENDING',
+        answer: replyText || undefined,
+        answeredBy: replyLog?.user?.name || undefined,
+        answeredByImage: replyLog?.user?.image || undefined,
+        answeredAt: replyLog?.createdAt ? new Date(replyLog.createdAt).toISOString() : undefined,
+        source: (qId.startsWith('acc_mgr_') ? 'MANAGER' : 'AI') as "MANAGER" | "AI",
+        askedBy: log.user?.name || (qId.startsWith('acc_mgr_') ? 'Manager' : 'AI Assistant'),
+        askedByImage: log.user?.image,
+        createdAt: new Date(log.createdAt).toISOString(),
+      };
+    } else if (!targetQ.answeredByImage && replyLog?.user?.image) {
+      targetQ = {
+        ...targetQ,
+        answeredByImage: replyLog.user.image,
+      };
+    }
+
+    // Manager Call / AI Accelerator ที่ตอบแล้ว ไม่ต้องแสดงในหน้า Activity feed (ให้ไปอยู่ที่ Manager Call > Answer History)
+    if (targetQ.status === 'ANSWERED') {
+      return null;
+    }
+
+    const nonUrgentReplies = log.replies?.filter(r => !r.content.startsWith('[URGENT_REPLY:')) || [];
+
+    return (
+      <div className="flex flex-col gap-2 my-2 w-full">
+        <div className="flex flex-row-reverse gap-3 self-end w-full max-w-[95%] sm:max-w-[88%] ml-auto">
+          {/* Avatar on Right */}
+          <div className={`w-10 h-10 rounded-full shrink-0 overflow-hidden relative flex items-center justify-center shadow-md ${
+            targetQ.source === 'AI'
+              ? 'bg-purple-500/20 border-2 border-purple-500'
+              : 'bg-amber-500/20 border-2 border-amber-500'
+          }`}>
+            {targetQ.source === 'AI' ? (
+              <div className="w-full h-full bg-gradient-to-br from-purple-600 to-indigo-600 flex items-center justify-center">
+                <Bot className="w-5 h-5 text-white" />
+              </div>
+            ) : log.user?.image ? (
+              <img src={log.user.image} alt="Avatar" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-xs font-black text-amber-400">
+                {log.user?.name ? log.user.name.charAt(0).toUpperCase() : 'M'}
+              </span>
+            )}
+          </div>
+
+          {/* Unified Question Card (Same component as Manager Call Tab) */}
+          <div className="flex-1 min-w-0">
+            <AcceleratorQuestionCard
+              question={targetQ}
+              canDelete={canUseManagerCall}
+              onDelete={onDeleteQuestion}
+              onAnswer={onAnswerQuestion}
+              variant="activity"
+            />
+          </div>
+        </div>
+
+        {/* Any manual non-urgent replies if any */}
+        {nonUrgentReplies.length > 0 && (
+          <div className="flex flex-col gap-2 mt-2 w-full pr-12 items-end">
+            {nonUrgentReplies.map(reply => (
+              <div key={reply.id} className="flex flex-row-reverse gap-2 max-w-[85%] items-start">
+                <div className="w-7 h-7 rounded-full bg-[#4E4F50] shrink-0 overflow-hidden">
+                  <img
+                    src={reply.user?.image || `https://api.dicebear.com/7.x/notionists/svg?seed=${reply.user?.name || reply.userId}`}
+                    alt="Avatar"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="bg-[#3A3B3C] rounded-2xl rounded-tr-sm p-2.5 text-left border border-[#4E4F50]">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-[11px] font-bold text-slate-200">{reply.user?.name || 'User'}</span>
+                    <span className="text-[10px] text-slate-400">{formatDateTime(reply.createdAt)}</span>
+                  </div>
+                  <p className="text-xs text-slate-100 leading-normal">{reply.content}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex gap-3">
@@ -421,12 +562,12 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
 
             {/* Edit / Delete Menu (3 Dots) */}
             {canEdit && (
-              <div className="relative opacity-0 group-hover/comment:opacity-100 transition-opacity flex items-center" ref={menuRef}>
+              <div className="relative flex items-center" ref={menuRef}>
                 <button
                   onClick={() => setShowMenu(!showMenu)}
-                  className="p-1 hover:bg-[#4E4F50] rounded-full transition-colors flex items-center justify-center -ml-2"
+                  className="p-1 hover:bg-[#4E4F50] rounded-full transition-colors flex items-center justify-center -ml-2 cursor-pointer"
                 >
-                  <MoreHorizontal className="w-3 h-3 text-slate-500" />
+                  <MoreHorizontal className="w-3.5 h-3.5 text-slate-400 hover:text-slate-200" />
                 </button>
 
                 {showMenu && (
@@ -465,6 +606,10 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
                     setReplyingToUsername(username);
                   }}
                   onImageClick={onImageClick}
+                  acceleratorsState={acceleratorsState}
+                  onAnswerQuestion={onAnswerQuestion}
+                  onDeleteQuestion={onDeleteQuestion}
+                  canUseManagerCall={canUseManagerCall}
                 />
               ))}
             </div>
@@ -510,7 +655,7 @@ function ActivityComment({ log, dealId, currentUser, refresh, mutateLogs, onRepl
   );
 }
 
-export type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'sharedMedia' | 'summary';
+export type TabType = 'activity' | 'system' | 'collaborate' | 'information' | 'notes' | 'sharedMedia' | 'summary' | 'manager-call';
 
 interface EditDealPanelProps {
   deal: OpportunityWithRelations;
@@ -670,6 +815,24 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const canEditDueDate = isOwner || isAdmin;
   const canAnswerAccelerators = isOwner || isAdmin;
 
+  const userRole = (session?.user as Record<string, unknown>)?.role as string | undefined;
+  const userDepartments = ((session?.user as Record<string, unknown>)?.departments as string[]) || [];
+  const isManagerOfOwner = Boolean(
+    userRole === "MANAGEMENT" &&
+    (deal.owner as { departments?: { id: string; name: string }[] })?.departments?.some(d => userDepartments.includes(d.name))
+  );
+  const canUseManagerCall = Boolean(isAdmin || isManagerOfOwner);
+
+  const [isManagerCallMode, setIsManagerCallMode] = useState(false);
+  const [isSendingManagerCall, setIsSendingManagerCall] = useState(false);
+  const isSendingManagerCallRef = useRef(false);
+  const isSubmittingLogRef = useRef(false);
+  const isManagerCallModeRef = useRef(false);
+
+  useEffect(() => {
+    isManagerCallModeRef.current = isManagerCallMode;
+  }, [isManagerCallMode]);
+
   // Won / Lost Modal State
   const [wonLostModalState, setWonLostModalState] = useState<{ isOpen: boolean; status: "WON" | "LOST" }>({
     isOpen: false,
@@ -737,7 +900,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   } = useSWR(
     isOpen ? ['deal-accelerators', deal.id] : null,
     ([, id]) => getDealAccelerators(id),
-    { revalidateOnFocus: false, dedupingInterval: 30000 }
+    { revalidateOnFocus: false, dedupingInterval: 0 }
   );
 
   // Idle Background Preloader: warms caches for Shared Media, AI Summary & Accelerators (0ms tab switch)
@@ -754,11 +917,32 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const acceleratorsState = acceleratorsResponse?.data;
   const [isGeneratingAccelerators, setIsGeneratingAccelerators] = useState(false);
   const [isAnsweringQuestionId, setIsAnsweringQuestionId] = useState<string | null>(null);
+  const [isDeletingQuestionId, setIsDeletingQuestionId] = useState<string | null>(null);
   const [customAnswers, setCustomAnswers] = useState<Record<string, string>>({});
   const [showCustomInput, setShowCustomInput] = useState<Record<string, boolean>>({});
-  const [isEditingGoal, setIsEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState('');
   const [isSavingGoal, setIsSavingGoal] = useState(false);
+  const goalTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const saveGoalDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  const adjustGoalTextareaHeight = useCallback(() => {
+    if (goalTextareaRef.current) {
+      goalTextareaRef.current.style.height = 'auto';
+      goalTextareaRef.current.style.height = `${goalTextareaRef.current.scrollHeight}px`;
+    }
+  }, []);
+
+  useEffect(() => {
+    const currentGoal = acceleratorsState?.targetGoal || deal.topic || '';
+    setGoalInput(currentGoal);
+  }, [acceleratorsState?.targetGoal, deal.topic]);
+
+  useEffect(() => {
+    if (activeTab === 'manager-call') {
+      const timer = setTimeout(adjustGoalTextareaHeight, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab, goalInput, adjustGoalTextareaHeight]);
   const [isAcceleratorsExpanded, setIsAcceleratorsExpanded] = useState(true);
   const [acceleratorTab, setAcceleratorTab] = useState<'pending' | 'answered'>('pending');
   const [editingAnswerQuestionId, setEditingAnswerQuestionId] = useState<string | null>(null);
@@ -808,37 +992,198 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   const answeredQuestions = acceleratorsState?.questions?.filter(q => q.status === 'ANSWERED') || [];
   const pendingQuestionsCount = pendingQuestions.length;
 
+  const [, setAnnouncementTick] = useState(0);
+  useEffect(() => {
+    if (pendingQuestions.length === 0) return;
+    const interval = setInterval(() => {
+      setAnnouncementTick(t => t + 1);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [pendingQuestions.length]);
+
+  const getElapsedWaitText = () => {
+    if (!pendingQuestions || pendingQuestions.length === 0) return '';
+    let earliestCreatedAt: Date | null = null;
+    for (const q of pendingQuestions) {
+      if (q.createdAt) {
+        const d = new Date(q.createdAt);
+        if (!earliestCreatedAt || d < earliestCreatedAt) {
+          earliestCreatedAt = d;
+        }
+      }
+    }
+    if (!earliestCreatedAt) return '';
+    const diffMs = Math.max(0, Date.now() - earliestCreatedAt.getTime());
+    const diffSec = Math.floor(diffMs / 1000);
+    const days = Math.floor(diffSec / (24 * 3600));
+    const hours = Math.floor((diffSec % (24 * 3600)) / 3600);
+    const minutes = Math.floor((diffSec % 3600) / 60);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+
+    if (days > 0) {
+      return `${days}DAY | ${pad(hours)}:${pad(minutes)}`;
+    }
+    return `${pad(hours)}:${pad(minutes)}`;
+  };
+
+  const handleSendManagerCall = async () => {
+    if (isSendingManagerCallRef.current || !newLog.trim()) return;
+    const questionText = newLog.trim();
+    isSendingManagerCallRef.current = true;
+    setIsSendingManagerCall(true);
+
+    // 1. Clear input immediately synchronously
+    setNewLog('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
+      adjustTextareaHeight(inputRef.current);
+    }
+    setIsManagerCallMode(false);
+    isManagerCallModeRef.current = false;
+
+    // 2. Optimistic UI (< 10ms): Render question instantly without waiting for network
+    const optimisticQId = `acc_mgr_${Date.now()}`;
+    const optimisticQuestion: AcceleratorQuestion = {
+      id: optimisticQId,
+      question: questionText,
+      reason: "คำถามด่วนจากฝ่ายบริหาร (Manager Call)",
+      status: "PENDING",
+      source: "MANAGER",
+      createdAt: new Date().toISOString(),
+      askedBy: session?.user?.name || "Manager",
+      askedByImage: session?.user?.image || null,
+    };
+
+    const previousState = acceleratorsResponse;
+    if (acceleratorsState) {
+      const newState = {
+        ...acceleratorsState,
+        questions: [...(acceleratorsState.questions || []), optimisticQuestion],
+        updatedAt: new Date().toISOString(),
+      };
+      void mutateAccelerators({ success: true, data: newState }, false);
+    }
+
+    const optimisticLog = {
+      id: `opt_log_${Date.now()}`,
+      content: `[URGENT_CALL:${optimisticQId}] ${questionText}`,
+      type: "COMMENT",
+      opportunityId: deal.id,
+      userId: session?.user?.id || "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      isEdited: false,
+      parentId: null,
+      user: {
+        id: session?.user?.id || "",
+        name: session?.user?.name || "Manager",
+        email: session?.user?.email || null,
+        image: session?.user?.image || null,
+        role: ((session?.user as Record<string, unknown>)?.role || "MANAGEMENT") as Role,
+      },
+      replies: [],
+    } as unknown as ActivityLogWithRelations;
+
+    if (loadActivityLogs) {
+      void loadActivityLogs(
+        (currentPages) => {
+          if (!currentPages || currentPages.length === 0) {
+            return [{ data: [optimisticLog] }];
+          }
+          return [
+            {
+              ...currentPages[0],
+              data: [optimisticLog, ...currentPages[0].data],
+            },
+            ...currentPages.slice(1),
+          ];
+        },
+        false
+      );
+    }
+
+    void mutate(
+      key => Array.isArray(key) && key[0] === 'pending-accelerators',
+      (prevMap: Record<string, number> | undefined) => {
+        if (!prevMap) return prevMap;
+        return { ...prevMap, [deal.id]: (prevMap[deal.id] || 0) + 1 };
+      },
+      false
+    );
+    void mutate(
+      'pending-accelerators-map',
+      (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+        if (!prevMap) return prevMap;
+        const current = prevMap[deal.id];
+        return {
+          ...prevMap,
+          [deal.id]: {
+            count: (current?.count || 0) + 1,
+            earliestPendingAt: current?.earliestPendingAt || new Date().toISOString(),
+          },
+        };
+      },
+      false
+    );
+
+    toast({ title: 'ส่ง Manager Call เรียบร้อย', description: 'คำถามถูกส่งเข้าสู่ Activity และแจ้งเตือนแล้ว', type: 'success' });
+
+    // 3. Fire server action in background (zero UI delay, no redundant re-fetches)
+    try {
+      const res = await createManagerCallQuestion(deal.id, questionText);
+      if (!res.success) {
+        toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถส่งคำถามได้', type: 'error' });
+        if (previousState) void mutateAccelerators(previousState, false);
+        void loadActivityLogs();
+        return;
+      }
+      if (res.data) {
+        void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
+        void mutateAccelerators({ success: true, data: res.data }, false);
+      }
+    } catch (err) {
+      console.error('Failed to send manager call:', err);
+      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถส่งคำถามได้', type: 'error' });
+      if (previousState) {
+        void mutate(['deal-accelerators', deal.id], previousState, false);
+        void mutateAccelerators(previousState, false);
+      }
+      void loadActivityLogs();
+    } finally {
+      setIsSendingManagerCall(false);
+      isSendingManagerCallRef.current = false;
+    }
+  };
+
   const handleAnswerAccelerator = async (questionId: string, answer: string) => {
     if (!answer.trim() || isAnsweringQuestionId) return;
     const cleanAnswer = answer.trim();
+    setIsAnsweringQuestionId(questionId);
     const previousState = acceleratorsResponse;
 
-    // 1. Optimistic UI update (< 50ms)
+    // 1. Optimistic UI update (< 10ms)
     if (acceleratorsState) {
-      const optimisticQuestions = (acceleratorsState.questions || []).map(q => {
+      const updatedQuestions = acceleratorsState.questions.map(q => {
         if (q.id === questionId) {
           return {
             ...q,
             status: 'ANSWERED' as const,
             answer: cleanAnswer,
             answeredBy: session?.user?.name || 'คุณ',
+            answeredByImage: session?.user?.image || null,
             answeredAt: new Date().toISOString(),
           };
         }
         return q;
       });
 
-      void mutateAccelerators(
-        {
-          success: true,
-          data: {
-            ...acceleratorsState,
-            questions: optimisticQuestions,
-            updatedAt: new Date().toISOString(),
-          },
-        },
-        false
-      );
+      const optimisticState = {
+        ...acceleratorsState,
+        questions: updatedQuestions,
+        updatedAt: new Date().toISOString(),
+      };
+      void mutate(['deal-accelerators', deal.id], { success: true, data: optimisticState }, false);
+      void mutateAccelerators({ success: true, data: optimisticState }, false);
 
       // Optimistically decrement pending counter on board
       void mutate(
@@ -853,26 +1198,151 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         },
         false
       );
+
+      void mutate(
+        'pending-accelerators-map',
+        (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+          if (!prevMap) return prevMap;
+          const current = prevMap[deal.id];
+          const newCount = Math.max(0, (current?.count || 0) - 1);
+          return {
+            ...prevMap,
+            [deal.id]: {
+              count: newCount,
+              earliestPendingAt: newCount > 0 ? current?.earliestPendingAt || null : null,
+            },
+          };
+        },
+        false
+      );
+
+      // Optimistically remove the urgent call log from local activity logs
+      if (loadActivityLogs) {
+        void loadActivityLogs(
+          (currentPages) => {
+            if (!currentPages) return currentPages;
+            return currentPages.map((page) => ({
+              ...page,
+              data: page.data.filter(l => !l.content.startsWith(`[URGENT_CALL:${questionId}]`)),
+            }));
+          },
+          false
+        );
+      }
     }
 
     toast({ title: 'บันทึกคำตอบเรียบร้อย', description: `ตอบ: "${cleanAnswer}"`, type: 'success' });
 
-    // 2. Fire server action in background
-    setIsAnsweringQuestionId(questionId);
+    // 2. Fire server action in background without blocking UI or triggering redundant GET re-fetches
     try {
       const res = await answerDealAccelerator(deal.id, questionId, cleanAnswer);
       if (res.success && res.data) {
-        await mutateAccelerators({ success: true, data: res.data }, false);
-        void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+        void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
+        void mutateAccelerators({ success: true, data: res.data }, false);
       } else {
-        if (previousState) void mutateAccelerators(previousState, false);
+        if (previousState) {
+          void mutate(['deal-accelerators', deal.id], previousState, false);
+          void mutateAccelerators(previousState, false);
+        }
+        void loadActivityLogs();
         toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
       }
     } catch {
-      if (previousState) void mutateAccelerators(previousState, false);
+      if (previousState) {
+        void mutate(['deal-accelerators', deal.id], previousState, false);
+        void mutateAccelerators(previousState, false);
+      }
+      void loadActivityLogs();
       toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกคำตอบได้', type: 'error' });
     } finally {
       setIsAnsweringQuestionId(null);
+    }
+  };
+
+  const handleDeleteAcceleratorQuestion = async (questionId: string) => {
+    if (isDeletingQuestionId) return;
+    setIsDeletingQuestionId(questionId);
+    try {
+      const previousState = acceleratorsResponse;
+      const targetQ = acceleratorsState?.questions?.find(q => q.id === questionId);
+      const isPendingQ = targetQ?.status === 'PENDING';
+
+      // 1. Optimistically remove question from Accelerators State
+      if (previousState?.data) {
+        const updatedQuestions = previousState.data.questions.filter(q => q.id !== questionId);
+        const newState = { ...previousState.data, questions: updatedQuestions };
+        void mutate(['deal-accelerators', deal.id], { success: true, data: newState }, false);
+        void mutateAccelerators({ success: true, data: newState }, false);
+      }
+
+      // 2. If it was pending, optimistically decrement badge count
+      if (isPendingQ) {
+        void mutate(
+          key => Array.isArray(key) && key[0] === 'pending-accelerators',
+          (prevMap: Record<string, number> | undefined) => {
+            if (!prevMap) return prevMap;
+            const currentCount = prevMap[deal.id] || 0;
+            return {
+              ...prevMap,
+              [deal.id]: Math.max(0, currentCount - 1),
+            };
+          },
+          false
+        );
+        void mutate(
+          'pending-accelerators-map',
+          (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
+            if (!prevMap) return prevMap;
+            const current = prevMap[deal.id];
+            const newCount = Math.max(0, (current?.count || 0) - 1);
+            return {
+              ...prevMap,
+              [deal.id]: {
+                count: newCount,
+                earliestPendingAt: newCount > 0 ? current?.earliestPendingAt || null : null,
+              },
+            };
+          },
+          false
+        );
+      }
+
+      // 3. Optimistically remove from local activity logs
+      if (loadActivityLogs) {
+        void loadActivityLogs(
+          (currentPages) => {
+            if (!currentPages) return currentPages;
+            return currentPages.map((page) => ({
+              ...page,
+              data: page.data.filter(l => !l.content.startsWith(`[URGENT_CALL:${questionId}]`)),
+            }));
+          },
+          false
+        );
+      }
+
+      toast({ title: 'Deleted', description: 'Question deleted successfully', type: 'success' });
+
+      // 4. Fire server action in background without re-fetching all deals or logs
+      const res = await deleteDealAcceleratorQuestion(deal.id, questionId);
+      if (!res.success) {
+        toast({ title: 'Error', description: res.error || 'Failed to delete question', type: 'error' });
+        if (previousState) {
+          void mutate(['deal-accelerators', deal.id], previousState, false);
+          void mutateAccelerators(previousState, false);
+        }
+        void loadActivityLogs();
+      } else if (res.data) {
+        void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
+        void mutateAccelerators({ success: true, data: res.data }, false);
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Failed to delete question', type: 'error' });
+      void mutate(['deal-accelerators', deal.id]);
+      void mutateAccelerators();
+      void loadActivityLogs();
+    } finally {
+      setIsDeletingQuestionId(null);
     }
   };
 
@@ -881,8 +1351,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     try {
       const res = await generateDealAccelerators(deal.id, acceleratorsState?.targetGoal);
       if (res.success && res.data) {
+        void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
         await mutateAccelerators({ success: true, data: res.data }, false);
         void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+        if (loadActivityLogs) void loadActivityLogs();
         toast({ title: 'วิเคราะห์สำเร็จ', description: 'อัปเดตเป้าหมายและจุดคอขวดเรียบร้อยแล้ว', type: 'success' });
       } else {
         toast({ title: 'ไม่สามารถวิเคราะห์ได้', description: res.error || 'โปรดตรวจสอบการเชื่อมต่อ', type: 'error' });
@@ -894,42 +1366,43 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     }
   };
 
-  const handleSaveGoal = async () => {
-    if (!goalInput.trim() || isSavingGoal) return;
-    const targetGoal = goalInput.trim();
-    const previousState = acceleratorsResponse;
-
-    // 1. Optimistic UI update (< 50ms)
-    if (acceleratorsState) {
-      void mutateAccelerators(
-        {
-          success: true,
-          data: {
-            ...acceleratorsState,
-            targetGoal,
-            goalSource: 'USER_OVERRIDE',
-            updatedAt: new Date().toISOString(),
-          },
-        },
-        false
-      );
+  const handleAutoSaveGoal = useCallback((newGoal: string) => {
+    if (saveGoalDebounceRef.current) {
+      clearTimeout(saveGoalDebounceRef.current);
     }
-    setIsEditingGoal(false);
-    toast({ title: 'อัปเดตเป้าหมายเรียบร้อย', type: 'success' });
+    saveGoalDebounceRef.current = setTimeout(async () => {
+      const trimmed = newGoal.trim();
+      if (!trimmed || trimmed === acceleratorsState?.targetGoal) return;
+      setIsSavingGoal(true);
+      try {
+        const res = await updateDealTargetGoal(deal.id, trimmed);
+        if (res.success && res.data) {
+          void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
+          await mutateAccelerators({ success: true, data: res.data }, false);
+        }
+      } catch (err) {
+        console.error("Failed to auto-save target goal:", err);
+      } finally {
+        setIsSavingGoal(false);
+      }
+    }, 800);
+  }, [deal.id, acceleratorsState?.targetGoal, mutate, mutateAccelerators]);
 
-    // 2. Fire server action in background
+  const handleBlurGoal = async () => {
+    if (saveGoalDebounceRef.current) {
+      clearTimeout(saveGoalDebounceRef.current);
+    }
+    const trimmed = goalInput.trim();
+    if (!trimmed || trimmed === acceleratorsState?.targetGoal) return;
     setIsSavingGoal(true);
     try {
-      const res = await updateDealTargetGoal(deal.id, targetGoal);
+      const res = await updateDealTargetGoal(deal.id, trimmed);
       if (res.success && res.data) {
+        void mutate(['deal-accelerators', deal.id], { success: true, data: res.data }, false);
         await mutateAccelerators({ success: true, data: res.data }, false);
-      } else {
-        if (previousState) void mutateAccelerators(previousState, false);
-        toast({ title: 'เกิดข้อผิดพลาด', description: res.error || 'ไม่สามารถบันทึกเป้าหมายได้', type: 'error' });
       }
-    } catch {
-      if (previousState) void mutateAccelerators(previousState, false);
-      toast({ title: 'เกิดข้อผิดพลาด', description: 'ไม่สามารถบันทึกเป้าหมายได้', type: 'error' });
+    } catch (err) {
+      console.error("Failed to save target goal on blur:", err);
     } finally {
       setIsSavingGoal(false);
     }
@@ -1106,7 +1579,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
     if (!session?.user?.id) return;
     const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
 
-    const handleUpdate = (data?: ActivityUpdateEvent & { dealId?: string; action?: string }) => {
+    const handleUpdate = (data?: ActivityUpdateEvent & { dealId?: string; action?: string; state?: DealAcceleratorsState; pendingCount?: number }) => {
       if (data?.dealId === deal.id) {
         if (data?.action?.startsWith('ACTIVITY_')) {
           loadActivityLogs(pages => applyActivityEvent(pages, data as ActivityUpdateEvent), { revalidate: false });
@@ -1114,7 +1587,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
         } else if (data?.action === 'DEAL_SUMMARY_UPDATED') {
           void mutate(['deal-summary-on-demand', deal.id]);
         } else if (data?.action === 'DEAL_ACCELERATORS_UPDATED') {
-          void mutate(['deal-accelerators', deal.id]);
+          if (data?.state) {
+            void mutate(['deal-accelerators', deal.id], { success: true, data: data.state }, false);
+            void mutateAccelerators({ success: true, data: data.state }, false);
+          } else {
+            void mutate(['deal-accelerators', deal.id]);
+            void mutateAccelerators();
+          }
+          if (loadActivityLogs) void loadActivityLogs();
+          void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
         } else if (data?.action === 'OPPORTUNITY_UPDATED') {
           void mutate(['deal-summary-on-demand', deal.id]);
         }
@@ -1165,7 +1646,13 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
   }, [isOpen, activeTab, users.length]);
 
   const handleAddLog = async () => {
+    if (isSubmittingLogRef.current || isSendingManagerCallRef.current) return;
+    if (isManagerCallMode || isManagerCallModeRef.current) {
+      await handleSendManagerCall();
+      return;
+    }
     if (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate) return;
+    isSubmittingLogRef.current = true;
 
     const currentNewLog = newLog;
     const currentAttachments = [...pendingAttachments];
@@ -1337,6 +1824,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
       }
     } finally {
       setIsSubmittingLog(false);
+      isSubmittingLogRef.current = false;
+      if (inputRef.current) {
+        adjustTextareaHeight(inputRef.current);
+      }
     }
   };
 
@@ -1619,23 +2110,43 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
           {/* Sub Bar (Tab-specific navigation & actions) */}
           {(() => {
-            if (activeTab === 'activity' || activeTab === 'system') {
+            if (activeTab === 'activity' || activeTab === 'system' || activeTab === 'manager-call') {
+              const pendingCount = pendingQuestionsCount;
+              const subTabs: SubBarTab[] = [
+                { id: 'activity', label: 'Activity' },
+                { id: 'system', label: 'System' },
+                {
+                  id: 'manager-call',
+                  label: 'Manager',
+                },
+              ];
+
+              const actions: SubBarActionItem[] = [];
+              if (canUseManagerCall) {
+                actions.push({
+                  id: 'recall',
+                  label: isGeneratingAccelerators ? 'Calling AI...' : 'Recall',
+                  icon: Sparkles,
+                  loading: isGeneratingAccelerators,
+                  disabled: isGeneratingAccelerators,
+                  onClick: handleRefreshAccelerators,
+                });
+              }
+
               return (
                 <EditDealSubBar
-                  tabs={[
-                    { id: 'activity', label: 'Activity' },
-                    { id: 'system', label: 'System' },
-                  ]}
+                  tabs={subTabs}
                   activeTab={activeTab}
                   onTabChange={(tabId) => setActiveTab(tabId as TabType)}
-                  search={{
+                  actions={actions.length > 0 ? actions : undefined}
+                  search={activeTab !== 'manager-call' ? {
                     isActive: isSearching,
                     query: activitySearchQuery,
                     placeholder: 'Search updates...',
                     onToggle: () => setIsSearching(prev => !prev),
                     onChange: setActivitySearchQuery,
                     onClear: () => setActivitySearchQuery(''),
-                  }}
+                  } : undefined}
                 />
               );
             }
@@ -1774,14 +2285,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                   disabled: isGeneratingSummary,
                   onClick: handleGenerateSummary,
                 },
-                {
-                  id: 'rescan',
-                  label: isGeneratingAccelerators ? 'Scanning...' : 'Rescan',
-                  icon: RefreshCw,
-                  loading: isGeneratingAccelerators,
-                  disabled: isGeneratingAccelerators,
-                  onClick: handleRefreshAccelerators,
-                },
               ];
 
               const summaryTabs: SubBarTab[] = [
@@ -1811,14 +2314,41 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
           <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 flex flex-col gap-8 custom-scrollbar">
 
-            {(activeTab === 'activity' || activeTab === 'system' || activeTab === 'summary') && (
+            {(activeTab === 'activity' || activeTab === 'system' || activeTab === 'summary' || activeTab === 'manager-call') && (
               <>
                 {/* Activity Logs (Facebook Style) */}
-                <div className="flex flex-col gap-4 flex-1 pb-10">
+                <div className="flex flex-col gap-4 flex-1">
 
                   {activeTab === 'activity' && (
-                    <div className="flex flex-col gap-6">
-
+                    <div className="flex flex-col">
+                      {/* Urgent Call Announcement Bar (Single Row, Minimal) */}
+                      {pendingQuestions.length > 0 && (
+                        <div
+                          onClick={() => setActiveTab('manager-call')}
+                          className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-amber-300 hover:bg-amber-500/15 transition cursor-pointer shadow-sm"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
+                            <PhoneCall className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+                            <span className="font-bold text-xs text-amber-400 shrink-0">Manager Call</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shrink-0">
+                              {pendingQuestions.length} Pending
+                            </span>
+                            <span className="text-[11px] text-amber-200/90 font-mono font-medium tracking-wide tabular-nums shrink-0">
+                              {getElapsedWaitText()}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveTab('manager-call');
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold shrink-0 hover:bg-amber-400 transition cursor-pointer shadow"
+                          >
+                            Answer
+                          </button>
+                        </div>
+                      )}
 
                       {/* Feed */}
                       <div className="flex flex-col gap-6 mt-4">
@@ -1840,6 +2370,63 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                           }
 
                           let comments = localActivityLogs.filter(log => log.type === 'COMMENT' && !log.parentId);
+
+                          // กรองเอา Manager Call / AI Accelerator ที่ตอบแล้วออกไปจากหน้า Activity feed (จะไปแสดงใน Manager Call > Answer History)
+                          comments = comments.filter(log => {
+                            if (!log.content.startsWith('[URGENT_CALL:')) return true;
+                            // ไม่แสดงคำถามเร่งด่วนก่อนที่ acceleratorsState จะโหลดเสร็จ เพื่อป้องกันการกระพริบของคำถามที่ตอบแล้ว (Flicker / Layout Shift)
+                            if (!acceleratorsState) return false;
+                            const match = log.content.match(/^\[URGENT_CALL:([^\]]+)\]\s*([\s\S]*)$/);
+                            const qId = match ? match[1] : '';
+                            const qText = match ? match[2].trim() : '';
+                            const targetQ = acceleratorsState.questions?.find(q => q.id === qId && q.question.trim() === qText)
+                              || acceleratorsState.questions?.find(q => q.id === qId && q.status === 'PENDING')
+                              || acceleratorsState.questions?.find(q => q.id === qId);
+                            if (targetQ) {
+                              return targetQ.status === 'PENDING';
+                            }
+                            const hasReply = log.replies?.some(r => r.content.startsWith('[URGENT_REPLY:'));
+                            return !hasReply;
+                          });
+
+                          // Fallback: หากมีคำถาม AI / Manager Call ที่ยัง PENDING แต่ยังไม่อยู่ใน comments ให้แสดงผลทันที
+                          const pendingAccelerators = acceleratorsState?.questions?.filter(q => q.status === 'PENDING') || [];
+                          if (pendingAccelerators.length > 0) {
+                            const existingQIds = new Set(
+                              comments
+                                .filter(log => log.content.startsWith('[URGENT_CALL:'))
+                                .map(log => {
+                                  const match = log.content.match(/^\[URGENT_CALL:([^\]]+)\]/);
+                                  return match ? match[1] : '';
+                                })
+                                .filter(Boolean)
+                            );
+
+                            const missingQuestions = pendingAccelerators.filter(q => !existingQIds.has(q.id));
+                            if (missingQuestions.length > 0) {
+                              const syntheticLogs = missingQuestions.map(q => ({
+                                id: `synth_log_${q.id}`,
+                                content: `[URGENT_CALL:${q.id}] ${q.question}`,
+                                type: 'COMMENT',
+                                opportunityId: deal.id,
+                                userId: q.askedByUserId || session?.user?.id || '',
+                                createdAt: q.createdAt ? new Date(q.createdAt) : new Date(),
+                                updatedAt: q.createdAt ? new Date(q.createdAt) : new Date(),
+                                isEdited: false,
+                                parentId: null,
+                                user: {
+                                  id: q.askedByUserId || session?.user?.id || '',
+                                  name: q.askedBy || (q.source === 'MANAGER' ? 'Manager' : 'AI Assistant'),
+                                  image: q.askedByImage || null,
+                                  email: null,
+                                  role: (q.source === 'MANAGER' ? 'MANAGEMENT' : 'ADMIN') as Role,
+                                },
+                                replies: [],
+                              })) as unknown as ActivityLogWithRelations[];
+
+                              comments = [...syntheticLogs, ...comments];
+                            }
+                          }
 
                           if (activitySearchQuery.trim()) {
                             const query = activitySearchQuery.toLowerCase();
@@ -1880,10 +2467,14 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                                     key={log.id}
                                     log={log}
                                     dealId={deal.id}
-                                    currentUser={session?.user as unknown as { id: string; name?: string | null; image?: string | null; email?: string | null; }}
+                                    currentUser={session?.user as unknown as { id: string; name?: string | null; image?: string | null; email?: string | null; role?: string }}
                                     refresh={() => loadActivityLogs()}
                                     mutateLogs={loadActivityLogs}
                                     searchQuery={activitySearchQuery}
+                                    acceleratorsState={acceleratorsState}
+                                    onAnswerQuestion={handleAnswerAccelerator}
+                                    onDeleteQuestion={handleDeleteAcceleratorQuestion}
+                                    canUseManagerCall={canUseManagerCall}
                                     onReplyClick={(username) => {
                                       setNewLog(prev => prev ? `${prev} @${username} ` : `@${username} `);
                                       if (inputRef.current) inputRef.current.focus();
@@ -1998,462 +2589,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       ) : (
                         /* Standard Deal Summary View */
                         <>
-                          {/* 🎯 AI Deal Accelerators Box */}
-                          {!isGeneratingSummary && (
-                            <div className="p-4 bg-[#3A3B3C] rounded-2xl border border-[#4E4F50] flex flex-col gap-3 mb-2">
-                              {/* Header & Toggle Bar */}
-                              <div className="flex items-center justify-between">
-                                <button
-                                  type="button"
-                                  onClick={() => setIsAcceleratorsExpanded(prev => !prev)}
-                                  className="flex items-center gap-2.5 text-left group cursor-pointer focus:outline-none"
-                                >
-                                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
-                                  <span className="text-xs font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
-                                    <span>AI Deal Accelerators</span>
-                                  </span>
-                                  {pendingQuestionsCount > 0 ? (
-                                    <span className="px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-300 border border-amber-400/30 text-xs font-semibold">
-                                      {pendingQuestionsCount} Pending
-                                    </span>
-                                  ) : acceleratorsState ? (
-                                    <span className="px-2.5 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] border border-[#C7F33C]/30 text-xs font-semibold flex items-center gap-1">
-                                      <Check className="w-3.5 h-3.5" />
-                                      <span>All Clear</span>
-                                    </span>
-                                  ) : null}
-                                  <div className="text-slate-400 group-hover:text-slate-200 transition-colors ml-1">
-                                    {isAcceleratorsExpanded ? (
-                                      <ChevronUp className="w-4 h-4" />
-                                    ) : (
-                                      <ChevronDown className="w-4 h-4" />
-                                    )}
-                                  </div>
-                                </button>
-                              </div>
-
-                              {/* Collapsible Content */}
-                              {isAcceleratorsExpanded && (
-                                <div className="flex flex-col gap-3 pt-1">
-                                  {/* Target Goal Milestone */}
-                                  <div className="flex flex-col gap-2 p-3.5 rounded-2xl bg-[#252728] border border-[#4E4F50]/60">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                                        <Target className="w-4 h-4 text-[#C7F33C]" />
-                                        <span>TARGET GOAL</span>
-                                        <span className="text-slate-500 font-normal">
-                                          ({acceleratorsState?.goalSource === 'USER_OVERRIDE' ? 'Custom' : 'AI Inferred'})
-                                        </span>
-                                      </div>
-                                      {!isEditingGoal && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setGoalInput(acceleratorsState?.targetGoal || deal.topic);
-                                            setIsEditingGoal(true);
-                                          }}
-                                          className="text-xs text-slate-400 hover:text-[#C7F33C] transition-colors cursor-pointer"
-                                        >
-                                          Edit Goal
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    {isEditingGoal ? (
-                                      <div className="flex items-center gap-2 mt-1">
-                                        <input
-                                          type="text"
-                                          value={goalInput}
-                                          onChange={e => setGoalInput(e.target.value)}
-                                          onKeyDown={e => {
-                                            if (e.key === 'Enter') handleSaveGoal();
-                                            if (e.key === 'Escape') setIsEditingGoal(false);
-                                          }}
-                                          placeholder="Define the primary goal of this deal..."
-                                          className="flex-1 bg-[#3A3B3C] border border-[#C7F33C] rounded-full px-4 py-2 text-xs text-slate-100 outline-none"
-                                          autoFocus
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={handleSaveGoal}
-                                          disabled={isSavingGoal}
-                                          className="px-4 py-2 rounded-full bg-[#C7F33C] text-black text-xs font-bold hover:bg-[#b0d635] transition-colors cursor-pointer disabled:opacity-50"
-                                        >
-                                          {isSavingGoal ? 'Saving...' : 'Save'}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => setIsEditingGoal(false)}
-                                          className="px-3 py-2 text-xs text-slate-400 hover:text-slate-200 cursor-pointer"
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <p className="text-xs text-slate-200 font-medium leading-relaxed">
-                                        {acceleratorsState?.targetGoal || (isLoadingAccelerators ? 'Loading goal...' : `Deliver results for ${deal.topic}`)}
-                                      </p>
-                                    )}
-                                  </div>
-
-                                  {/* Sub-tabs: Pending (X) vs Answered (Y) */}
-                                  <div className="flex items-center justify-between gap-2 pt-1 pb-0.5">
-                                    <div className="flex items-center gap-1.5 p-1 rounded-full bg-[#252728] border border-[#4E4F50]/60">
-                                      <button
-                                        type="button"
-                                        onClick={() => setAcceleratorTab('pending')}
-                                        className={`px-3.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                                          acceleratorTab === 'pending'
-                                            ? 'bg-[#3A3B3C] text-slate-100 border border-[#4E4F50]'
-                                            : 'text-slate-400 hover:text-slate-200'
-                                        }`}
-                                      >
-                                        <span>Pending</span>
-                                        <span className={`px-1.5 py-0.2 rounded-full text-[11px] font-bold ${
-                                          pendingQuestions.length > 0 ? 'bg-amber-400/20 text-amber-300' : 'bg-[#4E4F50]/40 text-slate-400'
-                                        }`}>
-                                          {pendingQuestions.length}
-                                        </span>
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        onClick={() => setAcceleratorTab('answered')}
-                                        className={`px-3.5 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                                          acceleratorTab === 'answered'
-                                            ? 'bg-[#3A3B3C] text-slate-100 border border-[#4E4F50]'
-                                            : 'text-slate-400 hover:text-slate-200'
-                                        }`}
-                                      >
-                                        <span>Answered</span>
-                                        <span className={`px-1.5 py-0.2 rounded-full text-[11px] font-bold ${
-                                          answeredQuestions.length > 0 ? 'bg-[#C7F33C]/20 text-[#C7F33C]' : 'bg-[#4E4F50]/40 text-slate-400'
-                                        }`}>
-                                          {answeredQuestions.length}
-                                        </span>
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  {/* Questions List (Facebook / Activity Thread Style) */}
-                                  {acceleratorTab === 'pending' ? (
-                                    pendingQuestions.length > 0 ? (
-                                      <div className="flex flex-col gap-4">
-                                        {pendingQuestions.map((q) => {
-                                          const questionDate = q.createdAt || acceleratorsState?.lastGeneratedAt || acceleratorsState?.updatedAt;
-                                          return (
-                                            <div
-                                              key={q.id}
-                                              className="p-4 rounded-2xl border bg-[#252728] border-amber-500/30 flex flex-col gap-3.5 transition-all"
-                                            >
-                                              {/* Thread 1: AI Agent Post (Question) */}
-                                              <div className="flex gap-3">
-                                                <div className="w-9 h-9 rounded-full bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C] shrink-0 mt-0.5">
-                                                  <Bot className="w-5 h-5" />
-                                                </div>
-
-                                                <div className="flex flex-col flex-1 min-w-0">
-                                                  <div className="flex items-center justify-between gap-2">
-                                                    <div className="flex items-center gap-2 flex-wrap">
-                                                      <span className="text-xs font-bold text-slate-100">AI Agent</span>
-                                                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] font-semibold border border-[#C7F33C]/20">
-                                                        Bot
-                                                      </span>
-                                                      {questionDate && (
-                                                        <span className="text-xs text-slate-500">
-                                                          • {formatDateTime(questionDate)}
-                                                        </span>
-                                                      )}
-                                                    </div>
-
-                                                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-400/10 text-amber-300 shrink-0 font-semibold border border-amber-400/20">
-                                                      Waiting for reply
-                                                    </span>
-                                                  </div>
-
-                                                  <p className="text-xs text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
-                                                    {q.question}
-                                                  </p>
-
-                                                  {q.reason && (
-                                                    <div className="mt-1 text-xs text-slate-400 flex items-center gap-1.5">
-                                                      <span>💡</span>
-                                                      <span>{q.reason}</span>
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              </div>
-
-                                              {/* Thread 2: Reply Area */}
-                                              <div className="ml-4 pl-4 border-l-2 border-[#4E4F50]/40 flex flex-col gap-2.5 pt-1">
-                                                {canAnswerAccelerators ? (
-                                                  <>
-                                                    <div className="flex flex-col gap-2">
-                                                      {q.choices.map((choice, cIdx) => (
-                                                        <button
-                                                          key={cIdx}
-                                                          type="button"
-                                                          disabled={isAnsweringQuestionId === q.id}
-                                                          onClick={() => handleAnswerAccelerator(q.id, choice)}
-                                                          className="w-full text-left px-4 py-2.5 rounded-full bg-[#3A3B3C] hover:bg-[#4E4F50] text-xs font-medium text-slate-200 hover:text-white border border-[#4E4F50] hover:border-[#C7F33C] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group"
-                                                        >
-                                                          <span>{choice}</span>
-                                                          <span className="opacity-0 group-hover:opacity-100 text-[#C7F33C] text-xs font-bold transition-opacity">
-                                                            Reply →
-                                                          </span>
-                                                        </button>
-                                                      ))}
-                                                    </div>
-
-                                                    <div className="flex items-center justify-between pt-1">
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => setShowCustomInput(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
-                                                        className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer transition-colors"
-                                                      >
-                                                        {showCustomInput[q.id] ? 'Hide' : '+ Type custom reply'}
-                                                      </button>
-                                                    </div>
-
-                                                    {showCustomInput[q.id] && (
-                                                      <div className="flex items-center gap-2 mt-1">
-                                                        <input
-                                                          type="text"
-                                                          value={customAnswers[q.id] || ''}
-                                                          onChange={e => setCustomAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                                                          onKeyDown={e => {
-                                                            if (e.key === 'Enter') handleAnswerAccelerator(q.id, customAnswers[q.id] || '');
-                                                          }}
-                                                          placeholder="Type your reply..."
-                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C]"
-                                                        />
-                                                        <button
-                                                          type="button"
-                                                          disabled={isAnsweringQuestionId === q.id || !customAnswers[q.id]?.trim()}
-                                                          onClick={() => handleAnswerAccelerator(q.id, customAnswers[q.id] || '')}
-                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                                                        >
-                                                          Reply
-                                                        </button>
-                                                      </div>
-                                                    )}
-                                                  </>
-                                                ) : (
-                                                  <div className="px-4 py-2.5 rounded-full bg-[#3A3B3C]/70 border border-[#4E4F50]/60 text-xs text-slate-400 flex items-center gap-2">
-                                                    <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                                                    <span>
-                                                      Only the Card Owner ({deal.owner.name}) or an Admin can reply to this question.
-                                                    </span>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    ) : (
-                                      <div className="p-4 rounded-2xl bg-[#252728] border border-[#4E4F50]/40 text-center flex flex-col items-center gap-1.5">
-                                        <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] font-semibold border border-[#C7F33C]/30">
-                                          ✓ All Pending Questions Resolved
-                                        </span>
-                                        <p className="text-xs text-slate-400 mt-1">
-                                          No bottleneck questions pending. Check the &quot;Answered&quot; tab to review confirmed decisions.
-                                        </p>
-                                      </div>
-                                    )
-                                  ) : (
-                                    /* Answered Tab Content */
-                                    answeredQuestions.length > 0 ? (
-                                      <div className="flex flex-col gap-4">
-                                        {answeredQuestions.map((q) => {
-                                          const questionDate = q.createdAt || acceleratorsState?.lastGeneratedAt || acceleratorsState?.updatedAt;
-                                          return (
-                                            <div
-                                              key={q.id}
-                                              className="p-4 rounded-2xl border bg-[#252728]/50 border-[#4E4F50]/40 flex flex-col gap-3.5 transition-all"
-                                            >
-                                              {/* Thread 1: AI Agent Post (Question) */}
-                                              <div className="flex gap-3">
-                                                <div className="w-9 h-9 rounded-full bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C] shrink-0 mt-0.5">
-                                                  <Bot className="w-5 h-5" />
-                                                </div>
-
-                                                <div className="flex flex-col flex-1 min-w-0">
-                                                  <div className="flex items-center justify-between gap-2">
-                                                    <div className="flex items-center gap-2 flex-wrap">
-                                                      <span className="text-xs font-bold text-slate-100">AI Agent</span>
-                                                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] font-semibold border border-[#C7F33C]/20">
-                                                        Bot
-                                                      </span>
-                                                      {questionDate && (
-                                                        <span className="text-xs text-slate-500">
-                                                          • {formatDateTime(questionDate)}
-                                                        </span>
-                                                      )}
-                                                    </div>
-
-                                                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#C7F33C]/10 text-[#C7F33C] shrink-0 font-semibold border border-[#C7F33C]/20">
-                                                      Answered
-                                                    </span>
-                                                  </div>
-
-                                                  <p className="text-xs text-slate-100 font-medium leading-relaxed mt-1.5 whitespace-pre-wrap">
-                                                    {q.question}
-                                                  </p>
-
-                                                  {q.reason && (
-                                                    <div className="mt-1 text-xs text-slate-400 flex items-center gap-1.5">
-                                                      <span>💡</span>
-                                                      <span>{q.reason}</span>
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              </div>
-
-                                              {/* Thread 2: User Reply Bubble or Edit Form */}
-                                              <div className="ml-4 pl-4 border-l-2 border-[#4E4F50]/40 flex flex-col gap-2.5 pt-1">
-                                                {editingAnswerQuestionId === q.id ? (
-                                                  <div className="flex flex-col gap-2">
-                                                    <div className="flex flex-col gap-2">
-                                                      {q.choices.map((choice, cIdx) => (
-                                                        <button
-                                                          key={cIdx}
-                                                          type="button"
-                                                          disabled={isAnsweringQuestionId === q.id}
-                                                          onClick={async () => {
-                                                            await handleAnswerAccelerator(q.id, choice);
-                                                            setEditingAnswerQuestionId(null);
-                                                          }}
-                                                          className={`w-full text-left px-4 py-2.5 rounded-full text-xs font-medium border transition-all cursor-pointer disabled:opacity-50 flex items-center justify-between group ${
-                                                            q.answer === choice
-                                                              ? 'bg-[#C7F33C]/20 text-[#C7F33C] border-[#C7F33C]'
-                                                              : 'bg-[#3A3B3C] hover:bg-[#4E4F50] text-slate-200 hover:text-white border-[#4E4F50] hover:border-[#C7F33C]'
-                                                          }`}
-                                                        >
-                                                          <span>{choice}</span>
-                                                          <span className="text-[#C7F33C] text-xs font-bold">
-                                                            {q.answer === choice ? 'Selected' : 'Choose →'}
-                                                          </span>
-                                                        </button>
-                                                      ))}
-                                                    </div>
-
-                                                    <div className="flex items-center justify-between pt-1">
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => setShowEditCustomInput(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
-                                                        className="text-xs text-slate-400 hover:text-slate-200 cursor-pointer transition-colors"
-                                                      >
-                                                        {showEditCustomInput[q.id] ? 'Hide' : '+ Type custom reply'}
-                                                      </button>
-
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => setEditingAnswerQuestionId(null)}
-                                                        className="text-xs text-slate-400 hover:text-red-400 cursor-pointer transition-colors"
-                                                      >
-                                                        Cancel
-                                                      </button>
-                                                    </div>
-
-                                                    {showEditCustomInput[q.id] && (
-                                                      <div className="flex items-center gap-2 mt-1">
-                                                        <input
-                                                          type="text"
-                                                          value={editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id] : (q.answer || '')}
-                                                          onChange={e => setEditCustomAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                                                          onKeyDown={async (e) => {
-                                                            if (e.key === 'Enter') {
-                                                              const val = editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id] : (q.answer || '');
-                                                              await handleAnswerAccelerator(q.id, val);
-                                                              setEditingAnswerQuestionId(null);
-                                                            }
-                                                          }}
-                                                          placeholder="Type updated reply..."
-                                                          className="flex-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C]"
-                                                        />
-                                                        <button
-                                                          type="button"
-                                                          disabled={isAnsweringQuestionId === q.id || !(editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id]?.trim() : q.answer?.trim())}
-                                                          onClick={async () => {
-                                                            const val = editCustomAnswers[q.id] !== undefined ? editCustomAnswers[q.id] : (q.answer || '');
-                                                            await handleAnswerAccelerator(q.id, val);
-                                                            setEditingAnswerQuestionId(null);
-                                                          }}
-                                                          className="px-5 py-2 rounded-full bg-[#C7F33C] text-black text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                                                        >
-                                                          Save
-                                                        </button>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                ) : (
-                                                  <div className="flex gap-3 items-start justify-between">
-                                                    <div className="flex gap-3 items-start flex-1 min-w-0">
-                                                      <div className="w-8 h-8 rounded-full bg-[#4E4F50] shrink-0 overflow-hidden mt-0.5">
-                                                        <img
-                                                          src={
-                                                            q.answeredByImage ||
-                                                            (q.answeredBy === session?.user?.name ? session?.user?.image : null) ||
-                                                            (q.answeredBy === deal.owner.name ? deal.owner.image : null) ||
-                                                            `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(q.answeredBy || 'User')}`
-                                                          }
-                                                          alt={q.answeredBy || 'User'}
-                                                          className="w-full h-full object-cover"
-                                                        />
-                                                      </div>
-                                                      <div className="flex flex-col flex-1 min-w-0">
-                                                        <div className="flex items-center gap-2 flex-wrap">
-                                                          <span className="text-xs font-bold text-slate-200">
-                                                            {q.answeredBy || 'User'}
-                                                          </span>
-                                                          {q.answeredAt && (
-                                                            <span className="text-xs text-slate-500">
-                                                              • {formatDateTime(q.answeredAt)} {q.isEdited && <span className="text-amber-400/80 font-normal">(edited)</span>}
-                                                            </span>
-                                                          )}
-                                                        </div>
-                                                        <div className="mt-1.5 inline-block">
-                                                          <div className="px-4 py-2 rounded-full bg-[#3A3B3C] border border-[#4E4F50] text-xs text-[#C7F33C] font-medium leading-normal inline-block">
-                                                            &quot;{q.answer}&quot;
-                                                          </div>
-                                                        </div>
-                                                      </div>
-                                                    </div>
-
-                                                    {canAnswerAccelerators && (
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                          setEditingAnswerQuestionId(q.id);
-                                                          setEditCustomAnswers(prev => ({ ...prev, [q.id]: q.answer || '' }));
-                                                        }}
-                                                        className="text-xs px-2.5 py-1 rounded-full text-slate-400 hover:text-slate-100 hover:bg-[#3A3B3C] border border-transparent hover:border-[#4E4F50] transition-all cursor-pointer shrink-0 flex items-center gap-1"
-                                                        title="Edit your response"
-                                                      >
-                                                        <Pencil className="w-3 h-3" />
-                                                        <span>Edit</span>
-                                                      </button>
-                                                    )}
-                                                  </div>
-                                                )}
-                                              </div>
-
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    ) : (
-                                      <div className="p-4 rounded-2xl bg-[#252728] border border-[#4E4F50]/40 text-center">
-                                        <p className="text-xs text-slate-400">No answered questions yet.</p>
-                                      </div>
-                                    )
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
                           {/* 1. Loading Initial State */}
                           {isLoadingDealSummary && (
                             <div className="flex flex-col gap-4 mt-2 w-full animate-pulse">
@@ -2774,6 +2909,129 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                     </div>
                   )}
 
+                  {activeTab === 'manager-call' && (
+                    <div className="flex flex-col gap-5 mt-2">
+                      {/* Target Goal Milestone (Direct Editable with Auto-Save) */}
+                      <div className="flex flex-col gap-2 p-4 rounded-2xl bg-[#3A3B3C] border border-[#4E4F50]/60">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-xs font-bold text-slate-300 uppercase tracking-wider">
+                            <Target className="w-4 h-4 text-[#F59E0B]" />
+                            <span>TARGET GOAL</span>
+                            <span className="text-slate-500 font-normal">
+                              ({acceleratorsState?.goalSource === 'USER_OVERRIDE' ? 'Custom' : 'AI Inferred'})
+                            </span>
+                          </div>
+                          {isSavingGoal && (
+                            <span className="text-[11px] text-amber-400/80 flex items-center gap-1 font-medium">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Saving...
+                            </span>
+                          )}
+                        </div>
+
+                        <textarea
+                          ref={goalTextareaRef}
+                          value={goalInput}
+                          disabled={!isOwner && !isAdmin}
+                          onChange={(e) => {
+                            setGoalInput(e.target.value);
+                            adjustGoalTextareaHeight();
+                            handleAutoSaveGoal(e.target.value);
+                          }}
+                          onBlur={handleBlurGoal}
+                          placeholder="Define the primary goal of this deal..."
+                          rows={1}
+                          className="w-full bg-transparent border-none text-xs text-slate-200 leading-relaxed italic resize-none focus:outline-none placeholder:text-slate-500 py-1 px-0 overflow-hidden disabled:opacity-80"
+                        />
+                      </div>
+
+                      {/* Sub-tabs: Pending Calls vs Answered History */}
+                      <div className="flex items-center gap-2 border-b border-[#4E4F50] pb-2">
+                        <button
+                          type="button"
+                          onClick={() => setAcceleratorTab('pending')}
+                          className={`text-xs font-bold px-3.5 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer ${
+                            acceleratorTab === 'pending'
+                              ? 'bg-[#F59E0B] text-slate-950'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-[#3A3B3C]'
+                          }`}
+                        >
+                          <span>Pending Calls</span>
+                          {pendingQuestions.length > 0 && (
+                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                              acceleratorTab === 'pending' ? 'bg-slate-950 text-[#F59E0B]' : 'bg-[#F59E0B] text-slate-950'
+                            }`}>
+                              {pendingQuestions.length}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAcceleratorTab('answered')}
+                          className={`text-xs font-bold px-3.5 py-1.5 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer ${
+                            acceleratorTab === 'answered'
+                              ? 'bg-[#F59E0B] text-slate-950'
+                              : 'text-slate-400 hover:text-slate-200 hover:bg-[#3A3B3C]'
+                          }`}
+                        >
+                          <span>Answered History</span>
+                          {answeredQuestions.length > 0 && (
+                            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                              acceleratorTab === 'answered' ? 'bg-slate-950 text-[#F59E0B]' : 'bg-[#4E4F50] text-slate-200'
+                            }`}>
+                              {answeredQuestions.length}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Content: Pending or Answered */}
+                      {acceleratorTab === 'pending' ? (
+                        pendingQuestions.length > 0 ? (
+                          <div className="flex flex-col gap-3">
+                            {pendingQuestions.map((q) => (
+                              <AcceleratorQuestionCard
+                                key={q.id}
+                                question={q}
+                                canDelete={canUseManagerCall}
+                                onDelete={handleDeleteAcceleratorQuestion}
+                                onAnswer={handleAnswerAccelerator}
+                                isAnswering={isAnsweringQuestionId === q.id}
+                                isDeleting={isDeletingQuestionId === q.id}
+                                variant="panel"
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-8 rounded-2xl bg-[#3A3B3C] border border-[#4E4F50] text-center flex flex-col items-center gap-2">
+                            <Check className="w-8 h-8 text-[#C7F33C]" />
+                            <p className="text-sm font-semibold text-slate-200">No Question Remaining </p>
+                            <p className="text-xs text-slate-400">All questions from Manager and AI have been answered</p>
+                          </div>
+                        )
+                      ) : (
+                        answeredQuestions.length > 0 ? (
+                          <div className="flex flex-col gap-3">
+                            {answeredQuestions.map((q) => (
+                              <AcceleratorQuestionCard
+                                key={q.id}
+                                question={q}
+                                canDelete={canUseManagerCall}
+                                onDelete={handleDeleteAcceleratorQuestion}
+                                isDeleting={isDeletingQuestionId === q.id}
+                                variant="panel"
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="p-8 rounded-2xl bg-[#3A3B3C] border border-[#4E4F50] text-center flex flex-col items-center gap-2">
+                            <p className="text-xs text-slate-400">No History</p>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
+
                   {activeTab === 'activity' && hasMoreLogs && (
                     <div ref={lastLogElementRef} className="py-4 flex justify-center mt-2">
                       {isLoadingMore ? (
@@ -2990,18 +3248,35 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                 </div>
               )}
 
+              {/* Manager Call Mode Banner */}
+              {isManagerCallMode && (
+                <div className="flex items-center justify-between px-3 py-1.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-400 text-xs font-semibold animate-in fade-in">
+                  <div className="flex items-center gap-2">
+                    <PhoneCall className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                    <span>Manager Call Mode: Send urgent question to deal owner.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsManagerCallMode(false)}
+                    className="p-1 rounded-md text-amber-300/80 hover:text-white hover:bg-amber-500/20 transition cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Auto-expanding Chat Input (LINE / WhatsApp style) */}
-              <div {...getRootProps()} className={`flex items-end gap-2 bg-[#3A3B3C] px-3 py-1.5 rounded-lg border transition-all ${isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
+              <div {...getRootProps()} className={`flex items-end gap-1 bg-[#3A3B3C] px-1 py-1.5 rounded-lg border transition-all ${isManagerCallMode ? 'border-[#F59E0B] bg-[#342a1d]' : isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
                 <input {...getInputProps()} />
 
-                {/* Left Action Buttons: Attach & Due Date (Anchored to bottom, height 28px) */}
+                {/* Left Action Buttons: Attach, Due Date, Manager Call */}
                 <div className="flex items-center gap-1 shrink-0 h-7 self-end">
-                  {session?.user?.id && (
+                  {session?.user?.id && !isManagerCallMode && (
                     <ChatAttachmentButton
                       onFileSelect={(files) => setPendingAttachments(prev => [...prev, ...files])}
                     />
                   )}
-                  {canEditDueDate && (() => {
+                  {canEditDueDate && !isManagerCallMode && (() => {
                     const activeDueDate = (pendingDueDate && pendingDueDate !== 'REMOVE')
                       ? pendingDueDate
                       : (!pendingDueDate && deal.dueDate ? deal.dueDate : null);
@@ -3023,6 +3298,23 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       </button>
                     );
                   })()}
+                  {canUseManagerCall && (
+                    <button
+                      type="button"
+                      onClick={() => setIsManagerCallMode(prev => !prev)}
+                      title={isManagerCallMode ? "Cancel Manager Call mode" : "Manager Call (Urgent question)"}
+                      className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                        isManagerCallMode
+                          ? 'bg-[#F59E0B] text-slate-950 font-bold text-[11px] px-2.5 gap-1.5 shadow-sm'
+                          : 'w-7 px-0 hover:bg-[#4E4F50] text-amber-400'
+                      }`}
+                    >
+                      <PhoneCall className="w-3.5 h-3.5 shrink-0" />
+                      {isManagerCallMode && (
+                        <span className="whitespace-nowrap tracking-tight">Manager Call</span>
+                      )}
+                    </button>
+                  )}
                 </div>
 
                 {/* Auto-adjusting Textarea with Shift+Enter & Mobile Return to Newline */}
@@ -3046,7 +3338,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
 
                       if (!isMobileDevice) {
                         e.preventDefault();
-                        if (!isSubmittingLog && (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate)) {
+                        if (isManagerCallMode || isManagerCallModeRef.current) {
+                          handleSendManagerCall();
+                        } else {
                           handleAddLog();
                         }
                       } else {
@@ -3054,21 +3348,29 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose }
                       }
                     }
                   }}
-                  placeholder={isDragActive ? "Drop files here..." : "Write an update..."}
+                  placeholder={isManagerCallMode ? " Urgent Question..." : isDragActive ? "Drop files here..." : "Write an update..."}
                   style={{ height: 'auto', minHeight: '28px', maxHeight: '120px' }}
-                  className="flex-1 bg-transparent border-none text-white text-[16px] focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
+                  className="flex-1 bg-transparent border-none pl-1 text-white text-[16px] focus:outline-none placeholder:text-slate-400 min-w-0 resize-none overflow-y-auto leading-5 hide-scrollbar py-1"
                 />
 
                 {/* Send Button / Indicator (Anchored to bottom, height 28px) */}
-                {isSubmittingLog ? (
+                {isSubmittingLog || isSendingManagerCall ? (
                   <div className="w-7 h-7 flex items-center justify-center shrink-0 self-end">
-                    <Loader2 className="w-4 h-4 text-[#C7F33C] animate-spin" />
+                    <Loader2 className={`w-4 h-4 animate-spin ${isManagerCallMode ? 'text-[#F59E0B]' : 'text-[#C7F33C]'}`} />
                   </div>
                 ) : (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate) ? (
                   <button
                     type="button"
-                    onClick={handleAddLog}
-                    className="w-7 h-7 flex items-center justify-center shrink-0 rounded-full text-[#C7F33C] hover:bg-black/20 transition-colors cursor-pointer self-end"
+                    onClick={() => {
+                      if (isManagerCallMode || isManagerCallModeRef.current) {
+                        handleSendManagerCall();
+                      } else {
+                        handleAddLog();
+                      }
+                    }}
+                    className={`w-7 h-7 flex items-center justify-center shrink-0 rounded-full transition-colors cursor-pointer self-end ${
+                      isManagerCallMode ? 'text-[#F59E0B] hover:bg-amber-500/20' : 'text-[#C7F33C] hover:bg-black/20'
+                    }`}
                     title="Send (Enter)"
                   >
                     <Send className="w-4 h-4" />

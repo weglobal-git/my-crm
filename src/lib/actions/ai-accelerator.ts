@@ -13,8 +13,8 @@ aiGateway.registerAdapter("GOOGLE_GEMINI", new GoogleGeminiAdapter());
 export interface AcceleratorQuestion {
   id: string;
   question: string;
-  reason: string;
-  choices: string[];
+  reason?: string;
+  choices?: string[];
   answer?: string | null;
   answeredBy?: string | null;
   answeredByImage?: string | null;
@@ -23,6 +23,16 @@ export interface AcceleratorQuestion {
   editedAt?: string | null;
   createdAt?: string | null;
   status: "PENDING" | "ANSWERED" | "DISMISSED";
+  source?: "AI" | "MANAGER";
+  askedBy?: string | null;
+  askedByImage?: string | null;
+  askedByUserId?: string | null;
+  urgentLogId?: string | null;
+}
+
+export interface PendingAcceleratorInfo {
+  count: number;
+  earliestPendingAt: string | null;
 }
 
 export interface DealAcceleratorsState {
@@ -69,7 +79,7 @@ const ACCELERATOR_SCHEMA = {
 };
 
 /**
- * ดึงข้อมูล AI Accelerators และเป้าหมายของดีล
+ * ดึงสถานะ AI Deal Accelerators สำหรับดีลที่ระบุ
  */
 export async function getDealAccelerators(
   dealId: string,
@@ -109,8 +119,14 @@ export async function generateDealAccelerators(
   options?: { bypassAuth?: boolean }
 ): Promise<{ success: boolean; data?: DealAcceleratorsState; error?: string }> {
   try {
+    let actorId: string | undefined;
     if (!options?.bypassAuth) {
-      await requireOpportunityAccess(dealId);
+      const access = await requireOpportunityAccess(dealId);
+      actorId = access.actor.id;
+    }
+    if (!actorId) {
+      const session = await getServerSession(authOptions);
+      actorId = session?.user?.id;
     }
 
     // 1. ดึงข้อมูลดีลและบริบททั้งหมด (เฉพาะฟิลด์ที่จำเป็น)
@@ -126,12 +142,16 @@ export async function generateDealAccelerators(
         dueDate: true,
         stage: { select: { name: true } },
         company: { select: { name: true } },
-        owner: { select: { name: true } },
+        owner: { select: { id: true, name: true } },
       },
     });
 
     if (!deal) {
       return { success: false, error: "ไม่พบข้อมูลดีลนี้ในระบบ" };
+    }
+
+    if (!actorId) {
+      actorId = deal.owner?.id;
     }
 
     const logs = await prisma.activityLog.findMany({
@@ -152,11 +172,13 @@ export async function generateDealAccelerators(
       return { success: false, error: "ยังไม่ได้ตั้งค่า GOOGLE_GEMINI_API_KEY ในไฟล์ .env" };
     }
 
-    // 2. ดึงประวัติ Accelerators เดิม (ถ้ามีคำถามที่ตอบแล้ว ให้เก็บไว้)
+    // 2. ดึงประวัติ Accelerators เดิม (ถ้ามีคำถามที่ตอบแล้ว หรือ Manager Call ค้างอยู่ ให้เก็บไว้)
     const existingRow = await prisma.systemConfig.findUnique({
       where: { id: `deal_accelerators_${dealId}` },
     });
     let previousAnswered: AcceleratorQuestion[] = [];
+    let previousPendingManager: AcceleratorQuestion[] = [];
+    let previousPendingAiIds: string[] = [];
     let savedGoal = customGoal;
 
     if (existingRow?.googleRefreshToken) {
@@ -164,6 +186,10 @@ export async function generateDealAccelerators(
         const prev: DealAcceleratorsState = JSON.parse(existingRow.googleRefreshToken);
         if (prev.questions) {
           previousAnswered = prev.questions.filter(q => q.status === "ANSWERED");
+          previousPendingManager = prev.questions.filter(q => q.status === "PENDING" && q.source === "MANAGER");
+          previousPendingAiIds = prev.questions
+            .filter(q => q.status === "PENDING" && q.source !== "MANAGER")
+            .map(q => q.id);
         }
         if (!savedGoal && prev.goalSource === "USER_OVERRIDE") {
           savedGoal = prev.targetGoal;
@@ -254,16 +280,52 @@ ${userGoalInstruction}
 
     const now = new Date().toISOString();
     const newQuestions: AcceleratorQuestion[] = (aiResult.data.questions || []).map((q, idx) => ({
-      id: q.id || `acc_${Date.now()}_${idx}`,
+      id: `acc_ai_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
       question: q.question,
       reason: q.reason,
       choices: q.choices && q.choices.length > 0 ? q.choices : ["ยืนยันเรียบร้อย", "ยังค้างอยู่", "เลื่อนกำหนด"],
       status: "PENDING",
       createdAt: now,
+      source: "AI",
+      askedBy: "AI Assistant",
     }));
 
-    // รวมคำถามใหม่ กับคำถามเก่าที่ตอบแล้ว (รักษาสถิติคำตอบเดิมไว้)
-    const combinedQuestions: AcceleratorQuestion[] = [...previousAnswered, ...newQuestions];
+    // 4. ทำความสะอาด ActivityLog ของคำถาม AI เดิมที่ค้างอยู่และยังไม่ถูกตอบ เพื่อไม่ให้ซ้ำซ้อน
+    if (previousPendingAiIds.length > 0) {
+      await prisma.activityLog.deleteMany({
+        where: {
+          opportunityId: dealId,
+          OR: previousPendingAiIds.map(id => ({
+            content: { startsWith: `[URGENT_CALL:${id}]` },
+          })),
+        },
+      }).catch(err => {
+        console.warn("[AI Accelerator] Failed to clean up old AI questions ActivityLogs:", err);
+      });
+    }
+
+    // 5. บันทึกคำถาม AI ใหม่ลงใน ActivityLog เพื่อให้แสดงในหน้า Activity Tab ทันทีเหมือน Manager Call
+    if (actorId) {
+      for (const q of newQuestions) {
+        await prisma.activityLog.create({
+          data: {
+            content: `[URGENT_CALL:${q.id}] ${q.question}`,
+            type: "COMMENT",
+            opportunityId: dealId,
+            userId: actorId,
+          },
+        }).catch(err => {
+          console.warn("[AI Accelerator] Failed to create ActivityLog for AI question:", err);
+        });
+      }
+    }
+
+    // รวมคำถามใหม่ + คำถามเก่าที่ตอบแล้ว + Manager Call เดิมที่ยังค้าง
+    const combinedQuestions: AcceleratorQuestion[] = [
+      ...previousAnswered,
+      ...previousPendingManager,
+      ...newQuestions,
+    ];
 
     const state: DealAcceleratorsState = {
       targetGoal: savedGoal || aiResult.data.targetGoal || `บรรลุเป้าหมายการ์ด ${deal.topic}`,
@@ -273,15 +335,25 @@ ${userGoalInstruction}
       updatedAt: now,
     };
 
-    // บันทึกลง SystemConfig (ไม่แตะ ActivityLog เด็ดขาด เพื่อคงการ์ดแดงไว้)
+    // บันทึกลง SystemConfig
     await prisma.systemConfig.upsert({
       where: { id: `deal_accelerators_${dealId}` },
       update: { googleRefreshToken: JSON.stringify(state) },
       create: { id: `deal_accelerators_${dealId}`, googleRefreshToken: JSON.stringify(state) },
     });
 
-    // Fire-and-forget Pusher update for real-time multi-user sync
-    void notifyPrivatePipelineUpdate(dealId, { action: 'DEAL_ACCELERATORS_UPDATED', dealId }).catch(() => {});
+    const pendingCount = combinedQuestions.filter(q => q.status === "PENDING").length;
+
+    // แจ้งเตือน real-time ผ่าน Pusher พร้อมส่ง payload ให้ client อัปเดตทันที
+    await notifyPrivatePipelineUpdate(dealId, {
+      action: 'DEAL_ACCELERATORS_UPDATED',
+      dealId,
+      state,
+      pendingCount,
+      questions: newQuestions,
+    }).catch(err => {
+      console.warn("[AI Accelerator] Pusher notify error:", err);
+    });
 
     return { success: true, data: state };
   } catch (err: unknown) {
@@ -292,9 +364,8 @@ ${userGoalInstruction}
 }
 
 /**
- * บันทึกคำตอบของเซลล์ / ผู้ใช้งาน สำหรับคำถามของ AI Accelerator (1-Click Answer)
+ * บันทึกคำตอบของเซลล์ / ผู้ใช้งาน สำหรับคำถามของ AI Accelerator หรือ Manager Call (1-Click Answer)
  * อนุญาตเฉพาะ Admin หรือ Card Owner เท่านั้น
- * ไม่แตะ ActivityLog เด็ดขาดตามข้อกำหนดของผู้ใช้ เพื่อคงสีแดงของการ์ดไว้จนกว่างานจะเดินจริง
  */
 export async function answerDealAccelerator(
   dealId: string,
@@ -345,8 +416,29 @@ export async function answerDealAccelerator(
       data: { googleRefreshToken: JSON.stringify(state) },
     });
 
-    // Fire-and-forget Pusher update for real-time multi-user sync
-    void notifyPrivatePipelineUpdate(dealId, { action: 'DEAL_ACCELERATORS_UPDATED', dealId }).catch(() => {});
+    // ลบ ActivityLog ของ Urgent Call นี้ออก เพื่อไม่ให้ค้างใน Activity feed หลังจากตอบแล้ว
+    await prisma.activityLog.deleteMany({
+      where: {
+        opportunityId: dealId,
+        content: { startsWith: `[URGENT_CALL:${questionId}]` },
+      },
+    }).catch(err => {
+      console.warn("[AI Accelerator] Failed to prune answered ActivityLog:", err);
+    });
+
+    const pendingCount = state.questions.filter(q => q.status === "PENDING").length;
+
+    // Await Pusher update for real-time multi-user sync with full payload
+    await notifyPrivatePipelineUpdate(dealId, {
+      action: 'DEAL_ACCELERATORS_UPDATED',
+      dealId,
+      state,
+      pendingCount,
+      questionId,
+      answeredQuestion: targetQ,
+    }).catch(err => {
+      console.warn("[AI Accelerator] Pusher notify error:", err);
+    });
 
     return { success: true, data: state };
   } catch (err: unknown) {
@@ -354,6 +446,152 @@ export async function answerDealAccelerator(
     if (msg === "Forbidden") {
       return { success: false, error: "เฉพาะเจ้าของดีล (Card Owner) หรือ Admin เท่านั้นที่สามารถตอบคำถามนี้ได้" };
     }
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * สร้างคำถามด่วนจากฝ่ายบริหาร (Manager Call)
+ */
+export async function createManagerCallQuestion(
+  dealId: string,
+  question: string
+): Promise<{ success: boolean; data?: DealAcceleratorsState; error?: string }> {
+  try {
+    const { actor } = await requireOpportunityAccess(dealId);
+    if (actor.role !== "ADMIN" && actor.role !== "MANAGEMENT") {
+      return { success: false, error: "Only Admin or Management can send Manager Calls" };
+    }
+
+    const session = await getServerSession(authOptions);
+    const userName = session?.user?.name || "Manager";
+    const userImage = session?.user?.image || null;
+
+    const configRow = await prisma.systemConfig.findUnique({
+      where: { id: `deal_accelerators_${dealId}` },
+    });
+
+    let state: DealAcceleratorsState;
+    const now = new Date().toISOString();
+    const newQuestionId = `acc_mgr_${Date.now()}`;
+    const newQuestion: AcceleratorQuestion = {
+      id: newQuestionId,
+      question: question.trim(),
+      reason: "คำถามด่วนจากฝ่ายบริหาร (Manager Call)",
+      status: "PENDING",
+      createdAt: now,
+      source: "MANAGER",
+      askedBy: userName,
+      askedByImage: userImage,
+      askedByUserId: actor.id,
+    };
+
+    if (configRow?.googleRefreshToken) {
+      state = JSON.parse(configRow.googleRefreshToken);
+      state.questions = [...(state.questions || []), newQuestion];
+      state.updatedAt = now;
+    } else {
+      state = {
+        targetGoal: "บรรลุเป้าหมายการ์ด",
+        goalSource: "AI_INFERRED",
+        questions: [newQuestion],
+        updatedAt: now,
+      };
+    }
+
+    await prisma.systemConfig.upsert({
+      where: { id: `deal_accelerators_${dealId}` },
+      update: { googleRefreshToken: JSON.stringify(state) },
+      create: { id: `deal_accelerators_${dealId}`, googleRefreshToken: JSON.stringify(state) },
+    });
+
+    // บันทึกลงใน ActivityLog ด้วย เพื่อให้แสดงผลใน Activity Tab
+    await prisma.activityLog.create({
+      data: {
+        content: `[URGENT_CALL:${newQuestionId}] ${question.trim()}`,
+        type: "COMMENT",
+        opportunityId: dealId,
+        userId: actor.id,
+      },
+    }).catch(err => {
+      console.warn("[AI Accelerator] Failed to create ActivityLog for Manager Call:", err);
+    });
+
+    const pendingCount = state.questions.filter(q => q.status === "PENDING").length;
+
+    // Await Pusher broadcast so all users get the event reliably
+    await notifyPrivatePipelineUpdate(dealId, {
+      action: "DEAL_ACCELERATORS_UPDATED",
+      dealId,
+      state,
+      pendingCount,
+      question: newQuestion,
+    }).catch(err => {
+      console.warn("[AI Accelerator] Pusher notify error:", err);
+    });
+
+    return { success: true, data: state };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to create manager call";
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * ลบคำถามเร่งงาน (ทั้งของ Manager Call หรือ AI)
+ */
+export async function deleteDealAcceleratorQuestion(
+  dealId: string,
+  questionId: string
+): Promise<{ success: boolean; data?: DealAcceleratorsState; error?: string }> {
+  try {
+    const { actor } = await requireOpportunityAccess(dealId);
+    if (actor.role !== "ADMIN" && actor.role !== "MANAGEMENT") {
+      return { success: false, error: "Only Admin or Management can delete questions" };
+    }
+
+    const configRow = await prisma.systemConfig.findUnique({
+      where: { id: `deal_accelerators_${dealId}` },
+    });
+
+    if (!configRow?.googleRefreshToken) {
+      return { success: false, error: "Question not found" };
+    }
+
+    const state: DealAcceleratorsState = JSON.parse(configRow.googleRefreshToken);
+    state.questions = (state.questions || []).filter(q => q.id !== questionId);
+    state.updatedAt = new Date().toISOString();
+
+    await prisma.systemConfig.update({
+      where: { id: `deal_accelerators_${dealId}` },
+      data: { googleRefreshToken: JSON.stringify(state) },
+    });
+
+    // ลบ ActivityLog ที่เกี่ยวข้องออก
+    await prisma.activityLog.deleteMany({
+      where: {
+        opportunityId: dealId,
+        content: { startsWith: `[URGENT_CALL:${questionId}]` },
+      },
+    }).catch(err => {
+      console.warn("[AI Accelerator] Failed to delete ActivityLog for question:", err);
+    });
+
+    const pendingCount = state.questions.filter(q => q.status === "PENDING").length;
+
+    await notifyPrivatePipelineUpdate(dealId, {
+      action: "DEAL_ACCELERATORS_UPDATED",
+      dealId,
+      state,
+      pendingCount,
+      deletedQuestionId: questionId,
+    }).catch(err => {
+      console.warn("[AI Accelerator] Pusher notify error:", err);
+    });
+
+    return { success: true, data: state };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to delete question";
     return { success: false, error: msg };
   }
 }
@@ -398,8 +636,17 @@ export async function updateDealTargetGoal(
       create: { id: `deal_accelerators_${dealId}`, googleRefreshToken: JSON.stringify(state) },
     });
 
-    // Fire-and-forget Pusher update for real-time multi-user sync
-    void notifyPrivatePipelineUpdate(dealId, { action: 'DEAL_ACCELERATORS_UPDATED', dealId }).catch(() => {});
+    const pendingCount = state.questions.filter(q => q.status === "PENDING").length;
+
+    // Await Pusher update for real-time multi-user sync
+    await notifyPrivatePipelineUpdate(dealId, {
+      action: 'DEAL_ACCELERATORS_UPDATED',
+      dealId,
+      state,
+      pendingCount,
+    }).catch(err => {
+      console.warn("[AI Accelerator] Pusher notify error:", err);
+    });
 
     return { success: true, data: state };
   } catch (err: unknown) {
@@ -411,7 +658,9 @@ export async function updateDealTargetGoal(
 /**
  * ดึงสถานะจำนวนคำถามที่ยังค้างตอบ สำหรับรายการ Deal IDs ที่ระบุ (เพื่อแสดงป้าย ? บน Kanban Card)
  */
-export async function getPendingAcceleratorsMap(dealIds: string[]): Promise<Record<string, number>> {
+export async function getPendingAcceleratorsMap(
+  dealIds: string[]
+): Promise<Record<string, PendingAcceleratorInfo>> {
   if (!dealIds || dealIds.length === 0) return {};
 
   try {
@@ -421,16 +670,27 @@ export async function getPendingAcceleratorsMap(dealIds: string[]): Promise<Reco
       select: { id: true, googleRefreshToken: true },
     });
 
-    const result: Record<string, number> = {};
+    const result: Record<string, PendingAcceleratorInfo> = {};
 
     for (const row of rows) {
       if (!row.googleRefreshToken) continue;
       try {
         const state: DealAcceleratorsState = JSON.parse(row.googleRefreshToken);
-        const pendingCount = (state.questions || []).filter(q => q.status === "PENDING").length;
-        if (pendingCount > 0) {
+        const pendingQuestions = (state.questions || []).filter(q => q.status === "PENDING");
+        if (pendingQuestions.length > 0) {
           const dealId = row.id.replace("deal_accelerators_", "");
-          result[dealId] = pendingCount;
+          let earliestPendingAt: string | null = null;
+          for (const q of pendingQuestions) {
+            if (q.createdAt) {
+              if (!earliestPendingAt || new Date(q.createdAt) < new Date(earliestPendingAt)) {
+                earliestPendingAt = q.createdAt;
+              }
+            }
+          }
+          result[dealId] = {
+            count: pendingQuestions.length,
+            earliestPendingAt,
+          };
         }
       } catch {}
     }

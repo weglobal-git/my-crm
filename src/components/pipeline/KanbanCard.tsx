@@ -9,6 +9,7 @@ import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 import { preload } from "swr";
 import { getOpportunityActivityLogs } from "@/lib/actions/opportunity";
+import { getDealAccelerators } from "@/lib/actions/ai-accelerator";
 
 const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
@@ -46,11 +47,13 @@ function parseLogContent(content: string) {
   return { cleanText, images, otherFiles };
 }
 
-export const PendingAcceleratorsContext = createContext<Record<string, number>>({});
+import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
+
+export const PendingAcceleratorsContext = createContext<Record<string, PendingAcceleratorInfo | number>>({});
 
 export type OpportunityWithRelations = Opportunity & {
   company: Company | null;
-  owner: User;
+  owner: User & { departments?: { id: string; name: string }[] };
   teamMembers: User[];
   tags?: (OpportunityTag & { tag: Tag })[];
   activityLogs: { 
@@ -72,7 +75,7 @@ export function checkIsRedCard(deal: OpportunityWithRelations) {
 
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
-    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:'));
+    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_'));
     if (validLogs.length > 0) {
       newestDate = new Date(validLogs[0].createdAt);
       newestDate.setHours(0, 0, 0, 0);
@@ -113,7 +116,7 @@ function getRedThreshold(deal: OpportunityWithRelations): Date | null {
 
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
-    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:'));
+    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_'));
     if (validLogs.length > 0) {
       newestDate = new Date(validLogs[0].createdAt);
     }
@@ -196,6 +199,9 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
     ? (deal.company?.displayName || deal.company?.name || null)
     : (deal.company?.displayName || deal.company?.name || "No Customer");
   const contactName = deal.owner.name || deal.owner.email || "Unknown Contact";
+  const pendingEntry = pendingAcceleratorsMap[deal.id];
+  const pendingCount = typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
+  const isOrange = pendingCount > 0;
   const highlight = checkIsRedCard(deal);
   
   const handlePrefetch = () => {
@@ -212,13 +218,17 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
         );
       }
     );
+    preload(
+      ['deal-accelerators', deal.id],
+      () => getDealAccelerators(deal.id)
+    );
   };
 
   return (
     <div
       className={`
         flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card min-h-[175px] md:h-[220px]
-        ${highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
+        ${isOrange ? "bg-[#F59E0B]" : highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
       `}
       onClick={() => onOpenPanel?.('')}
@@ -235,7 +245,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                 e.stopPropagation(); 
                 if (canView('collaborate')) onOpenPanel?.('collaborate'); 
               }}
-              className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer transition-all relative ${highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}
+              className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer transition-all relative ${isOrange ? 'border-[#F59E0B]' : highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}
             >
               <img 
                 src={deal.owner.image ? getOptimizedCloudinaryUrl(deal.owner.image, 100) : `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
@@ -245,7 +255,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             </div>
             {deal.teamMembers && deal.teamMembers.length > 0 && (
               <div 
-                className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full border-2 flex items-center justify-center text-[12px] font-bold z-20 cursor-pointer ${highlight ? 'bg-black text-[#C7F33C] border-[#C7F33C]' : 'bg-slate-300 text-black border-[#3A3B3C]'}`}
+                className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full border-2 flex items-center justify-center text-[12px] font-bold z-20 cursor-pointer ${isOrange ? 'bg-slate-950 text-amber-400 border-[#F59E0B]' : highlight ? 'bg-black text-[#C7F33C] border-[#C7F33C]' : 'bg-slate-300 text-black border-[#3A3B3C]'}`}
                 title={`${deal.teamMembers.length} team members`}
                 onClick={(e) => { 
                   e.stopPropagation(); 
@@ -256,15 +266,15 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
               </div>
             )}
             
-            <div className={`absolute -bottom-1 -left-1 w-6 h-6 rounded-full flex items-center justify-center z-20 ${highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}>
-              <DealTypeIcon type={deal.type} size="sm" highlight={highlight} />
+            <div className={`absolute -bottom-1 -left-1 w-6 h-6 rounded-full flex items-center justify-center z-20 ${isOrange ? 'border-[#F59E0B]' : highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}>
+              <DealTypeIcon type={deal.type} size="sm" highlight={highlight} isOrange={isOrange} />
             </div>
           </div>
           <div className="flex flex-col flex-1 min-w-0 pr-1 pl-1">
             <div className="flex items-center gap-1.5 mb-1">
-              <div className={`font-semibold text-[13px] leading-tight truncate ${highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
+              <div className={`font-semibold text-[13px] leading-tight truncate ${isOrange ? 'text-slate-950 font-bold' : highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
             </div>
-            <div className={`flex items-center text-[11px] truncate ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>
+            <div className={`flex items-center text-[11px] truncate ${isOrange ? 'text-slate-900 font-medium' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>
               {contactName}
             </div>
           </div>
@@ -276,37 +286,43 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
               className="flex-shrink-0" 
               title={`Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`}
             >
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${highlight ? 'bg-black/15 text-slate-900 hover:bg-black/25' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isOrange ? 'bg-black/20 text-slate-950 hover:bg-black/30' : highlight ? 'bg-black/15 text-slate-900 hover:bg-black/25' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}>
                 <BellRing className="w-4 h-4" />
               </div>
             </div>
           )}
-          {canView('summary') && canView('activity') && (() => {
-            const pendingCount = pendingAcceleratorsMap[deal.id] || 0;
-            return (
-              <div className="relative">
-                <button
-                  type="button"
-                  aria-label={`Open AI Summary for ${deal.topic}`}
-                  title={pendingCount > 0 ? `AI Manager มี ${pendingCount} คำถามรอคำตอบเพื่อช่วยเร่งงาน` : "Open AI Summary"}
-                  onPointerDown={event => event.stopPropagation()}
-                  onKeyDown={event => event.stopPropagation()}
-                  onClick={event => { event.stopPropagation(); onOpenPanel?.('summary'); }}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-100 ${highlight ? 'bg-black/15 text-slate-900 hover:bg-black/25' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}
+          {canView('summary') && canView('activity') && (
+            <div className="relative">
+              <button
+                type="button"
+                aria-label={`Open Manager Call for ${deal.topic}`}
+                title={pendingCount > 0 ? `Manager Call มี ${pendingCount} คำถามรอคำตอบด่วน` : "Open AI Summary"}
+                onPointerDown={event => event.stopPropagation()}
+                onKeyDown={event => event.stopPropagation()}
+                onClick={event => { 
+                  event.stopPropagation(); 
+                  onOpenPanel?.(pendingCount > 0 ? 'manager-call' : 'summary'); 
+                }}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-100 ${
+                  isOrange 
+                    ? 'bg-slate-950 text-amber-400 hover:bg-slate-900' 
+                    : highlight 
+                    ? 'bg-black/15 text-slate-900 hover:bg-black/25' 
+                    : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'
+                }`}
+              >
+                <Bot className="w-4 h-4" aria-hidden="true" />
+              </button>
+              {pendingCount > 0 && (
+                <span 
+                  className={`absolute -top-1 -right-1 w-4 h-4 rounded-full font-black text-[11px] leading-none flex items-center justify-center animate-bounce pointer-events-none ${isOrange ? 'bg-slate-950 text-amber-400 ring-1 ring-amber-400' : 'bg-amber-400 text-slate-950'}`}
+                  title="Manager Call รอคำตอบด่วน"
                 >
-                  <Bot className="w-4 h-4" aria-hidden="true" />
-                </button>
-                {pendingCount > 0 && (
-                  <span 
-                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-amber-400 text-slate-950 font-black text-[11px] leading-none flex items-center justify-center animate-bounce pointer-events-none"
-                    title="AI Manager รอคำตอบเพื่อช่วยเร่งงาน"
-                  >
-                    ?
-                  </span>
-                )}
-              </div>
-            );
-          })()}
+                  !
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -319,7 +335,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
         className="flex flex-col gap-2 cursor-pointer hover:opacity-90 transition-opacity flex-1 overflow-hidden"
       >
         {(() => {
-          const latestLog = deal.activityLogs?.find(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:'));
+          const latestLog = deal.activityLogs?.find(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_'));
           if (!latestLog) {
             return (
               <div className="flex flex-col justify-center gap-1 mt-1">
@@ -334,21 +350,21 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             <div className="flex flex-col gap-2 mt-1 flex-1 overflow-hidden">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
-                  <span className={`pl-4 text-[10px] font-medium ${highlight ? 'text-slate-700' : 'text-slate-400'}`}>{formatDateTime(latestLog.createdAt)}</span>
+                  <span className={`pl-4 text-[10px] font-medium ${isOrange ? 'text-slate-900 font-semibold' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>{formatDateTime(latestLog.createdAt)}</span>
                 </div>
                 <div className="flex items-start gap-2 px-2">
-                  <div className={`w-5 h-5 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${highlight ? 'bg-white/40' : 'bg-[#4E4F50]'}`}>
+                  <div className={`w-5 h-5 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${isOrange ? 'bg-black/25' : highlight ? 'bg-white/40' : 'bg-[#4E4F50]'}`}>
                     {latestLog.user?.image ? (
                       <img src={getOptimizedCloudinaryUrl(latestLog.user.image, 100)} alt={latestLog.user.name || ''} className="w-full h-full object-cover" />
                     ) : (
-                      <span className={`text-[9px] font-medium ${highlight ? 'text-slate-700' : 'text-slate-300'}`}>
+                      <span className={`text-[9px] font-medium ${isOrange ? 'text-slate-950 font-bold' : highlight ? 'text-slate-700' : 'text-slate-300'}`}>
                         {latestLog.user?.name?.charAt(0).toUpperCase() || 'U'}
                       </span>
                     )}
                   </div>
                   <div className="flex-1 min-w-0 flex flex-col gap-1 overflow-hidden">
                     {cleanText && (
-                      <div className={`text-[11px] font-medium ${images.length > 0 ? 'line-clamp-2' : 'line-clamp-4'} leading-tight mt-0.5 ${highlight ? 'text-slate-800' : 'text-slate-300'}`}>
+                      <div className={`text-[11px] font-medium ${images.length > 0 ? 'line-clamp-2' : 'line-clamp-4'} leading-tight mt-0.5 ${isOrange ? 'text-slate-950 font-medium' : highlight ? 'text-slate-800' : 'text-slate-300'}`}>
                         {cleanText}
                       </div>
                     )}
@@ -394,7 +410,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
       </div>
 
       {/* Bottom row: Customer Name & Timer */}
-      {(customerName || (highlight && getRedThreshold(deal))) && (
+      {(customerName || isOrange || (highlight && getRedThreshold(deal))) && (
         <div className="flex justify-between items-end mt-auto">
           {customerName ? (
             <div 
@@ -409,7 +425,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                 }
               }}
               className={`px-3 py-1.5 rounded-full text-[11px] font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[150px]
-                ${highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
+                ${isOrange ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/30 text-slate-900 font-semibold" : highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
               `}
               title={customerName}
             >
@@ -419,10 +435,24 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             <div></div> /* Empty div to push timer to the right if customer name is hidden */
           )}
 
-          {highlight && getRedThreshold(deal) && (
-            <div className="px-3 py-1.5 rounded-full bg-black/20 flex items-center justify-center min-w-[90px] ml-auto">
-              <RedTimer threshold={getRedThreshold(deal)!} />
+          {isOrange ? (
+            <div 
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenPanel?.('manager-call');
+              }}
+              className="px-2.5 py-1 rounded-full bg-slate-950 text-amber-400 font-bold text-[10px] tracking-wide flex items-center gap-1 shadow-sm ml-auto cursor-pointer hover:bg-slate-900"
+              title="ดูและตอบ Manager Call"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+              <span>Urgent Call ({pendingCount})</span>
             </div>
+          ) : (
+            highlight && getRedThreshold(deal) && (
+              <div className="px-3 py-1.5 rounded-full bg-black/20 flex items-center justify-center min-w-[90px] ml-auto">
+                <RedTimer threshold={getRedThreshold(deal)!} />
+              </div>
+            )
           )}
         </div>
       )}

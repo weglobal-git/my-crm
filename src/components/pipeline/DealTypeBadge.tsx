@@ -10,6 +10,7 @@ interface DealTypeIconProps {
   size?: "sm" | "md" | "lg";
   className?: string;
   highlight?: boolean;
+  isOrange?: boolean;
 }
 
 export function DealTypeIcon({
@@ -17,6 +18,7 @@ export function DealTypeIcon({
   size = "sm",
   className = "",
   highlight = false,
+  isOrange = false,
 }: DealTypeIconProps) {
   const isSales = type === "SALES_DEAL";
 
@@ -31,6 +33,21 @@ export function DealTypeIcon({
     md: "w-4.5 h-4.5",
     lg: "w-5 h-5",
   }[size];
+
+  if (isOrange) {
+    return (
+      <div
+        className={`${sizeClasses} rounded-full flex items-center justify-center transition-all bg-[#F59E0B] text-slate-950 border border-[#d97706] shadow-sm ${className}`}
+        title={isSales ? "Sales Deal" : "Internal Task"}
+      >
+        {isSales ? (
+          <CircleDollarSign className={iconSizes} />
+        ) : (
+          <FileText className={iconSizes} />
+        )}
+      </div>
+    );
+  }
 
   if (isSales) {
     return (

@@ -479,7 +479,7 @@ export function Sidebar() {
       {/* ============================================================ */}
       {/* 1. DESKTOP PERMANENT SIDEBAR (>= 1024px)                     */}
       {/* ============================================================ */}
-      <aside className="hidden lg:flex h-screen w-48 flex-col bg-[#252728] shrink-0 z-30 border-r border-[#1C1C1D]">
+      <aside className="hidden lg:flex h-screen w-54 flex-col bg-[#252728] shrink-0 z-30 border-r border-[#1C1C1D]">
         {renderSidebarContent(false)}
       </aside>
 
@@ -527,7 +527,7 @@ export function Sidebar() {
         {/* Mobile Central Pill (md:hidden) */}
         <div 
           ref={mobileSearchContainerRef}
-          className="md:hidden flex items-center bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 gap-3.5 select-none transition-all duration-300"
+          className="md:hidden flex items-center bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 gap-3.5 select-none shadow-md transition-all duration-300"
         >
           {/* Left: Find button / Animated Search Input */}
           {isMobileSearchExpanded && pageSearchConfig ? (
@@ -548,8 +548,12 @@ export function Sidebar() {
               />
               <button
                 type="button"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  handleMobileClearAndClose();
+                }}
                 onClick={handleMobileClearAndClose}
-                className="text-[11px] font-medium text-slate-400 hover:text-slate-100 active:text-white px-2 py-0.5 rounded-full hover:bg-[#3A3B3C] transition-colors shrink-0"
+                className="text-[11px] font-medium text-slate-400 hover:text-slate-100 active:text-white px-2 py-0.5 rounded-full hover:bg-[#3A3B3C] transition-colors shrink-0 cursor-pointer"
                 title="Clear search"
               >
                 Clear
@@ -559,6 +563,8 @@ export function Sidebar() {
             <button
               type="button"
               onClick={() => {
+                if (isManageModalOpen) setIsManageModalOpen(false);
+                if (isMobileMenuOpen) setIsMobileMenuOpen(false);
                 if (pageSearchConfig) {
                   setIsMobileSearchExpanded(true);
                 } else {
@@ -585,13 +591,26 @@ export function Sidebar() {
               <div className="h-3.5 w-px bg-[#4E4F50]" />
               <button
                 id="mobile-manage-filter-btn"
-                onClick={() => setIsManageModalOpen(true)}
+                onClick={() => {
+                  if (!isManageModalOpen) {
+                    setIsMobileMenuOpen(false);
+                    setIsMobileSearchExpanded(false);
+                  }
+                  setIsManageModalOpen(!isManageModalOpen);
+                }}
                 className="flex items-center gap-1.5 text-xs font-medium text-slate-200 hover:text-white transition-colors relative cursor-pointer"
-                aria-label="Manage and Filters"
+                aria-label={isManageModalOpen ? "Close Manage and Filters" : "Manage and Filters"}
+                title={isManageModalOpen ? "Close Manage" : "Manage and Filters"}
               >
-                <SlidersHorizontal className="w-4 h-4 text-[#C7F33C]" />
-                {hasActiveFilters && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] absolute -top-0.5 -right-1" />
+                {isManageModalOpen ? (
+                  <XIcon className="w-4 h-4 text-slate-100" />
+                ) : (
+                  <>
+                    <SlidersHorizontal className="w-4 h-4 text-[#C7F33C]" />
+                    {hasActiveFilters && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C] absolute -top-0.5 -right-1" />
+                    )}
+                  </>
                 )}
               </button>
             </>
@@ -602,7 +621,12 @@ export function Sidebar() {
 
           {/* Right: Menu / Close toggle */}
           <button
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            onClick={() => {
+              if (!isMobileMenuOpen) {
+                setIsManageModalOpen(false);
+              }
+              setIsMobileMenuOpen(!isMobileMenuOpen);
+            }}
             className="flex items-center justify-center text-slate-200 hover:text-white transition-colors"
             title={isMobileMenuOpen ? "Close Menu" : "Open Menu"}
           >
@@ -781,7 +805,7 @@ export function Sidebar() {
       {/* 6. STANDARDIZED MANAGE MODAL (< 768px - md:hidden)          */}
       {/* ============================================================ */}
       {isManageModalOpen && pageManageContent && (
-        <div className="md:hidden fixed inset-0 z-50 bg-[#252728] flex flex-col pb-24 px-4 overflow-y-auto">
+        <div className="md:hidden fixed inset-0 z-30 bg-[#252728] flex flex-col pb-24 px-4 overflow-y-auto animate-in fade-in duration-150">
           {/* Modal Header (Sticky on top) */}
           <div className="sticky top-0 z-10 bg-[#252728] flex items-center justify-between pt-4 pb-4 border-b border-[#1C1C1D] mb-4 shrink-0">
             <div className="flex items-center gap-2">

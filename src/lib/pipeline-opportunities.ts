@@ -24,13 +24,16 @@ export const pipelineOpportunitySelect = {
   createdAt: true,
   updatedAt: true,
   company: { select: { id: true, name: true, displayName: true } },
-  owner: { select: { id: true, name: true, email: true, image: true } },
+  owner: { select: { id: true, name: true, email: true, image: true, departments: { select: { id: true, name: true } } } },
   teamMembers: { select: { id: true, name: true, image: true } },
   activityLogs: {
     where: {
       parentId: null,
       type: 'COMMENT' as const,
-      NOT: { content: { startsWith: '[DUE DATE:' } },
+      NOT: [
+        { content: { startsWith: '[DUE DATE:' } },
+        { content: { startsWith: '[URGENT_' } },
+      ],
     },
     orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
     take: 1,

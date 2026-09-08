@@ -19,7 +19,7 @@ import {
 import { sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext } from "./KanbanCard";
-import { getPendingAcceleratorsMap } from "@/lib/actions/ai-accelerator";
+import { getPendingAcceleratorsMap, type DealAcceleratorsState } from "@/lib/actions/ai-accelerator";
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
@@ -27,7 +27,7 @@ import { useSidebar } from "@/components/layout/SidebarContext";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { pusherClient } from "@/lib/pusher";
-import useSWR from "swr";
+import useSWR, { mutate as globalMutate } from "swr";
 
 const loadEditDealPanel = () => import("./EditDealPanel");
 const EditDealPanel = dynamic(() => loadEditDealPanel().then(mod => mod.EditDealPanel), { ssr: false });
@@ -44,6 +44,8 @@ type PipelineUpdateEvent = {
   logId?: string;
   nextLatestLog?: OpportunityWithRelations['activityLogs'][number] | null;
   deal?: OpportunityWithRelations;
+  state?: DealAcceleratorsState;
+  pendingCount?: number;
 };
 
 export function DroppablePlaceholder({ id, label }: { id: string, label: string }) {
@@ -124,6 +126,29 @@ export function KanbanBoard({
     }
   );
 
+  // Infinite Scroll state for completed tab
+  const [completedDeals, setCompletedDeals] = useState<OpportunityWithRelations[]>([]);
+  const [hasMoreCompleted, setHasMoreCompleted] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  const allDealIds = useMemo(() => {
+    const fallback = tab === initialTab ? (initialOpportunities || []) : [];
+    const source = rawOpportunities || fallback;
+    const ids = source.map(d => d.id);
+    if (isCompletedTab) {
+      completedDeals.forEach(d => {
+        if (!ids.includes(d.id)) ids.push(d.id);
+      });
+    }
+    return ids;
+  }, [rawOpportunities, initialOpportunities, tab, initialTab, isCompletedTab, completedDeals]);
+
+  const { data: pendingAcceleratorsMap = {}, mutate: mutatePendingAccelerators } = useSWR(
+    allDealIds.length > 0 ? ['pending-accelerators', allDealIds.slice(0, 100).sort().join(',')] : null,
+    () => getPendingAcceleratorsMap(allDealIds),
+    { revalidateOnFocus: true, dedupingInterval: 2000 }
+  );
+
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
     const fallback = tab === initialTab ? (initialOpportunities || []) : [];
@@ -132,6 +157,13 @@ export function KanbanBoard({
       stageDeals = stageDeals.filter(o => o.type === cardTypeFilter);
     }
     stageDeals.sort((a, b) => {
+      const aInfo = pendingAcceleratorsMap[a.id];
+      const bInfo = pendingAcceleratorsMap[b.id];
+      const aPending = (typeof aInfo === 'number' ? aInfo : (aInfo?.count || 0)) > 0;
+      const bPending = (typeof bInfo === 'number' ? bInfo : (bInfo?.count || 0)) > 0;
+      if (aPending && !bPending) return -1;
+      if (!aPending && bPending) return 1;
+
       const aRed = checkIsRedCard(a);
       const bRed = checkIsRedCard(b);
       if (aRed && !bRed) return -1;
@@ -140,7 +172,7 @@ export function KanbanBoard({
     });
     acc[stage.id] = stageDeals;
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter]);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, pendingAcceleratorsMap]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
   const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
@@ -235,7 +267,8 @@ export function KanbanBoard({
         data.activityLog &&
         !data.activityLog.parentId &&
         data.activityLog.type === 'COMMENT' &&
-        !data.activityLog.content.startsWith('[DUE DATE:')
+        !data.activityLog.content.startsWith('[DUE DATE:') &&
+        !data.activityLog.content.startsWith('[URGENT_')
       ) {
         const addedActivityLog = data.activityLog;
         mutate(
@@ -289,6 +322,43 @@ export function KanbanBoard({
           },
           { revalidate: false }
         );
+      } else if (data?.action === 'DEAL_ACCELERATORS_UPDATED') {
+        const dealId = data.dealId;
+        const pendingCount = data.pendingCount;
+        if (dealId) {
+          if (data.state) {
+            void globalMutate(['deal-accelerators', dealId], { success: true, data: data.state }, false);
+          } else {
+            void globalMutate(['deal-accelerators', dealId]);
+          }
+        }
+        if (dealId && typeof pendingCount === 'number') {
+          void mutatePendingAccelerators(
+            (prev) => {
+              const next = { ...(prev || {}) };
+              if (pendingCount === 0) {
+                delete next[dealId];
+              } else {
+                const current = next[dealId];
+                if (typeof current === 'object' && current !== null) {
+                  next[dealId] = {
+                    ...current,
+                    count: pendingCount,
+                  };
+                } else {
+                  next[dealId] = {
+                    count: pendingCount,
+                    earliestPendingAt: new Date().toISOString(),
+                  };
+                }
+              }
+              return next;
+            },
+            false
+          );
+        }
+        void mutatePendingAccelerators();
+        return;
       } else if (data?.action?.startsWith('ACTIVITY_')) {
         // Ignore activity log updates for the board, as they don't affect Kanban columns directly.
         // This prevents the massive 10-second full board refetch bottleneck.
@@ -368,28 +438,7 @@ export function KanbanBoard({
     }, 0);
   }, [groupedDeals, activeDeal, panelOpen, rawOpportunities, tab, initialTab, initialOpportunities]);
 
-  // Infinite Scroll state for completed tab
-  const [completedDeals, setCompletedDeals] = useState<OpportunityWithRelations[]>([]);
-  const [hasMoreCompleted, setHasMoreCompleted] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  const allDealIds = useMemo(() => {
-    const ids: string[] = [];
-    Object.values(deals).forEach(list => {
-      list.forEach(d => ids.push(d.id));
-    });
-    if (isCompletedTab) {
-      completedDeals.forEach(d => ids.push(d.id));
-    }
-    return ids;
-  }, [deals, isCompletedTab, completedDeals]);
-
-  const { data: pendingAcceleratorsMap = {} } = useSWR(
-    allDealIds.length > 0 ? ['pending-accelerators', allDealIds.slice(0, 100).sort().join(',')] : null,
-    () => getPendingAcceleratorsMap(allDealIds),
-    { revalidateOnFocus: true, dedupingInterval: 10000 }
-  );
-  
   useEffect(() => {
     if (isCompletedTab) {
       const t = setTimeout(() => {
@@ -634,7 +683,7 @@ export function KanbanBoard({
       <KanbanClockProvider>
         <div 
           ref={boardContainerRef}
-          className={`relative flex gap-3 md:gap-3.5 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-hidden xl:overflow-x-auto touch-pan-y xl:touch-auto'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-[calc(100vh-140px)]'}`}
+          className={`relative flex gap-1 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-hidden xl:overflow-x-auto touch-pan-y xl:touch-auto'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
         >
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
