@@ -80,5 +80,34 @@ export async function getPipelineOpportunitiesForActor(
     take: tab === 'completed' ? 20 : undefined,
   });
 
+  // Auto-clear due dates that have already been fulfilled:
+  // If a deal's due date has arrived/passed (today >= dueDate) and an activity update
+  // was posted on or after that due date, clear the due date so it doesn't linger.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const expiredFulfilledIds: string[] = [];
+  data.forEach((opp) => {
+    if (opp.dueDate) {
+      const dueMidnight = new Date(opp.dueDate);
+      dueMidnight.setHours(0, 0, 0, 0);
+      if (dueMidnight <= today && opp.activityLogs && opp.activityLogs.length > 0) {
+        const latestLogDate = new Date(opp.activityLogs[0].createdAt);
+        latestLogDate.setHours(0, 0, 0, 0);
+        if (latestLogDate >= dueMidnight) {
+          opp.dueDate = null;
+          expiredFulfilledIds.push(opp.id);
+        }
+      }
+    }
+  });
+
+  if (expiredFulfilledIds.length > 0) {
+    prisma.opportunity.updateMany({
+      where: { id: { in: expiredFulfilledIds } },
+      data: { dueDate: null },
+    }).catch((err: unknown) => console.error("Failed to auto-clear fulfilled due dates:", err));
+  }
+
   return JSON.stringify(data);
 }

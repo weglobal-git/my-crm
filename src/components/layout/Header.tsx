@@ -270,7 +270,17 @@ export function Header() {
           >
             <span className="max-w-[110px] truncate">{columnNavConfig.currentTitle}</span>
             <span className="text-slate-500 font-normal">|</span>
-            <span className="text-[#C7F33C] font-bold">{columnNavConfig.currentCount ?? 0}</span>
+            {columnNavConfig.currentRedCount !== undefined ? (
+              <span className="tabular-nums">
+                <span className={columnNavConfig.currentRedCount > 0 ? "text-[#C7F33C] font-bold" : "text-slate-400"}>
+                  {columnNavConfig.currentRedCount}
+                </span>
+                <span className="text-slate-500 font-normal mx-0.5">/</span>
+                <span className="text-slate-300">{columnNavConfig.currentCount ?? 0}</span>
+              </span>
+            ) : (
+              <span className="text-[#C7F33C] font-bold">{columnNavConfig.currentCount ?? 0}</span>
+            )}
           </button>
         </div>
       ) : null}

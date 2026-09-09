@@ -769,7 +769,9 @@ export function KanbanBoard({
     }
 
     const currentStage = initialStages[activeColumnIndex];
-    const currentCount = currentStage ? (deals[currentStage.id]?.length ?? 0) : 0;
+    const currentDeals = currentStage ? (deals[currentStage.id] || []) : [];
+    const currentCount = currentDeals.length;
+    const currentRedCount = currentDeals.filter(checkIsRedCard).length;
     setColumnNavConfig({
       hasPrev: activeColumnIndex > 0,
       hasNext: activeColumnIndex < initialStages.length - 1,
@@ -779,6 +781,7 @@ export function KanbanBoard({
       currentIndex: activeColumnIndex,
       totalColumns: initialStages.length,
       currentCount,
+      currentRedCount,
     });
 
     return () => setColumnNavConfig(null);

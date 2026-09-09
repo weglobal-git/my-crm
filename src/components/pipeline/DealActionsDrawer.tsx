@@ -10,7 +10,9 @@ import {
   AlertTriangle, 
   CheckCircle2, 
   Loader2,
-  SlidersHorizontal
+  SlidersHorizontal,
+  ArrowRight,
+  Check
 } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { updateOpportunity, moveOpportunity, deleteOpportunity, addSystemLog } from "@/lib/actions/opportunity";
@@ -24,6 +26,7 @@ export interface DealActionsDrawerProps {
   canCloseDeal: boolean;
   canConvert: boolean;
   canDelete: boolean;
+  onNavigateToInformation?: () => void;
   onDealClosed?: (dealId: string, status: "WON" | "LOST") => void;
   onDealConverted?: () => void;
   onDealDeleted?: (dealId: string) => void;
@@ -36,6 +39,7 @@ export function DealActionsDrawer({
   canCloseDeal,
   canConvert,
   canDelete,
+  onNavigateToInformation,
   onDealClosed,
   onDealConverted,
   onDealDeleted,
@@ -48,13 +52,7 @@ export function DealActionsDrawer({
   // Active sub-mode for closing deal: "WON" | "LOST"
   const [closeMode, setCloseMode] = useState<"WON" | "LOST">("WON");
 
-  // Won fields
-  const [value, setValue] = useState<string>(deal.value?.toString() || "");
-  const [currency, setCurrency] = useState<string>(deal.currency || "THB");
-  const [goodsLoadingDate, setGoodsLoadingDate] = useState<string>(
-    deal.goodsLoadingDate ? new Date(deal.goodsLoadingDate).toISOString().split("T")[0] : ""
-  );
-  const [invoiceId, setInvoiceId] = useState<string>(deal.invoiceId || "");
+
 
   // Lost fields
   const [lossReason, setLossReason] = useState<string>(deal.lossReason || "");
@@ -67,19 +65,15 @@ export function DealActionsDrawer({
   const [isConverting, setIsConverting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Reset form states when deal or open status changes
-  useEffect(() => {
+  // Reset form states when drawer opens (render-time synchronization)
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
+  if (isOpen !== prevIsOpen) {
+    setPrevIsOpen(isOpen);
     if (isOpen) {
-      setValue(deal.value?.toString() || "");
-      setCurrency(deal.currency || "THB");
-      setGoodsLoadingDate(
-        deal.goodsLoadingDate ? new Date(deal.goodsLoadingDate).toISOString().split("T")[0] : ""
-      );
-      setInvoiceId(deal.invoiceId || "");
       setLossReason(deal.lossReason || "");
       setConfirmDeleteChecked(false);
     }
-  }, [isOpen, deal]);
+  }
 
   // Click outside and Escape key handling
   useEffect(() => {
@@ -107,28 +101,17 @@ export function DealActionsDrawer({
   }, [isOpen, isSubmittingClose, isConverting, isDeleting, onClose]);
 
   // Validation for Won
-  const isWonValid = !isSalesDeal || Boolean(
-    value.trim() && 
-    !isNaN(parseFloat(value)) && 
-    parseFloat(value) > 0 && 
-    currency && 
-    goodsLoadingDate && 
-    invoiceId.trim()
-  );
+  const hasValue = deal.value !== null && deal.value !== undefined && Number(deal.value) > 0;
+  const hasGoodsLoadingDate = Boolean(deal.goodsLoadingDate);
+  const hasInvoiceId = Boolean(deal.invoiceId && deal.invoiceId.trim());
 
-  // Missing fields list for Sales Deal
-  const missingWonFields = [];
+  const missingWonFields: string[] = [];
   if (isSalesDeal) {
-    if (!value.trim() || isNaN(parseFloat(value)) || parseFloat(value) <= 0) {
-      missingWonFields.push("Total Value");
-    }
-    if (!goodsLoadingDate) {
-      missingWonFields.push("Goods Loading Date");
-    }
-    if (!invoiceId.trim()) {
-      missingWonFields.push("Invoice Number");
-    }
+    if (!hasValue) missingWonFields.push("Total Value");
+    if (!hasGoodsLoadingDate) missingWonFields.push("Goods Loading Date");
+    if (!hasInvoiceId) missingWonFields.push("Invoice Number");
   }
+  const isWonValid = !isSalesDeal || missingWonFields.length === 0;
 
   // Handle Mark as Won
   const handleConfirmWon = async () => {
@@ -136,14 +119,6 @@ export function DealActionsDrawer({
     setIsSubmittingClose(true);
 
     try {
-      if (isSalesDeal) {
-        await updateOpportunity(deal.id, {
-          value: parseFloat(value),
-          currency,
-          goodsLoadingDate: new Date(goodsLoadingDate),
-          invoiceId: invoiceId.trim(),
-        });
-      }
       await moveOpportunity(deal.id, null, "WON");
 
       toast({
@@ -353,85 +328,42 @@ export function DealActionsDrawer({
                       </button>
                     </div>
 
-                    {/* Mode WON Details */}
+                        {/* Mode WON Details */}
                     {closeMode === "WON" && (
                       <div className="bg-[#1E1F20] border border-[#3A3B3C] rounded-xl p-4 space-y-4 animate-in fade-in duration-150">
                         {isSalesDeal ? (
                           <>
                             {/* Validation Status Banner */}
                             {missingWonFields.length > 0 ? (
-                              <div className="p-3 bg-[#2A2B2D] border border-[#4E4F50] rounded-lg flex items-start gap-2.5 text-xs text-amber-300/90">
-                                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-                                <div>
-                                  <p className="font-semibold text-amber-300">Missing required fields:</p>
-                                  <p className="text-[11px] text-slate-400 mt-0.5">
-                                    {missingWonFields.join(", ")}
-                                  </p>
+                              <div className="p-3.5 bg-[#2A2B2D] border border-[#4E4F50] rounded-xl flex flex-col gap-3 text-xs text-amber-300/90">
+                                <div className="flex items-start gap-2.5">
+                                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-semibold text-amber-300">Missing required fields:</p>
+                                    <p className="text-[11px] text-slate-300 mt-0.5">
+                                      {missingWonFields.join(", ")}
+                                    </p>
+                                  </div>
                                 </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onClose();
+                                    onNavigateToInformation?.();
+                                  }}
+                                  className="w-full py-2 px-3 bg-[#1C1C1D] hover:bg-[#252728] border border-[#4E4F50] text-[#C7F33C] text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                                >
+                                  <Briefcase className="w-3.5 h-3.5" />
+                                  <span>Go to Sale Deal to Complete Fields</span>
+                                  <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
+                                </button>
                               </div>
                             ) : (
-                              <div className="p-3 bg-[#2A2B2D] border border-[#4E4F50] rounded-lg flex items-center gap-2 text-xs text-slate-200">
+                              <div className="p-3 bg-[#2A2B2D] border border-[#4E4F50] rounded-xl flex items-center gap-2 text-xs text-slate-200">
                                 <CheckCircle2 className="w-4 h-4 shrink-0 text-[#C7F33C]" />
                                 <span>All required sales fields are complete</span>
                               </div>
                             )}
-
-                            {/* Inline Fields */}
-                            <div className="space-y-3">
-                              {/* Total Value & Currency */}
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-400 mb-1.5">
-                                  Total Value & Currency <span className="text-rose-400">*</span>
-                                </label>
-                                <div className="flex gap-2">
-                                  <select
-                                    value={currency}
-                                    onChange={(e) => setCurrency(e.target.value)}
-                                    className="bg-[#252728] border border-[#3A3B3C] rounded-lg px-2.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-[#C7F33C]"
-                                  >
-                                    <option value="THB">THB (฿)</option>
-                                    <option value="USD">USD ($)</option>
-                                    <option value="EUR">EUR (€)</option>
-                                  </select>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="any"
-                                    value={value}
-                                    onChange={(e) => setValue(e.target.value)}
-                                    placeholder="Enter total value..."
-                                    className="flex-1 bg-[#252728] border border-[#3A3B3C] rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C]"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Goods Loading Date */}
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-400 mb-1.5">
-                                  Goods Loading Date <span className="text-rose-400">*</span>
-                                </label>
-                                <input
-                                  type="date"
-                                  value={goodsLoadingDate}
-                                  onChange={(e) => setGoodsLoadingDate(e.target.value)}
-                                  className="w-full bg-[#252728] border border-[#3A3B3C] rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-[#C7F33C]"
-                                />
-                              </div>
-
-                              {/* Invoice Number */}
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-400 mb-1.5">
-                                  Invoice Number <span className="text-rose-400">*</span>
-                                </label>
-                                <input
-                                  type="text"
-                                  value={invoiceId}
-                                  onChange={(e) => setInvoiceId(e.target.value)}
-                                  placeholder="e.g. INV-2026-001"
-                                  className="w-full bg-[#252728] border border-[#3A3B3C] rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C]"
-                                />
-                              </div>
-                            </div>
                           </>
                         ) : (
                           <p className="text-xs text-slate-400 leading-relaxed">
@@ -554,13 +486,28 @@ export function DealActionsDrawer({
                         Permanently delete this deal and its entire history (comments, files, logs). This action cannot be reversed.
                       </p>
 
-                      <label className="flex items-center gap-2 cursor-pointer select-none text-xs text-slate-400 hover:text-slate-300 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={confirmDeleteChecked}
-                          onChange={(e) => setConfirmDeleteChecked(e.target.checked)}
-                          className="rounded border-[#4E4F50] bg-[#252728] text-red-600 focus:ring-0 focus:ring-offset-0"
-                        />
+                      <label 
+                        onClick={() => setConfirmDeleteChecked(!confirmDeleteChecked)}
+                        className="flex items-center gap-2.5 cursor-pointer select-none text-xs text-slate-300 hover:text-slate-100 transition-colors group"
+                      >
+                        <div
+                          role="checkbox"
+                          aria-checked={confirmDeleteChecked}
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === " " || e.key === "Enter") {
+                              e.preventDefault();
+                              setConfirmDeleteChecked(!confirmDeleteChecked);
+                            }
+                          }}
+                          className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all shrink-0 ${
+                            confirmDeleteChecked
+                              ? "bg-red-500 border-red-500 text-white"
+                              : "border-[#4E4F50] bg-[#252728] group-hover:border-[#6E6F70]"
+                          }`}
+                        >
+                          {confirmDeleteChecked && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
                         <span>I understand this cannot be undone</span>
                       </label>
 

@@ -53,6 +53,8 @@ const formatShortDueDate = (date: Date | string) => {
   return `${day}${month}${year}`;
 };
 
+const MIN_DUE_DATE_REASON_LENGTH = 10;
+
 const renderCommentText = (text: string, highlight: string = '') => {
   if (!text) return null;
   const parts = text.split(/(@\S+)/g);
@@ -461,7 +463,7 @@ function ActivityComment({
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-bold text-slate-100">{log.user?.name || 'Unknown User'}</span>
                 {dueDateMatch && (
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${dueDateMatch[1] === 'Removed' ? 'text-slate-300 bg-slate-600 border-slate-500' : 'text-pink-400 bg-pink-900/30 border-pink-900/50'}`}>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${dueDateMatch[1] === 'Removed' ? 'text-slate-300 bg-slate-600 border-slate-500' : 'bg-[#C7F33C] text-black'}`}>
                     {dueDateMatch[1] === 'Removed' ? 'Due Date Removed' : `Due: ${dueDateMatch[1]}`}
                   </span>
                 )}
@@ -1959,7 +1961,19 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       await handleSendManagerCall();
       return;
     }
-    if (!newLog.trim() && pendingAttachments.length === 0 && !pendingDueDate) return;
+    if (pendingDueDate) {
+      if (newLog.trim().length < MIN_DUE_DATE_REASON_LENGTH) {
+        toast({
+          title: 'จำเป็นต้องระบุเหตุผล',
+          description: `กรุณาระบุเหตุผลในการตั้ง/เปลี่ยน Due Date อย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร`,
+          type: 'warning'
+        });
+        inputRef.current?.focus();
+        return;
+      }
+    } else {
+      if (!newLog.trim() && pendingAttachments.length === 0) return;
+    }
     isSubmittingLogRef.current = true;
 
     const currentNewLog = newLog;
@@ -2010,13 +2024,31 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       { revalidate: false }
     );
 
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (!currentDueDate && deal.dueDate) {
+      const dueMidnight = new Date(deal.dueDate);
+      dueMidnight.setHours(0, 0, 0, 0);
+      if (dueMidnight <= today) {
+        deal.dueDate = null as unknown as Date;
+      }
+    }
+
     mutate(
       (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
       (currentData: OpportunityWithRelations[] | undefined) => {
         if (!currentData) return currentData;
         return currentData.map(opp => {
           if (opp.id === deal.id) {
-            return { ...opp, activityLogs: [optimisticLog] };
+            const isDueExpired = opp.dueDate && new Date(opp.dueDate) <= today;
+            const updatedDueDate = currentDueDate
+              ? (currentDueDate === 'REMOVE' ? null : currentDueDate)
+              : (isDueExpired ? null : opp.dueDate);
+            return {
+              ...opp,
+              dueDate: updatedDueDate,
+              activityLogs: [optimisticLog, ...(opp.activityLogs || [])]
+            };
           }
           return opp;
         });
@@ -3403,7 +3435,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
 
           {/* Sticky Footer for Activity Tab */}
           {activeTab === 'activity' && (
-            <div className="p-2 bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative">
+            <div className="bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative">
 
               {/* Mini Calendar Popup */}
               {canEditDueDate && showCalendar && (
@@ -3472,6 +3504,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                         onClick={() => {
                           setPendingDueDate('REMOVE');
                           setShowCalendar(false);
+                          setTimeout(() => inputRef.current?.focus(), 50);
                         }}
                         className="flex-1 py-2 rounded-xl text-xs font-bold text-red-400 bg-red-900/30 hover:bg-red-900/50"
                       >
@@ -3482,6 +3515,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                       onClick={() => {
                         setPendingDueDate(selectedPopupDate);
                         setShowCalendar(false);
+                        setTimeout(() => inputRef.current?.focus(), 50);
                       }}
                       disabled={!selectedPopupDate}
                       className="flex-1 py-2 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#c3ff00] disabled:opacity-50 disabled:cursor-not-allowed"
@@ -3492,18 +3526,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                 </div>
               )}
 
-              {/* Attachments / Due Date Preview */}
-              {(pendingDueDate || pendingAttachments.length > 0) && (
+              {/* Attachments Preview */}
+              {pendingAttachments.length > 0 && (
                 <div className="px-2 pb-1.5 flex flex-wrap gap-2 items-center">
-                  {pendingDueDate && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-black text-[#d4ff3a] border border-[#C7F33C]/20">
-                      <BellRing className="w-3 h-3" />
-                      {pendingDueDate === 'REMOVE' ? 'Remove Due Date' : `Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(pendingDueDate)}`}
-                      <button onClick={() => setPendingDueDate(null)} className="ml-1 opacity-70 hover:opacity-100 transition-opacity">
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  )}
                   {pendingAttachments.map((file, idx) => {
                      const isImg = file.type.startsWith('image/');
                      const objectUrl = isImg ? URL.createObjectURL(file) : null;
@@ -3528,6 +3553,37 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                 </div>
               )}
 
+              {/* Due Date Mode Banner */}
+              {pendingDueDate && !isManagerCallMode && (
+                <div className="flex items-center justify-between px-3 py-1.5 bg-[#C7F33C]/10 border border-[#C7F33C]/30 rounded-xl text-[#C7F33C] text-xs font-semibold animate-in fade-in mb-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <BellRing className="w-3.5 h-3.5 text-[#C7F33C] shrink-0 animate-pulse" />
+                    <span className="truncate">
+                      {pendingDueDate === 'REMOVE' ? 'Remove Due Date' : `Due Date: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(pendingDueDate)}`}
+                      <span className="text-slate-300 font-normal ml-1.5">
+                        (ระบุเหตุผลอย่างน้อย {MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร
+                        {newLog.trim().length > 0 ? (
+                          newLog.trim().length >= MIN_DUE_DATE_REASON_LENGTH ? (
+                            <span className="text-[#C7F33C] ml-1 font-bold">✓</span>
+                          ) : (
+                            <span className="text-amber-400 ml-1 font-mono">{newLog.trim().length}/{MIN_DUE_DATE_REASON_LENGTH}</span>
+                          )
+                        ) : null}
+                        )
+                      </span>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPendingDueDate(null)}
+                    className="p-1 rounded-md text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer shrink-0 ml-2"
+                    title="Cancel Due Date"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Manager Call Mode Banner */}
               {isManagerCallMode && (
                 <div className="flex items-center justify-between px-3 py-1.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-400 text-xs font-semibold animate-in fade-in">
@@ -3546,7 +3602,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
               )}
 
               {/* Auto-expanding Chat Input (LINE / WhatsApp style) */}
-              <div {...getRootProps()} className={`flex items-end gap-1 bg-[#3A3B3C] px-1 py-1.5 rounded-lg border transition-all ${isManagerCallMode ? 'border-[#F59E0B] bg-[#342a1d]' : isDragActive ? 'border-[#C7F33C] bg-[#4E4F50]' : 'border-[#4E4F50]'}`}>
+              <div {...getRootProps()} className={`flex items-end gap-1 bg-[#3A3B3C] px-1 py-1.5 border transition-all ${
+                isManagerCallMode 
+                  ? 'border-[#F59E0B] bg-[#342a1d]' 
+                  : pendingDueDate 
+                    ? 'border-[#C7F33C] bg-[#292e21]' 
+                    : isDragActive 
+                      ? 'border-[#C7F33C] bg-[#4E4F50]' 
+                      : 'border-[#4E4F50]'
+              }`}>
                 <input {...getInputProps()} />
 
                 {/* Left Action Buttons: Attach, Due Date, Manager Call */}
@@ -3566,15 +3630,19 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                         onClick={() => setShowCalendar(!showCalendar)}
                         title={activeDueDate ? `Due: ${formatShortDueDate(activeDueDate)} (Click to change)` : "Set Due Date"}
                         className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-                          activeDueDate
-                            ? 'bg-[#C7F33C] text-black font-bold text-xs px-2.5 gap-1.5'
-                            : 'w-7 px-0 hover:bg-[#4E4F50] text-slate-300'
+                          pendingDueDate === 'REMOVE'
+                            ? 'bg-red-500/20 text-red-400 border border-red-500/40 text-xs px-2.5 gap-1.5'
+                            : activeDueDate
+                              ? 'bg-[#C7F33C] text-black font-bold text-xs px-2.5 gap-1.5'
+                              : 'w-7 px-0 hover:bg-[#4E4F50] text-slate-300'
                         }`}
                       >
                         <BellRing className="w-3.5 h-3.5 shrink-0" />
-                        {activeDueDate && (
+                        {pendingDueDate === 'REMOVE' ? (
+                          <span className="whitespace-nowrap tracking-tight font-semibold">Remove Due</span>
+                        ) : activeDueDate ? (
                           <span className="whitespace-nowrap tracking-tight">{formatShortDueDate(activeDueDate)}</span>
-                        )}
+                        ) : null}
                       </button>
                     );
                   })()}
@@ -3621,6 +3689,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                         if (isManagerCallMode || isManagerCallModeRef.current) {
                           handleSendManagerCall();
                         } else {
+                          if (pendingDueDate && newLog.trim().length < MIN_DUE_DATE_REASON_LENGTH) {
+                            toast({
+                              title: 'จำเป็นต้องระบุเหตุผล',
+                              description: `กรุณาระบุเหตุผลในการตั้ง/เปลี่ยน Due Date อย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร`,
+                              type: 'warning'
+                            });
+                            inputRef.current?.focus();
+                            return;
+                          }
                           handleAddLog();
                         }
                       } else {
@@ -3638,24 +3715,52 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                   <div className="w-7 h-7 flex items-center justify-center shrink-0 self-end">
                     <Loader2 className={`w-4 h-4 animate-spin ${isManagerCallMode ? 'text-[#F59E0B]' : 'text-[#C7F33C]'}`} />
                   </div>
-                ) : (newLog.trim() || pendingAttachments.length > 0 || pendingDueDate) ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isManagerCallMode || isManagerCallModeRef.current) {
-                        handleSendManagerCall();
-                      } else {
-                        handleAddLog();
+                ) : (() => {
+                  const isDuePending = Boolean(pendingDueDate);
+                  const isDueValid = isDuePending ? newLog.trim().length >= MIN_DUE_DATE_REASON_LENGTH : true;
+                  const hasContent = isDuePending
+                    ? true
+                    : (newLog.trim().length > 0 || pendingAttachments.length > 0);
+
+                  if (!hasContent) return null;
+
+                  return (
+                    <button
+                      type="button"
+                      disabled={isDuePending && !isDueValid}
+                      onClick={() => {
+                        if (isManagerCallMode || isManagerCallModeRef.current) {
+                          handleSendManagerCall();
+                        } else {
+                          if (isDuePending && !isDueValid) {
+                            toast({
+                              title: 'จำเป็นต้องระบุเหตุผล',
+                              description: `กรุณาระบุเหตุผลในการตั้ง/เปลี่ยน Due Date อย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร`,
+                              type: 'warning'
+                            });
+                            inputRef.current?.focus();
+                            return;
+                          }
+                          handleAddLog();
+                        }
+                      }}
+                      className={`w-7 h-7 flex items-center justify-center shrink-0 rounded-full transition-colors cursor-pointer self-end ${
+                        isDuePending && !isDueValid
+                          ? 'text-slate-500 opacity-40 cursor-not-allowed'
+                          : isManagerCallMode
+                            ? 'text-[#F59E0B] hover:bg-amber-500/20'
+                            : 'text-[#C7F33C] hover:bg-black/20'
+                      }`}
+                      title={
+                        isDuePending && !isDueValid
+                          ? `ระบุเหตุผลอีกอย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH - newLog.trim().length} ตัวอักษร`
+                          : "Send (Enter)"
                       }
-                    }}
-                    className={`w-7 h-7 flex items-center justify-center shrink-0 rounded-full transition-colors cursor-pointer self-end ${
-                      isManagerCallMode ? 'text-[#F59E0B] hover:bg-amber-500/20' : 'text-[#C7F33C] hover:bg-black/20'
-                    }`}
-                    title="Send (Enter)"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                ) : null}
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -3804,6 +3909,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         canCloseDeal={canCloseDeal}
         canConvert={canConvert}
         canDelete={canDelete}
+        onNavigateToInformation={() => setActiveTab('information')}
         onDealClosed={(dealId, status) => {
           setIsActionsDrawerOpen(false);
           onDealClosed?.(dealId, status);

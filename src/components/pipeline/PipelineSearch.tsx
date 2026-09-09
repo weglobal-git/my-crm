@@ -49,10 +49,49 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
     if (isExpanded) {
       const timer = setTimeout(() => {
         inputRef.current?.focus();
+        inputRef.current?.select();
       }, 50);
       return () => clearTimeout(timer);
     }
   }, [isExpanded]);
+
+  // Keyboard shortcut: Press 'S' or 'ห' on desktop to open search and focus input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is already focused in an input, textarea, select, or editable element
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")
+      ) {
+        return;
+      }
+
+      // Ignore if modifier keys are pressed (Cmd+S, Ctrl+S, Alt+S)
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
+      const isSearchKey =
+        e.key === "s" ||
+        e.key === "S" ||
+        e.key === "ห" ||
+        e.key === "ฆ" ||
+        e.code === "KeyS";
+
+      if (isSearchKey) {
+        e.preventDefault();
+        setIsExpanded(true);
+        setTimeout(() => {
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }, 50);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const handleClearAndClose = useCallback(() => {
     setTerm("");
@@ -85,7 +124,7 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
             ? "bg-[#252728] border border-[#C7F33C] text-[#C7F33C] shadow-sm"
             : "bg-[#3A3B3C] hover:bg-[#4E4F50] text-slate-300 hover:text-white"
         }`}
-        title="Search cards"
+        title="Search cards (S)"
       >
         <Search className="w-3.5 h-3.5" />
       </button>

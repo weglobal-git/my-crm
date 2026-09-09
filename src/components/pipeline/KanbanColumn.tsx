@@ -1,8 +1,9 @@
 "use client";
 
+import { useMemo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { KanbanCard, OpportunityWithRelations } from "./KanbanCard";
+import { KanbanCard, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
 
 interface KanbanColumnProps {
   id: string;
@@ -35,6 +36,8 @@ export function KanbanColumn({
     }
   });
 
+  const redCardsCount = useMemo(() => deals.filter(checkIsRedCard).length, [deals]);
+
   return (
     <div
       ref={setNodeRef}
@@ -46,8 +49,17 @@ export function KanbanColumn({
             <h3 className="font-semibold text-base md:text-lg text-slate-100 truncate">{title}</h3>
           </div>
 
-          <span className="w-7 h-7 md:w-8 md:h-8 flex items-center justify-center rounded-full bg-[#3A3B3C] text-xs md:text-xs font-semibold text-slate-300 shrink-0">
-            {deals.length}
+          <span 
+            className="h-7 md:h-8 px-2.5 min-w-[2rem] md:min-w-[2.25rem] flex items-center justify-center rounded-full bg-[#3A3B3C] text-xs font-semibold shrink-0 tabular-nums select-none"
+            title={`Red Cards: ${redCardsCount} | ทั้งหมด: ${deals.length}`}
+          >
+            <span className={redCardsCount > 0 ? "text-[#C7F33C] font-bold" : "text-slate-400"}>
+              {redCardsCount}
+            </span>
+            <span className="text-slate-500 font-normal mx-0.5">|</span>
+            <span className="text-slate-300">
+              {deals.length}
+            </span>
           </span>
         </div>
       )}

@@ -73,34 +73,48 @@ export function checkIsRedCard(deal: OpportunityWithRelations) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
+  if (dueDate) {
+    dueDate.setHours(0, 0, 0, 0);
+  }
+
+  // 1. If Due Date is set:
+  if (dueDate) {
+    // If today is on or past Due Date: ALWAYS RED CARD as long as DueDate remains on the deal!
+    if (dueDate <= today) {
+      return true;
+    }
+    // If Due Date is in the future: scheduled for future date, not red yet
+    return false;
+  }
+
+  // 2. If NO Due Date is set:
+  // Standard inactivity: more than 2 days (3 days) without update -> Red Card
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
-    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_'));
+    const validLogs = deal.activityLogs.filter(
+      log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_')
+    );
     if (validLogs.length > 0) {
       newestDate = new Date(validLogs[0].createdAt);
       newestDate.setHours(0, 0, 0, 0);
     }
   }
 
-  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
-  if (dueDate) {
-    dueDate.setHours(0, 0, 0, 0);
-  }
-
-  const isDueOrPast = dueDate ? dueDate <= today : false;
-
   let diffDays = 0;
   if (newestDate) {
     const diffTime = Math.abs(today.getTime() - newestDate.getTime());
+    diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  } else if (deal.createdAt) {
+    const createdDate = new Date(deal.createdAt);
+    createdDate.setHours(0, 0, 0, 0);
+    const diffTime = Math.abs(today.getTime() - createdDate.getTime());
     diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   } else {
     diffDays = 999;
   }
 
-  if (isDueOrPast) return true;
-  if (diffDays > 2 && (!dueDate || dueDate <= today)) return true;
-
-  return false;
+  return diffDays > 2;
 }
 
 interface KanbanCardProps {
@@ -114,37 +128,43 @@ function getRedThreshold(deal: OpportunityWithRelations): Date | null {
     return null;
   }
 
+  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
+  const now = new Date();
+
+  // If there is an active Due Date:
+  if (dueDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueMidnight = new Date(dueDate);
+    dueMidnight.setHours(0, 0, 0, 0);
+
+    if (dueMidnight <= today) {
+      return dueDate;
+    }
+    return null;
+  }
+
+  // If NO Due Date: 3 days threshold from latest activity or creation
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
-    const validLogs = deal.activityLogs.filter(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_'));
+    const validLogs = deal.activityLogs.filter(
+      log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_')
+    );
     if (validLogs.length > 0) {
       newestDate = new Date(validLogs[0].createdAt);
     }
   }
 
-  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
-  const thresholds: Date[] = [];
-
-  if (dueDate) {
-    thresholds.push(dueDate);
-  }
-  
-  if (newestDate) {
-    // 3 days threshold
-    thresholds.push(new Date(newestDate.getTime() + 3 * 24 * 60 * 60 * 1000));
-  } else if (deal.createdAt) {
-    // fallback to createdAt if no activity
-    thresholds.push(new Date(new Date(deal.createdAt).getTime() + 3 * 24 * 60 * 60 * 1000));
+  let baseDate = newestDate;
+  if (!baseDate && deal.createdAt) {
+    baseDate = new Date(deal.createdAt);
   }
 
-  if (thresholds.length === 0) return null;
-
-  const earliestThreshold = new Date(Math.min(...thresholds.map(t => t.getTime())));
-  const now = new Date();
-
-  // If we are past the threshold, return it
-  if (now > earliestThreshold) {
-    return earliestThreshold;
+  if (baseDate) {
+    const threeDaysAfter = new Date(baseDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+    if (now > threeDaysAfter) {
+      return threeDaysAfter;
+    }
   }
 
   return null;
@@ -368,7 +388,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                   </div>
                   <div className="flex-1 min-w-0 flex flex-col gap-1 overflow-hidden">
                     {cleanText && (
-                      <div className={`text-xs font-medium ${images.length > 0 ? 'line-clamp-2' : 'line-clamp-4'} leading-tight mt-0.5 ${isOrange ? 'text-slate-950 font-medium' : highlight ? 'text-slate-800' : 'text-slate-300'}`}>
+                      <div className={`text-xs font-medium whitespace-pre-wrap break-words ${images.length > 0 ? 'line-clamp-2' : 'line-clamp-4'} leading-tight mt-0.5 ${isOrange ? 'text-slate-950 font-medium' : highlight ? 'text-slate-800' : 'text-slate-300'}`}>
                         {cleanText}
                       </div>
                     )}
@@ -449,7 +469,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
               title="ดูและตอบ Manager Call"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
-              <span>Urgent Call ({pendingCount})</span>
+              <span>Urgent ({pendingCount})</span>
             </div>
           ) : (
             highlight && getRedThreshold(deal) && (

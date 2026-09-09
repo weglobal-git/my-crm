@@ -482,6 +482,28 @@ export async function addActivityLog(opportunityId: string, content: string, par
   if (!newLogRaw) throw new Error("Activity was created but could not be loaded.");
   const newLog = { ...newLogRaw, replies: [] };
 
+  // If deal had an active Due Date that has arrived or passed (today >= dueDate),
+  // this activity update fulfills the reminder, so clear the Due Date.
+  if (deal && deal.dueDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dueMidnight = new Date(deal.dueDate);
+    dueMidnight.setHours(0, 0, 0, 0);
+    if (dueMidnight <= today) {
+      await prisma.opportunity.update({
+        where: { id: opportunityId },
+        data: { dueDate: null },
+      });
+      const fullDeal = await prisma.opportunity.findUnique({
+        where: { id: opportunityId },
+        select: pipelineOpportunitySelect,
+      });
+      if (fullDeal) {
+        await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+      }
+    }
+  }
+
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: newLog });
   return newLog;
 }
@@ -722,7 +744,14 @@ export async function removeTeamMember(opportunityId: string, userId: string) {
 }
 
 export async function deleteOpportunity(id: string) {
-  await requireOpportunityAccess(id, { adminOnly: true });
+  const { actor, opportunity } = await requireOpportunityAccess(id);
+  const isAdmin = actor.role === 'ADMIN';
+  const isOwner = opportunity.ownerId === actor.id;
+
+  if (!isAdmin && !isOwner) {
+    throw new Error('Forbidden: Only System Admin or the Deal Owner can delete this deal.');
+  }
+
   const recipientIds = await getPipelineRecipientUserIds(id);
   const result = await prisma.opportunity.delete({
     where: { id }
