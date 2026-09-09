@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import { KanbanBoard } from "@/components/pipeline/KanbanBoard";
 import { PipelineSearch } from "@/components/pipeline/PipelineSearch";
@@ -9,9 +9,11 @@ import { CardTypeFilterValue } from "@/components/pipeline/CardTypeFilter";
 import { PipelineFiltersDrawer, PipelineFilterContent } from "@/components/pipeline/PipelineFiltersDrawer";
 import { useSearchParams } from "next/navigation";
 import { PipelineStage } from "@prisma/client";
-import { OpportunityWithRelations } from "./KanbanCard";
+import { OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
+import useSWR from "swr";
+import { getPipelineOpportunities } from "@/lib/actions/opportunity";
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 
 interface PipelineViewProps {
@@ -40,6 +42,41 @@ export function PipelineView({
   const [ownerFilter, setOwnerFilter] = useState<string>('ALL');
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const { setPageManageContent, setHasActiveFilters, setPageSearchConfig } = useSidebar();
+
+  const { data: rawOpportunities } = useSWR<OpportunityWithRelations[]>(
+    ['pipeline-deals', tab, searchQuery],
+    async () => {
+      const res = await getPipelineOpportunities(tab, searchQuery);
+      return (typeof res === 'string' ? JSON.parse(res) : res) as OpportunityWithRelations[];
+    },
+    {
+      fallbackData: tab === initialTab ? initialOpportunities : undefined,
+      revalidateOnMount: !(tab === initialTab && initialOpportunities !== undefined),
+      revalidateOnFocus: false,
+      revalidateOnReconnect: true,
+      focusThrottleInterval: 15_000,
+      dedupingInterval: 5_000,
+    }
+  );
+
+  const visibleDeals = useMemo(() => {
+    const fallback = tab === initialTab ? (initialOpportunities || []) : [];
+    let list = rawOpportunities || fallback;
+    if (tab === 'workspace') {
+      const stageIds = new Set(stages.map(s => s.id));
+      list = list.filter(o => Boolean(o.pipelineStageId && stageIds.has(o.pipelineStageId)));
+    }
+    if (cardType && cardType !== 'ALL') {
+      list = list.filter(o => o.type === cardType);
+    }
+    if (ownerFilter && ownerFilter !== 'ALL') {
+      list = list.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
+    }
+    return list;
+  }, [rawOpportunities, initialOpportunities, tab, initialTab, stages, cardType, ownerFilter]);
+
+  const totalCards = visibleDeals.length;
+  const redCardsCount = useMemo(() => visibleDeals.filter(checkIsRedCard).length, [visibleDeals]);
   
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -157,6 +194,20 @@ export function PipelineView({
         <div className="flex items-center gap-2.5 shrink-0 ml-auto flex-wrap">
           {/* Expanding Search Component */}
           <PipelineSearch initialSearch={searchQuery} onSearch={handleSearchChange} />
+
+          {/* Board Red / Total Cards Count Badge */}
+          <span 
+            className="h-8 px-3 rounded-full bg-[#252728] border border-[#3A3B3C] flex items-center justify-center text-xs font-semibold shrink-0 tabular-nums select-none"
+            title={`Red Cards: ${redCardsCount} / ทั้งหมด: ${totalCards}`}
+          >
+            <span className={redCardsCount > 0 ? "text-[#C7F33C] font-bold" : "text-slate-400"}>
+              {redCardsCount}
+            </span>
+            <span className="text-slate-500 font-normal mx-0.5">/</span>
+            <span className="text-slate-300">
+              {totalCards}
+            </span>
+          </span>
 
           {/* Centralized Filters Button */}
           <button

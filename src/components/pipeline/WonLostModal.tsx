@@ -47,8 +47,7 @@ export function WonLostModal({ deal, status, onClose, onSuccess }: WonLostModalP
         if (!lossReason.trim()) {
           throw new Error("Please provide a reason for losing the deal.");
         }
-        await updateOpportunity(deal.id, { lossReason });
-        await moveOpportunity(deal.id, null, "LOST");
+        await moveOpportunity(deal.id, null, "LOST", lossReason.trim());
       }
       
       toast({ title: "Success", type: "success", description: `Deal marked as ${status}.` });

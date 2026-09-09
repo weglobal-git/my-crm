@@ -15,6 +15,7 @@ interface KanbanColumnProps {
   currentUserId?: string;
   currentUserRole?: string;
   onDealIntent?: () => void;
+  selectedCardId?: string | null;
 }
 
 export function KanbanColumn({ 
@@ -27,6 +28,7 @@ export function KanbanColumn({
   currentUserId, 
   currentUserRole, 
   onDealIntent,
+  selectedCardId,
 }: KanbanColumnProps) {
   const { setNodeRef } = useDroppable({
     id,
@@ -70,6 +72,7 @@ export function KanbanColumn({
             <KanbanCard
               key={deal.id}
               deal={deal}
+              isSelected={deal.id === selectedCardId}
               onOpenPanel={(tab) => onDealClick?.(deal, tab)}
               onPanelIntent={onDealIntent}
               currentUserId={currentUserId}

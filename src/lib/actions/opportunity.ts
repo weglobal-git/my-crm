@@ -111,12 +111,14 @@ export async function createOpportunity(data: {
 export async function moveOpportunity(
   opportunityId: string, 
   newStageId: string | null, // null if moving out of the board to an end status
-  newStatus: OpportunityStatus = "OPEN"
+  newStatus: OpportunityStatus = "OPEN",
+  lossReason?: string | null
 ) {
   const { actor } = await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
   // Fetch the opportunity to check current state
   const opportunity = await prisma.opportunity.findUnique({
-    where: { id: opportunityId }
+    where: { id: opportunityId },
+    include: { teamMembers: { select: { id: true } } }
   });
 
   if (!opportunity) {
@@ -137,6 +139,8 @@ export async function moveOpportunity(
     }
   }
 
+  const effectiveLossReason = lossReason?.trim() || (newStatus === "LOST" ? opportunity.lossReason : null);
+
   // 2. Moving to End (e.g. WON, LOST)
   if (newStatus === "WON") {
     if (opportunity.type === "SALES_DEAL") {
@@ -150,7 +154,7 @@ export async function moveOpportunity(
       }
     }
   } else if (newStatus === "LOST") {
-    if (!opportunity.lossReason) {
+    if (!effectiveLossReason) {
       throw new Error("Cannot mark as Lost without specifying a Loss Reason.");
     }
   }
@@ -164,6 +168,7 @@ export async function moveOpportunity(
       pipelineStageId: newStageId,
       status: newStatus,
       closedAt: isClosing ? new Date() : null,
+      ...(effectiveLossReason ? { lossReason: effectiveLossReason } : {}),
     }
   });
 
@@ -174,7 +179,7 @@ export async function moveOpportunity(
           ? `Deal marked as Won.`
           : `Task completed successfully (Won).`)
       : (newStatus === "LOST"
-          ? `Deal marked as Lost. Reason: ${opportunity.lossReason || 'Not specified'}.`
+          ? `Deal marked as Lost. Reason: ${effectiveLossReason || 'Not specified'}.`
           : `Deal reopened and moved back to active pipeline.`);
 
     await prisma.activityLog.create({
@@ -185,6 +190,45 @@ export async function moveOpportunity(
         content: systemMessage,
       }
     });
+
+    // Notify team members and owner about deal closing
+    if (isClosing) {
+      const recipients = [
+        opportunity.ownerId,
+        ...(opportunity.teamMembers?.map(m => m.id) || []),
+      ].filter(uid => uid && uid !== actor.id);
+
+      const uniqueRecipients = [...new Set(recipients)];
+      if (uniqueRecipients.length > 0) {
+        try {
+          const notifTitle = newStatus === 'WON' ? 'Deal Won' : 'Deal Lost';
+          const notifMsg = newStatus === 'WON'
+            ? `Deal "${opportunity.topic}" has been marked as Won.`
+            : `Deal "${opportunity.topic}" has been marked as Lost.`;
+
+          const notifications = await prisma.$transaction(
+            uniqueRecipients.map(recipientId =>
+              prisma.notification.create({
+                data: {
+                  type: 'SYSTEM_ALERT',
+                  senderId: actor.id,
+                  recipientId,
+                  referenceId: opportunityId,
+                  title: notifTitle,
+                  message: notifMsg,
+                },
+                include: { sender: true }
+              })
+            )
+          );
+          notifications.forEach(n => {
+            void triggerNotification(n.recipientId, n);
+          });
+        } catch (err) {
+          console.warn('[moveOpportunity] Failed to send notifications:', err);
+        }
+      }
+    }
   }
 
   const fullDeal = await prisma.opportunity.findUnique({
@@ -192,6 +236,7 @@ export async function moveOpportunity(
     select: pipelineOpportunitySelect
   });
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+  revalidatePath('/pipeline');
   return result;
 }
 
@@ -208,10 +253,13 @@ type SafeOpportunityUpdate = {
 };
 
 export async function updateOpportunity(id: string, data: SafeOpportunityUpdate) {
+  let actor;
   if (data.type !== undefined) {
-    await requireOpportunityAccess(id, { ownerOrAdmin: true });
+    const access = await requireOpportunityAccess(id, { ownerOrAdmin: true });
+    actor = access.actor;
   } else {
-    await requireOpportunityAccess(id);
+    const access = await requireOpportunityAccess(id);
+    actor = access.actor;
   }
   if (data.topic !== undefined && (data.topic.trim().length === 0 || data.topic.length > 500)) {
     throw new Error('Invalid topic');
@@ -227,8 +275,8 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate)
       where: { id },
       select: { type: true }
     });
-    if (current?.type === 'SALES_DEAL') {
-      throw new Error('Cannot downgrade a Sales Deal to an Internal Task.');
+    if (current?.type === 'SALES_DEAL' && actor?.role !== 'ADMIN') {
+      throw new Error('Only System Admin can downgrade a Sales Deal to an Internal Task.');
     }
   }
   const result = await prisma.opportunity.update({

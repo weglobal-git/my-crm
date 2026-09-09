@@ -6,7 +6,6 @@ import {
   DndContext, 
   DragOverlay, 
   closestCenter, 
-  KeyboardSensor, 
   MouseSensor,
   TouchSensor, 
   useSensor, 
@@ -16,9 +15,8 @@ import {
   DragEndEvent,
   useDroppable,
 } from "@dnd-kit/core";
-import { sortableKeyboardCoordinates, arrayMove } from "@dnd-kit/sortable";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext } from "./KanbanCard";
+import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, getRedThreshold, PendingAcceleratorsContext } from "./KanbanCard";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
@@ -62,6 +60,49 @@ export function DroppablePlaceholder({ id, label }: { id: string, label: string 
       {label}
     </div>
   );
+}
+
+export function sortDeals(
+  dealsList: OpportunityWithRelations[],
+  pendingAcceleratorsMap: Record<string, PendingAcceleratorInfo | number> = {}
+): OpportunityWithRelations[] {
+  return [...dealsList].sort((a, b) => {
+    // 1. Orange Card check (Urgent / Manager Call with pendingCount > 0)
+    const aInfo = pendingAcceleratorsMap[a.id];
+    const bInfo = pendingAcceleratorsMap[b.id];
+    const aPending = (typeof aInfo === 'number' ? aInfo : (aInfo?.count || 0)) > 0;
+    const bPending = (typeof bInfo === 'number' ? bInfo : (bInfo?.count || 0)) > 0;
+    if (aPending && !bPending) return -1;
+    if (!aPending && bPending) return 1;
+
+    // 2. Red Card check
+    const aRed = checkIsRedCard(a);
+    const bRed = checkIsRedCard(b);
+    if (aRed && !bRed) return -1;
+    if (!aRed && bRed) return 1;
+
+    // Sub-sort within Red Cards: longest overdue RedTimer first (earliest threshold date = smallest timestamp)
+    if (aRed && bRed) {
+      const aThreshold = getRedThreshold(a);
+      const bThreshold = getRedThreshold(b);
+      if (aThreshold && bThreshold) {
+        const diff = aThreshold.getTime() - bThreshold.getTime();
+        if (diff !== 0) return diff;
+      } else if (aThreshold && !bThreshold) {
+        return -1;
+      } else if (!aThreshold && bThreshold) {
+        return 1;
+      }
+    }
+
+    // 3. Normal Cards (or tie-breaker between same priority): latest activity/update first
+    const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    if (bTime !== aTime) {
+      return bTime - aTime;
+    }
+    return a.id.localeCompare(b.id);
+  });
 }
 
 import type { TabType } from "./EditDealPanel";
@@ -156,21 +197,7 @@ export function KanbanBoard({
     if (ownerFilter && ownerFilter !== 'ALL') {
       stageDeals = stageDeals.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
     }
-    stageDeals.sort((a, b) => {
-      const aInfo = pendingAcceleratorsMap[a.id];
-      const bInfo = pendingAcceleratorsMap[b.id];
-      const aPending = (typeof aInfo === 'number' ? aInfo : (aInfo?.count || 0)) > 0;
-      const bPending = (typeof bInfo === 'number' ? bInfo : (bInfo?.count || 0)) > 0;
-      if (aPending && !bPending) return -1;
-      if (!aPending && bPending) return 1;
-
-      const aRed = checkIsRedCard(a);
-      const bRed = checkIsRedCard(b);
-      if (aRed && !bRed) return -1;
-      if (!aRed && bRed) return 1;
-      return 0;
-    });
-    acc[stage.id] = stageDeals;
+    acc[stage.id] = sortDeals(stageDeals, pendingAcceleratorsMap);
     return acc;
   }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, pendingAcceleratorsMap]);
 
@@ -207,7 +234,12 @@ export function KanbanBoard({
     void preload("all-users", getAllUsers);
   }, []);
 
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+
   const handleOpenPanel = useCallback(async (deal: OpportunityWithRelations, tab: TabType) => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+      setSelectedCardId(deal.id);
+    }
     if (closingTimeout) clearTimeout(closingTimeout);
     await loadEditDealPanel();
     setActivePanelDeal({ deal, tab });
@@ -480,9 +512,16 @@ export function KanbanBoard({
               return opp;
             });
           },
-          { revalidate: true }
+          { revalidate: false }
         );
       } else if (data?.action === 'OPPORTUNITY_DELETED' && data.dealId) {
+        setDeals(prev => {
+          const next = { ...prev };
+          for (const colId in next) {
+            next[colId] = next[colId].filter(opp => opp.id !== data.dealId);
+          }
+          return next;
+        });
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             if (!currentData) return currentData;
@@ -588,8 +627,7 @@ export function KanbanBoard({
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } })
   );
 
   const findColumnOfDeal = useCallback((dealId: string) => {
@@ -651,36 +689,72 @@ export function KanbanBoard({
     setActiveDeal(null);
     setActiveWidth(0);
 
-    if (!over) return;
+    if (!over) {
+      if (dragOriginRef.current) {
+        setDeals(dragOriginRef.current);
+        dragOriginRef.current = null;
+      }
+      return;
+    }
 
     const activeId = active.id as string;
     const overId = over.id as string;
 
-    const columnId = findColumnOfDeal(activeId);
-    if (!columnId) return;
+    const originCol = dragOriginRef.current
+      ? Object.entries(dragOriginRef.current).find(([, items]) => items.some(d => d.id === activeId))?.[0]
+      : null;
 
-    const overCol = findColumnOfDeal(overId);
-    if (overCol === columnId && activeId !== overId) {
-      setDeals(prev => {
-        const items = [...prev[columnId]];
-        const activeIndex = items.findIndex(d => d.id === activeId);
-        const overIndex = items.findIndex(d => d.id === overId);
-        if (activeIndex !== -1 && overIndex !== -1) {
-          return { ...prev, [columnId]: arrayMove(items, activeIndex, overIndex) };
-        }
-        return prev;
-      });
+    let targetCol = findColumnOfDeal(activeId);
+    let overCol = findColumnOfDeal(overId);
+    if (!overCol && initialStages.some(c => c.id === overId)) {
+      overCol = overId;
+    }
+
+    if (overCol && overCol !== originCol) {
+      targetCol = overCol;
+    }
+
+    if (!targetCol) return;
+
+    if (originCol === targetCol) {
+      // Re-sort within same column according to system logic (Orange -> Red [longest overdue first] -> Normal)
+      setDeals(prev => ({
+        ...prev,
+        [targetCol]: sortDeals(prev[targetCol] || [], pendingAcceleratorsMap),
+      }));
+      dragOriginRef.current = null;
       return;
     }
+
+    // Moved across columns: place in destination column and sort according to logic
+    setDeals(prev => {
+      const next = { ...prev };
+      let draggedDeal: OpportunityWithRelations | undefined;
+      for (const colId of Object.keys(next)) {
+        const found = next[colId]?.find(d => d.id === activeId);
+        if (found) {
+          draggedDeal = found;
+          next[colId] = next[colId].filter(d => d.id !== activeId);
+        }
+      }
+      if (draggedDeal) {
+        const updatedDeal = { ...draggedDeal, pipelineStageId: targetCol };
+        next[targetCol] = sortDeals([...(next[targetCol] || []), updatedDeal], pendingAcceleratorsMap);
+      }
+      if (originCol && next[originCol]) {
+        next[originCol] = sortDeals(next[originCol], pendingAcceleratorsMap);
+      }
+      return next;
+    });
 
     try {
       await mutate(
         currentData => currentData?.map(deal =>
-          deal.id === activeId ? { ...deal, pipelineStageId: columnId } : deal
+          deal.id === activeId ? { ...deal, pipelineStageId: targetCol } : deal
         ),
         { revalidate: false }
       );
-      await moveOpportunity(activeId, columnId);
+      await moveOpportunity(activeId, targetCol);
     } catch (error: unknown) {
       const originalDeals = dragOriginRef.current;
       const originalDeal = originalDeals
@@ -701,7 +775,7 @@ export function KanbanBoard({
     } finally {
       dragOriginRef.current = null;
     }
-  }, [findColumnOfDeal, toast, mutate]);
+  }, [findColumnOfDeal, initialStages, pendingAcceleratorsMap, toast, mutate]);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const columnRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -786,6 +860,140 @@ export function KanbanBoard({
 
     return () => setColumnNavConfig(null);
   }, [isCompletedTab, initialStages, activeColumnIndex, scrollToColumn, setColumnNavConfig, deals]);
+
+  // Auto-scroll selected card into view smoothly
+  useEffect(() => {
+    if (!selectedCardId || panelOpen) return;
+    const el = document.getElementById(`deal-card-${selectedCardId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+  }, [selectedCardId, panelOpen]);
+
+  // Desktop Keyboard Navigation for Kanban Cards (Arrow keys & Enter)
+  useEffect(() => {
+    if (panelOpen || isCompletedTab) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input, textarea, select, or editable element
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")
+      ) {
+        return;
+      }
+
+      // Ignore if modifier keys are pressed
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
+      // Ignore if EditDealPanel or any drawer/modal is open
+      if (
+        document.body.dataset.dealPanelOpen === "true" ||
+        document.querySelector('[data-deal-panel-open="true"]')
+      ) {
+        return;
+      }
+
+      const isArrowKey = ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"].includes(e.key);
+      const isEnterKey = e.key === "Enter";
+      const isEscKey = e.key === "Escape";
+
+      if (!isArrowKey && !isEnterKey && !isEscKey) return;
+
+      if (isEscKey) {
+        if (selectedCardId) {
+          e.preventDefault();
+          setSelectedCardId(null);
+          if (document.activeElement && typeof (document.activeElement as HTMLElement).blur === 'function') {
+            (document.activeElement as HTMLElement).blur();
+          }
+        }
+        return;
+      }
+
+      // Map columns with their deals
+      const columnsWithDeals = initialStages.map((stage, idx) => ({
+        stageIdx: idx,
+        stageId: stage.id,
+        deals: deals[stage.id] || [],
+      }));
+
+      // Find current position of selected deal
+      let currentColIdx = -1;
+      let currentCardIdx = -1;
+      let currentDeal: OpportunityWithRelations | null = null;
+
+      if (selectedCardId) {
+        for (const col of columnsWithDeals) {
+          const cardIdx = col.deals.findIndex(d => d.id === selectedCardId);
+          if (cardIdx !== -1) {
+            currentColIdx = col.stageIdx;
+            currentCardIdx = cardIdx;
+            currentDeal = col.deals[cardIdx];
+            break;
+          }
+        }
+      }
+
+      if (isEnterKey) {
+        if (currentDeal) {
+          e.preventDefault();
+          handleOpenPanel(currentDeal, 'activity');
+        }
+        return;
+      }
+
+      if (isArrowKey) {
+        e.preventDefault();
+
+        // If no card is currently selected, select the first card in the first non-empty column
+        if (currentColIdx === -1 || currentCardIdx === -1) {
+          const firstNonEmpty = columnsWithDeals.find(c => c.deals.length > 0);
+          if (firstNonEmpty && firstNonEmpty.deals.length > 0) {
+            setSelectedCardId(firstNonEmpty.deals[0].id);
+            scrollToColumn(firstNonEmpty.stageIdx);
+          }
+          return;
+        }
+
+        const currentCol = columnsWithDeals[currentColIdx];
+
+        if (e.key === "ArrowDown") {
+          if (currentCardIdx < currentCol.deals.length - 1) {
+            setSelectedCardId(currentCol.deals[currentCardIdx + 1].id);
+          }
+        } else if (e.key === "ArrowUp") {
+          if (currentCardIdx > 0) {
+            setSelectedCardId(currentCol.deals[currentCardIdx - 1].id);
+          }
+        } else if (e.key === "ArrowRight") {
+          // Find next non-empty column to the right
+          const nextCols = columnsWithDeals.filter(c => c.stageIdx > currentColIdx && c.deals.length > 0);
+          if (nextCols.length > 0) {
+            const targetCol = nextCols[0];
+            const targetCardIdx = Math.min(currentCardIdx, targetCol.deals.length - 1);
+            setSelectedCardId(targetCol.deals[targetCardIdx].id);
+            scrollToColumn(targetCol.stageIdx);
+          }
+        } else if (e.key === "ArrowLeft") {
+          // Find previous non-empty column to the left
+          const prevCols = columnsWithDeals.filter(c => c.stageIdx < currentColIdx && c.deals.length > 0);
+          if (prevCols.length > 0) {
+            const targetCol = prevCols[prevCols.length - 1];
+            const targetCardIdx = Math.min(currentCardIdx, targetCol.deals.length - 1);
+            setSelectedCardId(targetCol.deals[targetCardIdx].id);
+            scrollToColumn(targetCol.stageIdx);
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [panelOpen, isCompletedTab, initialStages, deals, selectedCardId, handleOpenPanel, scrollToColumn]);
 
   if (isLoading && !rawOpportunities && (!initialOpportunities || initialOpportunities.length === 0)) {
     return (
@@ -872,7 +1080,13 @@ export function KanbanBoard({
                   id={col.id} 
                   title={col.name} 
                   deals={deals[col.id] || []} 
-                  onDealClick={(deal, tab) => handleOpenPanel(deal, (tab || 'activity') as TabType)}
+                  selectedCardId={selectedCardId}
+                  onDealClick={(deal, tab) => {
+                    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+                      setSelectedCardId(deal.id);
+                    }
+                    handleOpenPanel(deal, (tab || 'activity') as TabType);
+                  }}
                   isScrollable={true}
                   currentUserId={currentUserId}
                   currentUserRole={currentUserRole}
@@ -912,7 +1126,7 @@ export function KanbanBoard({
                 const source = currentData || (tab === initialTab ? (initialOpportunities || []) : []);
                 return source.filter(d => d.id !== dealId);
               },
-              { revalidate: true }
+              { revalidate: false }
             );
           }}
         />

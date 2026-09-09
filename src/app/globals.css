@@ -99,4 +99,17 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #6b6c6d;
   }
+
+  /* Prevent browser focus outline on Kanban cards */
+  [data-deal-id],
+  [id^="deal-card-"] {
+    outline: none !important;
+    -webkit-tap-highlight-color: transparent;
+  }
+  [data-deal-id]:focus,
+  [data-deal-id]:focus-visible,
+  [id^="deal-card-"]:focus,
+  [id^="deal-card-"]:focus-visible {
+    outline: none !important;
+  }
 }

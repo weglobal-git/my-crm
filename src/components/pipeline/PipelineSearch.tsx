@@ -55,20 +55,53 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
     }
   }, [isExpanded]);
 
-  // Keyboard shortcut: Press 'S' or 'ห' on desktop to open search and focus input
+  const isExpandedRef = useRef(isExpanded);
+  isExpandedRef.current = isExpanded;
+
+  const termRef = useRef(term);
+  termRef.current = term;
+
+  const handleClearAndClose = useCallback(() => {
+    setTerm("");
+    setLastEmitted("");
+    onSearch("");
+    setIsExpanded(false);
+    if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+      (document.activeElement as HTMLElement).blur();
+    }
+  }, [onSearch]);
+
+  // Keyboard shortcut: Press 'S' or 'ห' on desktop to open search, and 'Escape' to clear and close
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if modifier keys are pressed (Cmd+S, Ctrl+S, Alt+S)
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
+      // Ignore if EditDealPanel is open
+      if (
+        document.body.dataset.dealPanelOpen === "true" ||
+        document.querySelector('[data-deal-panel-open="true"]')
+      ) {
+        return;
+      }
+
+      // ESCAPE key on window: if search is expanded or has a term, clear and close it!
+      if (e.key === "Escape") {
+        if (isExpandedRef.current || termRef.current.trim() !== "") {
+          e.preventDefault();
+          handleClearAndClose();
+          return;
+        }
+      }
+
       // Ignore if user is already focused in an input, textarea, select, or editable element
       const target = e.target as HTMLElement | null;
       if (
         target?.isContentEditable ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")
       ) {
-        return;
-      }
-
-      // Ignore if modifier keys are pressed (Cmd+S, Ctrl+S, Alt+S)
-      if (e.metaKey || e.ctrlKey || e.altKey) {
         return;
       }
 
@@ -91,14 +124,7 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  const handleClearAndClose = useCallback(() => {
-    setTerm("");
-    setLastEmitted("");
-    onSearch("");
-    setIsExpanded(false);
-  }, [onSearch]);
+  }, [handleClearAndClose]);
 
   // Click outside listener: collapse if input is empty
   useEffect(() => {
@@ -146,7 +172,11 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
         onChange={(e) => setTerm(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
             handleClearAndClose();
+          } else if (e.key === "ArrowDown" || e.key === "Enter") {
+            inputRef.current?.blur();
           }
         }}
       />

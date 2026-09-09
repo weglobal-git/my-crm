@@ -12,7 +12,8 @@ import {
   Loader2,
   SlidersHorizontal,
   ArrowRight,
-  Check
+  Check,
+  FileText
 } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { updateOpportunity, moveOpportunity, deleteOpportunity, addSystemLog } from "@/lib/actions/opportunity";
@@ -25,10 +26,11 @@ export interface DealActionsDrawerProps {
   deal: OpportunityWithRelations;
   canCloseDeal: boolean;
   canConvert: boolean;
+  canConvertToInternal?: boolean;
   canDelete: boolean;
   onNavigateToInformation?: () => void;
   onDealClosed?: (dealId: string, status: "WON" | "LOST") => void;
-  onDealConverted?: () => void;
+  onDealConverted?: (newType?: string) => void;
   onDealDeleted?: (dealId: string) => void;
 }
 
@@ -38,6 +40,7 @@ export function DealActionsDrawer({
   deal,
   canCloseDeal,
   canConvert,
+  canConvertToInternal,
   canDelete,
   onNavigateToInformation,
   onDealClosed,
@@ -113,129 +116,180 @@ export function DealActionsDrawer({
   }
   const isWonValid = !isSalesDeal || missingWonFields.length === 0;
 
-  // Handle Mark as Won
+  // Handle Mark as Won (Optimistic UI < 10ms)
   const handleConfirmWon = async () => {
     if (isSubmittingClose || !isWonValid) return;
-    setIsSubmittingClose(true);
 
+    // 1. Optimistic UI: remove from board cache instantly with zero network delay
+    void mutate(
+      (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
+      (currentDeals: OpportunityWithRelations[] | undefined) => {
+        if (!currentDeals) return currentDeals;
+        return currentDeals.filter(d => d.id !== deal.id);
+      },
+      false
+    );
+
+    // 2. Immediate feedback & close
+    onDealClosed?.(deal.id, "WON");
+    onClose();
+    toast({
+      title: "Deal Marked as Won",
+      description: `"${deal.topic}" has been completed and moved to Completed.`,
+      type: "success",
+    });
+
+    // 3. Background server execution
     try {
       await moveOpportunity(deal.id, null, "WON");
-
-      toast({
-        title: "Deal Marked as Won",
-        description: `"${deal.topic}" has been completed and moved to Completed.`,
-        type: "success",
-      });
-
-      // Optimistic callback & SWR cache update
-      onDealClosed?.(deal.id, "WON");
-      void mutate(
-        (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
-        undefined,
-        { revalidate: true }
-      );
       void mutate(["opportunity", deal.id]);
-      onClose();
     } catch (e) {
+      void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to mark deal as Won";
       toast({ title: "Error", description: msg, type: "error" });
-    } finally {
-      setIsSubmittingClose(false);
     }
   };
 
-  // Handle Mark as Lost
+  // Handle Mark as Lost (Optimistic UI < 10ms)
   const handleConfirmLost = async () => {
     if (isSubmittingClose || !lossReason.trim()) return;
-    setIsSubmittingClose(true);
 
+    const trimmedReason = lossReason.trim();
+
+    // 1. Optimistic UI: remove from board cache instantly with zero network delay
+    void mutate(
+      (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
+      (currentDeals: OpportunityWithRelations[] | undefined) => {
+        if (!currentDeals) return currentDeals;
+        return currentDeals.filter(d => d.id !== deal.id);
+      },
+      false
+    );
+
+    // 2. Immediate feedback & close
+    onDealClosed?.(deal.id, "LOST");
+    onClose();
+    toast({
+      title: "Deal Marked as Lost",
+      description: `"${deal.topic}" has been marked as Lost and archived.`,
+      type: "success",
+    });
+
+    // 3. Background server execution (single fast call with lossReason)
     try {
-      await updateOpportunity(deal.id, { lossReason: lossReason.trim() });
-      await moveOpportunity(deal.id, null, "LOST");
-
-      toast({
-        title: "Deal Marked as Lost",
-        description: `"${deal.topic}" has been marked as Lost and archived.`,
-        type: "success",
-      });
-
-      // Optimistic callback & SWR cache update
-      onDealClosed?.(deal.id, "LOST");
-      void mutate(
-        (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
-        undefined,
-        { revalidate: true }
-      );
+      await moveOpportunity(deal.id, null, "LOST", trimmedReason);
       void mutate(["opportunity", deal.id]);
-      onClose();
     } catch (e) {
+      void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to mark deal as Lost";
       toast({ title: "Error", description: msg, type: "error" });
-    } finally {
-      setIsSubmittingClose(false);
     }
   };
 
-  // Handle Convert to Sales Deal
+  // Handle Convert to Sales Deal (Optimistic UI < 10ms)
   const handleConvert = async () => {
     if (isConverting) return;
-    setIsConverting(true);
 
+    // 1. Optimistic UI: update card type in board cache instantly
+    void mutate(
+      (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
+      (currentDeals: OpportunityWithRelations[] | undefined) => {
+        if (!currentDeals) return currentDeals;
+        return currentDeals.map(d => d.id === deal.id ? { ...d, type: "SALES_DEAL" as const } : d);
+      },
+      false
+    );
+
+    // 2. Immediate feedback & switch tabs
+    onDealConverted?.("SALES_DEAL");
+    onClose();
+    toast({
+      title: "Converted to Sales Deal",
+      description: `"${deal.topic}" is now a Sales Deal.`,
+      type: "success",
+    });
+
+    // 3. Background server execution (parallel fire-and-forget system log)
     try {
       await updateOpportunity(deal.id, { type: "SALES_DEAL" });
-      await addSystemLog(deal.id, "Converted opportunity type from Internal Task to Sales Deal.");
-
-      toast({
-        title: "Converted to Sales Deal",
-        description: `"${deal.topic}" is now a Sales Deal.`,
-        type: "success",
-      });
-
-      onDealConverted?.();
-      void mutate(
-        (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
-        undefined,
-        { revalidate: true }
-      );
+      void addSystemLog(deal.id, "Converted opportunity type from Internal Task to Sales Deal.").catch(() => {});
       void mutate(["opportunity", deal.id]);
-      onClose();
     } catch (e) {
+      void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to convert deal";
       toast({ title: "Error", description: msg, type: "error" });
-    } finally {
-      setIsConverting(false);
     }
   };
 
-  // Handle Delete Deal
+  // Handle Convert to Internal Task (Admin Only, Optimistic UI < 10ms)
+  const handleConvertToInternal = async () => {
+    if (isConverting) return;
+
+    // 1. Optimistic UI: update card type in board cache instantly
+    void mutate(
+      (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
+      (currentDeals: OpportunityWithRelations[] | undefined) => {
+        if (!currentDeals) return currentDeals;
+        return currentDeals.map(d => d.id === deal.id ? { ...d, type: "INTERNAL_TASK" as const } : d);
+      },
+      false
+    );
+
+    // 2. Immediate feedback & switch tabs
+    onDealConverted?.("INTERNAL_TASK");
+    onClose();
+    toast({
+      title: "Converted to Internal Task",
+      description: `"${deal.topic}" is now an Internal Task.`,
+      type: "success",
+    });
+
+    // 3. Background server execution (parallel fire-and-forget system log)
+    try {
+      await updateOpportunity(deal.id, { type: "INTERNAL_TASK" });
+      void addSystemLog(deal.id, "Converted opportunity type from Sales Deal to Internal Task by System Admin.").catch(() => {});
+      void mutate(["opportunity", deal.id]);
+    } catch (e) {
+      void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
+      const msg = e instanceof Error ? e.message : "Failed to convert deal";
+      toast({ title: "Error", description: msg, type: "error" });
+    }
+  };
+
+  // Handle Delete Deal (Optimistic UI < 10ms)
   const handleDelete = async () => {
     if (isDeleting || !confirmDeleteChecked) return;
-    setIsDeleting(true);
 
+    // 1. Optimistic UI: remove card from board cache instantly
+    void mutate(
+      (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
+      (currentDeals: OpportunityWithRelations[] | undefined) => {
+        if (!currentDeals) return currentDeals;
+        return currentDeals.filter(d => d.id !== deal.id);
+      },
+      false
+    );
+
+    // 2. Immediate feedback & close
+    onDealDeleted?.(deal.id);
+    onClose();
+    toast({
+      title: "Deal Deleted",
+      description: `"${deal.topic}" was deleted permanently.`,
+      type: "success",
+    });
+
+    // 3. Background server execution
     try {
       await deleteOpportunity(deal.id);
-      toast({
-        title: "Deal Deleted",
-        description: `"${deal.topic}" was deleted permanently.`,
-        type: "success",
-      });
-
-      onDealDeleted?.(deal.id);
-      void mutate(
-        (key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")),
-        undefined,
-        { revalidate: true }
-      );
-      onClose();
     } catch (e) {
+      void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to delete deal";
       toast({ title: "Error", description: msg, type: "error" });
-    } finally {
-      setIsDeleting(false);
     }
   };
 
-  const hasAnyActions = canCloseDeal || canConvert || canDelete;
+  const hasAnyActions = canCloseDeal || canConvert || canConvertToInternal || canDelete;
 
   return (
     <>
@@ -431,41 +485,78 @@ export function DealActionsDrawer({
                   </div>
                 )}
 
-                {/* 2. Convert to Sales Deal Section */}
-                {canConvert && (
+                {/* 2. Convert Deal Type Section */}
+                {(canConvert || canConvertToInternal) && (
                   <div className="space-y-2">
                     <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider pl-1">
-                      Convert Deal Type
+                      Convert Deal Type {canConvertToInternal ? "(Admin Only)" : ""}
                     </label>
-                    <div className="bg-[#1E1F20] border border-[#3A3B3C] rounded-xl p-4 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <Briefcase className="w-4 h-4 text-slate-400" />
-                        <span className="text-xs font-semibold text-slate-200">
-                          Convert to Sales Deal
-                        </span>
+
+                    {/* Convert to Sales Deal */}
+                    {canConvert && (
+                      <div className="bg-[#1E1F20] border border-[#3A3B3C] rounded-xl p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Briefcase className="w-4 h-4 text-slate-400" />
+                          <span className="text-xs font-semibold text-slate-200">
+                            Convert to Sales Deal
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Upgrade this task to an active Sales Deal to link customer accounts, track quotation stages, and record revenue.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleConvert}
+                          disabled={isConverting}
+                          className="w-full py-2.5 rounded-xl bg-[#2A2B2D] hover:bg-[#3A3B3C] text-slate-200 hover:text-white border border-[#4E4F50] font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {isConverting ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin text-slate-300" />
+                              <span>Converting...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Briefcase className="w-4 h-4 text-slate-400" />
+                              <span>Convert to Sales Deal</span>
+                            </>
+                          )}
+                        </button>
                       </div>
-                      <p className="text-xs text-slate-400 leading-relaxed">
-                        Upgrade this task to an active Sales Deal to link customer accounts, track quotation stages, and record revenue. Once converted, it cannot be reverted back.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={handleConvert}
-                        disabled={isConverting}
-                        className="w-full py-2.5 rounded-xl bg-[#2A2B2D] hover:bg-[#3A3B3C] text-slate-200 hover:text-white border border-[#4E4F50] font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {isConverting ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-slate-300" />
-                            <span>Converting...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Briefcase className="w-4 h-4 text-slate-400" />
-                            <span>Confirm Convert to Sales Deal</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
+                    )}
+
+                    {/* Convert to Internal Task (Admin Only) */}
+                    {canConvertToInternal && (
+                      <div className="bg-[#1E1F20] border border-[#3A3B3C] rounded-xl p-4 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-amber-400" />
+                          <span className="text-xs font-semibold text-slate-200">
+                            Convert to Internal Task
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          Change this Sales Deal to an Internal Task. Existing sales details (deal value, loading dates, invoice number) will remain safely preserved in the database if you ever switch it back.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleConvertToInternal}
+                          disabled={isConverting}
+                          className="w-full py-2.5 rounded-xl bg-[#2A2B2D] hover:bg-[#3A3B3C] text-slate-200 hover:text-white border border-[#4E4F50] font-semibold text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {isConverting ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin text-slate-300" />
+                              <span>Converting...</span>
+                            </>
+                          ) : (
+                            <>
+                              <FileText className="w-4 h-4 text-amber-400" />
+                              <span>Convert to Internal Task</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 

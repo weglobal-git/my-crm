@@ -11,7 +11,7 @@ import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, u
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { MemberSelectDrawer } from "./MemberSelectDrawer";
-import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo, Fragment } from "react";
 import useSWR, { useSWRConfig, mutate, preload } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
@@ -28,7 +28,8 @@ import { EditDealSubBar, SubBarTab, SubBarActionItem } from "./EditDealSubBar";
 import { DealActionsDrawer } from "./DealActionsDrawer";
 import { ChatAttachmentButton } from "./ChatAttachmentButton";
 import { AcceleratorQuestionCard } from "./AcceleratorQuestionCard";
-import { HighlightText } from "@/components/ui/HighlightText";
+import { HighlightText, renderCommentText } from "@/components/ui/HighlightText";
+export { renderCommentText };
 import { pusherClient } from "@/lib/pusher";
 import { useSwipeToClose } from "@/hooks/useSwipeToClose";
 import {
@@ -54,21 +55,6 @@ const formatShortDueDate = (date: Date | string) => {
 };
 
 const MIN_DUE_DATE_REASON_LENGTH = 10;
-
-const renderCommentText = (text: string, highlight: string = '') => {
-  if (!text) return null;
-  const parts = text.split(/(@\S+)/g);
-  return parts.map((part, index) => {
-    if (part.startsWith('@')) {
-      return (
-        <span key={index} className="font-bold text-black bg-[#C7F33C] px-1.5 py-1 rounded-md text-xs mx-0.5 ">
-          {part}
-        </span>
-      );
-    }
-    return <HighlightText key={index} text={part} highlight={highlight} />;
-  });
-};
 
 function ImageGrid({ images, onImageClick }: { images: {url: string, filename: string, type: string}[], onImageClick?: (url: string, index?: number, allUrls?: string[]) => void }) {
   if (images.length === 0) return null;
@@ -817,7 +803,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   const canDelete = isAdmin || isOwner;
   const canCloseDeal = (isAdmin || isOwner || isManagerOfOwner) && deal.status === "OPEN";
   const canConvert = deal.status === "OPEN" && dealType === 'INTERNAL_TASK' && (isOwner || isAdmin || isManagerOfOwner) && (canUseSalesDeal || isAdmin);
-  const hasCardActions = Boolean(canCloseDeal || canConvert || canDelete);
+  const canConvertToInternal = isAdmin && deal.status === "OPEN" && dealType === 'SALES_DEAL';
+  const hasCardActions = Boolean(canCloseDeal || canConvert || canConvertToInternal || canDelete);
   const canEditDueDate = isOwner || isAdmin;
   const canUseManagerCall = Boolean(isAdmin || isManagerOfOwner);
 
@@ -2352,6 +2339,168 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     }
   }, [isOpen]);
 
+  // Set body dataset attribute for global query/check
+  useEffect(() => {
+    if (isOpen) {
+      document.body.dataset.dealPanelOpen = "true";
+      return () => {
+        delete document.body.dataset.dealPanelOpen;
+      };
+    }
+  }, [isOpen]);
+
+  // Desktop Keyboard Shortcuts inside EditDealPanel
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. ESCAPE key: close panel or sub-modals
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (previewLightbox) {
+          setPreviewLightbox(null);
+          return;
+        }
+        if (showCalendar) {
+          setShowCalendar(false);
+          return;
+        }
+        if (isActionsDrawerOpen) {
+          setIsActionsDrawerOpen(false);
+          return;
+        }
+        if (showInviteDrawer) {
+          setShowInviteDrawer(false);
+          return;
+        }
+        if (showTransferDrawer) {
+          setShowTransferDrawer(false);
+          return;
+        }
+        if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+          (document.activeElement as HTMLElement).blur();
+        }
+        onClose();
+        return;
+      }
+
+      // Check if user is currently typing in an input/textarea
+      const target = e.target as HTMLElement | null;
+      const isInputFocused = Boolean(
+        target?.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")
+      );
+
+      // 2. "T" or "ะ" key: Focus textarea to type (Activity or Note or whatever tab is active)
+      const isTKey = e.key === 't' || e.key === 'T' || e.key === 'ะ' || e.code === 'KeyT';
+      if (!isInputFocused && isTKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        if (activeTab === 'activity' || activeTab === 'system' || activeTab === 'manager-call') {
+          inputRef.current?.focus();
+        } else {
+          const panelEl = document.querySelector('[data-deal-panel-open="true"]');
+          const ta = panelEl?.querySelector('textarea:not([disabled])') as HTMLTextAreaElement | null;
+          if (ta) {
+            ta.focus();
+          } else {
+            const firstInput = panelEl?.querySelector('input:not([disabled]):not([type="hidden"])') as HTMLInputElement | null;
+            firstInput?.focus();
+          }
+        }
+        return;
+      }
+
+      // 3. TAB key: Switch sub-tabs in EditDealSubBar
+      if (e.key === 'Tab') {
+        // Do not intercept if user is in a form input (e.g. Customer info inputs)
+        if (target?.tagName === 'INPUT') {
+          return;
+        }
+
+        // Sub-tabs for Activity/System/Manager
+        const isActivityGroup = activeTab === 'activity' || activeTab === 'system' || activeTab === 'manager-call';
+        if (isActivityGroup) {
+          e.preventDefault();
+          if (isInputFocused) target?.blur();
+          const activitySubTabs: TabType[] = ['activity', 'system'];
+          if (canUseManagerCall) activitySubTabs.push('manager-call');
+          const currentIdx = activitySubTabs.indexOf(activeTab);
+          const nextIdx = e.shiftKey
+            ? (currentIdx - 1 + activitySubTabs.length) % activitySubTabs.length
+            : (currentIdx + 1) % activitySubTabs.length;
+          setActiveTab(activitySubTabs[nextIdx]);
+          return;
+        }
+
+        // Sub-tabs for SharedMedia
+        if (activeTab === 'sharedMedia') {
+          e.preventDefault();
+          if (isInputFocused) target?.blur();
+          const mediaTabs: ("images" | "links" | "files")[] = ['images', 'links', 'files'];
+          const currentIdx = mediaTabs.indexOf(sharedMediaSubTab);
+          const nextIdx = e.shiftKey
+            ? (currentIdx - 1 + mediaTabs.length) % mediaTabs.length
+            : (currentIdx + 1) % mediaTabs.length;
+          setSharedMediaSubTab(mediaTabs[nextIdx]);
+          return;
+        }
+
+        // Sub-tabs for Summary
+        if (activeTab === 'summary' && isAdmin) {
+          e.preventDefault();
+          if (isInputFocused) target?.blur();
+          const summaryTabs: ("summary" | "prompt")[] = ['summary', 'prompt'];
+          const currentIdx = summaryTabs.indexOf(summaryViewMode);
+          const nextIdx = (currentIdx + 1) % summaryTabs.length;
+          setSummaryViewMode(summaryTabs[nextIdx]);
+          if (summaryTabs[nextIdx] === 'prompt') {
+            void handleLoadPromptConfig();
+          }
+          return;
+        }
+      }
+
+      // 4. ARROW UP / ARROW DOWN: Switch Tab Sidebar menu
+      // MUST NOT INTERCEPT if user is currently typing in an input/textarea!
+      if (!isInputFocused && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        e.preventDefault();
+
+        // Extract available tab IDs from rightMenus
+        const sidebarTabs: TabType[] = rightMenus.map(m => m.key.split('.').pop() as TabType);
+        if (sidebarTabs.length === 0) return;
+
+        // Current tab in sidebar (if system or manager-call, mapped to activity in sidebar)
+        const currentSidebarTab = (activeTab === 'system' || activeTab === 'manager-call') ? 'activity' : activeTab;
+        const currentIdx = sidebarTabs.indexOf(currentSidebarTab);
+
+        const nextIdx = e.key === 'ArrowDown'
+          ? (currentIdx + 1) % sidebarTabs.length
+          : (currentIdx - 1 + sidebarTabs.length) % sidebarTabs.length;
+
+        setActiveTab(sidebarTabs[nextIdx]);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    isOpen,
+    activeTab,
+    rightMenus,
+    sharedMediaSubTab,
+    summaryViewMode,
+    canUseManagerCall,
+    isAdmin,
+    previewLightbox,
+    showCalendar,
+    isActionsDrawerOpen,
+    showInviteDrawer,
+    showTransferDrawer,
+    onClose,
+    handleLoadPromptConfig
+  ]);
+
   if (!isOpen && !mounted) return null;
 
   return (
@@ -2376,6 +2525,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       />
 
       <div
+        data-deal-panel-open={internalIsOpen && !isDismissed ? "true" : undefined}
         {...swipeHandlers}
         style={
           isDismissed
@@ -2394,9 +2544,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         }
         className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[600px] md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${internalIsOpen && !isDismissed ? "opacity-100 translate-y-0 md:translate-x-0 scale-100" : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"}`}
       >
-        <div className="flex flex-col md:flex-row w-full h-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C]">
-          {/* Tab Sidebar (desktop only) */}
-          <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-3 gap-3 z-10 shrink-0">
+        <div className="flex flex-col w-full h-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C]">
+          {/* Top Row: Tab Sidebar + Main Panel Content */}
+          <div className="flex flex-col md:flex-row w-full flex-1 min-h-0 overflow-hidden">
+            {/* Tab Sidebar (desktop only) */}
+            <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-3 gap-3 z-10 shrink-0 overflow-y-auto hide-scrollbar">
           {rightMenus.map(menu => {
             const tabId = menu.key.split('.').pop() as TabType;
             const Icon = tabId === 'summary' || menu.key === 'pipeline.summary' 
@@ -3203,7 +3355,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                                 <strong className="text-slate-300">{log.user?.name || 'System'}</strong> • {formatDateTime(log.createdAt)}
                               </span>
                               <p className="text-[13px] text-slate-300 font-medium italic whitespace-pre-wrap">
-                                <HighlightText text={log.content?.trim() || ''} highlight={activitySearchQuery} />
+                                {renderCommentText(log.content?.trim() || '', activitySearchQuery)}
                               </p>
                             </div>
                             {session?.user?.role === 'ADMIN' && (
@@ -3432,10 +3584,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
               />
             )}
           </div>
+        </div>
+      </div>
 
-          {/* Sticky Footer for Activity Tab */}
-          {activeTab === 'activity' && (
-            <div className="bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative">
+      {/* Sticky Footer for Activity Tab (Full width across bottom of panel) */}
+      {activeTab === 'activity' && (
+        <div className="bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative">
 
               {/* Mini Calendar Popup */}
               {canEditDueDate && showCalendar && (
@@ -3602,7 +3756,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
               )}
 
               {/* Auto-expanding Chat Input (LINE / WhatsApp style) */}
-              <div {...getRootProps()} className={`flex items-end gap-1 bg-[#3A3B3C] px-1 py-1.5 border transition-all ${
+              <div {...getRootProps()} className={`flex items-end gap-1 bg-[#3A3B3C] px-2 py-1.5 border transition-all ${
                 isManagerCallMode 
                   ? 'border-[#F59E0B] bg-[#342a1d]' 
                   : pendingDueDate 
@@ -3765,6 +3919,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
             </div>
           )}
 
+          {/* Notes Tab Bottom Dock (Full width across bottom of panel) */}
+          <div id="deal-panel-notes-dock" className="w-full shrink-0 z-10 empty:hidden" />
+
           {/* Mobile Bottom Tab Bar (Icons only - no text) */}
           {rightMenus.length > 0 && (
             <div className="flex md:hidden w-full h-12 border-t border-[#1C1C1D] bg-[#252728] items-center justify-around p-3 shrink-0 z-10">
@@ -3794,8 +3951,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
               })}
             </div>
           )}
-
-        </div>
         </div>
       </div>
 
@@ -3908,6 +4063,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         deal={deal}
         canCloseDeal={canCloseDeal}
         canConvert={canConvert}
+        canConvertToInternal={canConvertToInternal}
         canDelete={canDelete}
         onNavigateToInformation={() => setActiveTab('information')}
         onDealClosed={(dealId, status) => {
@@ -3915,10 +4071,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
           onDealClosed?.(dealId, status);
           onClose();
         }}
-        onDealConverted={() => {
-          setDealType(OpportunityType.SALES_DEAL);
+        onDealConverted={(newType) => {
+          const targetType = (newType as OpportunityType) || (dealType === 'INTERNAL_TASK' ? OpportunityType.SALES_DEAL : OpportunityType.INTERNAL_TASK);
+          setDealType(targetType);
           setIsActionsDrawerOpen(false);
-          setActiveTab('information');
+          if (targetType === OpportunityType.SALES_DEAL) {
+            setActiveTab('information');
+          } else {
+            setActiveTab('activity');
+          }
         }}
         onDealDeleted={(dealId) => {
           setIsActionsDrawerOpen(false);

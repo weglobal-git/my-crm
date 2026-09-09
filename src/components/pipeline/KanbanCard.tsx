@@ -119,11 +119,14 @@ export function checkIsRedCard(deal: OpportunityWithRelations) {
 
 interface KanbanCardProps {
   deal: OpportunityWithRelations;
+  isSelected?: boolean;
   onOpenPanel?: (tab: string) => void;
   onPanelIntent?: () => void;
+  currentUserId?: string;
+  currentUserRole?: string;
 }
 
-function getRedThreshold(deal: OpportunityWithRelations): Date | null {
+export function getRedThreshold(deal: OpportunityWithRelations): Date | null {
   if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
     return null;
   }
@@ -205,7 +208,7 @@ function RedTimer({ threshold }: { threshold: Date }) {
 
 import React from 'react';
 
-export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging, onOpenPanel, onPanelIntent }: KanbanCardProps & { isDragging?: boolean }) {
+export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging, isSelected, onOpenPanel, onPanelIntent }: KanbanCardProps & { isDragging?: boolean }) {
   const { visibleRightMenus } = usePermissions();
   const rightMenus = visibleRightMenus('pipeline') || [];
   const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
@@ -250,10 +253,14 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
 
   return (
     <div
+      id={`deal-card-${deal.id}`}
+      data-deal-id={deal.id}
+      style={{ outline: 'none' }}
       className={`
-        flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card h-[220px]
+        flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card h-[220px] transition-all duration-150 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none
         ${isOrange ? "bg-[#F59E0B]" : highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
+        ${isSelected ? "md:ring-2 md:ring-white md:ring-offset-2 md:ring-offset-[#1C1C1D] md:shadow-2xl md:shadow-black/80 md:scale-[1.015] md:z-20" : ""}
       `}
       onClick={() => onOpenPanel?.('')}
       onMouseEnter={handlePrefetch}
@@ -484,7 +491,14 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   );
 });
 
-export const KanbanCard = React.memo(function KanbanCard({ deal, onOpenPanel, onPanelIntent, currentUserId, currentUserRole }: KanbanCardProps & { currentUserId?: string, currentUserRole?: string }) {
+export const KanbanCard = React.memo(function KanbanCard({ 
+  deal, 
+  isSelected,
+  onOpenPanel, 
+  onPanelIntent, 
+  currentUserId, 
+  currentUserRole 
+}: KanbanCardProps) {
   const canDrag = currentUserRole === 'ADMIN' || deal.ownerId === currentUserId;
 
   const {
@@ -511,14 +525,22 @@ export const KanbanCard = React.memo(function KanbanCard({ deal, onOpenPanel, on
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={{ ...style, outline: 'none' }}
       {...attributes}
+      tabIndex={-1}
       {...(canDrag ? listeners : {})}
       onPointerEnter={onPanelIntent}
       onFocusCapture={onPanelIntent}
-      className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      data-deal-id={deal.id}
+      className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0`}
     >
-      <KanbanCardUI deal={deal} isDragging={isDragging} onOpenPanel={onOpenPanel} onPanelIntent={onPanelIntent} />
+      <KanbanCardUI 
+        deal={deal} 
+        isDragging={isDragging} 
+        isSelected={isSelected}
+        onOpenPanel={onOpenPanel} 
+        onPanelIntent={onPanelIntent} 
+      />
     </div>
   );
 });
