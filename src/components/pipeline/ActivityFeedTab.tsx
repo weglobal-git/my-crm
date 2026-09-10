@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import useSWR, { useSWRConfig } from 'swr';
+import useSWR, { useSWRConfig, type KeyedMutator } from 'swr';
 import { useDropzone } from 'react-dropzone';
 import imageCompression from 'browser-image-compression';
 import {
@@ -20,6 +20,7 @@ import type { Session } from 'next-auth';
 import type { OpportunityWithRelations } from '@/components/pipeline/KanbanCard';
 import type { DealAcceleratorsState, AcceleratorQuestion } from '@/lib/actions/ai-accelerator';
 import { createManagerCallQuestion } from '@/lib/actions/ai-accelerator';
+import type { DealSummaryResponse } from '@/lib/actions/deal-summary';
 import { getNotes } from '@/lib/actions/notes';
 import { getIncompleteTodosCount, type DealTodoNote } from '@/lib/deal-todo-sync';
 import { addActivityLog, updateDueDateWithLog } from '@/lib/actions/opportunity';
@@ -58,8 +59,7 @@ export interface ActivityFeedTabProps {
   acceleratorsResponse?: { data?: DealAcceleratorsState };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mutateAccelerators: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mutateDealSummary: any;
+  mutateDealSummary?: KeyedMutator<DealSummaryResponse>;
   pendingQuestions: AcceleratorQuestion[];
   getElapsedWaitText: () => string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -128,15 +128,15 @@ export function ActivityFeedTab({
   const [dockEl, setDockEl] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
-    setDockEl(document.getElementById('deal-panel-activity-dock'));
+    queueMicrotask(() => {
+      setDockEl(document.getElementById('deal-panel-activity-dock'));
+    });
   }, []);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const calendarRef = useRef<HTMLDivElement>(null);
   const isSubmittingLogRef = useRef(false);
   const isSendingManagerCallRef = useRef(false);
-  const isManagerCallModeRef = useRef(isManagerCallMode);
-  isManagerCallModeRef.current = isManagerCallMode;
 
   const adjustTextareaHeight = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -199,7 +199,6 @@ export function ActivityFeedTab({
       adjustTextareaHeight(inputRef.current);
     }
     setIsManagerCallMode(false);
-    isManagerCallModeRef.current = false;
 
     // 2. Optimistic UI (< 10ms): Render question instantly without waiting for network
     const optimisticQId = `acc_mgr_${Date.now()}`;
@@ -388,13 +387,6 @@ export function ActivityFeedTab({
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    if (!currentDueDate && deal.dueDate) {
-      const dueMidnight = new Date(deal.dueDate);
-      dueMidnight.setHours(0, 0, 0, 0);
-      if (dueMidnight <= today) {
-        deal.dueDate = null as unknown as Date;
-      }
-    }
 
     mutate(
       (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
@@ -423,8 +415,8 @@ export function ActivityFeedTab({
     );
 
     // Notify AI Summary
-    mutateDealSummary(
-      (current: any) => {
+    void mutateDealSummary?.(
+      (current) => {
         if (!current?.data) return current;
         return {
           ...current,
@@ -648,6 +640,16 @@ export function ActivityFeedTab({
   const sortedYears = Object.keys(groupedComments)
     .map(Number)
     .sort((a, b) => b - a);
+
+  const activeDueDate =
+    pendingDueDate && pendingDueDate !== 'REMOVE'
+      ? pendingDueDate
+      : !pendingDueDate && deal.dueDate
+      ? deal.dueDate
+      : null;
+  const isDuePending = Boolean(pendingDueDate);
+  const isDueValid = isDuePending ? newLog.trim().length >= MIN_DUE_DATE_REASON_LENGTH : true;
+  const hasSubmitContent = isDuePending ? true : newLog.trim().length > 0 || pendingAttachments.length > 0;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 h-full">
@@ -1037,37 +1039,27 @@ export function ActivityFeedTab({
                 }}
               />
             )}
-            {canEditDueDate &&
-              !isManagerCallMode &&
-              (() => {
-                const activeDueDate =
-                  pendingDueDate && pendingDueDate !== 'REMOVE'
-                    ? pendingDueDate
-                    : !pendingDueDate && deal.dueDate
-                    ? deal.dueDate
-                    : null;
-                return (
-                  <button
-                    type="button"
-                    onClick={() => setShowCalendar(!showCalendar)}
-                    title={activeDueDate ? `Due: ${formatShortDueDate(activeDueDate)} (Click to change)` : 'Set Due Date'}
-                    className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-                      pendingDueDate === 'REMOVE'
-                        ? 'bg-red-500/20 text-red-400 border border-red-500/40 text-xs px-2.5 gap-1.5'
-                        : activeDueDate
-                        ? 'bg-[#C7F33C] text-black font-bold text-xs px-2.5 gap-1.5'
-                        : 'w-7 px-0 hover:bg-[#4E4F50] text-slate-300'
-                    }`}
-                  >
-                    <BellRing className="w-3.5 h-3.5 shrink-0" />
-                    {pendingDueDate === 'REMOVE' ? (
-                      <span className="whitespace-nowrap tracking-tight font-semibold">Remove Due</span>
-                    ) : activeDueDate ? (
-                      <span className="whitespace-nowrap tracking-tight">{formatShortDueDate(activeDueDate)}</span>
-                    ) : null}
-                  </button>
-                );
-              })()}
+            {canEditDueDate && !isManagerCallMode && (
+              <button
+                type="button"
+                onClick={() => setShowCalendar(!showCalendar)}
+                title={activeDueDate ? `Due: ${formatShortDueDate(activeDueDate)} (Click to change)` : 'Set Due Date'}
+                className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                  pendingDueDate === 'REMOVE'
+                    ? 'bg-red-500/20 text-red-400 border border-red-500/40 text-xs px-2.5 gap-1.5'
+                    : activeDueDate
+                    ? 'bg-[#C7F33C] text-black font-bold text-xs px-2.5 gap-1.5'
+                    : 'w-7 px-0 hover:bg-[#4E4F50] text-slate-300'
+                }`}
+              >
+                <BellRing className="w-3.5 h-3.5 shrink-0" />
+                {pendingDueDate === 'REMOVE' ? (
+                  <span className="whitespace-nowrap tracking-tight font-semibold">Remove Due</span>
+                ) : activeDueDate ? (
+                  <span className="whitespace-nowrap tracking-tight">{formatShortDueDate(activeDueDate)}</span>
+                ) : null}
+              </button>
+            )}
             {/* Rewriter Button */}
             {!isManagerCallMode && onShowRewriteModal && (
               <button
@@ -1125,7 +1117,7 @@ export function ActivityFeedTab({
 
                 if (!isMobileDevice) {
                   e.preventDefault();
-                  if (isManagerCallMode || isManagerCallModeRef.current) {
+                  if (isManagerCallMode) {
                     handleSendManagerCall();
                   } else {
                     if (pendingDueDate && newLog.trim().length < MIN_DUE_DATE_REASON_LENGTH) {
@@ -1158,50 +1150,42 @@ export function ActivityFeedTab({
                 className={`w-4 h-4 animate-spin ${isManagerCallMode ? 'text-[#F59E0B]' : 'text-[#C7F33C]'}`}
               />
             </div>
-          ) : (() => {
-            const isDuePending = Boolean(pendingDueDate);
-            const isDueValid = isDuePending ? newLog.trim().length >= MIN_DUE_DATE_REASON_LENGTH : true;
-            const hasContent = isDuePending ? true : newLog.trim().length > 0 || pendingAttachments.length > 0;
-
-            if (!hasContent) return null;
-
-            return (
-              <button
-                type="button"
-                disabled={isDuePending && !isDueValid}
-                onClick={() => {
-                  if (isManagerCallMode || isManagerCallModeRef.current) {
-                    handleSendManagerCall();
-                  } else {
-                    if (isDuePending && !isDueValid) {
-                      toast({
-                        title: 'จำเป็นต้องระบุเหตุผล',
-                        description: `กรุณาระบุเหตุผลในการตั้ง/เปลี่ยน Due Date อย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร`,
-                        type: 'warning',
-                      });
-                      inputRef.current?.focus();
-                      return;
-                    }
-                    handleAddLog();
+          ) : hasSubmitContent ? (
+            <button
+              type="button"
+              disabled={isDuePending && !isDueValid}
+              onClick={() => {
+                if (isManagerCallMode) {
+                  handleSendManagerCall();
+                } else {
+                  if (isDuePending && !isDueValid) {
+                    toast({
+                      title: 'จำเป็นต้องระบุเหตุผล',
+                      description: `กรุณาระบุเหตุผลในการตั้ง/เปลี่ยน Due Date อย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร`,
+                      type: 'warning',
+                    });
+                    inputRef.current?.focus();
+                    return;
                   }
-                }}
-                className={`w-7 h-7 flex items-center justify-center shrink-0 rounded-full transition-colors cursor-pointer self-end ${
-                  isDuePending && !isDueValid
-                    ? 'text-slate-500 opacity-40 cursor-not-allowed'
-                    : isManagerCallMode
-                    ? 'text-[#F59E0B] hover:bg-amber-500/20'
-                    : 'text-[#C7F33C] hover:bg-black/20'
-                }`}
-                title={
-                  isDuePending && !isDueValid
-                    ? `ระบุเหตุผลอีกอย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH - newLog.trim().length} ตัวอักษร`
-                    : 'Send (Enter)'
+                  handleAddLog();
                 }
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            );
-          })()}
+              }}
+              className={`w-7 h-7 flex items-center justify-center shrink-0 rounded-full transition-colors cursor-pointer self-end ${
+                isDuePending && !isDueValid
+                  ? 'text-slate-500 opacity-40 cursor-not-allowed'
+                  : isManagerCallMode
+                  ? 'text-[#F59E0B] hover:bg-amber-500/20'
+                  : 'text-[#C7F33C] hover:bg-black/20'
+              }`}
+              title={
+                isDuePending && !isDueValid
+                  ? `ระบุเหตุผลอีกอย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH - newLog.trim().length} ตัวอักษร`
+                  : 'Send (Enter)'
+              }
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          ) : null}
         </div>
       </div>
     );

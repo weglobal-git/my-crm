@@ -6,7 +6,7 @@ import { authOptions } from "@/lib/auth";
 import { ContactType, ContactStatus, Role, Prisma, AddressType } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { maskEmail, maskPhone } from "@/lib/contact-utils";
-import { pusherServer } from "@/lib/pusher";
+import { pusherServer } from "@/lib/pusher-server";
 
 export type ContactActor = {
   id: string;
@@ -676,7 +676,7 @@ export async function updateContact(contactId: string, input: UpdateContactInput
   });
 
   revalidatePath("/contact");
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "CONTACT_UPDATED",
     companyId: current.companyId,
     contactId,
@@ -758,7 +758,7 @@ export async function deleteContact(contactId: string) {
   });
 
   revalidatePath("/contact");
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "CONTACT_DELETED",
     companyId: contact.companyId,
     contactId,
@@ -857,7 +857,7 @@ export async function createContact(input: CreateContactInput) {
   });
 
   revalidatePath("/contact");
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "CONTACT_CREATED",
     companyId: result.companyId,
     contact: result,
@@ -895,7 +895,7 @@ export async function toggleContactActive(contactId: string, isActive: boolean) 
   ]);
 
   revalidatePath("/contact");
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "CONTACT_STATUS_CHANGE",
     companyId: current.companyId,
     contactId,
@@ -935,7 +935,7 @@ export async function toggleCompanyStatus(companyId: string, status: ContactStat
 
   revalidatePath("/contact");
   lastStatusStatsFetch = 0; // Invalidate cached counts for real-time update
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "STATUS_CHANGE",
     companyId,
     status: updated.status,
@@ -975,7 +975,7 @@ export async function updateCompanyStarRating(companyId: string, starRating: num
   ]);
 
   revalidatePath("/contact");
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "RATING_CHANGE",
     companyId,
     starRating: updated.starRating,
@@ -1059,7 +1059,7 @@ export async function updateCompanyDetails(
   ]);
 
   revalidatePath("/contact");
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "DETAILS_CHANGE",
     companyId,
     company: updated,
@@ -1161,7 +1161,7 @@ export async function createCompany(input: CreateCompanyInput) {
   });
 
   revalidatePath("/contact");
-  void pusherServer.trigger("contact", "account-updated", {
+  void pusherServer.trigger("private-contacts", "account-updated", {
     action: "COMPANY_CREATED",
     companyId: result.id,
     company: {
@@ -1801,4 +1801,3 @@ export async function getAccountSharedMedia(companyId: string): Promise<AccountS
     links: links.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
   };
 }
-

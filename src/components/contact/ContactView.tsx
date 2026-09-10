@@ -18,8 +18,10 @@ import {
   X
 } from "lucide-react";
 import useSWR, { preload, mutate } from "swr";
-import { pusherClient } from "@/lib/pusher";
+import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
+import { CONTACT_RECOVERY_EVENT } from "@/lib/pusher-connection-manager";
 import { usePermissions } from "@/providers/PermissionProvider";
+
 import { 
   getCompaniesWithContacts, 
   CompanyMasterItem,
@@ -170,6 +172,11 @@ export function ContactView({
     isLoadingMoreRef.current = isLoadingMore;
   }, [isLoadingMore]);
 
+  const selectedCompanyIdRef = useRef<string | null>(null);
+  const activeTabRef = useRef(activeTab);
+  const activeTypeRef = useRef(activeType);
+  const mutateOverviewRef = useRef<() => Promise<any>>(() => Promise.resolve());
+
   // Selected Company & Contact
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(
     initialCompanies[0]?.id || null
@@ -193,6 +200,42 @@ export function ContactView({
       keepPreviousData: true,
     }
   );
+
+  useEffect(() => { selectedCompanyIdRef.current = selectedCompanyId; }, [selectedCompanyId]);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { activeTypeRef.current = activeType; }, [activeType]);
+  useEffect(() => { mutateOverviewRef.current = mutateOverview; }, [mutateOverview]);
+
+  // Targeted recovery listener: refreshes active contacts dataset on connection recovery
+  useEffect(() => {
+    const handleContactRecovery = async () => {
+      console.log("[ContactView] Received contact recovery event. Refreshing active view...");
+      try {
+        const { companies: freshCompanies, stats: freshStats, total: freshTotal } = await getCompaniesWithContacts({
+          status: activeTabRef.current,
+          type: activeTypeRef.current,
+          country: selectedCountry === "ALL" ? "" : selectedCountry,
+          search: debouncedSearch,
+          page: 1,
+          pageSize: Math.max(20, pageRef.current * 20),
+        });
+        setCompanies(freshCompanies);
+        setStats(freshStats);
+        setTotalCompanies(freshTotal);
+        if (mutateOverviewRef.current) {
+          void mutateOverviewRef.current();
+        }
+      } catch (err) {
+        console.warn("[ContactView] Failed to recover contacts:", err);
+      }
+    };
+
+    window.addEventListener(CONTACT_RECOVERY_EVENT, handleContactRecovery);
+    return () => {
+      window.removeEventListener(CONTACT_RECOVERY_EVENT, handleContactRecovery);
+    };
+  }, [selectedCountry, debouncedSearch]);
+
 
   const isCurrentAccountLoaded = Boolean(accountOverview && accountOverview.company?.id === selectedCompanyId);
   const isOverviewTransitioning = isOverviewLoading || isOverviewValidating || !isCurrentAccountLoaded;
@@ -374,9 +417,10 @@ export function ContactView({
     };
   }, [loadMoreCompanies]);
 
-  // Real-time synchronization via Pusher
+  // Real-time synchronization via Pusher private-contacts channel
   useEffect(() => {
-    const channel = pusherClient.subscribe("contact");
+    const channelName = "private-contacts";
+    const channel = acquireChannel(channelName);
 
     type ContactPusherEvent = {
       action: string;
@@ -389,7 +433,7 @@ export function ContactView({
       isActive?: boolean;
     };
 
-    channel.bind("account-updated", (data?: ContactPusherEvent) => {
+    const handleAccountUpdate = (data?: ContactPusherEvent) => {
       if (!data?.companyId) return;
 
       if (data.action === "STATUS_CHANGE" && data.status) {
@@ -413,7 +457,7 @@ export function ContactView({
         const newComp = data.company as CompanyMasterItem;
         setCompanies((prev) => {
           if (prev.some((c) => c.id === newComp.id)) return prev;
-          if (newComp.status === activeTab && newComp.type === activeType) {
+          if (newComp.status === activeTabRef.current && newComp.type === activeTypeRef.current) {
             return [newComp, ...prev];
           }
           return prev;
@@ -456,15 +500,18 @@ export function ContactView({
       }
 
       // If the currently selected company was changed, revalidate overview
-      if (data.companyId === selectedCompanyId) {
-        void mutateOverview();
+      if (data.companyId === selectedCompanyIdRef.current) {
+        void mutateOverviewRef.current();
       }
-    });
+    };
+
+    channel.bind("account-updated", handleAccountUpdate);
 
     return () => {
-      pusherClient.unsubscribe("contact");
+      channel.unbind("account-updated", handleAccountUpdate);
+      releaseChannel(channelName);
     };
-  }, [selectedCompanyId, mutateOverview, activeTab, activeType]);
+  }, []);
 
   // Find currently selected company
   const selectedCompany = companies.find((c) => c.id === selectedCompanyId) || null;

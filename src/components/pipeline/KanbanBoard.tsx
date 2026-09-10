@@ -30,6 +30,7 @@ import { useSidebar } from "@/components/layout/SidebarContext";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { pusherClient } from "@/lib/pusher";
+import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
 import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
 import useSWR, { mutate as globalMutate, preload } from "swr";
 import { getAllUsers } from "@/lib/actions/users";
@@ -253,8 +254,8 @@ export function KanbanBoard({
     if (isCompletedTab) return;
     
     const channelName = `private-pipeline-${currentUserId}`;
-    console.log(`[KANBAN-PUSHER] Subscribing to: "${channelName}" (isCompletedTab=${isCompletedTab})`);
-    const channel = pusherClient.subscribe(channelName);
+    console.log(`[KANBAN-PUSHER] Acquiring channel: "${channelName}" (isCompletedTab=${isCompletedTab})`);
+    const channel = acquireChannel(channelName);
 
     const onSubSucceeded = () => {
       console.log(`[KANBAN-PUSHER] Subscribed successfully to: "${channelName}"`);
@@ -525,12 +526,11 @@ export function KanbanBoard({
     pusherClient.connection.bind('connected', handleConnected);
 
     return () => {
-      // This channel is shared with EditDealPanel. Only remove this component's
-      // handler; unsubscribing the channel here would disconnect the panel too.
       channel.unbind('pusher:subscription_succeeded', onSubSucceeded);
       channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handlePipelineUpdate);
       pusherClient.connection.unbind('connected', handleConnected);
+      releaseChannel(channelName);
     };
   }, [currentUserId, isCompletedTab, mutate]);
 

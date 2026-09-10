@@ -1,17 +1,28 @@
 "use client";
 
-import { pusherClient } from "@/lib/pusher";
+import { pusherClient, connectPusher, disconnectPusher, destroyPusherClient } from "@/lib/pusher";
+import { releaseAllChannels } from "@/lib/pusher-subscription-manager";
 import { mutate } from "swr";
 import { isPendingAcceleratorsKey } from "@/lib/deal-accelerators-sync";
 
 const DORMANCY_TIMEOUT_MS = 45_000; // 45 seconds after tab is hidden
+export const NOTIFICATIONS_CHANGED_EVENT = "my-crm:notifications-changed";
+export const CONTACT_RECOVERY_EVENT = "my-crm:contact-recovery";
+
 let dormancyTimer: ReturnType<typeof setTimeout> | null = null;
 let isInitialized = false;
 
-// BroadcastChannel for cross-tab event mirroring (zero internet bandwidth, 0ms latency)
+// Event listener references for clean removal
+let handleTeardownRef: (() => void) | null = null;
+let handleVisibilityChangeRef: (() => void) | null = null;
+let handlePageshowRef: ((e: PageTransitionEvent) => void) | null = null;
+let handleOnlineRef: (() => void) | null = null;
+
+// BroadcastChannel for cross-tab event mirroring (scoped by environment and user)
 let crossTabChannel: BroadcastChannel | null = null;
 
 export interface CrossTabEventMessage {
+  id: string;
   type: "PUSHER_EVENT_BROADCAST";
   channelName: string;
   eventName: string;
@@ -19,42 +30,85 @@ export interface CrossTabEventMessage {
   timestamp: number;
 }
 
+// In-memory deduplication set for cross-tab messages
+const seenBroadcastIds = new Set<string>();
+function markBroadcastSeen(id: string): boolean {
+  if (!id) return false;
+  if (seenBroadcastIds.has(id)) return true;
+  seenBroadcastIds.add(id);
+  if (seenBroadcastIds.size > 200) {
+    const first = seenBroadcastIds.values().next().value;
+    if (first) seenBroadcastIds.delete(first);
+  }
+  return false;
+}
+
 /**
- * Initializes Pusher Connection Hygiene:
- * 1. Immediate disconnect on page close/refresh (beforeunload, pagehide) to kill zombie connections.
- * 2. Tab Dormancy (disconnects WebSocket when tab is hidden > 45s, reconnects + SWR revalidates when visible).
- * 3. Cross-tab message bridge via BroadcastChannel.
+ * Triggers targeted cache recovery for currently active routes and resources.
+ * Replaces global SWR invalidation to prevent Neon DB connection/query storms.
  */
-export function initPusherConnectionHygiene() {
+export function triggerTargetedRecovery() {
+  console.log("[PUSHER-HYGIENE] Executing targeted recovery for active resources...");
+  // 1. Re-sync notifications
+  void mutate("my-notifications");
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
+  }
+
+  // 2. Active Pipeline board & accelerators
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/pipeline")) {
+    void mutate((key) => Array.isArray(key) && key[0] === "pipeline-deals");
+    void mutate(isPendingAcceleratorsKey);
+  }
+
+  // 3. Active Contacts view (notify state owner via event & revalidate overview SWR)
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/contact")) {
+    window.dispatchEvent(new Event(CONTACT_RECOVERY_EVENT));
+    void mutate((key) => Array.isArray(key) && key[0] === "account-overview");
+  }
+}
+
+/**
+ * Initializes Pusher Connection Hygiene for authenticated active sessions:
+ * 1. Connects WebSocket client (delays if tab is initially hidden).
+ * 2. Teardown on tab close / page refresh (beforeunload, pagehide) to kill zombie connections.
+ * 3. Tab Dormancy (disconnects WebSocket when tab is hidden > 45s, reconnects + targeted recovery when visible).
+ * 4. Pageshow (bfcache) and Online network recovery.
+ * 5. Cross-tab message bridge via user-scoped BroadcastChannel with deduplication.
+ */
+export function initPusherConnectionHygiene(userId?: string) {
   if (typeof window === "undefined" || isInitialized) return;
   isInitialized = true;
 
-  console.log("[PUSHER-HYGIENE] Initializing connection lifecycle manager...");
+  console.log(`[PUSHER-HYGIENE] Initializing connection lifecycle manager for user: ${userId || "authenticated"}...`);
+
+  // Initial-hidden check: If tab is loaded in background, avoid connecting immediately
+  if (document.visibilityState === "hidden") {
+    console.log("[PUSHER-HYGIENE] Tab loaded in background (hidden). Delaying WebSocket connection until tab is focused.");
+  } else {
+    connectPusher();
+  }
 
   // 1. Teardown on tab close / page refresh
-  const handleTeardown = () => {
+  handleTeardownRef = () => {
     try {
-      if (pusherClient.connection.state === "connected" || pusherClient.connection.state === "connecting") {
-        console.log("[PUSHER-HYGIENE] Disconnecting on tab teardown (beforeunload/pagehide)");
-        pusherClient.disconnect();
-      }
+      console.log("[PUSHER-HYGIENE] Disconnecting on tab teardown (beforeunload/pagehide)");
+      disconnectPusher();
     } catch {}
   };
 
-  window.addEventListener("beforeunload", handleTeardown);
-  window.addEventListener("pagehide", handleTeardown);
+  window.addEventListener("beforeunload", handleTeardownRef);
+  window.addEventListener("pagehide", handleTeardownRef);
 
   // 2. Tab Visibility & Dormancy Management
-  const handleVisibilityChange = () => {
+  handleVisibilityChangeRef = () => {
     if (document.visibilityState === "hidden") {
       // Tab is in background: start dormancy countdown
       if (dormancyTimer) clearTimeout(dormancyTimer);
       dormancyTimer = setTimeout(() => {
         if (document.visibilityState === "hidden") {
           console.log("[PUSHER-HYGIENE] Tab dormant for >45s. Disconnecting WebSocket to conserve quota.");
-          try {
-            pusherClient.disconnect();
-          } catch {}
+          disconnectPusher();
         }
       }, DORMANCY_TIMEOUT_MS);
     } else if (document.visibilityState === "visible") {
@@ -65,37 +119,62 @@ export function initPusherConnectionHygiene() {
       }
 
       if (pusherClient.connection.state === "disconnected" || pusherClient.connection.state === "unavailable") {
-        console.log("[PUSHER-HYGIENE] Tab visible. Reconnecting Pusher WebSocket and syncing state...");
+        console.log("[PUSHER-HYGIENE] Tab visible. Reconnecting Pusher WebSocket and running targeted recovery...");
         try {
-          pusherClient.connect();
-          // Trigger SWR revalidation to pull any updates missed during dormancy
-          void mutate(() => true, undefined, { revalidate: true });
+          connectPusher();
+          triggerTargetedRecovery();
         } catch {}
+      } else {
+        triggerTargetedRecovery();
       }
     }
   };
 
-  document.addEventListener("visibilitychange", handleVisibilityChange);
+  document.addEventListener("visibilitychange", handleVisibilityChangeRef);
 
-  // 3. Setup Cross-Tab BroadcastChannel
+  // 3. Pageshow event (handles Back/Forward cache restoration)
+  handlePageshowRef = (e: PageTransitionEvent) => {
+    if (e.persisted || document.visibilityState === "visible") {
+      console.log("[PUSHER-HYGIENE] Page restored from bfcache/pageshow. Connecting and recovering...");
+      connectPusher();
+      triggerTargetedRecovery();
+    }
+  };
+  window.addEventListener("pageshow", handlePageshowRef);
+
+  // 4. Online event (handles reconnect after offline/sleep)
+  handleOnlineRef = () => {
+    console.log("[PUSHER-HYGIENE] Network back online. Re-checking connection and recovering...");
+    if (document.visibilityState === "visible") {
+      connectPusher();
+      triggerTargetedRecovery();
+    }
+  };
+  window.addEventListener("online", handleOnlineRef);
+
+  // 5. Setup Cross-Tab BroadcastChannel (scoped by environment and user)
   if (typeof BroadcastChannel !== "undefined") {
     try {
-      crossTabChannel = new BroadcastChannel("my-crm-realtime-sync");
+      const env = process.env.NODE_ENV || "development";
+      const channelScope = `my-crm-realtime-${env}-${userId || "shared"}`;
+      crossTabChannel = new BroadcastChannel(channelScope);
       crossTabChannel.onmessage = (event: MessageEvent<CrossTabEventMessage>) => {
         if (event.data?.type === "PUSHER_EVENT_BROADCAST") {
-          // If we are dormant, or if event arrived from another tab, trigger SWR revalidation for the relevant key
+          if (markBroadcastSeen(event.data.id)) return; // Deduplicate
+
           const payload = event.data.data as { dealId?: string; action?: string; deal?: { id?: string } };
-          if (payload?.action?.startsWith('OPPORTUNITY_') || payload?.dealId || payload?.deal?.id) {
-            void mutate(key => Array.isArray(key) && key[0] === 'pipeline-deals');
+          if (payload?.action?.startsWith("OPPORTUNITY_") || payload?.dealId || payload?.deal?.id) {
+            void mutate((key) => Array.isArray(key) && key[0] === "pipeline-deals");
           }
           if (payload?.dealId) {
-            void mutate(['deal-accelerators', payload.dealId]);
+            void mutate(["deal-accelerators", payload.dealId]);
           }
-          if (payload?.action === 'DEAL_ACCELERATORS_UPDATED') {
+          if (payload?.action === "DEAL_ACCELERATORS_UPDATED") {
             void mutate(isPendingAcceleratorsKey);
           }
-          if (event.data.eventName === 'new-notification') {
-            void mutate('my-notifications');
+          if (event.data.eventName === "new-notification" || event.data.eventName === "notification-resolved") {
+            void mutate("my-notifications");
+            window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
           }
         }
       };
@@ -106,12 +185,66 @@ export function initPusherConnectionHygiene() {
 }
 
 /**
- * Broadcasts an event locally across all tabs in this browser instance
+ * Tears down all Pusher connections, listeners, channels, and timers.
+ * MUST be called on logout, session expiration, or account switch.
+ */
+export function teardownPusherConnectionHygiene() {
+  if (typeof window === "undefined" || !isInitialized) return;
+  console.log("[PUSHER-HYGIENE] Tearing down connection lifecycle manager...");
+
+  // Cancel dormancy timer
+  if (dormancyTimer) {
+    clearTimeout(dormancyTimer);
+    dormancyTimer = null;
+  }
+
+  // Remove window listeners
+  if (handleTeardownRef) {
+    window.removeEventListener("beforeunload", handleTeardownRef);
+    window.removeEventListener("pagehide", handleTeardownRef);
+    handleTeardownRef = null;
+  }
+  if (handleVisibilityChangeRef) {
+    document.removeEventListener("visibilitychange", handleVisibilityChangeRef);
+    handleVisibilityChangeRef = null;
+  }
+  if (handlePageshowRef) {
+    window.removeEventListener("pageshow", handlePageshowRef);
+    handlePageshowRef = null;
+  }
+  if (handleOnlineRef) {
+    window.removeEventListener("online", handleOnlineRef);
+    handleOnlineRef = null;
+  }
+
+  // Close cross-tab broadcast channel
+  if (crossTabChannel) {
+    try {
+      crossTabChannel.close();
+    } catch {}
+    crossTabChannel = null;
+  }
+
+  // Release all active channel subscriptions
+  releaseAllChannels();
+
+  // Fully destroy Pusher client
+  destroyPusherClient();
+
+  isInitialized = false;
+  console.log("[PUSHER-HYGIENE] Teardown complete. All sockets and subscriptions closed.");
+}
+
+/**
+ * Broadcasts an event locally across all tabs in this browser instance (scoped and deduplicated)
  */
 export function broadcastEventAcrossTabs(channelName: string, eventName: string, data: unknown) {
   try {
     if (crossTabChannel) {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      markBroadcastSeen(id);
       crossTabChannel.postMessage({
+        id,
         type: "PUSHER_EVENT_BROADCAST",
         channelName,
         eventName,

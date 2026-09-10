@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bell, X, Check, X as XIcon, Loader2 } from "lucide-react";
-import { getMyNotifications } from "@/lib/actions/notification";
+import { Bell, X, Check, X as XIcon, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import type { NotificationItem } from "@/lib/actions/notification";
 
-export type NotificationItem = Awaited<ReturnType<typeof getMyNotifications>>[number];
+export type { NotificationItem };
 
 export interface NotificationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   notifications: NotificationItem[];
+  error?: string | null;
+  onRetry?: () => void;
   onRespond?: (id: string, accept: boolean) => Promise<void> | void;
 }
 
@@ -17,8 +19,11 @@ export function NotificationDrawer({
   isOpen,
   onClose,
   notifications,
+  error,
+  onRetry,
   onRespond,
 }: NotificationDrawerProps) {
+
   const drawerRef = useRef<HTMLDivElement>(null);
   const [respondingId, setRespondingId] = useState<string | null>(null);
   const [respondingAction, setRespondingAction] = useState<"accept" | "reject" | null>(null);
@@ -140,19 +145,43 @@ export function NotificationDrawer({
 
           {/* Scrollable Notifications Body */}
           <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-3">
+            {error && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2.5 text-xs text-amber-300">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="truncate">{error}</span>
+                </div>
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-[11px] font-semibold transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Retry</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {notifications.length === 0 ? (
               <div className="py-16 text-center flex flex-col items-center justify-center gap-3">
                 <div className="w-12 h-12 rounded-full bg-[#1C1C1D] border border-[#3A3B3C] flex items-center justify-center text-slate-500">
                   <Bell className="w-6 h-6" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-200">No new notifications</p>
+                  <p className="text-sm font-semibold text-slate-200">
+                    {error ? "Unable to load notifications" : "No new notifications"}
+                  </p>
                   <p className="text-xs text-slate-500 mt-1 max-w-[260px]">
-                    You&apos;re all caught up! Transfers and invitations will appear here.
+                    {error
+                      ? "A database or network issue occurred. Please click retry to sync."
+                      : "You're all caught up! Transfers and invitations will appear here."}
                   </p>
                 </div>
               </div>
             ) : (
+
               notifications.map((notif) => {
                 const isResponding = respondingId === notif.id;
                 const isRequestType = ["DEAL_TRANSFER_REQUEST", "TEAM_INVITE_REQUEST"].includes(notif.type);

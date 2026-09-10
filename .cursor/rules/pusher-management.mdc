@@ -1,0 +1,16 @@
+---
+description: CRM notification, realtime, polling and new-page governance
+alwaysApply: true
+---
+
+# CRM Notification Governance
+
+Before creating a CRM page or changing notification, realtime, polling or cache
+recovery behavior, read `.agents/skills/pusher-management/SKILL.md` and the relevant
+sections of its `references/pusher-management.md` guidebook.
+Apply its mandatory rules together with `AGENTS.md` and relevant domain skills.
+Complete the new-page contract and maintain the page/channel/event policy tables.
+Distinguish current implementation from target requirements and unfinished phases.
+Do not create a client per component, publish private CRM data on public channels,
+or use blanket cache revalidation as recovery.
+Report actual checks and remaining gaps; documentation alone is not CI enforcement.

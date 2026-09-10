@@ -7,16 +7,21 @@ import { ReactNode, useEffect } from "react";
 import { PermissionProvider } from "@/providers/PermissionProvider";
 import { SidebarProvider } from "./SidebarContext";
 
-import { initPusherConnectionHygiene } from "@/lib/pusher-connection-manager";
+import { initPusherConnectionHygiene, teardownPusherConnectionHygiene } from "@/lib/pusher-connection-manager";
 
 export function ClientShell({ children }: { children: ReactNode }) {
   const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (session?.user) {
-      initPusherConnectionHygiene();
+    if (session?.user?.id) {
+      initPusherConnectionHygiene(session.user.id);
+      return () => {
+        teardownPusherConnectionHygiene();
+      };
+    } else {
+      teardownPusherConnectionHygiene();
     }
-  }, [session?.user]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (session && (session as unknown as Record<string, unknown>).error === "SessionInvalidated") {

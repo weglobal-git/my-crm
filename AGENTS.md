@@ -38,6 +38,21 @@ the request and report documentation conflicts. Reusable prompt:
 
 <!-- END:crm-feature-architecture -->
 
+<!-- BEGIN:pusher-management -->
+
+## Notification, Realtime & Polling Governance
+
+Before creating a CRM page or changing notifications, realtime subscriptions,
+polling, or cache recovery, read `.agents/skills/pusher-management/SKILL.md`
+and the relevant sections of its `references/pusher-management.md` guidebook.
+Follow its MUST/MUST NOT rules alongside the shared architecture and domain skills.
+For new pages, complete its feature contract and update the page policy matrix.
+When changing channels, events, ownership, or polling, update the guide in the same
+task. Distinguish audited current behavior from planned requirements; do not claim
+an unimplemented phase or untested delivery guarantee is complete.
+
+<!-- END:pusher-management -->
+
 <!-- BEGIN:pipeline-deal-panel-architecture -->
 
 ## Pipeline Workspace & EditDealPanel Architecture Continuity

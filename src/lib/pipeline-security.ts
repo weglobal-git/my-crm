@@ -4,7 +4,7 @@ import { getServerSession } from 'next-auth';
 import type { Prisma, Role } from '@prisma/client';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { pusherServer } from '@/lib/pusher';
+import { pusherServer } from '@/lib/pusher-server';
 
 export type PipelineActor = {
   id: string;
@@ -181,6 +181,7 @@ export async function getPipelineRecipientUserIds(opportunityId: string): Promis
 }
 
 export async function notifyPrivatePipelineUpdate(
+
   opportunityId: string,
   payload: unknown,
   additionalRecipientIds: string[] = [],
@@ -206,3 +207,4 @@ export async function notifyPrivatePipelineUpdate(
     console.error('[PUSHER-SERVER-TRIGGER] Private pipeline Pusher trigger error:', error);
   }
 }
+

@@ -16,7 +16,7 @@ import { OpportunityWithRelations } from "./KanbanCard";
 import { useDialog } from "@/providers/DialogProvider";
 import { renderCommentText } from "@/components/ui/HighlightText";
 import useSWR from "swr";
-import { pusherClient } from "@/lib/pusher";
+import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
 import { rollbackDeletedItem } from "@/lib/pipeline-delete-rollback";
 import {
   sortDealNotes,
@@ -62,9 +62,11 @@ export function NotesTab({
     setExpandedNoteId((prev) => (prev === id ? null : id));
   };
 
-  useEffect(() => {
+  const [prevSubTab, setPrevSubTab] = useState(subTab);
+  if (subTab !== prevSubTab) {
+    setPrevSubTab(subTab);
     setExpandedNoteId(null);
-  }, [subTab]);
+  }
 
   useEffect(() => {
     if (!expandedNoteId) return;
@@ -86,7 +88,9 @@ export function NotesTab({
   }, [expandedNoteId]);
 
   useEffect(() => {
-    setDockEl(document.getElementById("deal-panel-notes-dock"));
+    queueMicrotask(() => {
+      setDockEl(document.getElementById("deal-panel-notes-dock"));
+    });
   }, []);
 
   const adjustTextareaHeight = (el: HTMLTextAreaElement | null) => {
@@ -104,7 +108,8 @@ export function NotesTab({
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    const channel = pusherClient.subscribe(`private-pipeline-${session.user.id}`);
+    const channelName = `private-pipeline-${session.user.id}`;
+    const channel = acquireChannel(channelName);
     const handleNoteUpdate = (event?: {
       action?: string;
       dealId?: string;
@@ -132,6 +137,7 @@ export function NotesTab({
     channel.bind("pipeline-updated", handleNoteUpdate);
     return () => {
       channel.unbind("pipeline-updated", handleNoteUpdate);
+      releaseChannel(channelName);
     };
   }, [deal.id, mutateNotes, session?.user?.id]);
 

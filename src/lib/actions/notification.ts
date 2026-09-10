@@ -3,41 +3,118 @@
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 
-import { pusherServer } from "@/lib/pusher";
-import { notifyPrivatePipelineUpdate, requireOpportunityAccess } from "@/lib/pipeline-security";
+import { 
+  notifyPrivatePipelineUpdate, 
+  requireOpportunityAccess,
+  invalidatePipelineRecipientCache 
+} from "@/lib/pipeline-security";
+import { dispatchNotification } from "@/lib/notification-dispatcher";
 
-export async function getMyNotifications() {
+export interface NotificationItem {
+  id: string;
+  recipientId: string;
+  senderId: string | null;
+  type: string;
+  title: string;
+  message: string | null;
+  referenceId: string | null;
+  status: string;
+  readAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  sender: {
+    id: string;
+    name: string | null;
+    image: string | null;
+    role: string | null;
+  } | null;
+}
+
+export type GetMyNotificationsResult = 
+  | { success: true; data: NotificationItem[] }
+  | { success: false; data: NotificationItem[]; error: string };
+
+export async function getMyNotifications(limit = 30): Promise<GetMyNotificationsResult> {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return [];
+    if (!session?.user?.id) {
+      return { success: true, data: [] };
+    }
 
     const notifications = await prisma.notification.findMany({
       where: { 
         recipientId: session.user.id,
         status: 'PENDING'
       },
-      include: {
-        sender: true
+      take: limit,
+      select: {
+        id: true,
+        recipientId: true,
+        senderId: true,
+        type: true,
+        title: true,
+        message: true,
+        referenceId: true,
+        status: true,
+        readAt: true,
+        createdAt: true,
+        updatedAt: true,
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            role: true,
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
     
-    return notifications;
-  } catch (err) {
-    console.error("[getMyNotifications] Error:", err);
-    return [];
+    return { success: true, data: notifications };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Database error loading notifications";
+    console.error("[getMyNotifications] Error:", msg);
+    return { success: false, data: [], error: msg };
   }
 }
 
-export async function triggerNotification(userId: string, notification: unknown) {
-  try {
-    await pusherServer.trigger(`private-user-${userId}`, 'new-notification', notification);
-  } catch (e) {
-    console.error("Pusher error:", e);
-  }
+// Mark notification as read (updates readAt timestamp without breaking workflow status)
+export async function markNotificationAsRead(notificationId: string) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  await prisma.notification.updateMany({
+    where: {
+      id: notificationId,
+      recipientId: session.user.id,
+    },
+    data: {
+      readAt: new Date(),
+    },
+  });
+
+  return { success: true };
+}
+
+// Mark all notifications as read
+export async function markAllNotificationsAsRead() {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  await prisma.notification.updateMany({
+    where: {
+      recipientId: session.user.id,
+      readAt: null,
+    },
+    data: {
+      readAt: new Date(),
+    },
+  });
+
+  return { success: true };
 }
 
 // Request to transfer ownership
@@ -53,6 +130,25 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   if (!deal) throw new Error("Deal not found");
   if (deal.ownerId === newOwnerId) throw new Error("Already the owner");
 
+  // Idempotency check: avoid duplicate pending request
+  const existingPending = await prisma.notification.findFirst({
+    where: {
+      recipientId: newOwnerId,
+      referenceId: dealId,
+      type: 'DEAL_TRANSFER_REQUEST',
+      status: 'PENDING',
+    },
+    include: {
+      sender: {
+        select: { id: true, name: true, image: true, role: true }
+      }
+    }
+  });
+
+  if (existingPending) {
+    return { success: true, notification: existingPending, alreadyExists: true };
+  }
+
   const notification = await prisma.notification.create({
     data: {
       recipientId: newOwnerId,
@@ -62,10 +158,14 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
       message: `requests to transfer deal "${deal.topic}" to you.`,
       referenceId: dealId
     },
-    include: { sender: true }
+    include: {
+      sender: {
+        select: { id: true, name: true, image: true, role: true }
+      }
+    }
   });
 
-  await triggerNotification(newOwnerId, notification);
+  await dispatchNotification(newOwnerId, notification);
   return { success: true, notification };
 }
 
@@ -84,6 +184,25 @@ export async function requestTeamInvite(dealId: string, userId: string) {
   if (deal.ownerId === userId) throw new Error("User is already the owner");
   if (deal.teamMembers.some((tm: { id: string }) => tm.id === userId)) throw new Error("User is already a team member");
 
+  // Idempotency check: avoid duplicate pending request
+  const existingPending = await prisma.notification.findFirst({
+    where: {
+      recipientId: userId,
+      referenceId: dealId,
+      type: 'TEAM_INVITE_REQUEST',
+      status: 'PENDING',
+    },
+    include: {
+      sender: {
+        select: { id: true, name: true, image: true, role: true }
+      }
+    }
+  });
+
+  if (existingPending) {
+    return { success: true, notification: existingPending, alreadyExists: true };
+  }
+
   const notification = await prisma.notification.create({
     data: {
       recipientId: userId,
@@ -93,11 +212,14 @@ export async function requestTeamInvite(dealId: string, userId: string) {
       message: `requests you to join the team for deal "${deal.topic}".`,
       referenceId: dealId
     },
-    include: { sender: true }
+    include: {
+      sender: {
+        select: { id: true, name: true, image: true, role: true }
+      }
+    }
   });
 
-  await triggerNotification(userId, notification);
-  revalidatePath('/pipeline');
+  await dispatchNotification(userId, notification);
   return { success: true, notification };
 }
 
@@ -170,7 +292,8 @@ export async function respondToNotification(notificationId: string, accept: bool
     }
   });
 
-  if (accept) {
+  if (accept && notification.referenceId) {
+    invalidatePipelineRecipientCache(notification.referenceId);
     await notifyPrivatePipelineUpdate(
       notification.referenceId,
       { action: 'RECONCILE_OPPORTUNITY', dealId: notification.referenceId },
@@ -178,6 +301,5 @@ export async function respondToNotification(notificationId: string, accept: bool
     );
   }
 
-  revalidatePath('/pipeline');
   return { success: true };
 }

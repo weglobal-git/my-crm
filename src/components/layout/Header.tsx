@@ -6,18 +6,21 @@ import { Bell, PanelLeft } from "lucide-react";
 import { NotificationDrawer } from "./NotificationDrawer";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
+
 import { usePermissions } from "@/providers/PermissionProvider";
 import { MenuDefinition } from "@/lib/menu-registry";
 import { useSidebar } from "./SidebarContext";
 
 import { getActiveUsers, pingAndGetActiveUsers } from "@/lib/actions/users";
-import { getMyNotifications, respondToNotification } from "@/lib/actions/notification";
+import { getMyNotifications, respondToNotification, type NotificationItem } from "@/lib/actions/notification";
 import { pusherClient } from "@/lib/pusher";
-import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
+import {
+  broadcastEventAcrossTabs,
+  NOTIFICATIONS_CHANGED_EVENT,
+} from "@/lib/pusher-connection-manager";
 
 type ActiveUser = Awaited<ReturnType<typeof getActiveUsers>>[number];
-type NotificationItem = Awaited<ReturnType<typeof getMyNotifications>>[number];
 
 export function Header() {
   const pathname = usePathname();
@@ -43,11 +46,35 @@ export function Header() {
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [notifications, setNotifications] = useState<Awaited<ReturnType<typeof getMyNotifications>>>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notificationError, setNotificationError] = useState<string | null>(null);
   const [isNotificationDrawerOpen, setIsNotificationDrawerOpen] = useState(false);
+  const notificationMutationVersionRef = useRef(0);
+  const notificationSyncRequestRef = useRef(0);
+
 
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const profileDropdownRef = useRef<HTMLDivElement>(null);
+
+  const syncNotifications = useCallback(() => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    const mutationVersion = notificationMutationVersionRef.current;
+    const requestId = ++notificationSyncRequestRef.current;
+    void getMyNotifications().then(res => {
+      if (!res.success) {
+        console.warn("[Header] Failed to sync notifications:", res.error);
+        setNotificationError(res.error || "Failed to load notifications");
+        return;
+      }
+      setNotificationError(null);
+      if (
+        requestId === notificationSyncRequestRef.current &&
+        mutationVersion === notificationMutationVersionRef.current
+      ) {
+        setNotifications(res.data);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (status === "authenticated" && session?.user?.id) {
@@ -73,39 +100,47 @@ export function Header() {
           setActiveUsers(users);
         }
       });
-      getMyNotifications().then(items => {
-        if (!Array.isArray(items)) return;
-        setNotifications(prev => {
-          const map = new Map<string, NotificationItem>();
-          for (const item of prev) {
-            if (item?.id) map.set(item.id, item);
-          }
-          for (const item of items) {
-            if (item?.id) map.set(item.id, item as NotificationItem);
-          }
-          return Array.from(map.values());
-        });
-      });
 
-      // Heartbeat ping every 45s
+      let isNotificationSubscribed = false;
+      let isPresenceSubscribed = false;
+
+
+      syncNotifications();
+      window.addEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications);
+
+      // Heartbeat fallback ping every 90s (active only when Pusher presence is not connected/subscribed)
       const pingInterval = setInterval(() => {
-        pingAndGetActiveUsers().then(users => {
-          if (users && users.length > 0) {
-            setActiveUsers(users);
-          }
-        });
-      }, 45000);
+        if (!isPresenceSubscribed) {
+          pingAndGetActiveUsers().then(users => {
+            if (users && users.length > 0) {
+              setActiveUsers(users);
+            }
+          });
+        }
+      }, 90000);
+
+      // Fallback polling for notifications when private channel subscription is not active
+      const notificationFallbackInterval = setInterval(() => {
+        if (!isNotificationSubscribed || pusherClient.connection.state !== "connected") {
+          syncNotifications();
+        }
+      }, 60000);
 
       // 3. Setup Pusher Presence Channel
       try {
         const presenceChannel = pusherClient.subscribe('presence-global');
         
         presenceChannel.bind('pusher:subscription_succeeded', (members: { each: (cb: (member: { id: string; info: Record<string, unknown> }) => void) => void }) => {
+          isPresenceSubscribed = true;
           const users: ActiveUser[] = [];
           members.each((member) => {
             users.push({ id: member.id, ...member.info } as ActiveUser);
           });
           if (users.length > 0) setActiveUsers(users);
+        });
+
+        presenceChannel.bind('pusher:subscription_error', () => {
+          isPresenceSubscribed = false;
         });
 
         presenceChannel.bind('pusher:member_added', (member: { id: string; info: Record<string, unknown> }) => {
@@ -123,14 +158,23 @@ export function Header() {
       }
 
       // 4. Setup Pusher Private Channel for Notifications
+      let handleStateChange: ((states: { previous: string; current: string }) => void) | null = null;
+      let handleConnError: ((err: unknown) => void) | null = null;
+
       try {
         const userChannelName = `private-user-${session.user.id}`;
         console.log(`[HEADER-PUSHER] Subscribing to: ${userChannelName} for user: "${session.user.name}" (${session.user.email})`);
         
-        const handleStateChange = (states: { previous: string; current: string }) => {
+        handleStateChange = (states: { previous: string; current: string }) => {
           console.log(`[PUSHER-CONNECTION] State changed: ${states.previous} -> ${states.current}`);
+          if (states.current === "connected") {
+            syncNotifications();
+          } else {
+            isNotificationSubscribed = false;
+            isPresenceSubscribed = false;
+          }
         };
-        const handleConnError = (err: unknown) => {
+        handleConnError = (err: unknown) => {
           const e = err as { type?: string; error?: { data?: { code?: number; message?: string } } };
           const code = e?.error?.data?.code;
           const msg = e?.error?.data?.message;
@@ -139,6 +183,7 @@ export function Header() {
           } else {
             console.warn(`[PUSHER-CONNECTION] Connection issue${code ? ` (${code})` : ''}:`, msg || err);
           }
+          isNotificationSubscribed = false;
         };
 
         pusherClient.connection.bind('state_change', handleStateChange);
@@ -148,29 +193,43 @@ export function Header() {
         
         privateChannel.bind('pusher:subscription_succeeded', () => {
           console.log(`[HEADER-PUSHER] Subscribed successfully to: ${userChannelName}`);
+          isNotificationSubscribed = true;
+          // Reconcile notifications missed during reconnect / subscription handshake window
+          syncNotifications();
         });
         privateChannel.bind('pusher:subscription_error', (status: unknown) => {
           console.warn(`[HEADER-PUSHER] Subscription status for ${userChannelName}:`, status);
+          isNotificationSubscribed = false;
         });
         
         privateChannel.bind('new-notification', (newNotif: NotificationItem) => {
           console.log(`[HEADER-PUSHER] Received 'new-notification':`, newNotif);
           broadcastEventAcrossTabs(userChannelName, 'new-notification', newNotif);
           if (!newNotif?.id) return;
+          notificationMutationVersionRef.current += 1;
           setNotifications((prev: NotificationItem[]) => {
             if (prev.some(n => n?.id === newNotif.id)) return prev;
             return [newNotif, ...prev];
           });
         });
+
+        privateChannel.bind('notification-resolved', (data: { id?: string }) => {
+          if (!data?.id) return;
+          notificationMutationVersionRef.current += 1;
+          setNotifications((prev: NotificationItem[]) => prev.filter(n => n.id !== data.id));
+        });
+
       } catch (err) {
         console.warn("[Header] Pusher notification error:", err);
       }
 
       return () => {
         clearInterval(pingInterval);
+        clearInterval(notificationFallbackInterval);
+        window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications);
         try {
-          pusherClient.connection.unbind('state_change');
-          pusherClient.connection.unbind('error');
+          if (handleStateChange) pusherClient.connection.unbind('state_change', handleStateChange);
+          if (handleConnError) pusherClient.connection.unbind('error', handleConnError);
           pusherClient.unsubscribe('presence-global');
           pusherClient.unsubscribe(`private-user-${session.user.id}`);
         } catch {}
@@ -221,11 +280,16 @@ export function Header() {
   const handleRespond = async (id: string, accept: boolean) => {
     try {
       await respondToNotification(id, accept);
+      notificationMutationVersionRef.current += 1;
       setNotifications((prev: NotificationItem[]) => prev.filter((n: NotificationItem) => n.id !== id));
+      if (session?.user?.id) {
+        broadcastEventAcrossTabs(`private-user-${session.user.id}`, 'notification-resolved', { id });
+      }
     } catch (e) {
       console.error(e);
     }
   };
+
 
   return (
     <header className="flex w-full items-center justify-between py-1 px-2 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
@@ -383,8 +447,11 @@ export function Header() {
             isOpen={isNotificationDrawerOpen}
             onClose={() => setIsNotificationDrawerOpen(false)}
             notifications={uniqueNotifications}
+            error={notificationError}
+            onRetry={syncNotifications}
             onRespond={handleRespond}
           />
+
 
           {status === "loading" ? (
             <div className="w-11 h-11 rounded-full bg-[#3A3B3C] animate-pulse"></div>

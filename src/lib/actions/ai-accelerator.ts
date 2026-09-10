@@ -6,7 +6,7 @@ import { aiGateway } from "@/lib/ai/gateway";
 import { GoogleGeminiAdapter } from "@/lib/ai/adapters/gemini";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { triggerNotification } from "@/lib/actions/notification";
+import { dispatchNotification } from "@/lib/notification-dispatcher";
 
 // Ensure Gemini adapter is registered
 aiGateway.registerAdapter("GOOGLE_GEMINI", new GoogleGeminiAdapter());
@@ -446,19 +446,32 @@ ${userGoalInstruction}
       console.warn("[AI Accelerator] Pusher notify error:", err);
     });
 
-    // ส่งการแจ้งเตือน (Notification Bell) ไปยังเจ้าของดีลและทีมเมื่อ AI สร้างคำถามใหม่ (Fire-and-forget)
+    // ส่งการแจ้งเตือน (Notification Bell) ไปยังเจ้าของดีลและทีมเมื่อ AI สร้างคำถามใหม่ (Awaited with Idempotency)
     if (newQuestions.length > 0 && deal) {
-      void (async () => {
-        try {
-          const recipientIds = new Set<string>();
-          if (deal.owner?.id) recipientIds.add(deal.owner.id);
-          for (const m of deal.teamMembers || []) {
-            if (m.id) recipientIds.add(m.id);
-          }
-          if (actorId) recipientIds.delete(actorId);
+      try {
+        const recipientIds = new Set<string>();
+        if (deal.owner?.id) recipientIds.add(deal.owner.id);
+        for (const m of deal.teamMembers || []) {
+          if (m.id) recipientIds.add(m.id);
+        }
+        if (actorId) recipientIds.delete(actorId);
 
-          if (recipientIds.size > 0) {
-            const notifData = [...recipientIds].map(recipientId => ({
+        if (recipientIds.size > 0) {
+          // Idempotency: filter out recipients who received an alert for this deal in the last 15 minutes
+          const recentAlerts = await prisma.notification.findMany({
+            where: {
+              referenceId: dealId,
+              type: "SYSTEM_ALERT",
+              recipientId: { in: [...recipientIds] },
+              createdAt: { gt: new Date(Date.now() - 15 * 60 * 1000) },
+            },
+            select: { recipientId: true },
+          });
+          const recentRecipientIds = new Set(recentAlerts.map(a => a.recipientId));
+          const targetRecipientIds = [...recipientIds].filter(id => !recentRecipientIds.has(id));
+
+          if (targetRecipientIds.length > 0) {
+            const notifData = targetRecipientIds.map(recipientId => ({
               type: "SYSTEM_ALERT" as const,
               senderId: actorId || null,
               recipientId,
@@ -468,17 +481,27 @@ ${userGoalInstruction}
             }));
 
             const createdNotifs = await prisma.$transaction(
-              notifData.map(data => prisma.notification.create({ data, include: { sender: true } }))
+              notifData.map(data => 
+                prisma.notification.create({ 
+                  data, 
+                  include: { 
+                    sender: {
+                      select: { id: true, name: true, image: true, role: true }
+                    } 
+                  } 
+                })
+              )
             );
             await Promise.all(
-              createdNotifs.map(n => triggerNotification(n.recipientId, n))
+              createdNotifs.map(n => dispatchNotification(n.recipientId, n))
             );
           }
-        } catch (notifErr) {
-          console.warn("[AI Accelerator] Failed to send bell notifications for AI questions:", notifErr);
         }
-      })();
+      } catch (notifErr) {
+        console.warn("[AI Accelerator] Failed to send bell notifications for AI questions:", notifErr);
+      }
     }
+
 
     return { success: true, data: state };
   } catch (err: unknown) {
@@ -650,7 +673,7 @@ export async function answerDealAccelerator(
       });
 
       if (notif) {
-        void triggerNotification(targetQ.askedByUserId, notif);
+        void dispatchNotification(targetQ.askedByUserId, notif);
       }
     }
 
@@ -813,7 +836,7 @@ export async function createManagerCallQuestion(
             await Promise.all(
               createdNotifs.map(n => {
                 console.log(`[MGR-CALL-NOTIF] Triggering private-user-${n.recipientId} for notification id=${n.id}`);
-                return triggerNotification(n.recipientId, n);
+                return dispatchNotification(n.recipientId, n);
               })
             );
           }

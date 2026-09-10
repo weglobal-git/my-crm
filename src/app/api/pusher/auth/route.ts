@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { pusherServer } from "@/lib/pusher";
+import { authorizePusherRequest } from "@/lib/pusher-auth-authorizer";
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -15,45 +15,19 @@ export async function POST(request: NextRequest) {
   const socketId = params.get("socket_id");
   const channelName = params.get("channel_name");
 
-  console.log(`[PUSHER-AUTH] Request from user "${session.user.name}" (${session.user.email}, id=${session.user.id}) for channel="${channelName}" socketId="${socketId}"`);
-
   if (!socketId || !channelName) {
     console.warn("[PUSHER-AUTH] 400 Missing params:", { socketId, channelName });
     return NextResponse.json({ error: "Missing params" }, { status: 400 });
   }
 
-  // Presence channel auth
-  if (channelName.startsWith("presence-")) {
-    const presenceData = {
-      user_id: session.user.id,
-      user_info: {
-        name: session.user.name,
-        image: session.user.image,
-        role: session.user.role,
-        email: session.user.email,
-        departments: session.user.departments,
-      },
-    };
-    const authResponse = pusherServer.authorizeChannel(socketId, channelName, presenceData);
-    console.log(`[PUSHER-AUTH] 200 Authorized presence channel "${channelName}"`);
-    return NextResponse.json(authResponse);
-  }
+  const result = await authorizePusherRequest(socketId, channelName, session.user as {
+    id: string;
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+    role?: string;
+  });
 
-  // Private channel auth
-  if (channelName.startsWith("private-")) {
-    const allowedPrivateChannels = new Set([
-      `private-user-${session.user.id}`,
-      `private-pipeline-${session.user.id}`,
-    ]);
-    if (!allowedPrivateChannels.has(channelName)) {
-      console.error(`[PUSHER-AUTH] 403 Forbidden channel "${channelName}" for user "${session.user.id}". Allowed:`, [...allowedPrivateChannels]);
-      return NextResponse.json({ error: "Forbidden channel" }, { status: 403 });
-    }
-    const authResponse = pusherServer.authorizeChannel(socketId, channelName);
-    console.log(`[PUSHER-AUTH] 200 Authorized private channel "${channelName}" for user "${session.user.name}"`);
-    return NextResponse.json(authResponse);
-  }
-
-  console.warn(`[PUSHER-AUTH] 403 Channel type not supported: "${channelName}"`);
-  return NextResponse.json({ error: "Channel type not supported" }, { status: 403 });
+  return NextResponse.json(result.body, { status: result.status });
 }
+

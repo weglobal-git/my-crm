@@ -136,6 +136,7 @@ export function DealActionsDrawer({
   // Handle Mark as Won (Optimistic UI < 10ms)
   const handleConfirmWon = async () => {
     if (isSubmittingClose || !isWonValid) return;
+    setIsSubmittingClose(true);
 
     // 1. Optimistic UI: remove from board cache instantly with zero network delay
     void mutate(
@@ -161,6 +162,7 @@ export function DealActionsDrawer({
       await moveOpportunity(deal.id, null, "WON");
       void mutate(["opportunity", deal.id]);
     } catch (e) {
+      setIsSubmittingClose(false);
       void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to mark deal as Won";
       toast({ title: "Error", description: msg, type: "error" });
@@ -170,6 +172,7 @@ export function DealActionsDrawer({
   // Handle Mark as Lost (Optimistic UI < 10ms)
   const handleConfirmLost = async () => {
     if (isSubmittingClose || !lossReason.trim()) return;
+    setIsSubmittingClose(true);
 
     const trimmedReason = lossReason.trim();
 
@@ -197,15 +200,18 @@ export function DealActionsDrawer({
       await moveOpportunity(deal.id, null, "LOST", trimmedReason);
       void mutate(["opportunity", deal.id]);
     } catch (e) {
+      setIsSubmittingClose(false);
       void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to mark deal as Lost";
       toast({ title: "Error", description: msg, type: "error" });
     }
   };
 
+
   // Handle Convert to Sales Deal (Optimistic UI < 10ms)
   const handleConvert = async () => {
     if (isConverting) return;
+    setIsConverting(true);
 
     // 1. Optimistic UI: update card type in board cache instantly
     void mutate(
@@ -232,6 +238,7 @@ export function DealActionsDrawer({
       void addSystemLog(deal.id, "Converted opportunity type from Internal Task to Sales Deal.").catch(() => {});
       void mutate(["opportunity", deal.id]);
     } catch (e) {
+      setIsConverting(false);
       void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to convert deal";
       toast({ title: "Error", description: msg, type: "error" });
@@ -241,6 +248,7 @@ export function DealActionsDrawer({
   // Handle Convert to Internal Task (Admin Only, Optimistic UI < 10ms)
   const handleConvertToInternal = async () => {
     if (isConverting) return;
+    setIsConverting(true);
 
     // 1. Optimistic UI: update card type in board cache instantly
     void mutate(
@@ -267,6 +275,7 @@ export function DealActionsDrawer({
       void addSystemLog(deal.id, "Converted opportunity type from Sales Deal to Internal Task by System Admin.").catch(() => {});
       void mutate(["opportunity", deal.id]);
     } catch (e) {
+      setIsConverting(false);
       void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to convert deal";
       toast({ title: "Error", description: msg, type: "error" });
@@ -276,6 +285,7 @@ export function DealActionsDrawer({
   // Handle Delete Deal (Optimistic UI < 10ms)
   const handleDelete = async () => {
     if (isDeleting || !confirmDeleteChecked) return;
+    setIsDeleting(true);
 
     // 1. Optimistic UI: remove card from board cache instantly
     void mutate(
@@ -300,11 +310,13 @@ export function DealActionsDrawer({
     try {
       await deleteOpportunity(deal.id);
     } catch (e) {
+      setIsDeleting(false);
       void mutate((key) => (Array.isArray(key) && key[0] === "pipeline-deals") || (typeof key === "string" && key.startsWith("pipeline")));
       const msg = e instanceof Error ? e.message : "Failed to delete deal";
       toast({ title: "Error", description: msg, type: "error" });
     }
   };
+
 
   const hasAnyActions = canCloseDeal || canConvert || canConvertToInternal || canDelete;
 

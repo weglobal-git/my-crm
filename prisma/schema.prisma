@@ -76,6 +76,7 @@ model Notification {
   message     String?
   referenceId String?
   status      NotificationStatus @default(PENDING)
+  readAt      DateTime?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
   recipient   User               @relation("ReceivedNotifications", fields: [recipientId], references: [id], onDelete: Cascade)

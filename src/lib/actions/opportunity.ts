@@ -11,8 +11,8 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-import { pusherServer } from "@/lib/pusher";
-import { triggerNotification } from "@/lib/actions/notification";
+import { pusherServer } from "@/lib/pusher-server";
+import { dispatchNotification } from "@/lib/notification-dispatcher";
 import {
   getPipelineRecipientUserIds,
   notifyPrivatePipelineUpdate,
@@ -92,7 +92,7 @@ export async function createOpportunity(data: {
         )
       );
       notifications.forEach(n => {
-        void triggerNotification(n.recipientId, n);
+        void dispatchNotification(n.recipientId, n);
       });
     } catch (err) {
       console.warn("[createOpportunity] Failed to send notifications:", err);
@@ -235,7 +235,7 @@ export async function moveOpportunity(
             )
           );
           notifications.forEach(n => {
-            void triggerNotification(n.recipientId, n);
+            void dispatchNotification(n.recipientId, n);
           });
         } catch (err) {
           console.warn('[moveOpportunity] Failed to send notifications:', err);
@@ -546,7 +546,7 @@ export async function addActivityLog(opportunityId: string, content: string, par
             notificationInputs.map(data => prisma.notification.create({ data, include: { sender: true } }))
           );
           await Promise.all(notifications.map((notification: { recipientId: string }) =>
-            triggerNotification(notification.recipientId, notification)
+            dispatchNotification(notification.recipientId, notification)
           ));
         }
       }
@@ -724,7 +724,7 @@ export async function addTeamMember(opportunityId: string, userId: string) {
       },
       include: { sender: true }
     });
-    triggerNotification(userId, notification);
+    void dispatchNotification(userId, notification);
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, image: true, email: true, role: true } });
@@ -772,7 +772,7 @@ export async function addTeamMembers(opportunityId: string, userIds: string[], m
         )
       );
       notifications.forEach(n => {
-        void triggerNotification(n.recipientId, n);
+        void dispatchNotification(n.recipientId, n);
       });
     } catch (err) {
       console.warn("[addTeamMembers] Failed to send notifications:", err);

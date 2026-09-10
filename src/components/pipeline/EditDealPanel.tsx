@@ -1,6 +1,6 @@
 "use client";
 
-import { X, MoreHorizontal, MessageSquare, Trash2, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, PhoneCall, ListTodo } from "lucide-react";
+import { MessageSquare, RefreshCw, Sparkles, Copy, Check, Bot, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, ListTodo } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 
 import { deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateOpportunity } from "@/lib/actions/opportunity";
@@ -11,11 +11,11 @@ import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, d
 import { getAllUsers } from "@/lib/actions/users";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { MemberSelectDrawer } from "./MemberSelectDrawer";
-import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo, Fragment } from "react";
-import useSWR, { useSWRConfig, mutate } from "swr";
+import { useEffect, useState, useRef, useCallback, useMemo, Fragment } from "react";
+import useSWR, { useSWRConfig } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
-import { User, OpportunityType, Role } from "@prisma/client";
+import { OpportunityType, Role } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
 import { useDialog } from "@/providers/DialogProvider";
@@ -42,14 +42,13 @@ import {
   incrementPendingBadge,
   setPendingBadgeCount,
 } from "@/lib/deal-accelerators-sync";
-import { HighlightText, renderCommentText } from "@/components/ui/HighlightText";
+import { renderCommentText } from "@/components/ui/HighlightText";
 export { renderCommentText };
-import { pusherClient } from "@/lib/pusher";
+import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
 import { useSwipeToClose } from "@/hooks/useSwipeToClose";
 import {
   applyActivityEvent,
   activityFeedKey,
-  type ActivityLogPage,
   type ActivityLogWithRelations,
   type ActivityUpdateEvent,
 } from "@/lib/pipeline-activity-cache";
@@ -97,7 +96,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     : rightMenus.find(m => m.key.endsWith(`.${initialTab}`)) ? initialTab : (rightMenus[0]?.key.split('.').pop() as TabType || 'activity');
   const [activeTab, setActiveTab] = useState<TabType>(allowedInitialTab === ('duedate' as TabType) ? 'activity' : allowedInitialTab);
 
-  const { toast, confirm } = useDialog();
+  const { toast } = useDialog();
   const [showRewriteModal, setShowRewriteModal] = useState(false);
 
   // Lightbox Preview State (Supports multi-image gallery with Next/Prev)
@@ -135,7 +134,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         lastTopicRevisionRef.current = incomingRev;
       }
     }
-  }, [deal.topic, deal.updatedAt]);
+  }, [deal.topic, deal.updatedAt, topic]);
 
   const handleTopicSave = useCallback(
     async (newTopic: string) => {
@@ -279,7 +278,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   // Team Members State & Mutation Hook
   const {
     localTeamMembers,
-    setLocalTeamMembers,
     isAddingMembers,
     isRemovingId,
     handleAddMembers,
@@ -782,8 +780,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     if (!isOpen) return;
     if (!session?.user?.id) return;
     const channelName = `private-pipeline-${session.user.id}`;
-    console.log(`[PANEL-PUSHER] Subscribing to: "${channelName}" for deal (id=${deal.id})`);
-    const channel = pusherClient.subscribe(channelName);
+    console.log(`[PANEL-PUSHER] Acquiring channel: "${channelName}" for deal (id=${deal.id})`);
+    const channel = acquireChannel(channelName);
 
     const onSubSucceeded = () => {
       console.log(`[PANEL-PUSHER] Subscribed successfully to: "${channelName}"`);
@@ -939,8 +937,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       channel.unbind('pusher:subscription_succeeded', onSubSucceeded);
       channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handleUpdate);
+      releaseChannel(channelName);
     };
-  }, [deal.id, isOpen, loadActivityLogs, mutate, mutateAccelerators, session?.user?.id]);
+  }, [deal.id, isOpen, loadActivityLogs, mutate, mutateAccelerators, session?.user?.id, applyPusherMemberEvent]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {
     if (!uniqueLogsMap.has(log.id)) {
