@@ -97,3 +97,66 @@ export function replaceOptimisticActivity(
             .map(reply => reply.id === temporaryId ? persistedLog : reply))),
   }));
 }
+
+/** On-Demand Tab Cache Key: only fetch AI Summary when the user is actively viewing the summary tab */
+export function dealSummaryKey(
+  dealId: string | undefined,
+  activeTab: string,
+  isOpen: boolean,
+): [string, string] | null {
+  if (!isOpen || !dealId || activeTab !== 'summary') return null;
+  return ['deal-summary-on-demand', dealId];
+}
+
+/** On-Demand Tab Cache Key: only fetch Shared Media when the user is actively viewing the sharedMedia tab */
+export function sharedMediaKey(
+  dealId: string | undefined,
+  activeTab: string,
+  isOpen: boolean,
+): [string, string] | null {
+  if (!isOpen || !dealId || activeTab !== 'sharedMedia') return null;
+  return ['opportunity-shared-media', dealId];
+}
+
+export interface ParsedLogAttachment {
+  url: string;
+  filename: string;
+  type: string;
+  isImage: boolean;
+}
+
+export function parseLogContent(content: string) {
+  const attachments: ParsedLogAttachment[] = [];
+  const cleanText = (content || '')
+    .replace(
+      /\[ATTACHMENT:([^\|\]]+)(?:\|([^\|\]]*))?(?:\|([^\|\]]*))?\]/g,
+      (_match, url, filename = '', type = '') => {
+        const cleanUrl = (url || '').trim();
+        const cleanFilename = (filename || '').trim();
+        const cleanType = (type || '').trim();
+        const isImg =
+          cleanType.startsWith('image/') ||
+          cleanType.startsWith('video/') ||
+          Boolean(cleanUrl.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)(\?.*)?$/i)) ||
+          Boolean(cleanUrl.includes('/image/upload/')) ||
+          cleanUrl.startsWith('blob:') ||
+          cleanUrl.startsWith('data:') ||
+          Boolean(cleanFilename.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)$/i));
+
+        attachments.push({
+          url: cleanUrl,
+          filename: cleanFilename || 'Attachment',
+          type: cleanType || (isImg ? 'image/jpeg' : 'application/octet-stream'),
+          isImage: isImg,
+        });
+        return '';
+      }
+    )
+    .trim();
+
+  const images = attachments.filter((a) => a.isImage);
+  const otherFiles = attachments.filter((a) => !a.isImage);
+
+  return { cleanText, images, otherFiles };
+}
+

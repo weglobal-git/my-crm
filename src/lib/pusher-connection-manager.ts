@@ -2,6 +2,7 @@
 
 import { pusherClient } from "@/lib/pusher";
 import { mutate } from "swr";
+import { isPendingAcceleratorsKey } from "@/lib/deal-accelerators-sync";
 
 const DORMANCY_TIMEOUT_MS = 45_000; // 45 seconds after tab is hidden
 let dormancyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -91,7 +92,7 @@ export function initPusherConnectionHygiene() {
             void mutate(['deal-accelerators', payload.dealId]);
           }
           if (payload?.action === 'DEAL_ACCELERATORS_UPDATED') {
-            void mutate(key => Array.isArray(key) && key[0] === 'pending-accelerators');
+            void mutate(isPendingAcceleratorsKey);
           }
           if (event.data.eventName === 'new-notification') {
             void mutate('my-notifications');

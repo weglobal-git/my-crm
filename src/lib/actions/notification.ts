@@ -66,7 +66,6 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   });
 
   await triggerNotification(newOwnerId, notification);
-  revalidatePath('/pipeline');
   return { success: true, notification };
 }
 

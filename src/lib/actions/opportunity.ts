@@ -236,7 +236,6 @@ export async function moveOpportunity(
     select: pipelineOpportunitySelect
   });
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
-  revalidatePath('/pipeline');
   return result;
 }
 
@@ -252,7 +251,7 @@ type SafeOpportunityUpdate = {
   lossReason?: string | null;
 };
 
-export async function updateOpportunity(id: string, data: SafeOpportunityUpdate) {
+export async function updateOpportunity(id: string, data: SafeOpportunityUpdate, mutationId?: string) {
   let actor;
   if (data.type !== undefined) {
     const access = await requireOpportunityAccess(id, { ownerOrAdmin: true });
@@ -287,7 +286,14 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate)
     where: { id },
     select: pipelineOpportunitySelect
   });
-  await notifyPrivatePipelineUpdate(id, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+  const revision = fullDeal?.updatedAt ? new Date(fullDeal.updatedAt).getTime() : Date.now();
+  await notifyPrivatePipelineUpdate(id, {
+    action: 'OPPORTUNITY_UPDATED',
+    deal: fullDeal,
+    dealId: id,
+    revision,
+    mutationId,
+  });
   return fullDeal || result;
 }
 
@@ -369,7 +375,7 @@ export async function getOpportunitySharedMedia(dealId: string): Promise<Opportu
   };
 }
 
-export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string) {
+export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string, mutationId?: string) {
   const { actor } = await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
   const { opp: result, activityLog, systemLog } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const opp = await tx.opportunity.update({
@@ -418,12 +424,19 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     where: { id: opportunityId },
     select: pipelineOpportunitySelect
   });
-  await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+  const revision = fullDeal?.updatedAt ? new Date(fullDeal.updatedAt).getTime() : Date.now();
+  await notifyPrivatePipelineUpdate(opportunityId, {
+    action: 'OPPORTUNITY_UPDATED',
+    deal: fullDeal,
+    dealId: opportunityId,
+    revision,
+    mutationId,
+  });
   await Promise.all(logsWithUsers.map((log: (typeof logsWithUsers)[number]) =>
     notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: log })
   ));
-  revalidatePath('/pipeline');
-  return result;
+  const commentLog = logsWithUsers.find((l: (typeof logsWithUsers)[number]) => l.id === activityLog.id) || null;
+  return { opp: result, activityLog: commentLog, revision, mutationId };
 }
 
 export async function getOpportunityActivityLogs(opportunityId: string, limit = 10, cursor?: string, type?: 'COMMENT' | 'SYSTEM_UPDATE') {
@@ -707,7 +720,7 @@ export async function addTeamMember(opportunityId: string, userId: string) {
   return result;
 }
 
-export async function addTeamMembers(opportunityId: string, userIds: string[]) {
+export async function addTeamMembers(opportunityId: string, userIds: string[], mutationId?: string) {
   if (!userIds || userIds.length === 0) return null;
   const { actor } = await requireOpportunityAccess(opportunityId);
   
@@ -721,7 +734,7 @@ export async function addTeamMembers(opportunityId: string, userIds: string[]) {
     include: {
       teamMembers: {
         where: { id: { in: userIds } },
-        select: { id: true, name: true, image: true, email: true, role: true }
+        select: { id: true, name: true, image: true, email: true, role: true, departments: { select: { id: true, name: true } } }
       }
     }
   });
@@ -753,17 +766,45 @@ export async function addTeamMembers(opportunityId: string, userIds: string[]) {
     }
   }
 
+  // Create system log on server
+  try {
+    const names = result.teamMembers.map(u => u.name || 'user').join(', ');
+    const log = await prisma.activityLog.create({
+      data: {
+        content: `Invited ${names} to the team`,
+        opportunity: { connect: { id: opportunityId } },
+        user: { connect: { id: actor.id } },
+        type: "SYSTEM_UPDATE"
+      }
+    });
+    void notifyPrivatePipelineUpdate(opportunityId, {
+      action: 'ACTIVITY_ADDED',
+      dealId: opportunityId,
+      activityLog: log
+    }).catch(() => {});
+  } catch (err) {
+    console.warn("[addTeamMembers] Failed to log system update:", err);
+  }
+
+  const revision = result.updatedAt.getTime();
   await notifyPrivatePipelineUpdate(opportunityId, {
     action: 'MEMBERS_ADDED',
     dealId: opportunityId,
-    users: result.teamMembers
+    users: result.teamMembers,
+    revision,
+    mutationId,
   }).catch(() => {});
 
-  revalidatePath('/pipeline');
-  return result;
+  return {
+    success: true,
+    opportunityId,
+    teamMembers: result.teamMembers,
+    revision,
+    mutationId,
+  };
 }
 
-export async function removeTeamMember(opportunityId: string, userId: string) {
+export async function removeTeamMember(opportunityId: string, userId: string, mutationId?: string) {
   const { actor, opportunity } = await requireOpportunityAccess(opportunityId);
   const isOwner = opportunity.ownerId === actor.id;
   const isAdmin = ['ADMIN', 'MANAGEMENT'].includes(actor.role);
@@ -774,6 +815,13 @@ export async function removeTeamMember(opportunityId: string, userId: string) {
   }
 
   const previousRecipientIds = await getPipelineRecipientUserIds(opportunityId);
+
+  // Fetch user to remove before disconnect for logging
+  const userToRemove = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true }
+  });
+
   const result = await prisma.opportunity.update({
     where: { id: opportunityId },
     data: {
@@ -782,13 +830,45 @@ export async function removeTeamMember(opportunityId: string, userId: string) {
       }
     }
   });
+
+  // Create system log on server while actor still has access context
+  try {
+    const logContent = isSelf
+      ? `${actor.name || 'A team member'} left the team`
+      : `Removed ${userToRemove?.name || 'user'} from the team`;
+
+    const log = await prisma.activityLog.create({
+      data: {
+        content: logContent,
+        opportunity: { connect: { id: opportunityId } },
+        user: { connect: { id: actor.id } },
+        type: "SYSTEM_UPDATE"
+      }
+    });
+
+    void notifyPrivatePipelineUpdate(opportunityId, {
+      action: 'ACTIVITY_ADDED',
+      dealId: opportunityId,
+      activityLog: log
+    }).catch(() => {});
+  } catch (err) {
+    console.warn("[removeTeamMember] Failed to log system update:", err);
+  }
+
+  const revision = result.updatedAt.getTime();
   await notifyPrivatePipelineUpdate(
     opportunityId,
-    { action: 'MEMBER_REMOVED', dealId: opportunityId, userId },
+    { action: 'MEMBER_REMOVED', dealId: opportunityId, userId, revision, mutationId },
     previousRecipientIds,
   );
-  revalidatePath('/pipeline');
-  return result;
+  return {
+    success: true,
+    opportunityId,
+    removedUserId: userId,
+    isSelf,
+    revision,
+    mutationId,
+  };
 }
 
 export async function deleteOpportunity(id: string) {

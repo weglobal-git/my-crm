@@ -2,9 +2,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BellRing, Bot, FileText } from "lucide-react";
+import { BellRing, Bot, FileText, Loader2 } from "lucide-react";
 import { DealTypeIcon } from "./DealTypeBadge";
-import { Opportunity, Company, User, Tag, OpportunityTag } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 import { preload } from "swr";
@@ -15,107 +14,22 @@ const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
 };
 
-interface ParsedLogAttachment {
-  url: string;
-  filename: string;
-  type: string;
-  isImage: boolean;
-}
-
-function parseLogContent(content: string) {
-  const attachments: ParsedLogAttachment[] = [];
-  const cleanText = content
-    .replace(/\[ATTACHMENT:(https?:\/\/[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+[^\s\]|]*|blob:[^\]|\s]+)(?:\|([^\]|]*))?(?:\|([^\]|]*))?\]/g, (_match, url, filename = '', type = '') => {
-      const isImg =
-        type.startsWith('image/') ||
-        Boolean(url.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)(\?.*)?$/i)) ||
-        Boolean(url.includes('/image/upload/')) ||
-        url.startsWith('blob:');
-      attachments.push({
-        url,
-        filename: filename || 'Attachment',
-        type: type || (isImg ? 'image/jpeg' : 'application/octet-stream'),
-        isImage: isImg,
-      });
-      return '';
-    })
-    .trim();
-
-  const images = attachments.filter((a) => a.isImage);
-  const otherFiles = attachments.filter((a) => !a.isImage);
-
-  return { cleanText, images, otherFiles };
-}
+import { parseLogContent, type ParsedLogAttachment } from "@/lib/pipeline-activity-cache";
+export { parseLogContent, type ParsedLogAttachment };
 
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
+import {
+  checkIsRedCard,
+  getRedThreshold,
+  type KanbanCardDTO,
+  type PipelineCardDTO,
+} from "@/lib/pipeline-card-dto";
+
+export { checkIsRedCard, getRedThreshold };
+export type { KanbanCardDTO, PipelineCardDTO };
+export type OpportunityWithRelations = KanbanCardDTO;
 
 export const PendingAcceleratorsContext = createContext<Record<string, PendingAcceleratorInfo | number>>({});
-
-export type OpportunityWithRelations = Opportunity & {
-  company: Company | null;
-  owner: User & { departments?: { id: string; name: string }[] };
-  teamMembers: User[];
-  tags?: (OpportunityTag & { tag: Tag })[];
-  activityLogs: { 
-    id: string; 
-    createdAt: Date; 
-    content: string; 
-    type: string; 
-    user: { name: string | null; image: string | null } | null 
-  }[];
-};
-
-export function checkIsRedCard(deal: OpportunityWithRelations) {
-  if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
-    return false;
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
-  if (dueDate) {
-    dueDate.setHours(0, 0, 0, 0);
-  }
-
-  // 1. If Due Date is set:
-  if (dueDate) {
-    // If today is on or past Due Date: ALWAYS RED CARD as long as DueDate remains on the deal!
-    if (dueDate <= today) {
-      return true;
-    }
-    // If Due Date is in the future: scheduled for future date, not red yet
-    return false;
-  }
-
-  // 2. If NO Due Date is set:
-  // Standard inactivity: more than 2 days (3 days) without update -> Red Card
-  let newestDate: Date | null = null;
-  if (deal.activityLogs && deal.activityLogs.length > 0) {
-    const validLogs = deal.activityLogs.filter(
-      log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_')
-    );
-    if (validLogs.length > 0) {
-      newestDate = new Date(validLogs[0].createdAt);
-      newestDate.setHours(0, 0, 0, 0);
-    }
-  }
-
-  let diffDays = 0;
-  if (newestDate) {
-    const diffTime = Math.abs(today.getTime() - newestDate.getTime());
-    diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  } else if (deal.createdAt) {
-    const createdDate = new Date(deal.createdAt);
-    createdDate.setHours(0, 0, 0, 0);
-    const diffTime = Math.abs(today.getTime() - createdDate.getTime());
-    diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  } else {
-    diffDays = 999;
-  }
-
-  return diffDays > 2;
-}
 
 interface KanbanCardProps {
   deal: OpportunityWithRelations;
@@ -124,53 +38,6 @@ interface KanbanCardProps {
   onPanelIntent?: () => void;
   currentUserId?: string;
   currentUserRole?: string;
-}
-
-export function getRedThreshold(deal: OpportunityWithRelations): Date | null {
-  if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
-    return null;
-  }
-
-  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
-  const now = new Date();
-
-  // If there is an active Due Date:
-  if (dueDate) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dueMidnight = new Date(dueDate);
-    dueMidnight.setHours(0, 0, 0, 0);
-
-    if (dueMidnight <= today) {
-      return dueDate;
-    }
-    return null;
-  }
-
-  // If NO Due Date: 3 days threshold from latest activity or creation
-  let newestDate: Date | null = null;
-  if (deal.activityLogs && deal.activityLogs.length > 0) {
-    const validLogs = deal.activityLogs.filter(
-      log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_')
-    );
-    if (validLogs.length > 0) {
-      newestDate = new Date(validLogs[0].createdAt);
-    }
-  }
-
-  let baseDate = newestDate;
-  if (!baseDate && deal.createdAt) {
-    baseDate = new Date(deal.createdAt);
-  }
-
-  if (baseDate) {
-    const threeDaysAfter = new Date(baseDate.getTime() + 3 * 24 * 60 * 60 * 1000);
-    if (now > threeDaysAfter) {
-      return threeDaysAfter;
-    }
-  }
-
-  return null;
 }
 
 const KanbanClockContext = createContext(0);
@@ -405,17 +272,27 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                         {images.slice(0, 3).map((img, idx) => (
                           <div
                             key={idx}
-                            className={`${cleanText ? 'w-10 h-10' : 'w-12 h-12'} rounded-lg overflow-hidden border border-[#4E4F50]/60 bg-[#1C1C1D] shrink-0 relative`}
+                            className={`${cleanText ? 'w-10 h-10' : 'w-12 h-12'} rounded-lg overflow-hidden border border-[#4E4F50]/60 bg-[#1C1C1D] shrink-0 relative flex items-center justify-center`}
                           >
-                            <img
-                              src={getOptimizedCloudinaryUrl(img.url, 150)}
-                              alt={img.filename}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.currentTarget.onerror = null;
-                                e.currentTarget.src = "https://placehold.co/100x100/252728/4E4F50?text=IMG";
-                              }}
-                            />
+                            {img.url === 'uploading...' ? (
+                              <div className="w-full h-full flex items-center justify-center bg-[#252728]">
+                                <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                              </div>
+                            ) : (
+                              <img
+                                src={
+                                  img.url.startsWith('blob:') || img.url.startsWith('data:')
+                                    ? img.url
+                                    : getOptimizedCloudinaryUrl(img.url, 150)
+                                }
+                                alt={img.filename}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  e.currentTarget.src = "https://placehold.co/100x100/252728/4E4F50?text=IMG";
+                                }}
+                              />
+                            )}
                           </div>
                         ))}
                         {images.length > 3 && (

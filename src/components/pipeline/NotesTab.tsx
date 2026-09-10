@@ -11,6 +11,7 @@ import { useDialog } from "@/providers/DialogProvider";
 import { HighlightText, renderCommentText } from "@/components/ui/HighlightText";
 import useSWR from "swr";
 import { pusherClient } from "@/lib/pusher";
+import { rollbackDeletedItem } from "@/lib/pipeline-delete-rollback";
 
 type NoteItem = {
   id: string;
@@ -135,7 +136,7 @@ export function NotesTab({ deal, searchQuery: externalSearchQuery }: NotesTabPro
   };
 
   const handleDelete = async (id: string) => {
-    const previousNotes = notes;
+    const targetNote = notes?.find((n) => n.id === id);
     await mutateNotes((current) => (current || []).filter((note) => note.id !== id), {
       revalidate: false,
     });
@@ -143,7 +144,19 @@ export function NotesTab({ deal, searchQuery: externalSearchQuery }: NotesTabPro
       await deleteNote(id);
       toast({ title: "Note deleted", type: "success" });
     } catch {
-      await mutateNotes(previousNotes, { revalidate: false });
+      if (targetNote) {
+        await mutateNotes(
+          (current) =>
+            rollbackDeletedItem(
+              current,
+              targetNote,
+              (a, b) =>
+                Number(b.isPinned) - Number(a.isPinned) ||
+                new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            ),
+          { revalidate: false }
+        );
+      }
       toast({ title: "Failed to delete", type: "error" });
     }
   };

@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "next dev -p 3003 --webpack",
     "build": "prisma generate && next build --webpack",
-    "start": "next start -p 3003",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:pipeline": "node --import tsx --test src/lib/deal-members-concurrency.test.ts src/lib/pipeline-activity-cache.test.ts src/lib/deal-draft-store.test.ts src/lib/deal-accelerators-sync.test.ts src/lib/pipeline-card-dto.test.ts src/lib/deal-topic-sync.test.ts src/lib/pipeline-delete-rollback.test.ts",
+    "verify:pipeline": "npx tsc --noEmit && npm run test:pipeline"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.3",

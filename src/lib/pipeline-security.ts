@@ -8,6 +8,7 @@ import { pusherServer } from '@/lib/pusher';
 
 export type PipelineActor = {
   id: string;
+  name?: string | null;
   role: Role;
   departments: string[];
 };
@@ -17,6 +18,7 @@ async function getPipelineActorFromSession(): Promise<PipelineActor> {
   if (!session?.user) throw new Error('Unauthorized');
 
   let userId = session.user.id;
+  let name = session.user.name;
   let role = session.user.role as Role;
   let departments = Array.isArray(session.user.departments)
     ? session.user.departments.filter((name): name is string => typeof name === 'string')
@@ -29,6 +31,7 @@ async function getPipelineActorFromSession(): Promise<PipelineActor> {
     });
     if (dbUser) {
       userId = dbUser.id;
+      name = dbUser.name;
       role = dbUser.role;
       departments = dbUser.departments.map((d: { name: string }) => d.name);
     }
@@ -37,7 +40,7 @@ async function getPipelineActorFromSession(): Promise<PipelineActor> {
   if (!userId) throw new Error('Unauthorized');
   if (!['ADMIN', 'MANAGEMENT', 'GENERAL'].includes(role)) throw new Error('Forbidden');
 
-  return { id: userId, role, departments };
+  return { id: userId, name, role, departments };
 }
 
 // In-memory TTL caches to optimize latency and eliminate duplicate queries

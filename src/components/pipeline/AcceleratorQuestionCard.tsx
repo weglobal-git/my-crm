@@ -33,9 +33,16 @@ export function AcceleratorQuestionCard({
   variant = 'panel',
 }: AcceleratorQuestionCardProps) {
   const [answerText, setAnswerText] = useState('');
+  const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isPending = question.status === 'PENDING';
   const isManager = question.source === 'MANAGER';
+
+  useEffect(() => {
+    if (!isAnswering) {
+      setSelectedChoice(null);
+    }
+  }, [isAnswering]);
 
   const adjustTextareaHeight = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -128,21 +135,34 @@ export function AcceleratorQuestionCard({
           {/* Preset Choices if AI generated */}
           {question.choices && question.choices.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {question.choices.map((choice, cIdx) => (
-                <button
-                  key={cIdx}
-                  type="button"
-                  onClick={() => onAnswer?.(question.id, choice)}
-                  disabled={isAnswering}
-                  className={`px-3 py-1 rounded-full bg-[#1C1C1D] text-xs font-medium transition-all cursor-pointer disabled:opacity-50 ${
-                    isManager
-                      ? 'hover:bg-[#F59E0B] hover:text-slate-950 text-amber-200 border border-amber-500/40'
-                      : 'hover:bg-purple-600 hover:text-white text-purple-200 border border-purple-500/40'
-                  }`}
-                >
-                  {choice}
-                </button>
-              ))}
+              {question.choices.map((choice, cIdx) => {
+                const isSelected = isAnswering && selectedChoice === choice;
+                return (
+                  <button
+                    key={cIdx}
+                    type="button"
+                    onClick={() => {
+                      setSelectedChoice(choice);
+                      onAnswer?.(question.id, choice);
+                    }}
+                    disabled={isAnswering}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1C1C1D] text-xs font-medium transition-all cursor-pointer disabled:opacity-60 ${
+                      isManager
+                        ? 'hover:bg-[#F59E0B] hover:text-slate-950 text-amber-200 border border-amber-500/40'
+                        : 'hover:bg-purple-600 hover:text-white text-purple-200 border border-purple-500/40'
+                    } ${
+                      isSelected
+                        ? isManager
+                          ? 'bg-[#F59E0B] text-slate-950 border-[#F59E0B] font-bold shadow-sm'
+                          : 'bg-purple-600 text-white border-purple-600 font-bold shadow-sm'
+                        : ''
+                    }`}
+                  >
+                    {isSelected && <Loader2 className="w-3 h-3 animate-spin shrink-0" />}
+                    <span>{choice}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
 

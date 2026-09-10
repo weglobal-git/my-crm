@@ -4,48 +4,10 @@ import type { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { getOpportunityAccessWhere, type PipelineActor } from '@/lib/pipeline-security';
 
-export const pipelineOpportunitySelect = {
-  id: true,
-  topic: true,
-  type: true,
-  status: true,
-  value: true,
-  currency: true,
-  dueDate: true,
-  goodsReadyDate: true,
-  goodsLoadingDate: true,
-  pipelineStageId: true,
-  ownerId: true,
-  closedAt: true,
-  oemProgress: true,
-  lossReason: true,
-  reserveId: true,
-  invoiceId: true,
-  createdAt: true,
-  updatedAt: true,
-  company: { select: { id: true, name: true, displayName: true } },
-  owner: { select: { id: true, name: true, email: true, image: true, departments: { select: { id: true, name: true } } } },
-  teamMembers: { select: { id: true, name: true, image: true } },
-  activityLogs: {
-    where: {
-      parentId: null,
-      type: 'COMMENT' as const,
-      NOT: [
-        { content: { startsWith: '[DUE DATE:' } },
-        { content: { startsWith: '[URGENT_' } },
-      ],
-    },
-    orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
-    take: 1,
-    select: {
-      id: true,
-      content: true,
-      type: true,
-      createdAt: true,
-      user: { select: { name: true, image: true } },
-    },
-  },
-};
+import { pipelineCardSelect, type KanbanCardDTO, type PipelineCardDTO } from './pipeline-card-dto';
+
+export const pipelineOpportunitySelect = pipelineCardSelect;
+export type { KanbanCardDTO, PipelineCardDTO };
 
 export async function getPipelineOpportunitiesForActor(
   actor: PipelineActor,

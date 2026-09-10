@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Menu, X } from "lucide-react";
+import { Building2, Menu, X, Pencil } from "lucide-react";
 import { DealTypeIcon } from "./DealTypeBadge";
 import { OpportunityType } from "@prisma/client";
 
@@ -86,15 +86,24 @@ export function EditDealMainBar({
               />
             </div>
           ) : (
-            <h2
-              className={`text-xs font-semibold text-slate-100 line-clamp-1 flex-1 min-w-0 ${
-                canEditTopic ? "cursor-text hover:text-white" : ""
+            <div
+              className={`flex items-center gap-1.5 flex-1 min-w-0 group ${
+                canEditTopic ? "cursor-pointer" : ""
               }`}
               onClick={() => canEditTopic && setIsEditingTopic(true)}
               title={canEditTopic ? "Click to edit title" : undefined}
             >
-              {topic}
-            </h2>
+              <h2
+                className={`text-xs font-semibold text-slate-100 line-clamp-1 flex-1 min-w-0 ${
+                  canEditTopic ? "group-hover:text-[#C7F33C] transition-colors" : ""
+                }`}
+              >
+                {topic}
+              </h2>
+              {canEditTopic && (
+                <Pencil className="w-3 h-3 text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+              )}
+            </div>
           )}
         </div>
 

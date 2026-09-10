@@ -18,6 +18,11 @@ import {
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, getRedThreshold, PendingAcceleratorsContext } from "./KanbanCard";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
+import {
+  isPendingAcceleratorsKey,
+  setPendingBadgeCount,
+  mergePendingAccelerators,
+} from "@/lib/deal-accelerators-sync";
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
@@ -46,6 +51,8 @@ type PipelineUpdateEvent = {
   deal?: OpportunityWithRelations;
   state?: DealAcceleratorsState;
   pendingCount?: number;
+  revision?: number;
+  mutationId?: string;
 };
 
 export function DroppablePlaceholder({ id, label }: { id: string, label: string }) {
@@ -62,48 +69,9 @@ export function DroppablePlaceholder({ id, label }: { id: string, label: string 
   );
 }
 
-export function sortDeals(
-  dealsList: OpportunityWithRelations[],
-  pendingAcceleratorsMap: Record<string, PendingAcceleratorInfo | number> = {}
-): OpportunityWithRelations[] {
-  return [...dealsList].sort((a, b) => {
-    // 1. Orange Card check (Urgent / Manager Call with pendingCount > 0)
-    const aInfo = pendingAcceleratorsMap[a.id];
-    const bInfo = pendingAcceleratorsMap[b.id];
-    const aPending = (typeof aInfo === 'number' ? aInfo : (aInfo?.count || 0)) > 0;
-    const bPending = (typeof bInfo === 'number' ? bInfo : (bInfo?.count || 0)) > 0;
-    if (aPending && !bPending) return -1;
-    if (!aPending && bPending) return 1;
-
-    // 2. Red Card check
-    const aRed = checkIsRedCard(a);
-    const bRed = checkIsRedCard(b);
-    if (aRed && !bRed) return -1;
-    if (!aRed && bRed) return 1;
-
-    // Sub-sort within Red Cards: longest overdue RedTimer first (earliest threshold date = smallest timestamp)
-    if (aRed && bRed) {
-      const aThreshold = getRedThreshold(a);
-      const bThreshold = getRedThreshold(b);
-      if (aThreshold && bThreshold) {
-        const diff = aThreshold.getTime() - bThreshold.getTime();
-        if (diff !== 0) return diff;
-      } else if (aThreshold && !bThreshold) {
-        return -1;
-      } else if (!aThreshold && bThreshold) {
-        return 1;
-      }
-    }
-
-    // 3. Normal Cards (or tie-breaker between same priority): latest activity/update first
-    const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-    const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-    if (bTime !== aTime) {
-      return bTime - aTime;
-    }
-    return a.id.localeCompare(b.id);
-  });
-}
+import { sortDeals, type KanbanCardDTO } from "@/lib/pipeline-card-dto";
+export { sortDeals, type KanbanCardDTO };
+import { shouldAcceptRevision, normalizeRevision } from "@/lib/deal-topic-sync";
 
 import type { TabType } from "./EditDealPanel";
 
@@ -176,9 +144,14 @@ export function KanbanBoard({
     return ids;
   }, [rawOpportunities, initialOpportunities, tab, initialTab, isCompletedTab, completedDeals]);
 
+  const allDealIdsRef = useRef(allDealIds);
+  useEffect(() => {
+    allDealIdsRef.current = allDealIds;
+  }, [allDealIds]);
+
   const { data: pendingAcceleratorsMap = initialPendingAccelerators || {}, mutate: mutatePendingAccelerators } = useSWR(
-    allDealIds.length > 0 ? ['pending-accelerators', allDealIds.slice(0, 100).sort().join(',')] : null,
-    () => getPendingAcceleratorsMap(allDealIds),
+    'pending-accelerators',
+    () => getPendingAcceleratorsMap(allDealIdsRef.current),
     { 
       fallbackData: initialPendingAccelerators,
       revalidateOnMount: !initialPendingAccelerators,
@@ -186,6 +159,26 @@ export function KanbanBoard({
       dedupingInterval: 10_000 
     }
   );
+
+  // When allDealIds updates with new deals, incrementally fetch and merge missing accelerator badges
+  const trackedDealIdsRef = useRef<Set<string>>(new Set(Object.keys(initialPendingAccelerators || {})));
+  useEffect(() => {
+    const missingIds = allDealIds.filter(id => !trackedDealIdsRef.current.has(id));
+    if (missingIds.length > 0) {
+      missingIds.forEach(id => trackedDealIdsRef.current.add(id));
+      getPendingAcceleratorsMap(missingIds).then(newMap => {
+        if (newMap && Object.keys(newMap).length > 0) {
+          void mutatePendingAccelerators(
+            (prev: Record<string, PendingAcceleratorInfo> | undefined) =>
+              mergePendingAccelerators(prev, newMap),
+            false
+          );
+        }
+      }).catch(err => {
+        console.warn('[KanbanBoard] Failed to fetch missing pending accelerators:', err);
+      });
+    }
+  }, [allDealIds, mutatePendingAccelerators]);
 
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
@@ -228,6 +221,7 @@ export function KanbanBoard({
   useEffect(() => {
     mutatePendingAcceleratorsRef.current = mutatePendingAccelerators;
   }, [mutatePendingAccelerators]);
+  const dealRevisionsRef = useRef<Record<string, number>>({});
 
   const preloadEditDealPanel = useCallback(() => {
     void loadEditDealPanel();
@@ -443,28 +437,9 @@ export function KanbanBoard({
             false
           );
           void globalMutate(
-            key => Array.isArray(key) && key[0] === 'pending-accelerators',
-            (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) => {
-              if (!prevMap) return prevMap;
-              const next = { ...prevMap };
-              if (pendingCount === 0) {
-                delete next[dealId];
-              } else {
-                const current = next[dealId];
-                if (typeof current === 'object' && current !== null) {
-                  next[dealId] = {
-                    ...current,
-                    count: pendingCount,
-                  };
-                } else {
-                  next[dealId] = {
-                    count: pendingCount,
-                    earliestPendingAt: new Date().toISOString(),
-                  };
-                }
-              }
-              return next;
-            },
+            isPendingAcceleratorsKey,
+            (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) =>
+              setPendingBadgeCount(prevMap, dealId, pendingCount),
             false
           );
         }
@@ -489,6 +464,18 @@ export function KanbanBoard({
         );
       } else if (data?.action === 'OPPORTUNITY_UPDATED' && data.deal) {
         const updatedDeal = data.deal;
+        const dealId = updatedDeal.id;
+        const incomingRev = normalizeRevision(data.revision ?? updatedDeal.updatedAt);
+        const lastRev = dealRevisionsRef.current[dealId] || 0;
+
+        if (!shouldAcceptRevision(lastRev, incomingRev)) {
+          console.log(`[KANBAN-PUSHER] Ignoring stale OPPORTUNITY_UPDATED: dealId="${dealId}", rev=${incomingRev} < lastRev=${lastRev}`);
+          return;
+        }
+        if (incomingRev) {
+          dealRevisionsRef.current[dealId] = incomingRev;
+        }
+
         if (!isCompletedTab && updatedDeal.status !== 'OPEN') {
           // Deal was closed (WON/LOST) - immediately remove from all active board columns
           setDeals(prev => {
