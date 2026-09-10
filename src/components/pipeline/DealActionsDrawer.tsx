@@ -13,12 +13,15 @@ import {
   SlidersHorizontal,
   ArrowRight,
   Check,
-  FileText
+  FileText,
+  ListTodo
 } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { updateOpportunity, moveOpportunity, deleteOpportunity, addSystemLog } from "@/lib/actions/opportunity";
+import { getNotes } from "@/lib/actions/notes";
+import { getIncompleteTodosCount, canCloseDealAsWon, type DealTodoNote } from "@/lib/deal-todo-sync";
 import { useDialog } from "@/providers/DialogProvider";
-import { mutate } from "swr";
+import useSWR, { mutate } from "swr";
 
 export interface DealActionsDrawerProps {
   isOpen: boolean;
@@ -29,6 +32,7 @@ export interface DealActionsDrawerProps {
   canConvertToInternal?: boolean;
   canDelete: boolean;
   onNavigateToInformation?: () => void;
+  onNavigateToNotes?: () => void;
   onDealClosed?: (dealId: string, status: "WON" | "LOST") => void;
   onDealConverted?: (newType?: string) => void;
   onDealDeleted?: (dealId: string) => void;
@@ -43,6 +47,7 @@ export function DealActionsDrawer({
   canConvertToInternal,
   canDelete,
   onNavigateToInformation,
+  onNavigateToNotes,
   onDealClosed,
   onDealConverted,
   onDealDeleted,
@@ -103,6 +108,14 @@ export function DealActionsDrawer({
     };
   }, [isOpen, isSubmittingClose, isConverting, isDeleting, onClose]);
 
+  // Shared Deal Notes SWR Cache for To-Do completion requirement
+  const { data: dealNotes = [] } = useSWR<DealTodoNote[]>(
+    isOpen ? ["deal-notes", deal.id] : null,
+    () => getNotes(deal.id),
+    { dedupingInterval: 5_000 }
+  );
+  const pendingTodosCount = getIncompleteTodosCount(dealNotes);
+
   // Validation for Won
   const hasValue = deal.value !== null && deal.value !== undefined && Number(deal.value) > 0;
   const hasGoodsLoadingDate = Boolean(deal.goodsLoadingDate);
@@ -114,7 +127,11 @@ export function DealActionsDrawer({
     if (!hasGoodsLoadingDate) missingWonFields.push("Goods Loading Date");
     if (!hasInvoiceId) missingWonFields.push("Invoice Number");
   }
-  const isWonValid = !isSalesDeal || missingWonFields.length === 0;
+  const isWonValid = canCloseDealAsWon({
+    isSalesDeal,
+    missingWonFields,
+    pendingTodosCount,
+  });
 
   // Handle Mark as Won (Optimistic UI < 10ms)
   const handleConfirmWon = async () => {
@@ -423,6 +440,38 @@ export function DealActionsDrawer({
                           <p className="text-xs text-slate-400 leading-relaxed">
                             Complete this internal task successfully and archive it into Completed Projects.
                           </p>
+                        )}
+
+                        {/* To-Do Incomplete Tasks Warning Banner */}
+                        {pendingTodosCount > 0 ? (
+                          <div className="p-3.5 bg-[#2A2B2D] border border-amber-500/40 rounded-xl flex flex-col gap-3 text-xs text-amber-300/90">
+                            <div className="flex items-start gap-2.5">
+                              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-amber-300">Incomplete To-Do Tasks:</p>
+                                <p className="text-[11px] text-slate-300 mt-0.5">
+                                  There {pendingTodosCount === 1 ? 'is' : 'are'} {pendingTodosCount} incomplete To-Do {pendingTodosCount === 1 ? 'task' : 'tasks'} pending. Complete or delete all tasks before closing as Won.
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onClose();
+                                onNavigateToNotes?.();
+                              }}
+                              className="w-full py-2 px-3 bg-[#1C1C1D] hover:bg-[#252728] border border-[#4E4F50] text-[#C7F33C] text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            >
+                              <ListTodo className="w-3.5 h-3.5" />
+                              <span>Go to To-Do Tasks to Complete</span>
+                              <ArrowRight className="w-3.5 h-3.5 ml-0.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="p-3 bg-[#2A2B2D] border border-[#4E4F50] rounded-xl flex items-center gap-2 text-xs text-slate-200">
+                            <CheckCircle2 className="w-4 h-4 shrink-0 text-[#C7F33C]" />
+                            <span>All To-Do tasks are complete</span>
+                          </div>
                         )}
 
                         <button

@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useSWRConfig } from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { useDropzone } from 'react-dropzone';
 import imageCompression from 'browser-image-compression';
 import {
@@ -13,12 +13,15 @@ import {
   Loader2,
   X,
   Paperclip,
+  ListTodo,
 } from 'lucide-react';
 import type { Role } from '@prisma/client';
 import type { Session } from 'next-auth';
 import type { OpportunityWithRelations } from '@/components/pipeline/KanbanCard';
 import type { DealAcceleratorsState, AcceleratorQuestion } from '@/lib/actions/ai-accelerator';
 import { createManagerCallQuestion } from '@/lib/actions/ai-accelerator';
+import { getNotes } from '@/lib/actions/notes';
+import { getIncompleteTodosCount, type DealTodoNote } from '@/lib/deal-todo-sync';
 import { addActivityLog, updateDueDateWithLog } from '@/lib/actions/opportunity';
 import {
   type ActivityLogPage,
@@ -99,6 +102,14 @@ export function ActivityFeedTab({
   toast,
 }: ActivityFeedTabProps) {
   const { mutate } = useSWRConfig();
+
+  // Shared Deal Notes SWR Cache for To-Do announcement bar
+  const { data: dealNotes = [] } = useSWR<DealTodoNote[]>(
+    ['deal-notes', deal.id],
+    () => getNotes(deal.id),
+    { revalidateOnFocus: true, revalidateOnReconnect: true, dedupingInterval: 5_000 }
+  );
+  const pendingTodosCount = getIncompleteTodosCount(dealNotes);
 
   // In-Memory Draft Preservation Hook
   const { draft, updateDraft, clearCurrentDraft } = useDealDraft(deal.id, 'activity');
@@ -640,36 +651,68 @@ export function ActivityFeedTab({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 h-full">
-      {/* Scrollable Feed Timeline Container */}
-      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 flex flex-col gap-6 custom-scrollbar">
-        {/* Urgent Call Announcement Bar */}
-      {pendingQuestions.length > 0 && (
-        <div
-          onClick={() => setActiveTab('manager-call')}
-          className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-amber-300 hover:bg-amber-500/15 transition cursor-pointer shadow-sm mb-4"
-        >
-          <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
-            <PhoneCall className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
-            <span className="font-bold text-xs text-amber-400 shrink-0">Manager Call</span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shrink-0">
-              {pendingQuestions.length} Pending
-            </span>
-            <span className="text-xs text-amber-200/90 font-mono font-medium tracking-wide tabular-nums shrink-0">
-              {getElapsedWaitText()}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setActiveTab('manager-call');
-            }}
-            className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold shrink-0 hover:bg-amber-400 transition cursor-pointer shadow"
-          >
-            Answer
-          </button>
+      {/* Sticky/Pinned Top Announcements Container */}
+      {(pendingQuestions.length > 0 || pendingTodosCount > 0) && (
+        <div className="px-2 pt-2 pb-1 flex flex-col gap-1 shrink-0 bg-[#252728] z-20">
+          {/* Urgent Call Announcement Bar */}
+          {pendingQuestions.length > 0 && (
+            <div
+              onClick={() => setActiveTab('manager-call')}
+              className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-amber-300 hover:bg-amber-500/15 transition cursor-pointer shadow-sm"
+            >
+              <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
+                <PhoneCall className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
+                <span className="font-bold text-xs text-amber-400 shrink-0">Manager Call</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30 shrink-0">
+                  {pendingQuestions.length} Pending
+                </span>
+                <span className="text-xs text-amber-200/90 font-mono font-medium tracking-wide tabular-nums shrink-0">
+                  {getElapsedWaitText()}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveTab('manager-call');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold shrink-0 hover:bg-amber-400 transition cursor-pointer shadow"
+              >
+                Answer
+              </button>
+            </div>
+          )}
+
+          {/* To-Do Announcement Bar */}
+          {pendingTodosCount > 0 && (
+            <div
+              onClick={() => setActiveTab('notes')}
+              className="bg-[#C7F33C]/10 border border-[#C7F33C]/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-[#C7F33C] hover:bg-[#C7F33C]/15 transition cursor-pointer shadow-sm"
+            >
+              <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
+                <ListTodo className="w-3.5 h-3.5 text-[#C7F33C] shrink-0" />
+                <span className="font-bold text-xs text-[#C7F33C] shrink-0">To-Do Tasks</span>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] font-bold border border-[#C7F33C]/30 shrink-0">
+                  {pendingTodosCount} {pendingTodosCount === 1 ? 'Pending' : 'Pending'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveTab('notes');
+                }}
+                className="px-2.5 py-1 rounded-lg bg-[#C7F33C] text-slate-950 text-xs font-bold shrink-0 hover:bg-[#b8e42f] transition cursor-pointer shadow"
+              >
+                View To-Do
+              </button>
+            </div>
+          )}
         </div>
       )}
+
+      {/* Scrollable Feed Timeline Container */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 flex flex-col gap-6 custom-scrollbar">
 
       {/* Feed List */}
       <div className="flex flex-col gap-6">

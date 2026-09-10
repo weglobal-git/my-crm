@@ -94,3 +94,26 @@ export async function togglePinNote(noteId: string, isPinned: boolean) {
     throw new Error("Failed to pin note");
   }
 }
+
+export async function toggleCompleteNote(noteId: string, isCompleted: boolean) {
+  try {
+    const existingNote = await prisma.note.findUnique({ where: { id: noteId } });
+    if (!existingNote) throw new Error("Note not found");
+    await requireOpportunityAccess(existingNote.opportunityId);
+
+    const note = await prisma.note.update({
+      where: { id: noteId },
+      data: { isCompleted },
+      include: { author: { select: { name: true, image: true, email: true } } },
+    });
+
+    await notifyPrivatePipelineUpdate(existingNote.opportunityId, { action: 'NOTE_UPDATED', dealId: existingNote.opportunityId, noteId, note });
+
+    return note;
+  } catch (error) {
+    console.error("Failed to toggle complete note:", error);
+    throw new Error("Failed to update note completion status");
+  }
+}
+
+export const togglePriorityNote = togglePinNote;

@@ -328,6 +328,7 @@ model Note {
   id            String      @id @default(cuid())
   content       String
   isPinned      Boolean     @default(false)
+  isCompleted   Boolean     @default(false)
   color         String?
   opportunityId String
   authorId      String

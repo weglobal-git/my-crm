@@ -1,6 +1,6 @@
 "use client";
 
-import { X, MoreHorizontal, MessageSquare, Trash2, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, PhoneCall } from "lucide-react";
+import { X, MoreHorizontal, MessageSquare, Trash2, Download, Loader2, RefreshCw, Sparkles, Copy, Check, AlertCircle, Bot, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, PhoneCall, ListTodo } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 
 import { deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateOpportunity } from "@/lib/actions/opportunity";
@@ -259,6 +259,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
 
   // Tab Sub-States
   const [sharedMediaSubTab, setSharedMediaSubTab] = useState<"images" | "links" | "files">("images");
+  const [notesSubTab, setNotesSubTab] = useState<'todo' | 'completed'>('todo');
   const [noteSearchQuery, setNoteSearchQuery] = useState("");
   const [isSearchingNotes, setIsSearchingNotes] = useState(false);
   const customerTabRef = useRef<CustomerTabRef>(null);
@@ -1245,14 +1246,18 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
             <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-3 gap-3 z-10 shrink-0 overflow-y-auto hide-scrollbar">
           {rightMenus.map(menu => {
             const tabId = menu.key.split('.').pop() as TabType;
+            const isNotes = tabId === 'notes' || menu.key === 'pipeline.notes';
             const Icon = tabId === 'summary' || menu.key === 'pipeline.summary' 
               ? Bot 
+              : isNotes
+              ? ListTodo
               : (menu.iconName ? IconMap[menu.iconName] || MessageSquare : MessageSquare);
+            const label = isNotes ? 'To-Do' : menu.label;
             return (
               <button
                 key={menu.key}
                 onClick={() => setActiveTab(tabId)}
-                title={menu.label}
+                title={label}
                 className={`
                   flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200
                   ${activeTab === tabId || (activeTab === 'system' && tabId === 'activity')
@@ -1389,12 +1394,17 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
             if (activeTab === 'notes') {
               return (
                 <EditDealSubBar
-                  leftContent={<div />}
+                  tabs={[
+                    { id: 'todo', label: 'To-Do' },
+                    { id: 'completed', label: 'Completed' },
+                  ]}
+                  activeTab={notesSubTab}
+                  onTabChange={(tabId) => setNotesSubTab(tabId as 'todo' | 'completed')}
                   search={{
                     isActive: isSearchingNotes,
                     query: noteSearchQuery,
-                    placeholder: 'Search notes...',
-                    onToggle: () => setIsSearchingNotes(prev => !prev),
+                    placeholder: notesSubTab === 'todo' ? 'Search to-do...' : 'Search completed...',
+                    onToggle: () => setIsSearchingNotes((prev) => !prev),
                     onChange: setNoteSearchQuery,
                     onClear: () => setNoteSearchQuery(''),
                   }}
@@ -1546,7 +1556,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
             )}
 
             {activeTab === 'notes' && (
-              <NotesTab deal={deal} searchQuery={noteSearchQuery} />
+              <NotesTab deal={deal} searchQuery={noteSearchQuery} subTab={notesSubTab} />
             )}
 
             {['sharedMedia'].includes(activeTab) && (
@@ -1621,6 +1631,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         canConvertToInternal={canConvertToInternal}
         canDelete={canDelete}
         onNavigateToInformation={() => setActiveTab('information')}
+        onNavigateToNotes={() => setActiveTab('notes')}
         onDealClosed={(dealId, status) => {
           setIsActionsDrawerOpen(false);
           onDealClosed?.(dealId, status);

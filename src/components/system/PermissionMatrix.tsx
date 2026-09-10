@@ -313,7 +313,7 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
                                     <Unlock className="w-3.5 h-3.5" />
                                   </button>
                                 )}
-                                <span>{sideMenu.label}</span>
+                                <span>{sideMenu.key === "pipeline.notes" ? "To-Do" : sideMenu.label}</span>
                               </div>
                               {description && (
                                 <span className="text-xs text-slate-400/80 not-italic font-normal tracking-tight mt-0.5">

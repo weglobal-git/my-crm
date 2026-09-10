@@ -143,6 +143,19 @@ export async function moveOpportunity(
 
   // 2. Moving to End (e.g. WON, LOST)
   if (newStatus === "WON") {
+    const incompleteTodosCount = await prisma.note.count({
+      where: {
+        opportunityId,
+        isCompleted: false,
+      },
+    });
+
+    if (incompleteTodosCount > 0) {
+      throw new Error(
+        `Cannot mark as Won with ${incompleteTodosCount} incomplete to-do task(s). Complete or delete all tasks first.`
+      );
+    }
+
     if (opportunity.type === "SALES_DEAL") {
       if (
         opportunity.value === null || 

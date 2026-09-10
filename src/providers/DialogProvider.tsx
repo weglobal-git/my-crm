@@ -55,6 +55,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   });
 
   const toast = useCallback((options: ToastOptions) => {
+    // Suppress routine success & info toasts to keep UI calm and non-intrusive
+    // Only display critical error and warning notifications
+    if (options.type !== "error" && options.type !== "warning") {
+      return;
+    }
+
     const id = Math.random().toString(36).substring(2, 9);
     setToasts((prev) => [...prev, { ...options, id }]);
     
@@ -87,12 +93,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       {children}
 
       {/* TOAST CONTAINER */}
-      <div className="fixed bottom-4 right-4 z-[210] flex flex-col gap-3 pointer-events-none">
+      <div className="fixed top-4 right-4 z-[210] flex flex-col gap-3 pointer-events-none">
         {toasts.map((t) => (
           <div 
             key={t.id} 
             className={`
-              pointer-events-auto flex items-start gap-3 p-4 bg-[#252728] rounded-2xl border border-[#3A3B3C] shadow-2xl min-w-[300px] max-w-[400px] animate-in slide-in-from-bottom-5 fade-in duration-300
+              pointer-events-auto flex items-start gap-3 p-4 bg-[#252728] rounded-2xl border border-[#3A3B3C] shadow-2xl min-w-[300px] max-w-[400px] animate-in slide-in-from-top-5 fade-in duration-300
             `}
           >
             <div className="shrink-0 mt-0.5">
