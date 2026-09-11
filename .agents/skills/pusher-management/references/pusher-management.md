@@ -60,12 +60,12 @@ Connection คือ client socket ที่เปิดพร้อมกัน
 
 | เจ้าของ/ไฟล์ | พฤติกรรมที่พบ | งานที่ต้องทำหรือเฝ้าระวัง |
 |---|---|---|
-| `src/lib/pusher.ts` | Lazy browser-only client (Proxy pattern) ไม่สร้าง socket ตอน evaluate module | เชื่อมต่อเฉพาะเมื่อ authenticated session พร้อมผ่าน ClientShell |
+| `src/lib/pusher.ts` | Lazy browser-only client (Proxy pattern); Header ไม่แตะ Proxy ก่อน manager เชื่อมต่อสำเร็จ | เชื่อมต่อเฉพาะเมื่อ authenticated session พร้อมและ connection manager อนุญาต |
 | `src/lib/pusher-server.ts` | แยก server SDK และใช้ `server-only` แล้ว | รักษา server/client import boundary |
 | `src/lib/pusher-subscription-manager.ts` | Reference-counted subscription manager สำหรับ shared channels | ใช้ใน KanbanBoard, EditDealPanel, NotesTab, ContactView; unsubscribe เมื่อ refCount เป็น 0 |
-| `src/lib/pusher-connection-manager.ts` | Initial-hidden delay, 45s dormancy disconnect, bfcache pageshow, online reconnect, targeted recovery, user/env-scoped BroadcastChannel with dedupe, logout teardown | จัดการ lifecycle ครบถ้วน; ส่ง `CONTACT_RECOVERY_EVENT` สู่ Contact state owner |
+| `src/lib/pusher-connection-manager.ts` | Initial-hidden เริ่ม dormancy timer ทันที, 45s disconnect, reconnect จากสถานะ initialized, bfcache/pageshow, online recovery, targeted recovery, user/env-scoped BroadcastChannel with dedupe, logout teardown | เป็น owner เดียวที่เปิด socket; ส่ง `CONTACT_RECOVERY_EVENT` สู่ Contact state owner |
 | `src/components/layout/ClientShell.tsx` | จัดการ connection lifecycle ตาม session | มี init และ teardown/reset เมื่อ logout หรือเปลี่ยนบัญชีเรียบร้อย |
-| `src/components/layout/Header.tsx` | Reconnection gap ปิดด้วย sync บน subscription_succeeded; error state ไม่ล้าง inbox และมี retry banner; cross-tab resolve sync | จัดการ fallback เมื่อ subscription หลุด; presence สดไม่ยิง query ซ้ำซ้อน |
+| `src/components/layout/Header.tsx` | รอ connection-active signal จาก manager ก่อน subscribe presence/private channel; reconnection gap ปิดด้วย sync บน subscription_succeeded; error state ไม่ล้าง inbox และมี retry banner | ไม่สร้าง Pusher client จาก hidden initial load; จัดการ fallback เมื่อ subscription หลุด |
 | `src/app/api/pusher/auth/route.ts` + `src/lib/pusher-auth-authorizer.ts` | แยกโมดูล authorizer ตรวจสิทธิ์ contact menu permissions และ role ก่อนอนุญาต `private-contacts`; presence allowlist + sanitized user_info | ป้องกัน unauthenticated access, authorization bypass และ data leak ครบถ้วน |
 | `src/lib/pipeline-security.ts` | คำนวณผู้รับและส่ง private pipeline events; มี recipient cache พร้อมฟังก์ชัน `invalidatePipelineRecipientCache` | Invalidate ทันทีเมื่อ ownership หรือ team members เปลี่ยนแปลง |
 | `src/components/contact/ContactView.tsx`, `src/lib/actions/contact.ts` | ย้ายจาก public contact ไปสู่ private-contacts เรียบร้อย; ฟัง `CONTACT_RECOVERY_EVENT` เพื่อ refetch dataset สด | ใช้ subscription manager ref-counting และ private authorized channel พร้อม targeted recovery |
@@ -237,7 +237,7 @@ Notification DTO ต้องเลือกเฉพาะ id/type/title/messag
 | P0-B Baseline & lifecycle | pusher client/manager, ClientShell, shared subscribers | **เสร็จสมบูรณ์:** Lazy client ไม่สร้าง socket ตอน unauth/module import; 1 client/tab; clean teardown เมื่อ logout/session change; ref-counted shared subscriptions ป้องกัน disconnect ทับซ้อน; targeted recovery แทน global mutate; ผ่าน automated test suite |
 | P1 Recovery & Subscription Ownership | Header notification owner, manager, ContactView | **เสร็จสมบูรณ์:** Header ตรวจสอบ `isNotificationSubscribed` state จริง ไม่หลงเชื่อแค่ socket connected; fallback sync ทำงานอัตโนมัติเมื่อ subscription error; ContactView ใช้ subscription manager ref-counting |
 | P2 Inbox reliability & Presence | Header activity ping, notification actions/schema | **เสร็จสมบูรณ์:** แยก `readAt DateTime?` ใน Notification schema ไม่ปนกับ workflow status; throttle และ bypass DB heartbeat เมื่อ Pusher presence ทำงานปกติ ลดภาระ Neon query 100% ในช่วง steady state |
-| P3 Verification & Deployment | Automated test suites & deployment readiness | **เสร็จสมบูรณ์ระดับ codebase:** ผ่าน verify:pipeline ทั้ง 54 tests (0 failures, 0 TypeScript errors); โค้ดทั้งหมดพร้อม deploy สู่ staging/production เพื่อสังเกตการณ์ steady-state connections บน Pusher Dashboard |
+| P3 Verification & Deployment | Automated test suites & deployment readiness | **เสร็จสมบูรณ์ระดับ codebase:** ผ่าน verify:pipeline ทั้ง 59 tests (0 failures, 0 TypeScript errors) รวม regression ของ initial-hidden lifecycle; โค้ดพร้อม deploy สู่ staging/production เพื่อสังเกตการณ์ steady-state connections บน Pusher Dashboard |
 
 ก่อนย้าย provider ต้องพิสูจน์ private/presence compatibility, payload settings, TLS, auth, reconnect, deployment lifecycle และ recovery ด้วย client จริง เปลี่ยน env ไม่ได้แปลว่าทุก browser เปลี่ยนทันที โดยเฉพาะ NEXT_PUBLIC values ที่ bundle ตอน build ต้อง deploy และคำนึงถึงแท็บเวอร์ชันเก่า
 

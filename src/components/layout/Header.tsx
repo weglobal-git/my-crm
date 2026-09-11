@@ -14,10 +14,12 @@ import { useSidebar } from "./SidebarContext";
 
 import { getActiveUsers, pingAndGetActiveUsers } from "@/lib/actions/users";
 import { getMyNotifications, respondToNotification, type NotificationItem } from "@/lib/actions/notification";
-import { pusherClient } from "@/lib/pusher";
+import { getPusherClient } from "@/lib/pusher";
+import type PusherClient from "pusher-js";
 import {
   broadcastEventAcrossTabs,
   NOTIFICATIONS_CHANGED_EVENT,
+  PUSHER_CONNECTION_ACTIVE_EVENT,
 } from "@/lib/pusher-connection-manager";
 
 type ActiveUser = Awaited<ReturnType<typeof getActiveUsers>>[number];
@@ -103,6 +105,10 @@ export function Header() {
 
       let isNotificationSubscribed = false;
       let isPresenceSubscribed = false;
+      let realtimeClient: PusherClient | null = null;
+      let hasSetupRealtime = false;
+      let handleStateChange: ((states: { previous: string; current: string }) => void) | null = null;
+      let handleConnError: ((err: unknown) => void) | null = null;
 
 
       syncNotifications();
@@ -121,117 +127,129 @@ export function Header() {
 
       // Fallback polling for notifications when private channel subscription is not active
       const notificationFallbackInterval = setInterval(() => {
-        if (!isNotificationSubscribed || pusherClient.connection.state !== "connected") {
+        if (!isNotificationSubscribed || realtimeClient?.connection.state !== "connected") {
           syncNotifications();
         }
       }, 60000);
 
-      // 3. Setup Pusher Presence Channel
-      try {
-        const presenceChannel = pusherClient.subscribe('presence-global');
-        
-        presenceChannel.bind('pusher:subscription_succeeded', (members: { each: (cb: (member: { id: string; info: Record<string, unknown> }) => void) => void }) => {
-          isPresenceSubscribed = true;
-          const users: ActiveUser[] = [];
-          members.each((member) => {
-            users.push({ id: member.id, ...member.info } as ActiveUser);
+      // The connection manager is the only code allowed to create/connect the client.
+      // A hidden initial load therefore registers this callback without touching the Proxy.
+      const setupRealtimeSubscriptions = () => {
+        if (hasSetupRealtime) return;
+        const connectedClient = getPusherClient();
+        if (!connectedClient || connectedClient.connection.state !== "connected") return;
+
+        hasSetupRealtime = true;
+        realtimeClient = connectedClient;
+
+        // 3. Setup Pusher Presence Channel
+        try {
+          const presenceChannel = connectedClient.subscribe('presence-global');
+
+          presenceChannel.bind('pusher:subscription_succeeded', (members: { each: (cb: (member: { id: string; info: Record<string, unknown> }) => void) => void }) => {
+            isPresenceSubscribed = true;
+            const users: ActiveUser[] = [];
+            members.each((member) => {
+              users.push({ id: member.id, ...member.info } as ActiveUser);
+            });
+            if (users.length > 0) setActiveUsers(users);
           });
-          if (users.length > 0) setActiveUsers(users);
-        });
 
-        presenceChannel.bind('pusher:subscription_error', () => {
-          isPresenceSubscribed = false;
-        });
-
-        presenceChannel.bind('pusher:member_added', (member: { id: string; info: Record<string, unknown> }) => {
-          setActiveUsers((prev: ActiveUser[]) => {
-            if (prev.find((u: ActiveUser) => u.id === member.id)) return prev;
-            return [...prev, { id: member.id, ...member.info } as ActiveUser];
-          });
-        });
-
-        presenceChannel.bind('pusher:member_removed', (member: { id: string }) => {
-          setActiveUsers((prev: ActiveUser[]) => prev.filter((u: ActiveUser) => u.id !== member.id));
-        });
-      } catch (err) {
-        console.warn("[Header] Pusher presence error:", err);
-      }
-
-      // 4. Setup Pusher Private Channel for Notifications
-      let handleStateChange: ((states: { previous: string; current: string }) => void) | null = null;
-      let handleConnError: ((err: unknown) => void) | null = null;
-
-      try {
-        const userChannelName = `private-user-${session.user.id}`;
-        console.log(`[HEADER-PUSHER] Subscribing to: ${userChannelName} for user: "${session.user.name}" (${session.user.email})`);
-        
-        handleStateChange = (states: { previous: string; current: string }) => {
-          console.log(`[PUSHER-CONNECTION] State changed: ${states.previous} -> ${states.current}`);
-          if (states.current === "connected") {
-            syncNotifications();
-          } else {
-            isNotificationSubscribed = false;
+          presenceChannel.bind('pusher:subscription_error', () => {
             isPresenceSubscribed = false;
-          }
-        };
-        handleConnError = (err: unknown) => {
-          const e = err as { type?: string; error?: { data?: { code?: number; message?: string } } };
-          const code = e?.error?.data?.code;
-          const msg = e?.error?.data?.message;
-          if (code === 4004) {
-            console.warn(`[PUSHER-CONNECTION] Pusher quota exceeded (code 4004: Account over quota). Fallback polling active.`);
-          } else {
-            console.warn(`[PUSHER-CONNECTION] Connection issue${code ? ` (${code})` : ''}:`, msg || err);
-          }
-          isNotificationSubscribed = false;
-        };
-
-        pusherClient.connection.bind('state_change', handleStateChange);
-        pusherClient.connection.bind('error', handleConnError);
-
-        const privateChannel = pusherClient.subscribe(userChannelName);
-        
-        privateChannel.bind('pusher:subscription_succeeded', () => {
-          console.log(`[HEADER-PUSHER] Subscribed successfully to: ${userChannelName}`);
-          isNotificationSubscribed = true;
-          // Reconcile notifications missed during reconnect / subscription handshake window
-          syncNotifications();
-        });
-        privateChannel.bind('pusher:subscription_error', (status: unknown) => {
-          console.warn(`[HEADER-PUSHER] Subscription status for ${userChannelName}:`, status);
-          isNotificationSubscribed = false;
-        });
-        
-        privateChannel.bind('new-notification', (newNotif: NotificationItem) => {
-          console.log(`[HEADER-PUSHER] Received 'new-notification':`, newNotif);
-          broadcastEventAcrossTabs(userChannelName, 'new-notification', newNotif);
-          if (!newNotif?.id) return;
-          notificationMutationVersionRef.current += 1;
-          setNotifications((prev: NotificationItem[]) => {
-            if (prev.some(n => n?.id === newNotif.id)) return prev;
-            return [newNotif, ...prev];
           });
-        });
 
-        privateChannel.bind('notification-resolved', (data: { id?: string }) => {
-          if (!data?.id) return;
-          notificationMutationVersionRef.current += 1;
-          setNotifications((prev: NotificationItem[]) => prev.filter(n => n.id !== data.id));
-        });
+          presenceChannel.bind('pusher:member_added', (member: { id: string; info: Record<string, unknown> }) => {
+            setActiveUsers((prev: ActiveUser[]) => {
+              if (prev.find((u: ActiveUser) => u.id === member.id)) return prev;
+              return [...prev, { id: member.id, ...member.info } as ActiveUser];
+            });
+          });
 
-      } catch (err) {
-        console.warn("[Header] Pusher notification error:", err);
-      }
+          presenceChannel.bind('pusher:member_removed', (member: { id: string }) => {
+            setActiveUsers((prev: ActiveUser[]) => prev.filter((u: ActiveUser) => u.id !== member.id));
+          });
+        } catch (err) {
+          console.warn("[Header] Pusher presence error:", err);
+        }
+
+        // 4. Setup Pusher Private Channel for Notifications
+        try {
+          const userChannelName = `private-user-${session.user.id}`;
+          console.log(`[HEADER-PUSHER] Subscribing to: ${userChannelName} for user: "${session.user.name}" (${session.user.email})`);
+
+          handleStateChange = (states: { previous: string; current: string }) => {
+            console.log(`[PUSHER-CONNECTION] State changed: ${states.previous} -> ${states.current}`);
+            if (states.current === "connected") {
+              syncNotifications();
+            } else {
+              isNotificationSubscribed = false;
+              isPresenceSubscribed = false;
+            }
+          };
+          handleConnError = (err: unknown) => {
+            const e = err as { type?: string; error?: { data?: { code?: number; message?: string } } };
+            const code = e?.error?.data?.code;
+            const msg = e?.error?.data?.message;
+            if (code === 4004) {
+              console.warn(`[PUSHER-CONNECTION] Pusher quota exceeded (code 4004: Account over quota). Fallback polling active.`);
+            } else {
+              console.warn(`[PUSHER-CONNECTION] Connection issue${code ? ` (${code})` : ''}:`, msg || err);
+            }
+            isNotificationSubscribed = false;
+          };
+
+          connectedClient.connection.bind('state_change', handleStateChange);
+          connectedClient.connection.bind('error', handleConnError);
+
+          const privateChannel = connectedClient.subscribe(userChannelName);
+
+          privateChannel.bind('pusher:subscription_succeeded', () => {
+            console.log(`[HEADER-PUSHER] Subscribed successfully to: ${userChannelName}`);
+            isNotificationSubscribed = true;
+            // Reconcile notifications missed during reconnect / subscription handshake window
+            syncNotifications();
+          });
+          privateChannel.bind('pusher:subscription_error', (subscriptionStatus: unknown) => {
+            console.warn(`[HEADER-PUSHER] Subscription status for ${userChannelName}:`, subscriptionStatus);
+            isNotificationSubscribed = false;
+          });
+
+          privateChannel.bind('new-notification', (newNotif: NotificationItem) => {
+            console.log(`[HEADER-PUSHER] Received 'new-notification':`, newNotif);
+            broadcastEventAcrossTabs(userChannelName, 'new-notification', newNotif);
+            if (!newNotif?.id) return;
+            notificationMutationVersionRef.current += 1;
+            setNotifications((prev: NotificationItem[]) => {
+              if (prev.some(n => n?.id === newNotif.id)) return prev;
+              return [newNotif, ...prev];
+            });
+          });
+
+          privateChannel.bind('notification-resolved', (data: { id?: string }) => {
+            if (!data?.id) return;
+            notificationMutationVersionRef.current += 1;
+            setNotifications((prev: NotificationItem[]) => prev.filter(n => n.id !== data.id));
+          });
+
+        } catch (err) {
+          console.warn("[Header] Pusher notification error:", err);
+        }
+      };
+
+      window.addEventListener(PUSHER_CONNECTION_ACTIVE_EVENT, setupRealtimeSubscriptions);
+      setupRealtimeSubscriptions();
 
       return () => {
         clearInterval(pingInterval);
         clearInterval(notificationFallbackInterval);
         window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, syncNotifications);
+        window.removeEventListener(PUSHER_CONNECTION_ACTIVE_EVENT, setupRealtimeSubscriptions);
         try {
-          if (handleStateChange) pusherClient.connection.unbind('state_change', handleStateChange);
-          if (handleConnError) pusherClient.connection.unbind('error', handleConnError);
-          pusherClient.unsubscribe('presence-global');
-          pusherClient.unsubscribe(`private-user-${session.user.id}`);
+          if (handleStateChange) realtimeClient?.connection.unbind('state_change', handleStateChange);
+          if (handleConnError) realtimeClient?.connection.unbind('error', handleConnError);
+          realtimeClient?.unsubscribe('presence-global');
+          realtimeClient?.unsubscribe(`private-user-${session.user.id}`);
         } catch {}
       };
     }

@@ -1,13 +1,14 @@
 "use client";
 
-import { pusherClient, connectPusher, disconnectPusher, destroyPusherClient } from "@/lib/pusher";
+import { connectPusher, disconnectPusher, destroyPusherClient, getOrCreatePusherClient } from "@/lib/pusher";
 import { releaseAllChannels } from "@/lib/pusher-subscription-manager";
 import { mutate } from "swr";
 import { isPendingAcceleratorsKey } from "@/lib/deal-accelerators-sync";
 
-const DORMANCY_TIMEOUT_MS = 45_000; // 45 seconds after tab is hidden
+export const DORMANCY_TIMEOUT_MS = 45_000; // 45 seconds after tab is hidden
 export const NOTIFICATIONS_CHANGED_EVENT = "my-crm:notifications-changed";
 export const CONTACT_RECOVERY_EVENT = "my-crm:contact-recovery";
+export const PUSHER_CONNECTION_ACTIVE_EVENT = "my-crm:pusher-connection-active";
 
 let dormancyTimer: ReturnType<typeof setTimeout> | null = null;
 let isInitialized = false;
@@ -17,9 +18,44 @@ let handleTeardownRef: (() => void) | null = null;
 let handleVisibilityChangeRef: (() => void) | null = null;
 let handlePageshowRef: ((e: PageTransitionEvent) => void) | null = null;
 let handleOnlineRef: (() => void) | null = null;
+let handleConnectedRef: (() => void) | null = null;
 
 // BroadcastChannel for cross-tab event mirroring (scoped by environment and user)
 let crossTabChannel: BroadcastChannel | null = null;
+
+export function shouldConnectPusher(state: string): boolean {
+  return state === "initialized" || state === "disconnected" || state === "unavailable";
+}
+
+function scheduleDormancyDisconnect() {
+  if (dormancyTimer) clearTimeout(dormancyTimer);
+  dormancyTimer = setTimeout(() => {
+    dormancyTimer = null;
+    if (document.visibilityState === "hidden") {
+      console.log("[PUSHER-HYGIENE] Tab dormant for >45s. Disconnecting WebSocket to conserve quota.");
+      disconnectPusher();
+    }
+  }, DORMANCY_TIMEOUT_MS);
+}
+
+function activatePusherConnection() {
+  const client = getOrCreatePusherClient();
+  if (!handleConnectedRef) {
+    handleConnectedRef = () => {
+      window.dispatchEvent(new Event(PUSHER_CONNECTION_ACTIVE_EVENT));
+    };
+    client.connection.bind("connected", handleConnectedRef);
+  }
+
+  if (client.connection.state === "connected") {
+    handleConnectedRef();
+    return;
+  }
+
+  if (shouldConnectPusher(client.connection.state)) {
+    connectPusher();
+  }
+}
 
 export interface CrossTabEventMessage {
   id: string;
@@ -85,8 +121,9 @@ export function initPusherConnectionHygiene(userId?: string) {
   // Initial-hidden check: If tab is loaded in background, avoid connecting immediately
   if (document.visibilityState === "hidden") {
     console.log("[PUSHER-HYGIENE] Tab loaded in background (hidden). Delaying WebSocket connection until tab is focused.");
+    scheduleDormancyDisconnect();
   } else {
-    connectPusher();
+    activatePusherConnection();
   }
 
   // 1. Teardown on tab close / page refresh
@@ -104,13 +141,7 @@ export function initPusherConnectionHygiene(userId?: string) {
   handleVisibilityChangeRef = () => {
     if (document.visibilityState === "hidden") {
       // Tab is in background: start dormancy countdown
-      if (dormancyTimer) clearTimeout(dormancyTimer);
-      dormancyTimer = setTimeout(() => {
-        if (document.visibilityState === "hidden") {
-          console.log("[PUSHER-HYGIENE] Tab dormant for >45s. Disconnecting WebSocket to conserve quota.");
-          disconnectPusher();
-        }
-      }, DORMANCY_TIMEOUT_MS);
+      scheduleDormancyDisconnect();
     } else if (document.visibilityState === "visible") {
       // Tab is active again: cancel countdown and reconnect if needed
       if (dormancyTimer) {
@@ -118,15 +149,11 @@ export function initPusherConnectionHygiene(userId?: string) {
         dormancyTimer = null;
       }
 
-      if (pusherClient.connection.state === "disconnected" || pusherClient.connection.state === "unavailable") {
-        console.log("[PUSHER-HYGIENE] Tab visible. Reconnecting Pusher WebSocket and running targeted recovery...");
-        try {
-          connectPusher();
-          triggerTargetedRecovery();
-        } catch {}
-      } else {
+      try {
+        console.log("[PUSHER-HYGIENE] Tab visible. Ensuring Pusher is connected and running targeted recovery...");
+        activatePusherConnection();
         triggerTargetedRecovery();
-      }
+      } catch {}
     }
   };
 
@@ -136,7 +163,7 @@ export function initPusherConnectionHygiene(userId?: string) {
   handlePageshowRef = (e: PageTransitionEvent) => {
     if (e.persisted || document.visibilityState === "visible") {
       console.log("[PUSHER-HYGIENE] Page restored from bfcache/pageshow. Connecting and recovering...");
-      connectPusher();
+      activatePusherConnection();
       triggerTargetedRecovery();
     }
   };
@@ -146,7 +173,7 @@ export function initPusherConnectionHygiene(userId?: string) {
   handleOnlineRef = () => {
     console.log("[PUSHER-HYGIENE] Network back online. Re-checking connection and recovering...");
     if (document.visibilityState === "visible") {
-      connectPusher();
+      activatePusherConnection();
       triggerTargetedRecovery();
     }
   };
@@ -215,6 +242,11 @@ export function teardownPusherConnectionHygiene() {
   if (handleOnlineRef) {
     window.removeEventListener("online", handleOnlineRef);
     handleOnlineRef = null;
+  }
+  if (handleConnectedRef) {
+    const client = getOrCreatePusherClient();
+    client.connection.unbind("connected", handleConnectedRef);
+    handleConnectedRef = null;
   }
 
   // Close cross-tab broadcast channel
