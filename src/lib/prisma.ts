@@ -20,7 +20,7 @@ const prismaClientSingleton = () => {
   })
 }
 
-const SCHEMA_VERSION = 'v5_company_phone_20260906_0202';
+const SCHEMA_VERSION = 'v6_notification_read_at_20260911';
 
 declare global {
   var prismaGlobal: undefined | ReturnType<typeof prismaClientSingleton>;

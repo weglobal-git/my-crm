@@ -16,8 +16,9 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, getRedThreshold, PendingAcceleratorsContext } from "./KanbanCard";
+import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, getRedThreshold, PendingAcceleratorsContext, OwnerFilterContext, DealSummariesContext } from "./KanbanCard";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
+import { getDealsWithSummaryMap } from "@/lib/actions/deal-summary";
 import {
   isPendingAcceleratorsKey,
   setPendingBadgeCount,
@@ -73,6 +74,7 @@ export function DroppablePlaceholder({ id, label }: { id: string, label: string 
 import { sortDeals, type KanbanCardDTO } from "@/lib/pipeline-card-dto";
 export { sortDeals, type KanbanCardDTO };
 import { shouldAcceptRevision, normalizeRevision } from "@/lib/deal-topic-sync";
+import type { PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
 
 import type { TabType } from "./EditDealPanel";
 
@@ -82,12 +84,19 @@ interface KanbanBoardProps {
   initialStages: PipelineStage[];
   initialOpportunities?: OpportunityWithRelations[];
   initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
+  initialDealSummaries?: Record<string, boolean>;
+  activeStageTitleDepartmentId?: string;
+  stageTitlesByDepartment?: PipelineStageTitlesByDepartment;
+  canEditStageTitles?: boolean;
+  onStageTitleChanged?: (stageId: string, title: string | null) => void;
   isCompletedTab?: boolean;
   initialTab?: string;
   activeTab?: string;
   activeSearch?: string;
   cardTypeFilter?: string;
   ownerFilter?: string;
+  onOwnerFilterChange?: (ownerId: string) => void;
+  onSearchChange?: (query: string) => void;
 }
 
 export function KanbanBoard({ 
@@ -97,11 +106,18 @@ export function KanbanBoard({
   initialStages, 
   initialOpportunities, 
   initialPendingAccelerators, 
+  initialDealSummaries,
+  activeStageTitleDepartmentId,
+  stageTitlesByDepartment = {},
+  canEditStageTitles = false,
+  onStageTitleChanged,
   initialTab = 'workspace',
   activeTab,
   activeSearch,
   cardTypeFilter = 'ALL',
   ownerFilter = 'ALL',
+  onOwnerFilterChange,
+  onSearchChange,
 }: KanbanBoardProps) {
   const { toast } = useDialog();
   const { setColumnNavConfig } = useSidebar();
@@ -111,7 +127,7 @@ export function KanbanBoard({
   const searchQuery = activeSearch !== undefined ? activeSearch : (searchParams.get('search') || '');
 
   const { data: rawOpportunities, mutate, isLoading } = useSWR<OpportunityWithRelations[]>(
-    ['pipeline-deals', tab, searchQuery],
+    ['pipeline-deals', currentUserId, tab, searchQuery],
     async () => {
       const res = await getPipelineOpportunities(tab, searchQuery);
       return (typeof res === 'string' ? JSON.parse(res) : res) as OpportunityWithRelations[];
@@ -180,6 +196,36 @@ export function KanbanBoard({
       });
     }
   }, [allDealIds, mutatePendingAccelerators]);
+
+  // Deal summaries presence map (for showing the Bot icon only when AI summary exists)
+  const { data: dealSummariesMap = initialDealSummaries || {}, mutate: mutateDealSummaries } = useSWR<Record<string, boolean>>(
+    'deals-with-summary',
+    () => getDealsWithSummaryMap(allDealIdsRef.current),
+    {
+      fallbackData: initialDealSummaries,
+      revalidateOnMount: !initialDealSummaries,
+      revalidateOnFocus: false,
+      dedupingInterval: 30_000,
+    }
+  );
+
+  const trackedSummaryDealIdsRef = useRef<Set<string>>(new Set(Object.keys(initialDealSummaries || {})));
+  useEffect(() => {
+    const missingIds = allDealIds.filter(id => !trackedSummaryDealIdsRef.current.has(id));
+    if (missingIds.length > 0) {
+      missingIds.forEach(id => trackedSummaryDealIdsRef.current.add(id));
+      getDealsWithSummaryMap(missingIds).then(newMap => {
+        if (newMap && Object.keys(newMap).length > 0) {
+          void mutateDealSummaries(
+            (prev: Record<string, boolean> | undefined) => ({ ...(prev || {}), ...newMap }),
+            false
+          );
+        }
+      }).catch(err => {
+        console.warn('[KanbanBoard] Failed to fetch missing deal summaries:', err);
+      });
+    }
+  }, [allDealIds, mutateDealSummaries]);
 
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
@@ -996,8 +1042,10 @@ export function KanbanBoard({
   }
 
   return (
-    <PendingAcceleratorsContext.Provider value={pendingAcceleratorsMap}>
-      <KanbanClockProvider>
+    <OwnerFilterContext.Provider value={{ ownerFilter, onOwnerFilterChange, searchQuery, onSearchChange }}>
+      <PendingAcceleratorsContext.Provider value={pendingAcceleratorsMap}>
+        <DealSummariesContext.Provider value={dealSummariesMap}>
+          <KanbanClockProvider>
         <div 
           ref={boardContainerRef}
           className={`relative flex gap-0 md:gap-1 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-auto xl:overflow-x-auto touch-pan-x xl:touch-auto snap-x snap-mandatory md:snap-none'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
@@ -1067,7 +1115,15 @@ export function KanbanBoard({
               >
                 <KanbanColumn 
                   id={col.id} 
-                  title={col.name} 
+                  title={
+                    (activeStageTitleDepartmentId
+                      ? stageTitlesByDepartment[activeStageTitleDepartmentId]?.[col.id]
+                      : undefined) || col.name
+                  }
+                  defaultTitle={col.name}
+                  departmentId={activeStageTitleDepartmentId}
+                  canEditTitle={canEditStageTitles && Boolean(activeStageTitleDepartmentId)}
+                  onTitleChanged={onStageTitleChanged}
                   deals={deals[col.id] || []} 
                   selectedCardId={selectedCardId}
                   onDealClick={(deal, tab) => {
@@ -1120,7 +1176,9 @@ export function KanbanBoard({
           }}
         />
       )}
-      </KanbanClockProvider>
-    </PendingAcceleratorsContext.Provider>
+          </KanbanClockProvider>
+        </DealSummariesContext.Provider>
+      </PendingAcceleratorsContext.Provider>
+    </OwnerFilterContext.Provider>
   );
 }

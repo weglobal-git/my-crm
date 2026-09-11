@@ -595,3 +595,41 @@ ${effectiveTaskInstruction}`;
     };
   }
 }
+
+/**
+ * ตรวจสอบว่าดีลใดบ้างที่มีการสรุปผล AI เรียบร้อยแล้ว
+ * ส่งกลับเป็น Record<dealId, boolean> เพื่อใช้แสดงไอคอน Bot บน KanbanCard
+ */
+export async function getDealsWithSummaryMap(dealIds: string[]): Promise<Record<string, boolean>> {
+  if (!dealIds || dealIds.length === 0) return {};
+
+  try {
+    const ids = dealIds.map(id => `deal_summary_${id}`);
+    const rows = await prisma.systemConfig.findMany({
+      where: {
+        id: { in: ids },
+        googleRefreshToken: { not: null },
+      },
+      select: { id: true, googleRefreshToken: true },
+    });
+
+    const result: Record<string, boolean> = {};
+    for (const row of rows) {
+      if (!row.googleRefreshToken) continue;
+      try {
+        const payload = JSON.parse(row.googleRefreshToken);
+        if (payload && payload.summaryData) {
+          const dealId = row.id.replace('deal_summary_', '');
+          result[dealId] = true;
+        }
+      } catch {
+        // Ignore JSON parse errors for corrupt configs
+      }
+    }
+    return result;
+  } catch (error) {
+    console.error('[Deal Summary] Failed to fetch deals summary map:', error);
+    return {};
+  }
+}
+

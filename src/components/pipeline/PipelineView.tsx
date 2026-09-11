@@ -15,6 +15,7 @@ import { useSidebar } from "@/components/layout/SidebarContext";
 import useSWR from "swr";
 import { getPipelineOpportunities } from "@/lib/actions/opportunity";
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
+import type { PipelineDepartmentOption, PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
 
 interface PipelineViewProps {
   userId: string;
@@ -23,6 +24,10 @@ interface PipelineViewProps {
   companies?: { id: string; name: string; displayName?: string | null; contacts?: { id: string; name: string }[] }[];
   initialOpportunities?: OpportunityWithRelations[];
   initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
+  initialDealSummaries?: Record<string, boolean>;
+  stageTitleDepartments?: PipelineDepartmentOption[];
+  initialStageTitlesByDepartment?: PipelineStageTitlesByDepartment;
+  canEditStageTitles?: boolean;
   initialTab?: string;
 }
 
@@ -33,6 +38,10 @@ export function PipelineView({
   companies, 
   initialOpportunities, 
   initialPendingAccelerators,
+  initialDealSummaries,
+  stageTitleDepartments = [],
+  initialStageTitlesByDepartment = {},
+  canEditStageTitles = false,
   initialTab = 'workspace' 
 }: PipelineViewProps) {
   const searchParams = useSearchParams();
@@ -41,10 +50,14 @@ export function PipelineView({
   const [cardType, setCardType] = useState<CardTypeFilterValue>('ALL');
   const [ownerFilter, setOwnerFilter] = useState<string>('ALL');
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [activeStageTitleDepartmentId, setActiveStageTitleDepartmentId] = useState(
+    () => stageTitleDepartments[0]?.id || ''
+  );
+  const [stageTitlesByDepartment, setStageTitlesByDepartment] = useState(initialStageTitlesByDepartment);
   const { setPageManageContent, setHasActiveFilters, setPageSearchConfig } = useSidebar();
 
   const { data: rawOpportunities } = useSWR<OpportunityWithRelations[]>(
-    ['pipeline-deals', tab, searchQuery],
+    ['pipeline-deals', userId, tab, searchQuery],
     async () => {
       const res = await getPipelineOpportunities(tab, searchQuery);
       return (typeof res === 'string' ? JSON.parse(res) : res) as OpportunityWithRelations[];
@@ -77,6 +90,16 @@ export function PipelineView({
 
   const totalCards = visibleDeals.length;
   const redCardsCount = useMemo(() => visibleDeals.filter(checkIsRedCard).length, [visibleDeals]);
+
+  const handleStageTitleChanged = useCallback((stageId: string, title: string | null) => {
+    if (!activeStageTitleDepartmentId) return;
+    setStageTitlesByDepartment((current) => {
+      const departmentTitles = { ...(current[activeStageTitleDepartmentId] || {}) };
+      if (title) departmentTitles[stageId] = title;
+      else delete departmentTitles[stageId];
+      return { ...current, [activeStageTitleDepartmentId]: departmentTitles };
+    });
+  }, [activeStageTitleDepartmentId]);
   
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -192,6 +215,24 @@ export function PipelineView({
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0 ml-auto flex-wrap">
+          {stageTitleDepartments.length > 1 && (
+            <label className="h-8 px-3 rounded-full bg-[#252728] border border-[#3A3B3C] flex items-center gap-2 text-xs text-slate-400">
+              <span>Column labels</span>
+              <select
+                value={activeStageTitleDepartmentId}
+                onChange={(event) => setActiveStageTitleDepartmentId(event.target.value)}
+                className="bg-transparent text-slate-100 focus:outline-none cursor-pointer"
+                aria-label="Department for column labels"
+              >
+                {stageTitleDepartments.map((department) => (
+                  <option key={department.id} value={department.id} className="bg-[#252728]">
+                    {department.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           {/* Expanding Search Component */}
           <PipelineSearch initialSearch={searchQuery} onSearch={handleSearchChange} />
 
@@ -257,18 +298,43 @@ export function PipelineView({
         onResetFilters={handleResetFilters}
       />
 
+      {stageTitleDepartments.length > 1 && (
+        <label className="md:hidden mb-3 h-10 px-3 rounded-xl bg-[#252728] border border-[#3A3B3C] flex items-center justify-between gap-3 text-xs text-slate-400">
+          <span>Column labels</span>
+          <select
+            value={activeStageTitleDepartmentId}
+            onChange={(event) => setActiveStageTitleDepartmentId(event.target.value)}
+            className="bg-transparent text-slate-100 focus:outline-none cursor-pointer max-w-[60%]"
+            aria-label="Department for column labels"
+          >
+            {stageTitleDepartments.map((department) => (
+              <option key={department.id} value={department.id} className="bg-[#252728]">
+                {department.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <KanbanBoard 
         currentUserId={userId} 
         currentUserRole={role}
         initialStages={stages} 
         initialOpportunities={initialOpportunities}
         initialPendingAccelerators={initialPendingAccelerators}
+        initialDealSummaries={initialDealSummaries}
+        activeStageTitleDepartmentId={activeStageTitleDepartmentId}
+        stageTitlesByDepartment={stageTitlesByDepartment}
+        canEditStageTitles={canEditStageTitles}
+        onStageTitleChanged={handleStageTitleChanged}
         initialTab={initialTab}
         isCompletedTab={tab === 'completed'}
         activeTab={tab}
         activeSearch={searchQuery}
         cardTypeFilter={cardType}
         ownerFilter={ownerFilter}
+        onOwnerFilterChange={setOwnerFilter}
+        onSearchChange={handleSearchChange}
       />
     </WorkspaceLayout>
   );

@@ -244,8 +244,8 @@ export function NotesTab({
 
 
   const inputBar = (
-    <div className="bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col relative w-full">
-      <div className="flex items-end gap-1 bg-[#3A3B3C] text-[16px] px-2 py-1.5 border border-[#4E4F50] transition-all w-full">
+    <div className="bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col relative w-full p-2.5 pt-2">
+      <div className="flex items-end gap-1 bg-[#3A3B3C] text-[16px] px-2 py-1.5 border border-[#4E4F50] rounded-xl transition-all w-full">
         {/* Left To-Do List Icon indicator */}
         <div className="flex items-center gap-1 shrink-0 h-7 self-end pl-1 pr-1 text-slate-400">
           <ListTodo className="w-4 h-4 text-[#C7F33C]" />
@@ -354,7 +354,7 @@ export function NotesTab({
                   isCompleted
                     ? "bg-[#252728]/70 border-[#383A3C] opacity-75 hover:opacity-100 hover:border-[#4E4F50]"
                     : note.isPinned
-                    ? "bg-[#2A2B28] border-[#C7F33C]/40"
+                    ? "bg-[#2A2B28] border-amber-400"
                     : "border-[#4E4F50]"
                 }`}
               >

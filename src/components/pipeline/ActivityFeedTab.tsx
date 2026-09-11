@@ -798,7 +798,7 @@ export function ActivityFeedTab({
       {/* Sticky Bottom Input Bar (docked in deal-panel-activity-dock for full width) */}
       {(() => {
         const bar = (
-          <div className="bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-2 relative w-full">
+          <div className="bg-[#252728] border-t border-[#1C1C1D] shrink-0 z-10 flex flex-col gap-1.5 relative w-full p-2.5 pt-2">
         {/* Mini Calendar Popup */}
         {canEditDueDate && showCalendar && (
           <div
@@ -951,7 +951,7 @@ export function ActivityFeedTab({
 
         {/* Due Date Mode Banner */}
         {pendingDueDate && !isManagerCallMode && (
-          <div className="flex items-center justify-between px-3 py-1.5 bg-[#C7F33C]/10 border border-[#C7F33C]/30 rounded-xl text-[#C7F33C] text-xs font-semibold animate-in fade-in mb-1">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-[#C7F33C]/10 border border-[#C7F33C]/30 rounded-xl text-[#C7F33C] text-xs font-semibold animate-in fade-in">
             <div className="flex items-center gap-2 min-w-0">
               <BellRing className="w-3.5 h-3.5 text-[#C7F33C] shrink-0 animate-pulse" />
               <span className="truncate">
@@ -963,7 +963,7 @@ export function ActivityFeedTab({
                       year: 'numeric',
                     }).format(pendingDueDate)}`}
                 <span className="text-slate-300 font-normal ml-1.5">
-                  (ระบุเหตุผลอย่างน้อย {MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร
+                  (Provide at least {MIN_DUE_DATE_REASON_LENGTH} characters
                   {newLog.trim().length > 0 ? (
                     newLog.trim().length >= MIN_DUE_DATE_REASON_LENGTH ? (
                       <span className="text-[#C7F33C] ml-1 font-bold">✓</span>
@@ -1014,7 +1014,7 @@ export function ActivityFeedTab({
         {/* Auto-expanding Chat Input */}
         <div
           {...getRootProps()}
-          className={`flex items-end gap-1 bg-[#3A3B3C] px-2 py-1.5 border transition-all ${
+          className={`flex items-end gap-1 bg-[#3A3B3C] px-2 py-1.5 border rounded-xl transition-all ${
             isManagerCallMode
               ? 'border-[#F59E0B] bg-[#342a1d]'
               : pendingDueDate

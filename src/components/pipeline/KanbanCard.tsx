@@ -31,6 +31,17 @@ export type OpportunityWithRelations = KanbanCardDTO;
 
 export const PendingAcceleratorsContext = createContext<Record<string, PendingAcceleratorInfo | number>>({});
 
+export interface OwnerFilterContextType {
+  ownerFilter: string;
+  onOwnerFilterChange?: (ownerId: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+}
+
+export const OwnerFilterContext = createContext<OwnerFilterContextType>({ ownerFilter: 'ALL' });
+
+export const DealSummariesContext = createContext<Record<string, boolean>>({});
+
 interface KanbanCardProps {
   deal: OpportunityWithRelations;
   isSelected?: boolean;
@@ -38,6 +49,10 @@ interface KanbanCardProps {
   onPanelIntent?: () => void;
   currentUserId?: string;
   currentUserRole?: string;
+  currentOwnerFilter?: string;
+  onFilterByOwner?: (ownerId: string) => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
 }
 
 const KanbanClockContext = createContext(0);
@@ -75,10 +90,32 @@ function RedTimer({ threshold }: { threshold: Date }) {
 
 import React from 'react';
 
-export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging, isSelected, onOpenPanel, onPanelIntent }: KanbanCardProps & { isDragging?: boolean }) {
+export const KanbanCardUI = React.memo(function KanbanCardUI({
+  deal,
+  isDragging,
+  isSelected,
+  onOpenPanel,
+  onPanelIntent,
+  currentOwnerFilter,
+  onFilterByOwner,
+  searchQuery,
+  onSearchChange,
+}: KanbanCardProps & { isDragging?: boolean }) {
   const { visibleRightMenus } = usePermissions();
   const rightMenus = visibleRightMenus('pipeline') || [];
   const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
+  const dealSummariesMap = useContext(DealSummariesContext);
+  const hasAiSummary = Boolean(dealSummariesMap[deal.id]);
+  const {
+    ownerFilter: contextOwnerFilter,
+    onOwnerFilterChange: contextOnOwnerFilterChange,
+    searchQuery: contextSearchQuery,
+    onSearchChange: contextOnSearchChange,
+  } = useContext(OwnerFilterContext);
+  const activeOwnerFilter = currentOwnerFilter ?? contextOwnerFilter;
+  const handleOwnerFilterChange = onFilterByOwner ?? contextOnOwnerFilterChange;
+  const activeSearchQuery = searchQuery ?? contextSearchQuery;
+  const handleSearchChange = onSearchChange ?? contextOnSearchChange;
   
   const canView = (tabKey: string) => rightMenus.some(menu => menu.key === `pipeline.${tabKey}`);
   const canViewInformation = canView('information');
@@ -88,7 +125,15 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   const customerName = isInternal 
     ? (deal.company?.displayName || deal.company?.name || null)
     : (deal.company?.displayName || deal.company?.name || "No Customer");
+  const rawCompanyName = deal.company?.displayName || deal.company?.name;
+  const isCompanyFiltered = Boolean(
+    rawCompanyName &&
+    activeSearchQuery &&
+    activeSearchQuery.trim().toLowerCase() === rawCompanyName.trim().toLowerCase()
+  );
   const contactName = deal.owner.name || deal.owner.email || "Unknown Contact";
+  const targetOwnerId = deal.ownerId || deal.owner?.id;
+  const isOwnerFiltered = Boolean(targetOwnerId && activeOwnerFilter === targetOwnerId);
   const pendingEntry = pendingAcceleratorsMap[deal.id];
   const pendingCount = typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
   const isOrange = pendingCount > 0;
@@ -101,21 +146,35 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
   const handlePrefetch = () => {
     onPanelIntent?.();
     if (!canView('activity')) return;
-    preload(
+    void preload(
       ['activity-logs', deal.id, 'COMMENT', ''],
       async ([, id, typeFilter, cursor]: [string, string, string, string]) => {
-        return getOpportunityActivityLogs(
-          id,
-          10,
-          cursor || undefined,
-          typeFilter as 'COMMENT' | 'SYSTEM_UPDATE',
-        );
+        try {
+          return await getOpportunityActivityLogs(
+            id,
+            10,
+            cursor || undefined,
+            typeFilter as 'COMMENT' | 'SYSTEM_UPDATE',
+          );
+        } catch (error) {
+          // A card can remain briefly in the client cache after access changes.
+          // Treat access loss during an optional hover prefetch as an empty result;
+          // the server remains authoritative and the next board refresh removes it.
+          if (error instanceof Error && error.message === 'Forbidden') {
+            return { data: [], nextCursor: undefined };
+          }
+          throw error;
+        }
       }
-    );
-    preload(
+    ).catch((error: unknown) => {
+      console.error('Failed to prefetch opportunity activity logs', error);
+    });
+    void preload(
       ['deal-accelerators', deal.id],
       () => getDealAccelerators(deal.id)
-    );
+    ).catch((error: unknown) => {
+      console.error('Failed to prefetch deal accelerators', error);
+    });
   };
 
   return (
@@ -141,9 +200,28 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             <div 
               onClick={(e) => { 
                 e.stopPropagation(); 
+                if (e.metaKey || e.ctrlKey) {
+                  if (targetOwnerId && handleOwnerFilterChange) {
+                    handleOwnerFilterChange(isOwnerFiltered ? 'ALL' : targetOwnerId);
+                    return;
+                  }
+                }
                 if (canView('collaborate')) onOpenPanel?.('collaborate'); 
               }}
-              className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer hover:border-black/50 hover:border-solid transition-all relative ${isOrange ? 'border-[#F59E0B]' : highlight ? 'border-[#C7F33C]' : 'border-[#3A3B3C]'}`}
+              title={
+                isOwnerFiltered
+                  ? `${contactName} (⌘+Click to clear filter)`
+                  : `${contactName} (⌘+Click to filter by owner)`
+              }
+              className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer hover:border-black/50 hover:border-solid transition-all relative ${
+                isOwnerFiltered
+                  ? 'ring-2 ring-white ring-offset-2 ring-offset-[#1C1C1D] border-white'
+                  : isOrange
+                  ? 'border-[#F59E0B]'
+                  : highlight
+                  ? 'border-[#C7F33C]'
+                  : 'border-[#3A3B3C]'
+              }`}
             >
               <img 
                 src={deal.owner.image ? getOptimizedCloudinaryUrl(deal.owner.image, 100) : `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
@@ -189,17 +267,17 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
               </div>
             </div>
           )}
-          {canView('summary') && canView('activity') && (
+          {canView('summary') && canView('activity') && hasAiSummary && (
             <div className="relative">
               <button
                 type="button"
-                aria-label={`Open Manager Call for ${deal.topic}`}
-                title={pendingCount > 0 ? `Manager Call มี ${pendingCount} คำถามรอคำตอบด่วน` : "Open AI Summary"}
+                aria-label={`Open AI Summary for ${deal.topic}`}
+                title="Open AI Summary"
                 onPointerDown={event => event.stopPropagation()}
                 onKeyDown={event => event.stopPropagation()}
                 onClick={event => { 
                   event.stopPropagation(); 
-                  onOpenPanel?.(pendingCount > 0 ? 'manager-call' : 'summary'); 
+                  onOpenPanel?.('summary'); 
                 }}
                 className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-100 ${
                   isOrange 
@@ -211,14 +289,6 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
               >
                 <Bot className="w-4 h-4" aria-hidden="true" />
               </button>
-              {pendingCount > 0 && (
-                <span 
-                  className={`absolute -top-1 -right-1 w-4 h-4 rounded-full font-black text-xs leading-none flex items-center justify-center animate-bounce pointer-events-none ${isOrange ? 'bg-slate-950 text-amber-400 ring-1 ring-amber-400' : 'bg-amber-400 text-slate-950'}`}
-                  title="Manager Call รอคำตอบด่วน"
-                >
-                  !
-                </span>
-              )}
             </div>
           )}
         </div>
@@ -247,9 +317,6 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
           return (
             <div className="flex flex-col gap-2 mt-1 flex-1 overflow-hidden">
               <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between">
-                  <span className={`pl-4 text-xs font-medium ${isOrange ? 'text-slate-900 font-semibold' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>{formatDateTime(latestLog.createdAt)}</span>
-                </div>
                 <div className="flex items-start gap-2 px-2">
                   <div className={`w-5 h-5 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${isOrange ? 'bg-black/25' : highlight ? 'bg-white/40' : 'bg-[#4E4F50]'}`}>
                     {latestLog.user?.image ? (
@@ -324,6 +391,12 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
             <div 
               onClick={(e) => { 
                 e.stopPropagation(); 
+                if (e.metaKey || e.ctrlKey) {
+                  if (rawCompanyName && handleSearchChange) {
+                    handleSearchChange(isCompanyFiltered ? '' : rawCompanyName);
+                    return;
+                  }
+                }
                 if (canViewInformation && deal.type === 'SALES_DEAL') {
                   onOpenPanel?.('information');
                 } else if (canView('notes')) {
@@ -333,9 +406,16 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({ deal, isDragging,
                 }
               }}
               className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[150px]
+                ${isCompanyFiltered ? "ring-2 ring-white ring-offset-2 ring-offset-[#1C1C1D] border-white font-bold" : ""}
                 ${isOrange ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/30 text-slate-900 font-semibold" : highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
               `}
-              title={customerName}
+              title={
+                rawCompanyName
+                  ? isCompanyFiltered
+                    ? `${customerName} (⌘+Click to clear search)`
+                    : `${customerName} (⌘+Click to search account)`
+                  : customerName
+              }
             >
               <span className="truncate">{customerName}</span>
             </div>
@@ -374,7 +454,11 @@ export const KanbanCard = React.memo(function KanbanCard({
   onOpenPanel, 
   onPanelIntent, 
   currentUserId, 
-  currentUserRole 
+  currentUserRole,
+  currentOwnerFilter,
+  onFilterByOwner,
+  searchQuery,
+  onSearchChange,
 }: KanbanCardProps) {
   const canDrag = currentUserRole === 'ADMIN' || deal.ownerId === currentUserId;
 
@@ -417,6 +501,10 @@ export const KanbanCard = React.memo(function KanbanCard({
         isSelected={isSelected}
         onOpenPanel={onOpenPanel} 
         onPanelIntent={onPanelIntent} 
+        currentOwnerFilter={currentOwnerFilter}
+        onFilterByOwner={onFilterByOwner}
+        searchQuery={searchQuery}
+        onSearchChange={onSearchChange}
       />
     </div>
   );

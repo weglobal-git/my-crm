@@ -729,6 +729,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       const res = await generateDealSummary(deal.id);
       if (res.success && res.data) {
         await mutateDealSummary(res, false);
+        void mutate('deals-with-summary', (prev: Record<string, boolean> | undefined) => ({ ...(prev || {}), [deal.id]: true }), false);
         toast({ title: 'AI Summary Ready', description: 'Deal summary generated successfully.', type: 'success' });
       } else {
         const errorMsg = res.message || 'Unable to generate summary.';
