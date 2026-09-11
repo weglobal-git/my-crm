@@ -44,7 +44,7 @@ import {
 } from "@/lib/deal-accelerators-sync";
 import { renderCommentText } from "@/components/ui/HighlightText";
 export { renderCommentText };
-import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
+import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { useSwipeToClose } from "@/hooks/useSwipeToClose";
 import {
   applyActivityEvent,
@@ -781,7 +781,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     if (!session?.user?.id) return;
     const channelName = `private-pipeline-${session.user.id}`;
     console.log(`[PANEL-PUSHER] Acquiring channel: "${channelName}" for deal (id=${deal.id})`);
-    const channel = acquireChannel(channelName);
+    return acquireChannelWhenConnected(channelName, (channel) => {
 
     const onSubSucceeded = () => {
       console.log(`[PANEL-PUSHER] Subscribed successfully to: "${channelName}"`);
@@ -937,8 +937,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       channel.unbind('pusher:subscription_succeeded', onSubSucceeded);
       channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handleUpdate);
-      releaseChannel(channelName);
     };
+    });
   }, [deal.id, isOpen, loadActivityLogs, mutate, mutateAccelerators, session?.user?.id, applyPusherMemberEvent]);
   const uniqueLogsMap = new Map();
   allLogs.forEach(log => {

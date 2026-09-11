@@ -16,7 +16,7 @@ import { OpportunityWithRelations } from "./KanbanCard";
 import { useDialog } from "@/providers/DialogProvider";
 import { renderCommentText } from "@/components/ui/HighlightText";
 import useSWR from "swr";
-import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
+import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { rollbackDeletedItem } from "@/lib/pipeline-delete-rollback";
 import {
   sortDealNotes,
@@ -109,36 +109,34 @@ export function NotesTab({
   useEffect(() => {
     if (!session?.user?.id) return;
     const channelName = `private-pipeline-${session.user.id}`;
-    const channel = acquireChannel(channelName);
-    const handleNoteUpdate = (event?: {
-      action?: string;
-      dealId?: string;
-      noteId?: string;
-      note?: NoteItem;
-    }) => {
-      if (event?.dealId !== deal.id || !event.action?.startsWith("NOTE_")) return;
-      mutateNotes(
-        (current) => {
-          const existing = current || [];
-          if (event.action === "NOTE_DELETED" && event.noteId) {
-            return existing.filter((note) => note.id !== event.noteId);
-          }
-          if (event.note) {
-            return [
-              event.note,
-              ...existing.filter((note) => note.id !== event.note?.id),
-            ].sort(sortDealNotes);
-          }
-          return existing;
-        },
-        { revalidate: false }
-      );
-    };
-    channel.bind("pipeline-updated", handleNoteUpdate);
-    return () => {
-      channel.unbind("pipeline-updated", handleNoteUpdate);
-      releaseChannel(channelName);
-    };
+    return acquireChannelWhenConnected(channelName, (channel) => {
+      const handleNoteUpdate = (event?: {
+        action?: string;
+        dealId?: string;
+        noteId?: string;
+        note?: NoteItem;
+      }) => {
+        if (event?.dealId !== deal.id || !event.action?.startsWith("NOTE_")) return;
+        mutateNotes(
+          (current) => {
+            const existing = current || [];
+            if (event.action === "NOTE_DELETED" && event.noteId) {
+              return existing.filter((note) => note.id !== event.noteId);
+            }
+            if (event.note) {
+              return [
+                event.note,
+                ...existing.filter((note) => note.id !== event.note?.id),
+              ].sort(sortDealNotes);
+            }
+            return existing;
+          },
+          { revalidate: false }
+        );
+      };
+      channel.bind("pipeline-updated", handleNoteUpdate);
+      return () => channel.unbind("pipeline-updated", handleNoteUpdate);
+    });
   }, [deal.id, mutateNotes, session?.user?.id]);
 
   const handleCreateNote = async () => {
@@ -471,4 +469,3 @@ export function NotesTab({
     </div>
   );
 }
-

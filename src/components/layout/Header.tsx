@@ -14,12 +14,11 @@ import { useSidebar } from "./SidebarContext";
 
 import { getActiveUsers, pingAndGetActiveUsers } from "@/lib/actions/users";
 import { getMyNotifications, respondToNotification, type NotificationItem } from "@/lib/actions/notification";
-import { getPusherClient } from "@/lib/pusher";
+import { getPusherClient, PUSHER_CONNECTION_ACTIVE_EVENT } from "@/lib/pusher";
 import type PusherClient from "pusher-js";
 import {
   broadcastEventAcrossTabs,
   NOTIFICATIONS_CHANGED_EVENT,
-  PUSHER_CONNECTION_ACTIVE_EVENT,
 } from "@/lib/pusher-connection-manager";
 
 type ActiveUser = Awaited<ReturnType<typeof getActiveUsers>>[number];

@@ -1,6 +1,12 @@
 "use client";
 
-import { connectPusher, disconnectPusher, destroyPusherClient, getOrCreatePusherClient } from "@/lib/pusher";
+import {
+  PUSHER_CONNECTION_ACTIVE_EVENT,
+  connectPusher,
+  disconnectPusher,
+  destroyPusherClient,
+  getOrCreatePusherClient,
+} from "@/lib/pusher";
 import { releaseAllChannels } from "@/lib/pusher-subscription-manager";
 import { mutate } from "swr";
 import { isPendingAcceleratorsKey } from "@/lib/deal-accelerators-sync";
@@ -8,7 +14,6 @@ import { isPendingAcceleratorsKey } from "@/lib/deal-accelerators-sync";
 export const DORMANCY_TIMEOUT_MS = 45_000; // 45 seconds after tab is hidden
 export const NOTIFICATIONS_CHANGED_EVENT = "my-crm:notifications-changed";
 export const CONTACT_RECOVERY_EVENT = "my-crm:contact-recovery";
-export const PUSHER_CONNECTION_ACTIVE_EVENT = "my-crm:pusher-connection-active";
 
 let dormancyTimer: ReturnType<typeof setTimeout> | null = null;
 let isInitialized = false;

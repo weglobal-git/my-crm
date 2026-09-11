@@ -1,7 +1,7 @@
 "use client";
 
 import type { Channel } from "pusher-js";
-import { pusherClient } from "@/lib/pusher";
+import { getPusherClient, pusherClient, PUSHER_CONNECTION_ACTIVE_EVENT } from "@/lib/pusher";
 
 interface ChannelEntry {
   channel: Channel;
@@ -40,6 +40,42 @@ export function acquireChannel(channelName: string): Channel {
     console.log(`[PUSHER-SUB-MGR] Reusing channel: "${channelName}" (refCount: ${entry.refCount})`);
   }
   return entry.channel;
+}
+
+/**
+ * Waits for the lifecycle owner to establish the socket before acquiring a channel.
+ * Calling this from an initially hidden tab never constructs a Pusher client.
+ */
+export function acquireChannelWhenConnected(
+  channelName: string,
+  setup: (channel: Channel) => void | (() => void),
+): () => void {
+  let acquired = false;
+  let cleanupChannel: void | (() => void);
+
+  const acquireIfConnected = () => {
+    if (acquired) return;
+    const client = testClient ? null : getPusherClient();
+    if (!testClient && (!client || client.connection.state !== "connected")) return;
+
+    acquired = true;
+    const channel = acquireChannel(channelName);
+    cleanupChannel = setup(channel);
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener(PUSHER_CONNECTION_ACTIVE_EVENT, acquireIfConnected);
+  }
+  acquireIfConnected();
+
+  return () => {
+    if (typeof window !== "undefined") {
+      window.removeEventListener(PUSHER_CONNECTION_ACTIVE_EVENT, acquireIfConnected);
+    }
+    if (!acquired) return;
+    cleanupChannel?.();
+    releaseChannel(channelName);
+  };
 }
 
 /**

@@ -18,7 +18,7 @@ import {
   X
 } from "lucide-react";
 import useSWR, { preload, mutate } from "swr";
-import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
+import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { CONTACT_RECOVERY_EVENT } from "@/lib/pusher-connection-manager";
 import { usePermissions } from "@/providers/PermissionProvider";
 
@@ -420,7 +420,6 @@ export function ContactView({
   // Real-time synchronization via Pusher private-contacts channel
   useEffect(() => {
     const channelName = "private-contacts";
-    const channel = acquireChannel(channelName);
 
     type ContactPusherEvent = {
       action: string;
@@ -505,12 +504,12 @@ export function ContactView({
       }
     };
 
-    channel.bind("account-updated", handleAccountUpdate);
-
-    return () => {
-      channel.unbind("account-updated", handleAccountUpdate);
-      releaseChannel(channelName);
-    };
+    return acquireChannelWhenConnected(channelName, (channel) => {
+      channel.bind("account-updated", handleAccountUpdate);
+      return () => {
+        channel.unbind("account-updated", handleAccountUpdate);
+      };
+    });
   }, []);
 
   // Find currently selected company

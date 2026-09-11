@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   acquireChannel,
+  acquireChannelWhenConnected,
   releaseChannel,
   getActiveChannel,
   getChannelRefCount,
@@ -47,6 +48,19 @@ test.describe('Pusher Subscription Manager (Ref Counting & Lifecycle)', () => {
     assert.equal(getChannelRefCount('private-pipeline-user-1'), 1);
     assert.deepEqual(subscribedChannels, ['private-pipeline-user-1']);
     assert.equal(getActiveChannel('private-pipeline-user-1'), ch);
+  });
+
+  test('Deferred acquisition does not create a subscription before a connection exists', () => {
+    setTestPusherClient(null);
+    let setupCalls = 0;
+
+    const cleanup = acquireChannelWhenConnected('private-pipeline-hidden-user', () => {
+      setupCalls += 1;
+    });
+
+    assert.equal(setupCalls, 0);
+    assert.equal(getChannelRefCount('private-pipeline-hidden-user'), 0);
+    cleanup();
   });
 
   test('Acquiring same channel increments refCount and returns same channel without duplicate subscribe', () => {

@@ -29,8 +29,8 @@ import { useDialog } from "@/providers/DialogProvider";
 import { useSidebar } from "@/components/layout/SidebarContext";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
-import { pusherClient } from "@/lib/pusher";
-import { acquireChannel, releaseChannel } from "@/lib/pusher-subscription-manager";
+import { getPusherClient } from "@/lib/pusher";
+import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
 import useSWR, { mutate as globalMutate, preload } from "swr";
 import { getAllUsers } from "@/lib/actions/users";
@@ -255,7 +255,9 @@ export function KanbanBoard({
     
     const channelName = `private-pipeline-${currentUserId}`;
     console.log(`[KANBAN-PUSHER] Acquiring channel: "${channelName}" (isCompletedTab=${isCompletedTab})`);
-    const channel = acquireChannel(channelName);
+    return acquireChannelWhenConnected(channelName, (channel) => {
+    const connectedClient = getPusherClient();
+    if (!connectedClient) return;
 
     const onSubSucceeded = () => {
       console.log(`[KANBAN-PUSHER] Subscribed successfully to: "${channelName}"`);
@@ -266,7 +268,7 @@ export function KanbanBoard({
     channel.bind('pusher:subscription_succeeded', onSubSucceeded);
     channel.bind('pusher:subscription_error', onSubError);
 
-    let hasConnectedOnce = pusherClient.connection.state === 'connected';
+    let hasConnectedOnce = connectedClient.connection.state === 'connected';
     const handleConnected = () => {
       if (hasConnectedOnce) {
         console.log(`[KANBAN-PUSHER] Pusher re-connected, triggering SWR mutate()`);
@@ -523,15 +525,15 @@ export function KanbanBoard({
     };
 
     channel.bind('pipeline-updated', handlePipelineUpdate);
-    pusherClient.connection.bind('connected', handleConnected);
+    connectedClient.connection.bind('connected', handleConnected);
 
     return () => {
       channel.unbind('pusher:subscription_succeeded', onSubSucceeded);
       channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handlePipelineUpdate);
-      pusherClient.connection.unbind('connected', handleConnected);
-      releaseChannel(channelName);
+      connectedClient.connection.unbind('connected', handleConnected);
     };
+    });
   }, [currentUserId, isCompletedTab, mutate]);
 
   // Sync state when props update (only if not dragging)

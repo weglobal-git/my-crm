@@ -4,6 +4,8 @@ import PusherClient from "pusher-js";
 
 let clientInstance: PusherClient | null = null;
 
+export const PUSHER_CONNECTION_ACTIVE_EVENT = "my-crm:pusher-connection-active";
+
 export function getPusherClient(): PusherClient | null {
   if (typeof window === "undefined") return null;
   return clientInstance;
