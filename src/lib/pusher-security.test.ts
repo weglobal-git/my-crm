@@ -40,11 +40,13 @@ test.describe('Pusher Security & DTO Sanitization (Phase P0-A & P2)', () => {
   test('canUserAccessChannel: Admin is authorized for contacts, pipeline, own user, and presence-global', () => {
     assert.equal(canUserAccessChannel(adminUser, 'private-user-admin-1'), true);
     assert.equal(canUserAccessChannel(adminUser, 'private-pipeline-admin-1'), true);
+    assert.equal(canUserAccessChannel(adminUser, 'private-calendar-admin-1'), true);
     assert.equal(canUserAccessChannel(adminUser, 'private-contacts'), true);
     assert.equal(canUserAccessChannel(adminUser, 'presence-global'), true);
 
     // Admin cannot eavesdrop on other user's private channel
     assert.equal(canUserAccessChannel(adminUser, 'private-user-other-user'), false);
+    assert.equal(canUserAccessChannel(adminUser, 'private-calendar-other-user'), false);
     // Non-allowlisted presence channel is rejected
     assert.equal(canUserAccessChannel(adminUser, 'presence-secret-room'), false);
     // Public channels are rejected
@@ -64,6 +66,13 @@ test.describe('Pusher Security & DTO Sanitization (Phase P0-A & P2)', () => {
 
   test('canUserAccessChannel: GUEST role is forbidden from pipeline channel', () => {
     assert.equal(canUserAccessChannel(externalUser, 'private-pipeline-guest-1'), false);
+    assert.equal(canUserAccessChannel({ ...externalUser, visibleMenuKeys: ['calendar'] }, 'private-calendar-guest-1'), false);
+  });
+
+  test('canUserAccessChannel: Calendar requires own channel and calendar menu permission', () => {
+    assert.equal(canUserAccessChannel({ ...salesUserWithContacts, visibleMenuKeys: ['calendar'] }, 'private-calendar-sales-1'), true);
+    assert.equal(canUserAccessChannel(salesUserWithContacts, 'private-calendar-sales-1'), false);
+    assert.equal(canUserAccessChannel({ ...salesUserWithContacts, visibleMenuKeys: ['calendar'] }, 'private-calendar-other'), false);
   });
 
   test('sanitizePresenceUserInfo: strips email and internal fields from presence payload', () => {

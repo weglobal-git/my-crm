@@ -150,4 +150,12 @@ test.describe('Pusher Subscription Manager (Ref Counting & Lifecycle)', () => {
     assert.ok(unsubscribedChannels.includes('ch-2'));
     assert.ok(unsubscribedChannels.includes('ch-3'));
   });
+
+  test('releaseAllChannels with an empty registry does not require or create a client', () => {
+    releaseAllChannels();
+    setTestPusherClient(null);
+
+    assert.doesNotThrow(() => releaseAllChannels());
+    assert.equal(getActiveChannel('missing'), null);
+  });
 });

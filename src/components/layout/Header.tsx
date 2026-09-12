@@ -13,7 +13,7 @@ import { MenuDefinition } from "@/lib/menu-registry";
 import { useSidebar } from "./SidebarContext";
 
 import { getActiveUsers, pingAndGetActiveUsers } from "@/lib/actions/users";
-import { getMyNotifications, respondToNotification, type NotificationItem } from "@/lib/actions/notification";
+import { dismissNotification, getMyNotifications, respondToNotification, type NotificationItem } from "@/lib/actions/notification";
 import { getPusherClient, PUSHER_CONNECTION_ACTIVE_EVENT } from "@/lib/pusher";
 import type PusherClient from "pusher-js";
 import {
@@ -252,7 +252,7 @@ export function Header() {
         } catch {}
       };
     }
-  }, [status, session]);
+  }, [status, session, syncNotifications]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -307,6 +307,15 @@ export function Header() {
     }
   };
 
+  const handleDismiss = async (id: string) => {
+    await dismissNotification(id);
+    notificationMutationVersionRef.current += 1;
+    setNotifications((prev) => prev.filter((notification) => notification.id !== id));
+    if (session?.user?.id) {
+      broadcastEventAcrossTabs(`private-user-${session.user.id}`, 'notification-resolved', { id });
+    }
+  };
+
 
   return (
     <header className="flex w-full items-center justify-between py-1 px-2 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
@@ -346,12 +355,12 @@ export function Header() {
                 columnNavConfig.onPrev();
               }
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1C1C1D] border border-[#3A3B3C] text-xs font-semibold text-slate-200 shadow-sm active:scale-95 transition-all cursor-pointer select-none"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#1C1C1D] border border-[#3A3B3C] text-xs font-semibold text-slate-200 active:scale-95 transition-all cursor-pointer select-none"
             title="Switch column"
           >
             <span className="max-w-[110px] truncate">{columnNavConfig.currentTitle}</span>
-            <span className="text-slate-500 font-normal">|</span>
-            {columnNavConfig.currentRedCount !== undefined ? (
+            {!columnNavConfig.hideCount && <span className="text-slate-500 font-normal">|</span>}
+            {!columnNavConfig.hideCount && (columnNavConfig.currentRedCount !== undefined ? (
               <span className="tabular-nums">
                 <span className={columnNavConfig.currentRedCount > 0 ? "text-[#C7F33C] font-bold" : "text-slate-400"}>
                   {columnNavConfig.currentRedCount}
@@ -361,7 +370,7 @@ export function Header() {
               </span>
             ) : (
               <span className="text-[#C7F33C] font-bold">{columnNavConfig.currentCount ?? 0}</span>
-            )}
+            ))}
           </button>
         </div>
       ) : null}
@@ -467,6 +476,7 @@ export function Header() {
             error={notificationError}
             onRetry={syncNotifications}
             onRespond={handleRespond}
+            onDismiss={handleDismiss}
           />
 
 

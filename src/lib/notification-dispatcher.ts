@@ -26,31 +26,33 @@ export interface SanitizedNotificationDTO {
  * Strips raw database fields (e.g. password, email, internal IDs, tokens)
  * from the notification payload before broadcasting via Pusher WebSocket.
  */
-export function sanitizeNotificationPayload(notification: any): SanitizedNotificationDTO {
+export function sanitizeNotificationPayload(notification: unknown): SanitizedNotificationDTO {
   if (!notification || typeof notification !== "object") {
     throw new Error("Invalid notification payload");
   }
 
-  const sender = notification.sender
+  const n = notification as Record<string, unknown>;
+  const senderRaw = n.sender as Record<string, unknown> | null | undefined;
+  const sender = senderRaw
     ? {
-        id: String(notification.sender.id || ""),
-        name: notification.sender.name ? String(notification.sender.name) : null,
-        image: notification.sender.image ? String(notification.sender.image) : null,
-        role: notification.sender.role ? String(notification.sender.role) : null,
+        id: String(senderRaw.id || ""),
+        name: senderRaw.name ? String(senderRaw.name) : null,
+        image: senderRaw.image ? String(senderRaw.image) : null,
+        role: senderRaw.role ? String(senderRaw.role) : null,
       }
     : null;
 
   return {
-    id: String(notification.id || ""),
-    recipientId: String(notification.recipientId || ""),
-    senderId: notification.senderId ? String(notification.senderId) : null,
-    type: String(notification.type || "SYSTEM_ALERT"),
-    title: String(notification.title || ""),
-    message: notification.message ? String(notification.message) : null,
-    referenceId: notification.referenceId ? String(notification.referenceId) : null,
-    status: String(notification.status || "PENDING"),
-    readAt: notification.readAt ? new Date(notification.readAt).toISOString() : null,
-    createdAt: notification.createdAt ? new Date(notification.createdAt).toISOString() : new Date().toISOString(),
+    id: String(n.id || ""),
+    recipientId: String(n.recipientId || ""),
+    senderId: n.senderId ? String(n.senderId) : null,
+    type: String(n.type || "SYSTEM_ALERT"),
+    title: String(n.title || ""),
+    message: n.message ? String(n.message) : null,
+    referenceId: n.referenceId ? String(n.referenceId) : null,
+    status: String(n.status || "PENDING"),
+    readAt: n.readAt ? new Date(n.readAt as string | number | Date).toISOString() : null,
+    createdAt: n.createdAt ? new Date(n.createdAt as string | number | Date).toISOString() : new Date().toISOString(),
     sender,
   };
 }
@@ -60,11 +62,17 @@ export function sanitizeNotificationPayload(notification: any): SanitizedNotific
  * Not exposed as a Next.js Server Action to prevent arbitrary client-side notification spoofing.
  */
 export async function dispatchNotification(userId: string, notification: unknown): Promise<void> {
-  if (!userId) return;
+  await dispatchNotificationWithResult(userId, notification);
+}
+
+export async function dispatchNotificationWithResult(userId: string, notification: unknown): Promise<boolean> {
+  if (!userId) return false;
   try {
     const sanitized = sanitizeNotificationPayload(notification);
     await pusherServer.trigger(`private-user-${userId}`, "new-notification", sanitized);
+    return true;
   } catch (err) {
     console.error(`[NOTIFICATION-DISPATCHER] Error dispatching to user ${userId}:`, err);
+    return false;
   }
 }

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { PhoneCall, Sparkles, Trash2, Loader2, Send, Check } from 'lucide-react';
+import { Sparkles, Trash2, Loader2, Send } from 'lucide-react';
 import { AcceleratorQuestion } from '@/lib/actions/ai-accelerator';
 
 export interface AcceleratorQuestionCardProps {
@@ -30,19 +30,20 @@ export function AcceleratorQuestionCard({
   onAnswer,
   isAnswering = false,
   isDeleting = false,
-  variant = 'panel',
 }: AcceleratorQuestionCardProps) {
   const [answerText, setAnswerText] = useState('');
   const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
+  const [prevIsAnswering, setPrevIsAnswering] = useState(isAnswering);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const isPending = question.status === 'PENDING';
   const isManager = question.source === 'MANAGER';
 
-  useEffect(() => {
+  if (isAnswering !== prevIsAnswering) {
+    setPrevIsAnswering(isAnswering);
     if (!isAnswering) {
       setSelectedChoice(null);
     }
-  }, [isAnswering]);
+  }
 
   const adjustTextareaHeight = (el: HTMLTextAreaElement | null) => {
     if (!el) return;

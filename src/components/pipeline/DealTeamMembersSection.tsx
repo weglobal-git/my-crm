@@ -2,7 +2,6 @@
 
 import React, { useMemo } from 'react';
 import { X, Loader2 } from 'lucide-react';
-import type { User } from '@prisma/client';
 
 export type TeamMemberItem = {
   id: string;
@@ -30,7 +29,6 @@ interface DealTeamMembersSectionProps {
 }
 
 export function DealTeamMembersSection({
-  dealId: _dealId,
   owner,
   ownerId,
   teamMembers,

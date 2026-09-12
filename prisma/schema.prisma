@@ -35,28 +35,30 @@ model Session {
 }
 
 model User {
-  id                    String         @id @default(cuid())
+  id                    String                   @id @default(cuid())
   name                  String?
-  email                 String?        @unique
+  email                 String?                  @unique
   emailVerified         DateTime?
   image                 String?
-  role                  Role           @default(GENERAL)
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
-  lastActive            DateTime       @default(now())
+  role                  Role                     @default(GENERAL)
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+  lastActive            DateTime                 @default(now())
   accounts              Account[]
   activityLogs          ActivityLog[]
   uploadedAttachments   Attachment[]
   notes                 Note[]
-  receivedNotifications Notification[] @relation("ReceivedNotifications")
-  sentNotifications     Notification[] @relation("SentNotifications")
-  opportunities         Opportunity[]  @relation("OpportunityOwner")
-  quotations            Quotation[]    @relation("QuotationCreator")
+  receivedNotifications Notification[]           @relation("ReceivedNotifications")
+  sentNotifications     Notification[]           @relation("SentNotifications")
+  opportunities         Opportunity[]            @relation("OpportunityOwner")
+  quotations            Quotation[]              @relation("QuotationCreator")
   sessions              Session[]
-  departments           Department[]   @relation("DepartmentToUser")
-  teamOpportunities     Opportunity[]  @relation("OpportunityTeam")
+  departments           Department[]             @relation("DepartmentToUser")
+  teamOpportunities     Opportunity[]            @relation("OpportunityTeam")
   contactLogs           ContactLog[]
   companyLogs           CompanyLog[]
+  calendarEvents        CalendarEvent[]          @relation("CalendarEventOwner")
+  calendarRecipients    CalendarEventRecipient[]
 }
 
 model VerificationToken {
@@ -81,15 +83,18 @@ model Notification {
   updatedAt   DateTime           @updatedAt
   recipient   User               @relation("ReceivedNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
   sender      User?              @relation("SentNotifications", fields: [senderId], references: [id])
+  calendarReminderDelivery CalendarReminderDelivery?
 }
 
 model Department {
-  id                   String                       @id @default(cuid())
-  name                 String                       @unique
-  permissions          DepartmentMenuPermission[]
-  users                User[]                       @relation("DepartmentToUser")
-  contacts             Contact[]
-  pipelineStageTitles  PipelineStageTitleOverride[]
+  id                  String                       @id @default(cuid())
+  name                String                       @unique
+  permissions         DepartmentMenuPermission[]
+  users               User[]                       @relation("DepartmentToUser")
+  contacts            Contact[]
+  pipelineStageTitles PipelineStageTitleOverride[]
+  calendarEvents      CalendarEvent[]
+  calendarTags        CalendarTag[]
 }
 
 model MenuItem {
@@ -152,11 +157,11 @@ model Company {
 }
 
 model CompanyAddress {
-  id               String       @id @default(cuid())
+  id               String      @id @default(cuid())
   companyId        String
   title            String?
-  type             AddressType  @default(BILLING)
-  isDefault        Boolean      @default(false)
+  type             AddressType @default(BILLING)
+  isDefault        Boolean     @default(false)
   taxId            String?
   branchNumber     String?
   addressLine1     String
@@ -165,13 +170,13 @@ model CompanyAddress {
   district         String?
   province         String?
   postalCode       String?
-  country          String?      @default("Thailand")
+  country          String?     @default("Thailand")
   formattedAddress String?
   googleMapsUrl    String?
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
-  company          Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
 }
@@ -197,7 +202,7 @@ model Contact {
   updatedAt         DateTime      @updatedAt
   company           Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
   department        Department?   @relation(fields: [departmentId], references: [id])
-  logs         ContactLog[]
+  logs              ContactLog[]
 
   @@index([companyId])
   @@index([departmentId])
@@ -217,8 +222,8 @@ model ContactLog {
   summary   String
   createdAt DateTime @default(now())
 
-  contact   Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id])
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
 
   @@index([contactId, createdAt])
   @@index([userId])
@@ -235,8 +240,8 @@ model CompanyLog {
   summary   String
   createdAt DateTime @default(now())
 
-  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
 
   @@index([companyId, createdAt])
   @@index([userId])
@@ -279,6 +284,8 @@ model Opportunity {
   @@index([status, updatedAt])
   @@index([status, closedAt])
   @@index([companyId])
+  @@index([goodsReadyDate])
+  @@index([goodsLoadingDate])
 }
 
 model Attachment {
@@ -440,6 +447,7 @@ enum NotificationType {
   SYSTEM_ALERT
   TEAM_INVITE_REQUEST
   DEAL_COMMENT
+  CALENDAR_REMINDER
 }
 
 enum NotificationStatus {
@@ -497,4 +505,113 @@ enum AddressType {
   HEADQUARTERS
   BRANCH
   OTHER
+}
+
+enum CalendarRepeatFrequency {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+model CalendarEvent {
+  id                 String                     @id @default(cuid())
+  name               String
+  detail             String?
+  departmentId       String
+  ownerId            String
+  clientRequestId    String?
+  allDay             Boolean                    @default(false)
+  startAt            DateTime
+  endAt              DateTime
+  timezone           String                     @default("Asia/Bangkok")
+  repeatFrequency    CalendarRepeatFrequency    @default(NONE)
+  repeatUntil        DateTime?
+  revision           Int                        @default(1)
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  department         Department                 @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  owner              User                       @relation("CalendarEventOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  recipients         CalendarEventRecipient[]
+  tags               CalendarEventTag[]
+  exceptions         CalendarEventException[]
+  reminderDeliveries CalendarReminderDelivery[]
+
+  @@unique([ownerId, clientRequestId])
+  @@index([departmentId, startAt])
+  @@index([ownerId, startAt])
+  @@index([repeatFrequency, startAt, repeatUntil])
+}
+
+model CalendarEventRecipient {
+  eventId            String
+  userId             String
+  reminderEnabled    Boolean       @default(true)
+  reminderOffsetMins Int           @default(0)
+  event              CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, userId])
+  @@index([userId, eventId])
+}
+
+model CalendarTag {
+  id             String             @id @default(cuid())
+  departmentId   String
+  name           String
+  normalizedName String
+  color          String
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  department     Department         @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  events         CalendarEventTag[]
+
+  @@unique([departmentId, normalizedName])
+  @@index([departmentId])
+}
+
+model CalendarEventTag {
+  eventId   String
+  tagId     String
+  createdAt DateTime      @default(now())
+  event     CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  tag       CalendarTag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([eventId, tagId])
+  @@index([tagId])
+}
+
+model CalendarEventException {
+  id                String        @id @default(cuid())
+  eventId           String
+  occurrenceStartAt DateTime
+  overrideStartAt   DateTime?
+  overrideEndAt     DateTime?
+  isCancelled       Boolean       @default(false)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  event             CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, occurrenceStartAt])
+}
+
+model CalendarReminderDelivery {
+  id                String        @id @default(cuid())
+  eventId           String
+  recipientId       String
+  occurrenceStartAt DateTime
+  scheduledFor      DateTime
+  deliveredAt       DateTime?
+  status            String        @default("PENDING")
+  attempts          Int           @default(0)
+  lastError         String?
+  notificationId    String?       @unique
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  event             CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  notification      Notification? @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, recipientId, occurrenceStartAt, scheduledFor])
+  @@index([status, scheduledFor])
 }

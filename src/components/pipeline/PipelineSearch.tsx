@@ -56,10 +56,12 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
   }, [isExpanded]);
 
   const isExpandedRef = useRef(isExpanded);
-  isExpandedRef.current = isExpanded;
-
   const termRef = useRef(term);
-  termRef.current = term;
+
+  useEffect(() => {
+    isExpandedRef.current = isExpanded;
+    termRef.current = term;
+  }, [isExpanded, term]);
 
   const handleClearAndClose = useCallback(() => {
     setTerm("");

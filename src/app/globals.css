@@ -100,6 +100,27 @@
     background: #6b6c6d;
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .calendar-surface *,
+    .calendar-dialog,
+    .calendar-dialog-backdrop {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* iOS Safari zooms the viewport when an editable control computes below 16px. */
+  @media (max-width: 767px) {
+    input:is([type="text"], [type="email"], [type="password"], [type="search"], [type="tel"], [type="url"], [type="number"], [type="date"], [type="time"], [type="datetime-local"], [type="month"], [type="week"]),
+    textarea,
+    select,
+    [contenteditable="true"] {
+      font-size: 16px !important;
+    }
+  }
+
   /* Prevent browser focus outline on Kanban cards */
   [data-deal-id],
   [id^="deal-card-"] {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 
 export interface ActivityDraft {
   text: string;
@@ -68,6 +68,8 @@ export function resetAllDrafts(): void {
  * React hook to bind draft state with memory preservation across tab unmounting
  */
 export function useDealDraft(dealId: string, tabId: string = 'activity') {
+  const compositeKey = `${dealId}:${tabId}`;
+  const [prevCompositeKey, setPrevCompositeKey] = useState(compositeKey);
   const [draft, setDraftState] = useState<ActivityDraft>(() => {
     return (
       getDealDraft<ActivityDraft>(dealId, tabId) || {
@@ -80,21 +82,19 @@ export function useDealDraft(dealId: string, tabId: string = 'activity') {
     );
   });
 
-  // Re-sync if dealId or tabId changes
-  useEffect(() => {
+  if (compositeKey !== prevCompositeKey) {
+    setPrevCompositeKey(compositeKey);
     const existing = getDealDraft<ActivityDraft>(dealId, tabId);
-    if (existing) {
-      setDraftState(existing);
-    } else {
-      setDraftState({
+    setDraftState(
+      existing || {
         text: '',
         pendingDueDate: null,
         pendingAttachments: [],
         isManagerCallMode: false,
         replies: {},
-      });
-    }
-  }, [dealId, tabId]);
+      }
+    );
+  }
 
   const updateDraft = useCallback(
     (patch: Partial<ActivityDraft> | ((prev: ActivityDraft) => Partial<ActivityDraft>)) => {

@@ -1027,7 +1027,7 @@ export function ActivityFeedTab({
           <input {...getInputProps()} />
 
           {/* Left Action Buttons: Attach, Due Date, Rewriter, Manager Call */}
-          <div className="flex items-center gap-1 shrink-0 h-7 self-end">
+          <div className="flex items-center shrink-0 h-7 self-end">
             {session?.user?.id && !isManagerCallMode && (
               <ChatAttachmentButton
                 onFileSelect={(files) => {

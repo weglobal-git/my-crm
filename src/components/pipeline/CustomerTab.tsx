@@ -6,7 +6,7 @@ import { OpportunityWithRelations } from "./KanbanCard";
 import { updateOpportunity } from "@/lib/actions/opportunity";
 import { useDialog } from "@/providers/DialogProvider";
 import { DollarSign, Package, Calendar, FileText } from "lucide-react";
-import { DatePicker } from "@/components/ui/DatePicker";
+import { CalendarDatePicker } from "@/components/ui/CalendarDatePicker";
 
 export interface CustomerTabRef {
   save: () => Promise<void>;
@@ -16,10 +16,11 @@ export interface CustomerTabRef {
 export interface CustomerTabProps {
   deal: OpportunityWithRelations;
   onClose?: () => void;
+  canEditDealDates?: boolean;
 }
 
 export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function CustomerTab(
-  { deal },
+  { deal, canEditDealDates = false },
   ref
 ) {
   const { mutate } = useSWRConfig();
@@ -56,8 +57,12 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
     const updatedPayload = {
       value: formData.value !== "" ? parseFloat(formData.value.toString()) : null,
       currency: formData.currency,
-      goodsReadyDate: formData.goodsReadyDate ? new Date(formData.goodsReadyDate) : null,
-      goodsLoadingDate: formData.goodsLoadingDate ? new Date(formData.goodsLoadingDate) : null,
+      ...(formData.goodsReadyDate !== initialFormData.goodsReadyDate ? {
+        goodsReadyDate: formData.goodsReadyDate ? new Date(formData.goodsReadyDate) : null,
+      } : {}),
+      ...(formData.goodsLoadingDate !== initialFormData.goodsLoadingDate ? {
+        goodsLoadingDate: formData.goodsLoadingDate ? new Date(formData.goodsLoadingDate) : null,
+      } : {}),
       reserveId: formData.reserveId || null,
       invoiceId: formData.invoiceId || null,
     };
@@ -94,7 +99,7 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
     } finally {
       setIsSaving(false);
     }
-  }, [deal.id, formData, mutate, toast]);
+  }, [deal.id, formData, initialFormData, mutate, toast]);
 
   useImperativeHandle(
     ref,
@@ -159,7 +164,8 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
             <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
               Goods Ready Date
             </label>
-            <DatePicker
+            <CalendarDatePicker
+              ariaLabel="Goods Ready Date"
               value={formData.goodsReadyDate}
               onChange={(date) =>
                 setFormData((prev) => ({
@@ -167,14 +173,15 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
                   goodsReadyDate: date,
                 }))
               }
-              placeholder="Select ready date"
+              disabled={!canEditDealDates}
             />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
               Goods Loading Date <span className="text-rose-500">*</span>
             </label>
-            <DatePicker
+            <CalendarDatePicker
+              ariaLabel="Goods Loading Date"
               value={formData.goodsLoadingDate}
               onChange={(date) =>
                 setFormData((prev) => ({
@@ -182,7 +189,7 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
                   goodsLoadingDate: date,
                 }))
               }
-              placeholder="Select loading date"
+              disabled={!canEditDealDates}
             />
           </div>
         </div>

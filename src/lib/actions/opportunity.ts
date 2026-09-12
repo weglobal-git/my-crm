@@ -17,6 +17,7 @@ import {
   getPipelineRecipientUserIds,
   notifyPrivatePipelineUpdate,
   requireOpportunityAccess,
+  requireOpportunityDateEdit,
   requirePipelineActor,
   type PipelineActor,
 } from "@/lib/pipeline-security";
@@ -264,9 +265,16 @@ type SafeOpportunityUpdate = {
   lossReason?: string | null;
 };
 
-export async function updateOpportunity(id: string, data: SafeOpportunityUpdate, mutationId?: string) {
+export async function updateOpportunity(id: string, data: SafeOpportunityUpdate, mutationId?: string, expectedRevision?: number) {
   let actor;
-  if (data.type !== undefined) {
+  if (data.goodsReadyDate !== undefined || data.goodsLoadingDate !== undefined) {
+    const field = data.goodsReadyDate !== undefined ? 'goodsReadyDate' : 'goodsLoadingDate';
+    const access = await requireOpportunityDateEdit(id, field);
+    actor = access.actor;
+    if (data.goodsReadyDate !== undefined && data.goodsLoadingDate !== undefined) {
+      await requireOpportunityDateEdit(id, 'goodsLoadingDate', actor);
+    }
+  } else if (data.type !== undefined) {
     const access = await requireOpportunityAccess(id, { ownerOrAdmin: true });
     actor = access.actor;
   } else {
@@ -276,7 +284,7 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
   if (data.topic !== undefined && (data.topic.trim().length === 0 || data.topic.length > 500)) {
     throw new Error('Invalid topic');
   }
-  if (data.currency !== undefined && data.currency !== null && !['THB', 'USD', 'EUR'].includes(data.currency)) {
+  if (data.currency !== undefined && data.currency !== null && !['THB', 'USD', 'EUR', 'CNY'].includes(data.currency)) {
     throw new Error('Invalid currency');
   }
   if (data.value !== undefined && data.value !== null && (!Number.isFinite(data.value) || data.value < 0)) {
@@ -291,10 +299,16 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
       throw new Error('Only System Admin can downgrade a Sales Deal to an Internal Task.');
     }
   }
-  const result = await prisma.opportunity.update({
-    where: { id },
-    data
-  });
+  const result = expectedRevision === undefined
+    ? await prisma.opportunity.update({ where: { id }, data })
+    : await prisma.$transaction(async (tx) => {
+        const changed = await tx.opportunity.updateMany({
+          where: { id, updatedAt: new Date(expectedRevision) },
+          data,
+        });
+        if (changed.count !== 1) throw new Error('CONFLICT');
+        return tx.opportunity.findUniqueOrThrow({ where: { id } });
+      });
   const fullDeal = await prisma.opportunity.findUnique({
     where: { id },
     select: pipelineOpportunitySelect
@@ -388,13 +402,21 @@ export async function getOpportunitySharedMedia(dealId: string): Promise<Opportu
   };
 }
 
-export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string, mutationId?: string) {
-  const { actor } = await requireOpportunityAccess(opportunityId, { ownerOrAdmin: true });
+export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string, mutationId?: string, expectedRevision?: number) {
+  if (!reason.trim()) throw new Error('Reason is required');
+  const { actor } = await requireOpportunityDateEdit(opportunityId, 'dueDate');
   const { opp: result, activityLog, systemLog } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    const opp = await tx.opportunity.update({
-      where: { id: opportunityId },
-      data: { dueDate }
-    });
+    let opp;
+    if (expectedRevision === undefined) {
+      opp = await tx.opportunity.update({ where: { id: opportunityId }, data: { dueDate } });
+    } else {
+      const changed = await tx.opportunity.updateMany({
+        where: { id: opportunityId, updatedAt: new Date(expectedRevision) },
+        data: { dueDate },
+      });
+      if (changed.count !== 1) throw new Error('CONFLICT');
+      opp = await tx.opportunity.findUniqueOrThrow({ where: { id: opportunityId } });
+    }
     let formattedDate = 'Removed';
     if (dueDate) {
       const isMidnight = dueDate.getHours() === 0 && dueDate.getMinutes() === 0;

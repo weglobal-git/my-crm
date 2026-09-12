@@ -423,7 +423,7 @@ function SortableMainMenuBucket({ mainMenu, subMenus, onEdit, onEditSub, onDelet
         <button onClick={onDelete} className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#4E4F50] rounded-md transition-colors"><Trash2 className="w-4 h-4" /></button>
       </div>
 
-      <div className="flex items-center gap-3 mb-6 px-2 pr-16 group/header cursor-grab active:cursor-grabbing" {...attributes} {...listeners}>
+      <div className="flex items-center gap-3 mb-6 px-2 pr-16 group/header cursor-grab active:cursor-pointer" {...attributes} {...listeners}>
         <GripHorizontal className="w-5 h-5 text-slate-400 group-hover/header:text-[#C7F33C] transition-colors" />
         {Icon && <div className="p-2 bg-[#252728] rounded-lg border border-[#4E4F50] text-slate-300"><Icon className="w-5 h-5" /></div>}
         <h3 className="font-bold text-slate-100 tracking-tight">{mainMenu.label}</h3>
@@ -466,7 +466,7 @@ function SubMenuCard({ menu, isDragging, isOverlay, onEdit }: { menu: MenuItemTy
   return (
     <div className={`
       relative bg-[#252728] rounded-xl border border-[#4E4F50] p-3 flex items-center gap-3 group
-      ${isDragging ? 'border-dashed bg-[#252728]' : 'hover:border-[#C7F33C] transition-colors cursor-grab active:cursor-grabbing'}
+      ${isDragging ? 'border-dashed bg-[#252728]' : 'hover:border-[#C7F33C] transition-colors cursor-grab active:cursor-pointer'}
       ${isOverlay ? 'scale-105 rotate-2 z-50 bg-[#252728]/90 backdrop-blur' : ''}
     `}>
       <div className="text-slate-400 group-hover:text-[#C7F33C] transition-colors">

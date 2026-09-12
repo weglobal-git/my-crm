@@ -248,7 +248,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   const canConvert = deal.status === "OPEN" && dealType === 'INTERNAL_TASK' && (isOwner || isAdmin || isManagerOfOwner) && (canUseSalesDeal || isAdmin);
   const canConvertToInternal = isAdmin && deal.status === "OPEN" && dealType === 'SALES_DEAL';
   const hasCardActions = Boolean(canCloseDeal || canConvert || canConvertToInternal || canDelete);
-  const canEditDueDate = isOwner || isAdmin;
+  const canEditDueDate = isOwner || isAdmin || userRole === "MANAGEMENT";
   const canEditTopic = isOwner || isAdmin || isTeamMember;
   const canUseManagerCall = Boolean(isAdmin || isManagerOfOwner);
 
@@ -1552,7 +1552,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
             )}
 
             {activeTab === 'information' && (
-              <CustomerTab ref={customerTabRef} deal={deal} onClose={onClose} />
+              <CustomerTab
+                ref={customerTabRef}
+                deal={deal}
+                onClose={onClose}
+                canEditDealDates={isOwner || isAdmin || userRole === "MANAGEMENT"}
+              />
             )}
 
             {activeTab === 'notes' && (

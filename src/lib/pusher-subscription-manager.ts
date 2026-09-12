@@ -120,10 +120,11 @@ export function getChannelRefCount(channelName: string): number {
  * Cleanly releases and unsubscribes all active channels (called on logout/teardown).
  */
 export function releaseAllChannels(): void {
-  const client = testClient || pusherClient;
+  if (registry.size === 0) return;
+  const client = testClient || getPusherClient();
   for (const [channelName] of registry.entries()) {
     try {
-      client.unsubscribe(channelName);
+      client?.unsubscribe(channelName);
     } catch {}
   }
   registry.clear();

@@ -64,6 +64,15 @@ export function RewriteCommentModal({
   const [taskInstructionInput, setTaskInstructionInput] = useState(DEFAULT_REWRITE_TASK_INSTRUCTION);
   const [jsonSchemaInput, setJsonSchemaInput] = useState(JSON.stringify(DEFAULT_REWRITE_JSON_SCHEMA, null, 2));
 
+  const isPromptActive = isOpen && activeTab === 'prompt';
+  const [prevPromptActive, setPrevPromptActive] = useState(isPromptActive);
+  if (isPromptActive !== prevPromptActive) {
+    setPrevPromptActive(isPromptActive);
+    if (isPromptActive) {
+      setIsLoadingPrompt(true);
+    }
+  }
+
   // Focus raw input on open
   useEffect(() => {
     if (isOpen && activeTab === 'rewrite') {
@@ -78,7 +87,6 @@ export function RewriteCommentModal({
   useEffect(() => {
     if (isOpen && activeTab === 'prompt') {
       let isMounted = true;
-      setIsLoadingPrompt(true);
       getRewritePromptConfig()
         .then((cfg) => {
           if (!isMounted) return;

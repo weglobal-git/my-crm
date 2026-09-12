@@ -6,6 +6,24 @@ let clientInstance: PusherClient | null = null;
 
 export const PUSHER_CONNECTION_ACTIVE_EVENT = "my-crm:pusher-connection-active";
 
+export function resolvePusherEnabled(
+  nodeEnv: string | undefined,
+  enabledFlag: string | undefined,
+  enableInDevFlag: string | undefined,
+): boolean {
+  if (enabledFlag === "false") return false;
+  if (nodeEnv !== "production") return enableInDevFlag === "true";
+  return true;
+}
+
+export function isPusherEnabled(): boolean {
+  return resolvePusherEnabled(
+    process.env.NODE_ENV,
+    process.env.NEXT_PUBLIC_PUSHER_ENABLED,
+    process.env.NEXT_PUBLIC_PUSHER_ENABLE_IN_DEV,
+  );
+}
+
 export function getPusherClient(): PusherClient | null {
   if (typeof window === "undefined") return null;
   return clientInstance;
@@ -14,6 +32,9 @@ export function getPusherClient(): PusherClient | null {
 export function getOrCreatePusherClient(): PusherClient {
   if (typeof window === "undefined") {
     throw new Error("PusherClient should only be initialized in browser environments.");
+  }
+  if (!isPusherEnabled()) {
+    throw new Error("Pusher is disabled in this environment.");
   }
   if (!clientInstance) {
     clientInstance = new PusherClient(

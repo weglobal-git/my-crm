@@ -10,7 +10,7 @@ import {
   X,
   Send,
 } from 'lucide-react';
-import type { User, Role } from '@prisma/client';
+import type { User } from '@prisma/client';
 import { editActivityLog, addActivityLog, deleteActivityLog } from '@/lib/actions/opportunity';
 import type { OpportunityWithRelations } from '@/components/pipeline/KanbanCard';
 import { AcceleratorQuestionCard } from '@/components/pipeline/AcceleratorQuestionCard';

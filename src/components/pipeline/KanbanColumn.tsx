@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Check, Loader2, Pencil, RotateCcw, X } from "lucide-react";
@@ -45,10 +45,14 @@ export function KanbanColumn({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isSavingTitle, setIsSavingTitle] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
+  const [prevTitle, setPrevTitle] = useState(title);
 
-  useEffect(() => {
-    if (!isEditingTitle) setDraftTitle(title);
-  }, [isEditingTitle, title]);
+  if (title !== prevTitle) {
+    setPrevTitle(title);
+    if (!isEditingTitle) {
+      setDraftTitle(title);
+    }
+  }
 
   const saveTitle = async (value: string) => {
     if (!departmentId || isSavingTitle) return;

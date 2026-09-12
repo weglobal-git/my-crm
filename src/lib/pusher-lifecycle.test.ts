@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getPusherClient } from "./pusher";
+import { getPusherClient, resolvePusherEnabled } from "./pusher";
 import {
   initPusherConnectionHygiene,
   shouldConnectPusher,
@@ -8,6 +8,14 @@ import {
 } from "./pusher-connection-manager";
 
 test.describe("Pusher connection lifecycle", () => {
+  test("keeps development sockets opt-in and production sockets enabled by default", () => {
+    assert.equal(resolvePusherEnabled("development", undefined, undefined), false);
+    assert.equal(resolvePusherEnabled("development", undefined, "true"), true);
+    assert.equal(resolvePusherEnabled("test", undefined, "true"), true);
+    assert.equal(resolvePusherEnabled("production", undefined, undefined), true);
+    assert.equal(resolvePusherEnabled("production", "false", "true"), false);
+  });
+
   test("reconnects an initialized client when an initially hidden tab becomes visible", () => {
     assert.equal(shouldConnectPusher("initialized"), true);
     assert.equal(shouldConnectPusher("disconnected"), true);

@@ -527,7 +527,7 @@ export function Sidebar() {
         {/* Mobile Central Pill (md:hidden) */}
         <div 
           ref={mobileSearchContainerRef}
-          className="md:hidden flex items-center bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 gap-3.5 select-none shadow-md transition-all duration-300"
+          className="md:hidden flex items-center bg-[#3A3B3C] border border-[#4E4F50] rounded-full px-4 py-2 gap-3.5 select-none transition-all duration-300"
         >
           {/* Left: Find button / Animated Search Input */}
           {isMobileSearchExpanded && pageSearchConfig ? (
@@ -566,7 +566,8 @@ export function Sidebar() {
                 if (isManageModalOpen) setIsManageModalOpen(false);
                 if (isMobileMenuOpen) setIsMobileMenuOpen(false);
                 if (pageSearchConfig) {
-                  setIsMobileSearchExpanded(true);
+                  if (pageSearchConfig.onOpen) pageSearchConfig.onOpen();
+                  else setIsMobileSearchExpanded(true);
                 } else {
                   setIsSearchModalOpen(true);
                 }
@@ -575,9 +576,9 @@ export function Sidebar() {
                 pageSearchConfig?.query ? "text-[#C7F33C]" : "text-slate-200 hover:text-white"
               }`}
             >
-              <Search className={`w-3.5 h-3.5 ${pageSearchConfig?.query ? "text-[#C7F33C]" : "text-slate-300"}`} />
+              {pageSearchConfig?.isOpen ? <XIcon className="h-4 w-4 text-[#C7F33C]" /> : <Search className={`w-3.5 h-3.5 ${pageSearchConfig?.query ? "text-[#C7F33C]" : "text-slate-300"}`} />}
               <span className="max-w-[80px] truncate">
-                {pageSearchConfig?.query ? pageSearchConfig.query : "Find"}
+                {pageSearchConfig?.isOpen ? "Close" : pageSearchConfig?.query ? pageSearchConfig.query : "Find"}
               </span>
               {pageSearchConfig?.query && (
                 <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C]" />

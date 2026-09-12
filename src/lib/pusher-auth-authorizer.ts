@@ -33,7 +33,13 @@ export function canUserAccessChannel(user: PusherAuthUser, channelName: string):
     return ["ADMIN", "MANAGEMENT", "GENERAL"].includes(user.role);
   }
 
-  // 4. Private contacts channel
+  // 4. Private per-user Calendar channel
+  if (channelName === `private-calendar-${user.id}`) {
+    return ["ADMIN", "MANAGEMENT", "GENERAL"].includes(user.role) &&
+      (user.role === "ADMIN" || Boolean(user.visibleMenuKeys?.includes("calendar")));
+  }
+
+  // 5. Private contacts channel
   if (channelName === "private-contacts") {
     if (user.role === "ADMIN") return true;
     if (user.visibleMenuKeys && user.visibleMenuKeys.some(key => key === "contact" || key.startsWith("contact."))) {
@@ -72,9 +78,9 @@ export async function authorizePusherRequest(
 
   const role = sessionUser.role || "USER";
 
-  // Resolve menu permissions if checking contacts channel
+  // Resolve menu permissions for feature channels that require an enabled menu.
   let visibleMenuKeys: string[] | undefined = undefined;
-  if (channelName === "private-contacts" && role !== "ADMIN") {
+  if ((channelName === "private-contacts" || channelName === `private-calendar-${sessionUser.id}`) && role !== "ADMIN") {
     try {
       visibleMenuKeys = await getUserVisibleMenuKeys(sessionUser.id);
     } catch (err) {

@@ -117,6 +117,45 @@ export async function requireOpportunityAccess(
   return { actor, opportunity };
 }
 
+export type OpportunityDateField = 'goodsReadyDate' | 'goodsLoadingDate' | 'dueDate';
+
+/** Shared server-side policy for every deal-date mutation entry point. */
+export async function requireOpportunityDateEdit(
+  opportunityId: string,
+  field: OpportunityDateField,
+  actorOverride?: PipelineActor,
+) {
+  const access = await requireOpportunityAccess(opportunityId, {
+    ownerOrAdmin: true,
+    actor: actorOverride,
+  });
+  const opportunity = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    select: { id: true, type: true, status: true, updatedAt: true },
+  });
+  if (!opportunity) throw new Error('Forbidden');
+  if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(opportunity.status)) {
+    throw new Error('ARCHIVED_DEAL');
+  }
+
+  if (field === 'goodsReadyDate' || field === 'goodsLoadingDate') {
+    if (opportunity.type !== 'SALES_DEAL') throw new Error('Forbidden');
+    if (access.actor.role !== 'ADMIN') {
+      const allowed = await prisma.departmentMenuPermission.findFirst({
+        where: {
+          visible: true,
+          menuItem: { key: 'pipeline.information' },
+          department: { users: { some: { id: access.actor.id } } },
+        },
+        select: { id: true },
+      });
+      if (!allowed) throw new Error('Forbidden');
+    }
+  }
+
+  return { ...access, opportunity };
+}
+
 export function invalidatePipelineRecipientCache(opportunityId?: string) {
   if (opportunityId) {
     pipelineRecipientCache.delete(opportunityId);
@@ -207,4 +246,3 @@ export async function notifyPrivatePipelineUpdate(
     console.error('[PUSHER-SERVER-TRIGGER] Private pipeline Pusher trigger error:', error);
   }
 }
-

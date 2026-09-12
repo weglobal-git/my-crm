@@ -60,7 +60,7 @@ Connection คือ client socket ที่เปิดพร้อมกัน
 
 | เจ้าของ/ไฟล์ | พฤติกรรมที่พบ | งานที่ต้องทำหรือเฝ้าระวัง |
 |---|---|---|
-| `src/lib/pusher.ts` | Lazy browser-only client (Proxy pattern); Header ไม่แตะ Proxy ก่อน manager เชื่อมต่อสำเร็จ | เชื่อมต่อเฉพาะเมื่อ authenticated session พร้อมและ connection manager อนุญาต |
+| `src/lib/pusher.ts` | Lazy browser-only client (Proxy pattern); Header ไม่แตะ Proxy ก่อน manager เชื่อมต่อสำเร็จ; local/dev ปิด Pusher เป็นค่าเริ่มต้นและ opt in ด้วย `NEXT_PUBLIC_PUSHER_ENABLE_IN_DEV=true`; production kill switch คือ `NEXT_PUBLIC_PUSHER_ENABLED=false` | เชื่อมต่อเฉพาะเมื่อ authenticated session พร้อมและ connection manager อนุญาต; `pusher-js@8.6.0` ไม่มี `autoConnect` option จึงต้องห้าม construct clientก่อน boundaryอนุญาต |
 | `src/lib/pusher-server.ts` | แยก server SDK และใช้ `server-only` แล้ว | รักษา server/client import boundary |
 | `src/lib/pusher-subscription-manager.ts` | Reference-counted subscription manager รอ manager connection-active ก่อน acquire shared channels | ใช้ใน KanbanBoard, EditDealPanel, NotesTab, ContactView; hidden initial load ไม่สร้าง client และ unsubscribe เมื่อ refCount เป็น 0 |
 | `src/lib/pusher-connection-manager.ts` | Initial-hidden เริ่ม dormancy timer ทันที, 45s disconnect, reconnect จากสถานะ initialized, bfcache/pageshow, online recovery, targeted recovery, user/env-scoped BroadcastChannel with dedupe, logout teardown | เป็น owner เดียวที่เปิด socket; ส่ง `CONTACT_RECOVERY_EVENT` สู่ Contact state owner |
@@ -69,6 +69,7 @@ Connection คือ client socket ที่เปิดพร้อมกัน
 | `src/app/api/pusher/auth/route.ts` + `src/lib/pusher-auth-authorizer.ts` | แยกโมดูล authorizer ตรวจสิทธิ์ contact menu permissions และ role ก่อนอนุญาต `private-contacts`; presence allowlist + sanitized user_info | ป้องกัน unauthenticated access, authorization bypass และ data leak ครบถ้วน |
 | `src/lib/pipeline-security.ts` | คำนวณผู้รับและส่ง private pipeline events; มี recipient cache พร้อมฟังก์ชัน `invalidatePipelineRecipientCache` | Invalidate ทันทีเมื่อ ownership หรือ team members เปลี่ยนแปลง |
 | `src/components/contact/ContactView.tsx`, `src/lib/actions/contact.ts` | ย้ายจาก public contact ไปสู่ private-contacts เรียบร้อย; ฟัง `CONTACT_RECOVERY_EVENT` เพื่อ refetch dataset สด | ใช้ subscription manager ref-counting และ private authorized channel พร้อม targeted recovery |
+| `src/components/calendar/CalendarView.tsx`, `src/lib/calendar/calendar-realtime*.ts`, `src/lib/actions/calendar.ts` | ใช้ `private-calendar-{userId}` ผ่าน shared subscription manager; producerคำนวณผู้รับฝั่ง server, consumer dedupe/revision/own echo และ recover active month; Calendar ส่ง invalidation ของ Goods Ready/Loading ไปยังผู้รับ Pipeline ที่ยังมีสิทธิ์ Calendar | payloadเป็น invalidation envelope; Neon authoritative; Event reminder persistผ่าน `CalendarReminderDelivery` + global inbox และใช้ private-user channelเดิม |
 | `src/lib/actions/notification.ts`, `src/lib/notification-dispatcher.ts` | Discriminated union `{ success, data, error }`; ลบ `revalidatePath('/pipeline')`; sanitize sender fields (ไม่มี raw DB fields); มี idempotency guard | ปิดช่องโหว่ public trigger action, ป้องกัน duplicate transfer/invite requests |
 | `src/lib/actions/ai-accelerator.ts` | ลบ fire-and-forget; await transaction + notification dispatch พร้อม idempotency window 15 นาที | ส่ง bell notification ครบถ้วนและไม่ spam ซ้ำซ้อน |
 | `prisma/schema.prisma` + `prisma/migrations/20260910220000_add_notification_read_at/` | เพิ่ม readAt DateTime? ใน model Notification พร้อม additive SQL migration | แยก read timestamp ออกจาก workflow state อย่างปลอดภัยต่อ production |
@@ -99,7 +100,8 @@ Connection คือ client socket ที่เปิดพร้อมกัน
 5. Hidden tab: หยุด polling ทันที; disconnect หลัง grace 45s เป็นค่าเริ่มต้น รวมกรณีเปิดมาแล้ว hidden ตั้งแต่แรก การกลับ visible/pageshow/online ต้อง recover อย่างมี dedupe
 6. Browser unload cleanup เป็น best effort ห้ามถือว่าปิด socket บน provider ทันทีทุกกรณี ทดสอบ bfcache และ dev HMR/React effect remount ด้วย
 7. Bell เป็น global feature ทุก authenticated page จึงยังมีเหตุผลให้หนึ่ง connection อยู่บน Settings/Profile อย่าปิด socket เพียงเพราะไม่ได้อยู่ Pipeline
-8. เวอร์ชันนี้รับรองเฉพาะ in-app notification ตอนกลับมาใช้งาน ไม่รับรอง desktop/mobile push ขณะปิดเว็บ ถ้าต้องการต้องออกแบบ Web Push แยก
+8. Local/dev ต้องไม่ใช้ connection quotaของ productionโดย default; เปิดได้เฉพาะการทดสอบที่ตั้ง `NEXT_PUBLIC_PUSHER_ENABLE_IN_DEV=true` โดยควรใช้ Pusher appแยก environment. ใช้ `NEXT_PUBLIC_PUSHER_ENABLED=false` เป็น production diagnostic/rollback switchได้ โดย fallback/recoveryต้องยังทำงาน
+9. เวอร์ชันนี้รับรองเฉพาะ in-app notification ตอนกลับมาใช้งาน ไม่รับรอง desktop/mobile push ขณะปิดเว็บ ถ้าต้องการต้องออกแบบ Web Push แยก
 
 ### 6.2 ทะเบียน channel
 
@@ -109,7 +111,8 @@ Connection คือ client socket ที่เปิดพร้อมกัน
 | `private-pipeline-{userId}` / `pipeline-updated` | ผู้รับที่ server ตรวจสิทธิ์ต่อ deal; Pipeline consumers | subscribe เมื่อมี consumer ที่ mount; board/drawer/tabs แชร์ subscription อย่างปลอดภัย |
 | `presence-global` / membership | เฉพาะผู้มีสิทธิ์ดูรายชื่อออนไลน์; shell | เลือกใช้เมื่อจำเป็นต้องเห็นออนไลน์จริง; sanitize user_info เหลือ id, name, image, role |
 | `private-contacts` / `account-updated` | ผู้รับที่มีสิทธิ์เข้าถึง Contacts; ContactView | ย้ายจาก public channel เรียบร้อย; ใช้ authorized private channel ผ่าน subscription manager |
-| Channel หน้าใหม่ | ยังไม่มี | ต้องลงทะเบียน exact pattern, owner, auth, DTO และ recovery ที่นี่ก่อนใช้ |
+| `private-calendar-{userId}` / `calendar-updated` | Event: owner, selected recipients, Management ของ Department และ Admin; Deal dates: authorized Pipeline recipients; ทุกกรณีกรองผู้ที่ยังมีสิทธิ์ Calendar ก่อนส่ง | per-user authorized channel; payload เป็น minimal invalidation envelope ไม่มี event/deal detail หรือ user object; merge delete หรือ revalidateเฉพาะ active month |
+| Channel หน้าใหม่ | ยังไม่มีเพิ่มเติม | ต้องลงทะเบียน exact pattern, owner, auth, DTO และ recovery ที่นี่ก่อนใช้ |
 
 Private channel ไม่ทดแทน authorization ของ mutation/read API และการ subscribe สำเร็จครั้งแรกไม่รับรองสิทธิ์ตลอด session เมื่อ revoke ต้องหยุด fanout, clear known inaccessible data และตรวจสิทธิ์ใหม่บน recovery; client offline ไม่สามารถรับประกันล้างข้อมูลทันที
 
@@ -131,6 +134,7 @@ BroadcastChannel เป็น local hint ไม่ใช่ฐานข้อม
 | Deal drawer: Manager Call/Collaborate | accelerator/team workflows | question/answer, members, pending badge | ใช้ accelerator/member helpers; recover เฉพาะ resource | ถาม→ผู้รับผิดชอบ, ตอบ→ผู้ถาม; exclude actor, dedupe |
 | Deal drawer: Customer/Information | detail view | patch/invalidate fields ของ record ที่เปิด | fetch detail ตามความจำเป็น | ไม่ broadcast ข้อมูลลูกค้าทั้ง object |
 | `/contact` | SSR list + ContactView local state, public events | authorized account/person delta เมื่อกำลังดู | initial/filter/page fetch; fallback 60s เฉพาะ active view เมื่อ transport เสีย | CRUD ทั่วไปใช้ local feedback; notify เมื่อมี assignment/action ชัดเจน |
+| `/calendar` | SSR month snapshot + user-scoped SWR cache; Phase 0–8 implemented in code | `private-calendar-{userId}` สำหรับ month invalidation; reminderใช้ `private-user-{userId}` inbox channelเดิมหลัง persist Notification | initial snapshot, targeted optimistic patch/reconcile; reminder materializer server-sideทุก 5 นาทีบน Vercel Pro, atomic claim, stale-claim recoveryและ bounded retry | Eventใช้ reminder toggle/offsetร่วมกันหนึ่งค่ากับ selected recipientsทั้งหมด; persistent inboxค้นพบได้แม้ Pusher fail; schedule/recipient/occurrence changeยกเลิก pending deliveryใน transaction; ไม่มี browser timerหรือ connectionเพิ่ม |
 | `/product` | Under Construction | ไม่เพิ่ม subscription ล่วงหน้า | เมื่อพัฒนา: on demand/focus; realtime เฉพาะ stock/ราคาเมื่อมี requirement | ยังไม่มี business notification contract ห้ามสมมติว่ามีแล้ว |
 | `/profile` | UserProfileClient | ไม่มี page channel โดยค่าเริ่มต้น | load + mutation response; refresh session ตาม field ที่เปลี่ยน | save profile ใช้ local feedback; security alert ต้องแยก business policy |
 | `/system/general` | ผู้ใช้/แผนกสำหรับ ADMIN | targeted directory/session invalidation หากต้องเห็นข้ามผู้ใช้ | initial + after mutation + focus; ไม่ polling ทุก 10s | สิทธิ์/บัญชีเปลี่ยนแจ้งผู้ได้รับผลเมื่อมีเหตุผล ไม่ส่ง user object ทั้งก้อน |
@@ -148,6 +152,7 @@ Event AI และหน้าอนาคตที่ยังไม่มี r
 |---|---|---|---|
 | Global inbox | initial + subscribe acknowledged + focus; safety reconcile 5 นาทีขณะ visible | 60s พร้อม backoff/jitter เมื่อ error | hidden/offline/logout |
 | Active Pipeline/Contact | event delta + mutation response | visible 60s targeted snapshot | hidden/unmount/offline/access loss |
+| Active Calendar month | typed event + operation optimistic result; safety reconcile 5 นาทีขณะ visible | visible 60s เมื่อ Calendar subscription/socketไม่พร้อม | hidden/unmount/offline/access loss |
 | Active deal detail/tab | delta หรือ invalidation เฉพาะ key | ใช้ recovery coordinator ชุดเดียว ไม่เพิ่ม timer ทุก tab | inactive/unmount/hidden |
 | Dashboard | visible 60–120s เฉพาะเมื่อมี live data requirement | รอบเดิม ไม่ผูกกับ socket | hidden/unmount |
 | System/Profile/static directory | on demand/mutation/focus | ไม่เพิ่ม interval อัตโนมัติ | ไม่ใช้งาน |
@@ -211,7 +216,7 @@ type RealtimeEvent = {
 | AI questions/summary พร้อม | requester/ผู้รับผิดชอบที่ต้องใช้ผล | เฉพาะงานที่ต้องกลับมาดู | รวมเป็นหนึ่งการแจ้งต่อ job/result ไม่ยิงทุก partial update |
 | Mention/direct reply | ผู้ถูกระบุที่มีสิทธิ์ | เมื่อพัฒนา feature นี้ | ยังไม่ถือว่ามี mention system แล้ว; validate recipient ฝั่ง server |
 | ย้าย stage/แก้ค่า/add note ทั่วไป | ผู้ที่กำลังดูข้อมูลและมีสิทธิ์ | ไม่มีโดยค่าเริ่มต้น | realtime data event + actor feedback |
-| Due reminder | assignee ที่ยังมีงานค้าง | เมื่อมี scheduler จริง | idempotent ต่อ occurrence; ไม่สร้างจากแต่ละ browser timer |
+| Calendar Event reminder | selected recipientsทั้งหมดเมื่อเปิด Event reminder | มี | UI และ validationบังคับ shared offsetหนึ่งค่าต่อ Event; deliveryยัง unique ต่อ event-recipient-occurrence-schedule; persistก่อน Pusher; cron 5 นาทีบน Pro และไม่สร้างจาก browser timer |
 | Permission revoked | ผู้ได้รับผล | optional ตาม UX | enforcement ไม่พึ่ง bell; event ให้ revalidate/evict แบบไม่เผยข้อมูลเพิ่ม |
 
 Schema เป้าหมายควรแยก `readAt` ออกจาก workflow status; อ่านคำขอแล้วต้องยังตอบได้ เพิ่ม idempotency key/uniqueness ตาม business event + recipient และ pagination/retention ตามการใช้งานจริง ต้องมี migration/backfill สำหรับข้อมูลเดิมก่อนเปลี่ยน semantics ของ PENDING/READ

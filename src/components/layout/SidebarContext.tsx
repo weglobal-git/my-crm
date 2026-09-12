@@ -7,6 +7,8 @@ export interface PageSearchConfig {
   query: string;
   onSearch: (term: string) => void;
   placeholder?: string;
+  onOpen?: () => void;
+  isOpen?: boolean;
 }
 
 export interface ColumnNavConfig {
@@ -19,6 +21,7 @@ export interface ColumnNavConfig {
   totalColumns?: number;
   currentCount?: number;
   currentRedCount?: number;
+  hideCount?: boolean;
 }
 
 interface SidebarContextType {

@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useLayoutEffect, useCallback, useEffect } from 'react';
 import { Target, Loader2, Check } from 'lucide-react';
-import { mutate } from 'swr';
+import { mutate, type KeyedMutator } from 'swr';
 import {
   updateDealTargetGoal,
   type DealAcceleratorsState,
@@ -14,7 +14,7 @@ export interface DealManagerCallTabProps {
   dealId: string;
   dealTopic?: string | null;
   acceleratorsState: DealAcceleratorsState | null | undefined;
-  mutateAccelerators: (data?: any, shouldRevalidate?: boolean) => Promise<any>;
+  mutateAccelerators: KeyedMutator<{ success: boolean; data?: DealAcceleratorsState; error?: string }>;
   pendingQuestions: AcceleratorQuestion[];
   answeredQuestions: AcceleratorQuestion[];
   isOwner: boolean;

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bell, X, Check, X as XIcon, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { Bell, X, Check, X as XIcon, Loader2, AlertCircle, RefreshCw, CalendarDays } from "lucide-react";
+import Link from "next/link";
 import type { NotificationItem } from "@/lib/actions/notification";
 
 export type { NotificationItem };
@@ -13,6 +14,7 @@ export interface NotificationDrawerProps {
   error?: string | null;
   onRetry?: () => void;
   onRespond?: (id: string, accept: boolean) => Promise<void> | void;
+  onDismiss?: (id: string) => Promise<void> | void;
 }
 
 export function NotificationDrawer({
@@ -22,6 +24,7 @@ export function NotificationDrawer({
   error,
   onRetry,
   onRespond,
+  onDismiss,
 }: NotificationDrawerProps) {
 
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -91,6 +94,16 @@ export function NotificationDrawer({
     }
   };
 
+  const handleDismiss = async (id: string) => {
+    if (!onDismiss) return;
+    setRespondingId(id);
+    try {
+      await onDismiss(id);
+    } finally {
+      setRespondingId(null);
+    }
+  };
+
   return (
     <>
       {/* Backdrop */}
@@ -113,21 +126,19 @@ export function NotificationDrawer({
       >
         <div
           ref={drawerRef}
-          className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden shadow-2xl"
+          className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden"
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-5 sm:p-6 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-[#3A3B3C] border border-[#4E4F50] flex items-center justify-center shrink-0">
-                <Bell className="w-4 h-4 text-[#C7F33C]" />
-              </div>
+              <Bell className="w-4 h-4 text-[#C7F33C] shrink-0" />
               <div className="flex items-center gap-2">
-                <h2 className="text-xl font-bold text-slate-100">
+                <h2 className="text-base font-semibold text-slate-100">
                   Notifications
                 </h2>
                 {notifications.length > 0 && (
-                  <span className="px-2 py-0.5 rounded-full bg-[#C7F33C] text-black text-[11px] font-bold">
-                    {notifications.length} New
+                  <span className="text-xs font-medium text-slate-400">
+                    {notifications.length} new
                   </span>
                 )}
               </div>
@@ -144,7 +155,7 @@ export function NotificationDrawer({
           </div>
 
           {/* Scrollable Notifications Body */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-3">
+          <div className="flex-1 overflow-y-auto custom-scrollbar px-3">
             {error && (
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2.5 text-xs text-amber-300">
                 <div className="flex items-center gap-2 min-w-0">
@@ -185,15 +196,20 @@ export function NotificationDrawer({
               notifications.map((notif) => {
                 const isResponding = respondingId === notif.id;
                 const isRequestType = ["DEAL_TRANSFER_REQUEST", "TEAM_INVITE_REQUEST"].includes(notif.type);
+                const isCalendarReminder = notif.type === 'CALENDAR_REMINDER';
+                const [calendarEventId, occurrenceStartAt] = isCalendarReminder ? (notif.referenceId || '').split('|') : ['', ''];
+                const calendarMonth = occurrenceStartAt && !Number.isNaN(new Date(occurrenceStartAt).getTime())
+                  ? new Date(occurrenceStartAt).toISOString().slice(0, 7)
+                  : '';
 
                 return (
                   <div
                     key={notif.id}
-                    className="bg-[#1E1F20] border border-[#3A3B3C] hover:border-[#4E4F50] rounded-xl p-4 transition-all flex flex-col gap-3"
+                    className="border-b border-[#3A3B3C] px-2 py-4 transition-colors hover:bg-[#2A2C2D] flex flex-col gap-3"
                   >
                     <div className="flex items-start gap-3">
                       {/* Sender Avatar */}
-                      <div className="w-9 h-9 rounded-full bg-[#252728] border border-[#3A3B3C] overflow-hidden shrink-0">
+                      <div className="w-9 h-9 rounded-full bg-[#252728] overflow-hidden shrink-0">
                         <img
                           src={
                             notif.sender?.image ||
@@ -209,14 +225,14 @@ export function NotificationDrawer({
                       {/* Content */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-slate-100 truncate">
-                            {notif.sender?.name || "Team Member"}
+                          <span className="text-sm font-semibold text-slate-200 truncate">
+                            {isCalendarReminder ? notif.title : (notif.sender?.name || "Team Member")}
                           </span>
-                          <span className="text-[10px] text-slate-500 shrink-0">
+                          <span className="text-xs text-slate-500 shrink-0">
                             {formatRelativeTime(notif.createdAt)}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                        <p className="text-sm text-slate-300 mt-1 leading-relaxed">
                           {notif.message}
                         </p>
                       </div>
@@ -224,12 +240,12 @@ export function NotificationDrawer({
 
                     {/* Action Buttons for Transfer & Invite Requests */}
                     {isRequestType && (
-                      <div className="flex items-center gap-2 pt-2 border-t border-[#2A2B2D]">
+                      <div className="flex items-center justify-end gap-2 pl-12">
                         <button
                           type="button"
                           disabled={isResponding}
                           onClick={() => handleAction(notif.id, true)}
-                          className="flex-1 flex items-center justify-center gap-1.5 bg-[#C7F33C] text-slate-950 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#b8e332] transition-colors cursor-pointer disabled:opacity-50"
+                          className="flex items-center justify-center gap-1.5 bg-[#C7F33C] text-slate-950 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#b8e332] transition-colors cursor-pointer disabled:opacity-50"
                         >
                           {isResponding && respondingAction === "accept" ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -242,7 +258,7 @@ export function NotificationDrawer({
                           type="button"
                           disabled={isResponding}
                           onClick={() => handleAction(notif.id, false)}
-                          className="flex-1 flex items-center justify-center gap-1.5 bg-[#2E3032] border border-[#4E4F50] text-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#3A3B3C] transition-colors cursor-pointer disabled:opacity-50"
+                          className="flex items-center justify-center gap-1.5 border border-[#4E4F50] text-slate-300 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#3A3B3C] transition-colors cursor-pointer disabled:opacity-50"
                         >
                           {isResponding && respondingAction === "reject" ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -250,6 +266,26 @@ export function NotificationDrawer({
                             <XIcon className="w-3.5 h-3.5" />
                           )}
                           <span>Reject</span>
+                        </button>
+                      </div>
+                    )}
+                    {isCalendarReminder && (
+                      <div className="flex items-center justify-end gap-2 pl-12">
+                        <Link
+                          href={`/calendar?month=${calendarMonth}&event=${encodeURIComponent(calendarEventId)}&occurrence=${encodeURIComponent(occurrenceStartAt)}`}
+                          onClick={() => { void handleDismiss(notif.id); onClose(); }}
+                          className="flex items-center justify-center gap-1.5 bg-[#C7F33C] text-slate-950 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-[#b8e332] transition-colors"
+                        >
+                          <CalendarDays className="w-3.5 h-3.5" />
+                          View calendar
+                        </Link>
+                        <button
+                          type="button"
+                          disabled={isResponding}
+                          onClick={() => handleDismiss(notif.id)}
+                          className="px-3 py-1.5 rounded-lg border border-[#4E4F50] text-slate-300 text-xs font-semibold hover:bg-[#3A3B3C] disabled:opacity-50"
+                        >
+                          Dismiss
                         </button>
                       </div>
                     )}

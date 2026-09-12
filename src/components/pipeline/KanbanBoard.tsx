@@ -16,7 +16,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, getRedThreshold, PendingAcceleratorsContext, OwnerFilterContext, DealSummariesContext } from "./KanbanCard";
+import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, OwnerFilterContext, DealSummariesContext } from "./KanbanCard";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import { getDealsWithSummaryMap } from "@/lib/actions/deal-summary";
 import {

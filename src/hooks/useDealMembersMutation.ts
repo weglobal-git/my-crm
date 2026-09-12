@@ -41,15 +41,23 @@ export function useDealMembersMutation({
   const pendingMutationIdsRef = useRef<Set<string>>(new Set());
 
   // Keep localTeamMembers in sync if parent deal changes
-  useEffect(() => {
+  const [prevDealId, setPrevDealId] = useState(dealId);
+  const [prevInitialMembers, setPrevInitialMembers] = useState(initialMembers);
+
+  if (dealId !== prevDealId || initialMembers !== prevInitialMembers) {
+    setPrevDealId(dealId);
+    setPrevInitialMembers(initialMembers);
     setLocalTeamMembers(initialMembers || []);
+  }
+
+  useEffect(() => {
     if (dealUpdatedAt) {
       serverRevisionRef.current = Math.max(
         serverRevisionRef.current,
         new Date(dealUpdatedAt).getTime()
       );
     }
-  }, [dealId, initialMembers, dealUpdatedAt]);
+  }, [dealUpdatedAt]);
 
   /**
    * Helper to patch SWR ['pipeline-deals'] cache optimistically

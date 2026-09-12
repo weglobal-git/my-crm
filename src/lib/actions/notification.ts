@@ -117,6 +117,23 @@ export async function markAllNotificationsAsRead() {
   return { success: true };
 }
 
+export async function dismissNotification(notificationId: string) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) throw new Error("Unauthorized");
+
+  const updated = await prisma.notification.updateMany({
+    where: {
+      id: notificationId,
+      recipientId: session.user.id,
+      type: { in: ['CALENDAR_REMINDER', 'SYSTEM_ALERT', 'DEAL_COMMENT'] },
+      status: 'PENDING',
+    },
+    data: { status: 'READ', readAt: new Date() },
+  });
+  if (updated.count !== 1) throw new Error('Notification cannot be dismissed');
+  return { success: true };
+}
+
 // Request to transfer ownership
 export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   const session = await getServerSession(authOptions);

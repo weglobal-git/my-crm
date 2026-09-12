@@ -10,9 +10,6 @@ import { preload } from "swr";
 import { getOpportunityActivityLogs } from "@/lib/actions/opportunity";
 import { getDealAccelerators } from "@/lib/actions/ai-accelerator";
 
-const formatDateTime = (date: Date | string) => {
-  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(date));
-};
 
 import { parseLogContent, type ParsedLogAttachment } from "@/lib/pipeline-activity-cache";
 export { parseLogContent, type ParsedLogAttachment };
@@ -493,7 +490,7 @@ export const KanbanCard = React.memo(function KanbanCard({
       onPointerEnter={onPanelIntent}
       onFocusCapture={onPanelIntent}
       data-deal-id={deal.id}
-      className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-grabbing' : ''} outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0`}
+      className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-pointer' : ''} outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0`}
     >
       <KanbanCardUI 
         deal={deal} 

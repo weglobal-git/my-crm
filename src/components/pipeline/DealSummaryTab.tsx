@@ -26,17 +26,6 @@ export interface DealSummaryTabProps {
   }) => void;
 }
 
-function formatDateTime(date: Date | string) {
-  const d = new Date(date);
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(d);
-}
-
 export function DealSummaryTab({
   summaryViewMode,
   dealSummaryResponse,
@@ -55,6 +44,14 @@ export function DealSummaryTab({
   const [jsonSchemaInput, setJsonSchemaInput] = useState('');
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(false);
   const [isSavingPrompt, setIsSavingPrompt] = useState(false);
+  const [prevSummaryViewMode, setPrevSummaryViewMode] = useState(summaryViewMode);
+
+  if (summaryViewMode !== prevSummaryViewMode) {
+    setPrevSummaryViewMode(summaryViewMode);
+    if (summaryViewMode === 'prompt' && isAdmin) {
+      setIsLoadingPrompt(true);
+    }
+  }
 
   // Stable refs for Prompt Settings textareas
   const systemInstructionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -82,7 +79,6 @@ export function DealSummaryTab({
   useEffect(() => {
     if (summaryViewMode === 'prompt' && isAdmin) {
       let isMounted = true;
-      setIsLoadingPrompt(true);
       getDealSummaryPromptConfig()
         .then((config) => {
           if (!isMounted) return;

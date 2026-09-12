@@ -6,6 +6,7 @@
     "dev": "next dev -p 3003 --webpack",
     "build": "prisma generate && next build --webpack",
     "test:pipeline": "node --import tsx --test src/lib/deal-members-concurrency.test.ts src/lib/pipeline-activity-cache.test.ts src/lib/deal-draft-store.test.ts src/lib/deal-accelerators-sync.test.ts src/lib/pipeline-card-dto.test.ts src/lib/deal-topic-sync.test.ts src/lib/pipeline-delete-rollback.test.ts src/lib/deal-todo-sync.test.ts src/lib/pusher-lifecycle.test.ts src/lib/pusher-subscription-manager.test.ts src/lib/pusher-security.test.ts",
+    "test:calendar": "node --import tsx --test src/lib/calendar/calendar-recurrence.test.ts src/lib/calendar/calendar-month.test.ts src/lib/calendar/calendar-crud.test.ts src/lib/calendar/calendar-realtime.test.ts src/lib/calendar/calendar-deal-date.test.ts src/lib/calendar/calendar-move.test.ts src/lib/calendar/calendar-filters.test.ts src/lib/calendar/calendar-reminder-policy.test.ts src/lib/calendar/calendar-presentation.test.ts",
     "verify:pipeline": "npx tsc --noEmit && npm run test:pipeline"
   },
   "dependencies": {

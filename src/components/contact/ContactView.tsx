@@ -175,7 +175,7 @@ export function ContactView({
   const selectedCompanyIdRef = useRef<string | null>(null);
   const activeTabRef = useRef(activeTab);
   const activeTypeRef = useRef(activeType);
-  const mutateOverviewRef = useRef<() => Promise<any>>(() => Promise.resolve());
+  const mutateOverviewRef = useRef<() => Promise<unknown>>(() => Promise.resolve());
 
   // Selected Company & Contact
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(

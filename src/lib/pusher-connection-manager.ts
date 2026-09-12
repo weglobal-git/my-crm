@@ -6,6 +6,7 @@ import {
   disconnectPusher,
   destroyPusherClient,
   getOrCreatePusherClient,
+  isPusherEnabled,
 } from "@/lib/pusher";
 import { releaseAllChannels } from "@/lib/pusher-subscription-manager";
 import { mutate } from "swr";
@@ -14,6 +15,8 @@ import { isPendingAcceleratorsKey } from "@/lib/deal-accelerators-sync";
 export const DORMANCY_TIMEOUT_MS = 45_000; // 45 seconds after tab is hidden
 export const NOTIFICATIONS_CHANGED_EVENT = "my-crm:notifications-changed";
 export const CONTACT_RECOVERY_EVENT = "my-crm:contact-recovery";
+export const CALENDAR_RECOVERY_EVENT = "my-crm:calendar-recovery";
+export const CALENDAR_REALTIME_BRIDGE_EVENT = "my-crm:calendar-realtime-bridge";
 
 let dormancyTimer: ReturnType<typeof setTimeout> | null = null;
 let isInitialized = false;
@@ -107,6 +110,11 @@ export function triggerTargetedRecovery() {
     window.dispatchEvent(new Event(CONTACT_RECOVERY_EVENT));
     void mutate((key) => Array.isArray(key) && key[0] === "account-overview");
   }
+
+  // 4. Active Calendar viewport owns its exact user/month SWR key.
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/calendar")) {
+    window.dispatchEvent(new Event(CALENDAR_RECOVERY_EVENT));
+  }
 }
 
 /**
@@ -118,7 +126,7 @@ export function triggerTargetedRecovery() {
  * 5. Cross-tab message bridge via user-scoped BroadcastChannel with deduplication.
  */
 export function initPusherConnectionHygiene(userId?: string) {
-  if (typeof window === "undefined" || isInitialized) return;
+  if (typeof window === "undefined" || isInitialized || !isPusherEnabled()) return;
   isInitialized = true;
 
   console.log(`[PUSHER-HYGIENE] Initializing connection lifecycle manager for user: ${userId || "authenticated"}...`);
@@ -207,6 +215,9 @@ export function initPusherConnectionHygiene(userId?: string) {
           if (event.data.eventName === "new-notification" || event.data.eventName === "notification-resolved") {
             void mutate("my-notifications");
             window.dispatchEvent(new Event(NOTIFICATIONS_CHANGED_EVENT));
+          }
+          if (event.data.eventName === "calendar-updated") {
+            window.dispatchEvent(new CustomEvent(CALENDAR_REALTIME_BRIDGE_EVENT, { detail: event.data.data }));
           }
         }
       };
