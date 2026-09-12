@@ -1,12 +1,19 @@
 "use client";
 
-import { useState, useMemo, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useState, useMemo, useCallback, forwardRef, useImperativeHandle, useEffect, useRef } from "react";
 import { useSWRConfig } from "swr";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { updateOpportunity } from "@/lib/actions/opportunity";
 import { useDialog } from "@/providers/DialogProvider";
-import { DollarSign, Package, Calendar, FileText } from "lucide-react";
+import { DollarSign, Package, Calendar, FileText, ChevronDown, Check } from "lucide-react";
 import { CalendarDatePicker } from "@/components/ui/CalendarDatePicker";
+
+const CURRENCY_OPTIONS = [
+  { value: "THB", label: "THB (฿)" },
+  { value: "USD", label: "USD ($)" },
+  { value: "EUR", label: "EUR (€)" },
+  { value: "CNY", label: "CNY (¥)" },
+] as const;
 
 export interface CustomerTabRef {
   save: () => Promise<void>;
@@ -26,6 +33,22 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
   const { mutate } = useSWRConfig();
   const { toast } = useDialog();
   const [isSaving, setIsSaving] = useState(false);
+  const [showCurrencyMenu, setShowCurrencyMenu] = useState(false);
+  const currencyMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (currencyMenuRef.current && !currencyMenuRef.current.contains(event.target as Node)) {
+        setShowCurrencyMenu(false);
+      }
+    }
+    if (showCurrencyMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showCurrencyMenu]);
 
   const dealKey = `${deal.id}-${deal.value}-${deal.currency}-${deal.goodsReadyDate}-${deal.goodsLoadingDate}-${deal.reserveId}-${deal.invoiceId}`;
 
@@ -137,17 +160,54 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
             <label className="text-xs font-semibold text-slate-300 flex items-center gap-1">
               Currency <span className="text-rose-500">*</span>
             </label>
-            <select
-              name="currency"
-              value={formData.currency}
-              onChange={handleChange}
-              className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl px-3 py-2.5 text-slate-100 text-xs focus:outline-none focus:border-[#C7F33C] transition-colors cursor-pointer"
-            >
-              <option value="THB">THB (฿)</option>
-              <option value="USD">USD ($)</option>
-              <option value="EUR">EUR (€)</option>
-              <option value="CNY">CNY (¥)</option>
-            </select>
+            <div className="relative" ref={currencyMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowCurrencyMenu((prev) => !prev)}
+                className={`w-full bg-[#252728] border rounded-xl px-3 py-2.5 text-slate-100 text-xs transition-colors cursor-pointer flex items-center justify-between ${
+                  showCurrencyMenu
+                    ? "border-[#C7F33C]"
+                    : "border-[#4E4F50] hover:border-slate-400"
+                }`}
+                aria-haspopup="listbox"
+                aria-expanded={showCurrencyMenu}
+              >
+                <span>
+                  {CURRENCY_OPTIONS.find((c) => c.value === formData.currency)?.label || formData.currency}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${
+                    showCurrencyMenu ? "rotate-180 text-[#C7F33C]" : ""
+                  }`}
+                />
+              </button>
+
+              {showCurrencyMenu && (
+                <div className="absolute left-0 top-full mt-1.5 w-full min-w-[140px] bg-[#252728] border border-[#3A3B3C] rounded-xl p-1.5 z-50 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+                  {CURRENCY_OPTIONS.map((option) => {
+                    const isSelected = formData.currency === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => {
+                          setFormData((prev) => ({ ...prev, currency: option.value }));
+                          setShowCurrencyMenu(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium rounded-lg transition-colors text-left cursor-pointer ${
+                          isSelected
+                            ? "bg-[#3A3B3C] text-[#C7F33C]"
+                            : "text-slate-200 hover:bg-[#3A3B3C] hover:text-white"
+                        }`}
+                      >
+                        <span className="truncate">{option.label}</span>
+                        {isSelected && <Check className="w-3.5 h-3.5 text-[#C7F33C] shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
