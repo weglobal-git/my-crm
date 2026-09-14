@@ -62,7 +62,7 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
   return (
     <div className={`${compact ? 'shrink-0' : 'flex-1 min-h-0'} flex flex-col border border-[#3A3B3C] rounded-2xl overflow-hidden bg-[#252728]`} role="grid" aria-label={`${currentYear}-${String(currentMonth).padStart(2, '0')} calendar`}>
       {/* 7-column weekday headers */}
-      <div className="grid grid-cols-7 border-b border-[#3A3B3C] bg-[#2E3031]/80 shrink-0" role="row">
+      <div className="grid grid-cols-7 border-b border-[#3A3B3C] bg-[#252728] shrink-0" role="row">
         {WEEKDAY_NAMES.map((name, index) => (
           <div
             key={name}

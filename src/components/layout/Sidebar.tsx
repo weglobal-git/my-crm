@@ -171,18 +171,6 @@ export function Sidebar() {
               searchable.push(item);
             }
           });
-        } else if (main.href && canSee(main.key)) {
-          const item: FlattenedMenuItem = {
-            key: main.key,
-            label: main.label,
-            href: main.href,
-            iconName: main.iconName || "LayoutDashboard",
-            parentLabel: main.label,
-            parentKey: main.key,
-            isSubItem: false,
-          };
-          direct.push(item);
-          searchable.push(item);
         }
       }
     });
@@ -439,36 +427,6 @@ export function Sidebar() {
             <Headphones className="w-4 h-4 text-slate-400 shrink-0" />
             <span>Support</span>
           </button>
-
-          {/* User Profile Snippet (Logout removed) */}
-          <div className="flex items-center px-2.5 py-2 rounded-lg bg-[#3A3B3C]/40 border border-[#1C1C1D] mt-1">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-full bg-[#3A3B3C] border border-[#4E4F50] flex items-center justify-center overflow-hidden shrink-0">
-                {session?.user?.image ? (
-                  <Image 
-                    src={session.user.image} 
-                    alt={session.user.name || "User"} 
-                    width={28} 
-                    height={28} 
-                    className="w-full h-full object-cover" 
-                    unoptimized 
-                  />
-                ) : (
-                  <span className="text-xs font-bold text-slate-200">
-                    {session?.user?.name?.charAt(0).toUpperCase() || "U"}
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-xs font-semibold text-slate-100 truncate">
-                  {session?.user?.name || "User"}
-                </span>
-                <span className="text-xs text-slate-400 truncate">
-                  {session?.user?.email || "Admin"}
-                </span>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     );

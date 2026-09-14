@@ -20,14 +20,14 @@ const prismaClientSingleton = () => {
   })
 }
 
-const SCHEMA_VERSION = 'v7_calendar_events_20260911';
+const SCHEMA_VERSION = 'v8_company_sale_targets_20260914';
 
 declare global {
   var prismaGlobal: undefined | ReturnType<typeof prismaClientSingleton>;
   var prismaSchemaVersion: undefined | string;
 }
 
-const prisma = (globalThis.prismaGlobal && globalThis.prismaSchemaVersion === SCHEMA_VERSION && 'calendarEvent' in globalThis.prismaGlobal)
+const prisma = (globalThis.prismaGlobal && globalThis.prismaSchemaVersion === SCHEMA_VERSION && 'companySaleTarget' in globalThis.prismaGlobal)
   ? globalThis.prismaGlobal
   : (() => {
       const client = prismaClientSingleton();

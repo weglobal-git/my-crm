@@ -113,8 +113,13 @@ export function CalendarTagPicker({
     onChange(selectedTagIds.filter((id) => id !== tagId));
   };
 
-  const handleCreateNewTag = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateNewTag = async (
+    e?: React.SyntheticEvent
+  ) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!newTagName.trim() || isSubmittingTag) return;
 
     setIsSubmittingTag(true);
@@ -254,20 +259,33 @@ export function CalendarTagPicker({
                     Create new tag
                   </button>
                 ) : (
-                  <form onSubmit={handleCreateNewTag} className="space-y-2">
+                  <div className="space-y-2">
                     <div className="flex gap-1.5">
                       <input
                         type="text"
                         placeholder="Tag name"
                         value={newTagName}
                         onChange={(e) => setNewTagName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleCreateNewTag(e);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setIsCreating(false);
+                            setErrorMessage(null);
+                          }
+                        }}
                         className="flex-1 bg-[#1E1F20] border border-[#4E4F50] text-xs text-white px-2 py-1 rounded focus:outline-none focus:border-[#C7F33C]"
                         autoFocus
                       />
                       <button
-                        type="submit"
+                        type="button"
+                        onClick={handleCreateNewTag}
                         disabled={!newTagName.trim() || isSubmittingTag}
-                        className="px-2.5 py-1 bg-[#C7F33C] text-black font-semibold text-xs rounded hover:bg-[#b8e432] disabled:opacity-50 transition-colors"
+                        className="px-2.5 py-1 bg-[#C7F33C] text-black font-semibold text-xs rounded hover:bg-[#b8e432] disabled:opacity-50 transition-colors flex items-center justify-center min-w-[48px]"
                       >
                         {isSubmittingTag ? <Loader2 className="w-3 h-3 animate-spin" /> : "Save"}
                       </button>
@@ -277,7 +295,7 @@ export function CalendarTagPicker({
                           setIsCreating(false);
                           setErrorMessage(null);
                         }}
-                        className="px-2 py-1 text-neutral-400 hover:text-white text-xs"
+                        className="px-2.5 py-1 text-neutral-400 hover:text-white text-xs"
                       >
                         Cancel
                       </button>
@@ -301,7 +319,7 @@ export function CalendarTagPicker({
                     {errorMessage && (
                       <p className="text-[11px] text-red-400">{errorMessage}</p>
                     )}
-                  </form>
+                  </div>
                 )}
               </div>
             </div>

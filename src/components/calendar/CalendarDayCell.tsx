@@ -100,7 +100,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
       tabIndex={0}
       aria-label={`${new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(date)}, ${items.length} items${isToday ? ', today' : ''}`}
       className={`relative isolate min-h-[105px] h-full flex flex-col p-1.5 border-r border-b border-[#3A3B3C]/70 transition-colors select-none focus-visible:z-20 focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-[#C7F33C] ${
-        isCurrentMonth ? 'bg-[#2A2C2D]/60 hover:bg-[#323435]/70' : 'bg-[#222324]/80 text-slate-600'
+        isCurrentMonth ? 'bg-[#2E3033]' : 'bg-[#222324] text-slate-600'
       }`}
     >
       {isOver && (

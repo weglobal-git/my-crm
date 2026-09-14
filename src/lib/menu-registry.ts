@@ -1,6 +1,6 @@
 import { 
   LayoutDashboard, Briefcase, Megaphone, Wrench, Settings, MousePointer2, FileText, Users, Package, MessageSquare, Building2, FileBadge, Image as ImageIcon, Paperclip,
-  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart, HardDrive, Wand2, Bot, ListTodo
+  Home, Box, BarChart, Calendar, Bell, Shield, Mail, File, Folder, Link, Map, Phone, ShoppingCart, Tag, Target, Video, Zap, Activity, Book, Camera, Database, Globe, Heart, Key, Lock, Monitor, Printer, Search, Star, Truck, UserCircle, Grid, Menu, MoreHorizontal, CheckSquare, ClipboardList, PenTool, LayoutTemplate, PieChart, HardDrive, Wand2, Bot, ListTodo
 } from "lucide-react";
 
 export type MenuLevel = 1 | 2 | 3;
@@ -27,7 +27,7 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "system",      label: "System Settings",     level: 1, iconName: "Settings",        href: "/system", sortOrder: 99 },
 
   // === SUB-MENU (Level 2) ===
-  { key: "crm_overview", label: "CRM Overview", level: 2, parentKey: "dashboard", iconName: "LayoutDashboard", href: "/dashboard/overview", sortOrder: 1 },
+  { key: "crm_overview", label: "Dashboard", level: 2, parentKey: "dashboard", iconName: "LayoutDashboard", href: "/dashboard/overview", sortOrder: 1 },
   { key: "pipeline",    label: "Pipeline",     level: 2, parentKey: "sales_ops", iconName: "MousePointer2",   href: "/pipeline",   sortOrder: 1 },
   { key: "quotation",   label: "Quotation",    level: 2, parentKey: "sales_ops", iconName: "FileText",        href: "/quotations", sortOrder: 2 },
   { key: "contact",     label: "Account", level: 2, parentKey: "sales_ops", iconName: "Users",           href: "/contact",    sortOrder: 3 },
@@ -43,6 +43,11 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "system.permissions", label: "Menu Permissions",    level: 2, parentKey: "system", iconName: "Settings",        href: "/system/permissions", sortOrder: 3 },
 
   // === RIGHT-MENU (Level 3) ===
+  // Dashboard
+  { key: "dashboard.sale_summary",       label: "Sale Summary",       level: 3, parentKey: "crm_overview", iconName: "BarChart", sortOrder: 1 },
+  { key: "dashboard.sale_tracking",      label: "Sale Tracking",      level: 3, parentKey: "crm_overview", iconName: "Target",   sortOrder: 2 },
+  { key: "dashboard.annual_sale_report", label: "Annual Sale Report", level: 3, parentKey: "crm_overview", iconName: "FileText", sortOrder: 3 },
+
   // Pipeline
   { key: "pipeline.activity",    label: "Activity Log", level: 3, parentKey: "pipeline", iconName: "MessageSquare", sortOrder: 1, isLocked: true },
   { key: "pipeline.collaborate", label: "Collaborate",  level: 3, parentKey: "pipeline", iconName: "Users",         sortOrder: 2, isLocked: true },
@@ -55,9 +60,10 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   { key: "contact.account",     label: "Account",      level: 3, parentKey: "contact",  iconName: "Building2",     sortOrder: 1, isLocked: true },
   { key: "contact.contact",     label: "Contact",      level: 3, parentKey: "contact",  iconName: "Users",         sortOrder: 2, isLocked: true },
   { key: "contact.projects",    label: "Projects",     level: 3, parentKey: "contact",  iconName: "Briefcase",     sortOrder: 3 },
-  { key: "contact.email",       label: "Email",        level: 3, parentKey: "contact",  iconName: "Mail",          sortOrder: 4 },
-  { key: "contact.ai_analysis", label: "Account AI Analysis", level: 3, parentKey: "contact", iconName: "Bot",     sortOrder: 5 },
-  { key: "contact.sharedMedia", label: "Shared Media",        level: 3, parentKey: "contact", iconName: "Folder",  sortOrder: 6 },
+  { key: "contact.sale_target", label: "Sale Target",  level: 3, parentKey: "contact",  iconName: "Target",        sortOrder: 4 },
+  { key: "contact.email",       label: "Email",        level: 3, parentKey: "contact",  iconName: "Mail",          sortOrder: 5 },
+  { key: "contact.ai_analysis", label: "Account AI Analysis", level: 3, parentKey: "contact", iconName: "Bot",     sortOrder: 6 },
+  { key: "contact.sharedMedia", label: "Shared Media",        level: 3, parentKey: "contact", iconName: "Folder",  sortOrder: 7 },
 ];
 
 export function getMenuByKey(key: string): MenuDefinition | undefined {
@@ -106,6 +112,7 @@ export const IconMap: Record<string, React.ElementType> = {
   Phone,
   ShoppingCart,
   Tag,
+  Target,
   Video,
   Zap,
   Activity,

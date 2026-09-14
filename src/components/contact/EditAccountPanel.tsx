@@ -21,7 +21,8 @@ import {
   Bot, 
   Folder, 
   Sparkles, 
-  ExternalLink 
+  ExternalLink,
+  Target 
 } from "lucide-react";
 import { SlideOverPanel, SlideOverTab } from "@/components/ui/SlideOverPanel";
 import { SlideOverSubBar, SubBarTab, SubBarActionItem } from "@/components/ui/SlideOverSubBar";
@@ -74,6 +75,15 @@ const SharedMediaTab = dynamic(() => import("@/components/pipeline/SharedMediaTa
   ssr: false,
 });
 
+const SaleTargetTab = dynamic(() => import("./SaleTargetTab").then((m) => m.SaleTargetTab), {
+  loading: () => (
+    <div className="flex items-center justify-center h-64">
+      <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
+    </div>
+  ),
+  ssr: false,
+});
+
 interface EditAccountPanelProps {
   companyId: string | null;
   initialOverview?: AccountOverviewResult | null;
@@ -82,7 +92,7 @@ interface EditAccountPanelProps {
   onAccountUpdated: (updatedCompany?: Partial<CompanyMasterItem>) => void;
   status?: ContactStatus;
   onToggleStatus?: () => void;
-  initialTab?: "account" | "contact" | "projects" | "email" | "ai_analysis" | "sharedMedia" | string;
+  initialTab?: "account" | "contact" | "projects" | "sale_target" | "email" | "ai_analysis" | "sharedMedia" | string;
   selectedContactId?: string | null;
   onBusinessSummaryUpdated?: (summary: string) => void;
 }
@@ -180,6 +190,7 @@ export function EditAccountPanel({
       { key: "account", label: "Account", icon: Building2 },
       { key: "contact", label: "Contact", icon: Users },
       { key: "projects", label: "Projects", icon: Briefcase },
+      { key: "sale_target", label: "Sale Target", icon: Target },
       { key: "email", label: "Email", icon: Mail },
       { key: "ai_analysis", label: "Account AI", icon: Bot },
       { key: "sharedMedia", label: "Shared Media", icon: Folder },
@@ -2344,6 +2355,11 @@ export function EditAccountPanel({
                 maskedOpportunityCount={0}
               />
             </div>
+          )}
+
+          {/* TAB: SALE TARGET */}
+          {safeActiveTab === "sale_target" && companyId && (
+            <SaleTargetTab key={companyId} companyId={companyId} />
           )}
 
           {/* TAB 4: EMAIL (Compose & Communications) */}

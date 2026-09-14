@@ -27,7 +27,7 @@ export default withAuth(
     callbacks: {
       authorized: ({ req, token }) => {
         const path = req.nextUrl.pathname;
-        if (path === "/" || path.startsWith("/dashboard/overview")) {
+        if (path === "/" || path.startsWith("/auth")) {
           return true;
         }
         return !!token;

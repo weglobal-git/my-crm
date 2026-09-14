@@ -134,3 +134,79 @@
     outline: none !important;
   }
 }
+
+/* Print Media Styles for clean A4 Reports */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0; /* Eliminates browser default headers (date, title) and footers (URL, page numbers) */
+  }
+
+  html {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    margin: 0 !important;
+    padding: 12mm 15mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  #__next,
+  body > div,
+  main {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  /* Force hide all standard page chrome and navigation during print */
+  header,
+  aside,
+  nav,
+  .no-print,
+  [role="navigation"],
+  #next-toploader {
+    display: none !important;
+  }
+
+  /* Prevent awkward page breaks inside report sections */
+  .print-avoid-break {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    page-break-after: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+}

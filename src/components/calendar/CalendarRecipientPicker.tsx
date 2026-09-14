@@ -6,7 +6,6 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { Bell, Check, ChevronDown, Loader2, Search, UserPlus, Users, X } from "lucide-react";
 import { getCalendarRecipientsAction } from "@/lib/actions/calendar";
-import { CalendarSelect } from "./CalendarSelect";
 
 export interface RecipientState {
   userId: string;
@@ -29,15 +28,6 @@ interface CalendarRecipientPickerProps {
 }
 
 type RecipientUser = { id: string; name: string | null; email: string | null; image: string | null; role: string };
-
-const REMINDER_OFFSET_OPTIONS = [
-  { label: "At event time", value: "0" },
-  { label: "5 mins before", value: "5" },
-  { label: "15 mins before", value: "15" },
-  { label: "30 mins before", value: "30" },
-  { label: "1 hour before", value: "60" },
-  { label: "1 day before", value: "1440" },
-];
 
 const EMPTY_USERS: RecipientUser[] = [];
 
@@ -127,9 +117,26 @@ export function CalendarRecipientPicker({ departmentId, departmentName, recipien
       </div>
 
       <div className="rounded-xl border border-[#3A3B3C] bg-[#1E1F20] p-3">
-        <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-xs font-semibold text-slate-300"><Bell className="h-4 w-4 text-[#C7F33C]" /> Event reminder</span><button type="button" role="switch" aria-checked={reminderEnabled} disabled={disabled || recipients.length === 0} onClick={() => onReminderChange(!reminderEnabled, reminderOffsetMins)} className={`relative h-6 w-11 rounded-full transition-colors disabled:opacity-40 ${reminderEnabled ? "bg-[#C7F33C]" : "bg-[#4E4F50]"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${reminderEnabled ? "translate-x-6" : "translate-x-1"}`} /></button></div>
-        <p className="mt-1 text-xs text-slate-500">The same reminder time applies to every recipient.</p>
-        {reminderEnabled && recipients.length > 0 && <div className="mt-3"><CalendarSelect ariaLabel="Event reminder time" value={String(reminderOffsetMins)} onChange={(value) => onReminderChange(true, Number(value))} disabled={disabled} options={REMINDER_OFFSET_OPTIONS} /></div>}
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+            <Bell className="h-4 w-4 text-[#C7F33C]" /> LINE Morning Digest
+          </span>
+          <label className={`relative inline-flex items-center ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}>
+            <input
+              type="checkbox"
+              checked={reminderEnabled}
+              onChange={(e) => onReminderChange(e.target.checked, 0)}
+              disabled={disabled}
+              className="sr-only peer"
+            />
+            <div className="w-9 h-5 bg-[#3A3B3C] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#C7F33C]"></div>
+          </label>
+        </div>
+        <p className="mt-1 text-xs text-slate-400">
+          {reminderEnabled
+            ? "This event will be included in the daily morning LINE summary for this department."
+            : "Not included in the daily morning LINE summary."}
+        </p>
       </div>
 
       {isOpen && typeof document !== "undefined" && createPortal(<>
