@@ -181,6 +181,7 @@ export interface GetCompaniesParams {
 }
 
 let cachedCountries: { country: string; count: number }[] | null = null;
+let cachedCountryDbVariants = new Map<string, string[]>();
 let lastCountriesFetch = 0;
 const COUNTRIES_CACHE_TTL_MS = 5 * 60 * 1000; // 5-minute memory cache
 
@@ -206,20 +207,68 @@ export async function getCompanyCountries(): Promise<{ country: string; count: n
     });
 
     const countMap = new Map<string, number>();
+    const variantsMap = new Map<string, Set<string>>();
+
     for (const r of raw) {
       if (!r.country || !r.country.trim()) continue;
       const canonical = normalizeCountryName(r.country);
       countMap.set(canonical, (countMap.get(canonical) || 0) + r._count.id);
+
+      const key = canonical.toUpperCase();
+      let s = variantsMap.get(key);
+      if (!s) {
+        s = new Set<string>();
+        variantsMap.set(key, s);
+      }
+      s.add(r.country.trim());
+      s.add(canonical);
     }
+
     const result = Array.from(countMap.entries())
       .map(([country, count]) => ({ country, count }))
       .sort((a, b) => b.count - a.count);
+
+    cachedCountryDbVariants = new Map(
+      Array.from(variantsMap.entries()).map(([k, v]) => [k, Array.from(v)])
+    );
     cachedCountries = result;
     lastCountriesFetch = now;
     return result;
   } catch (err) {
     console.error("Failed to fetch company countries:", err);
     return cachedCountries || [];
+  }
+}
+
+let cachedTypes: { type: ContactType; count: number }[] | null = null;
+let lastTypesFetch = 0;
+const TYPES_CACHE_TTL_MS = 5 * 60 * 1000; // 5-minute memory cache
+
+export async function getCompanyTypes(): Promise<{ type: ContactType; count: number }[]> {
+  const now = Date.now();
+  if (cachedTypes && now - lastTypesFetch < TYPES_CACHE_TTL_MS) {
+    return cachedTypes;
+  }
+  try {
+    const raw = await prisma.company.groupBy({
+      by: ["type"],
+      _count: { id: true },
+      orderBy: {
+        _count: {
+          id: "desc",
+        },
+      },
+    });
+
+    const result = raw
+      .filter((r) => r.type)
+      .map((r) => ({ type: r.type, count: r._count.id }));
+    cachedTypes = result;
+    lastTypesFetch = now;
+    return result;
+  } catch (err) {
+    console.error("Failed to fetch company types:", err);
+    return cachedTypes || [];
   }
 }
 
@@ -250,11 +299,36 @@ export async function getCompaniesWithContacts({
     const trimmed = country.trim();
     const canonical = normalizeCountryName(trimmed);
     const variants = new Set([trimmed, canonical]);
-    if (canonical.toLowerCase() === "vietnam") {
+
+    // Check cached DB variants mapping
+    const dbVariants =
+      cachedCountryDbVariants.get(canonical.toUpperCase()) ||
+      cachedCountryDbVariants.get(trimmed.toUpperCase());
+    if (dbVariants) {
+      for (const v of dbVariants) {
+        variants.add(v);
+      }
+    }
+
+    // Common aliases (Laos, Vietnam, USA, etc.)
+    const canonLower = canonical.toLowerCase();
+    if (canonLower === "vietnam") {
       variants.add("Viet Nam");
       variants.add("viet nam");
       variants.add("Vietnam");
+    } else if (canonLower === "laos") {
+      variants.add("Lao People's Democratic Republic");
+      variants.add("Lao Peoples Democratic Republic");
+      variants.add("Lao PDR");
+      variants.add("Lao");
+      variants.add("Laos");
+    } else if (canonLower === "united states" || canonLower === "usa") {
+      variants.add("United States");
+      variants.add("USA");
+      variants.add("U.S.A.");
+      variants.add("United States of America");
     }
+
     where.country = { in: Array.from(variants) };
   }
 
@@ -296,6 +370,7 @@ export async function getCompaniesWithContacts({
         type: true,
         starRating: true,
         createdAt: true,
+        updatedAt: true,
         _count: {
           select: {
             contacts: true,
@@ -341,6 +416,42 @@ export async function getCompaniesWithContacts({
     ? rawCompaniesWithExtra.slice(0, pageSize)
     : rawCompaniesWithExtra;
 
+  // Single bounded aggregation query for deal metrics and success rate calculation (No N+1)
+  const companyIds = rawCompanies.map((c) => c.id);
+  const oppStatsMap = new Map<string, { won: number; total: number }>();
+  if (companyIds.length > 0) {
+    const oppGroups = await prisma.opportunity.groupBy({
+      by: ["companyId", "status"],
+      where: {
+        companyId: { in: companyIds },
+      },
+      _count: { id: true },
+    });
+    for (const row of oppGroups) {
+      if (!row.companyId) continue;
+      const cur = oppStatsMap.get(row.companyId) || { won: 0, total: 0 };
+      cur.total += row._count.id;
+      if (row.status === "WON" || (row.status as string) === "COMPLETED") {
+        cur.won += row._count.id;
+      }
+      oppStatsMap.set(row.companyId, cur);
+    }
+  }
+
+  const enrichedCompanies = rawCompanies.map((comp) => {
+    const stats = oppStatsMap.get(comp.id) || { won: 0, total: 0 };
+    const wonDealsCount = stats.won;
+    const totalDealsCount = stats.total;
+    const successRate = totalDealsCount > 0 ? Math.round((wonDealsCount / totalDealsCount) * 100) : 0;
+    return {
+      ...comp,
+      wonDealsCount,
+      totalDealsCount,
+      successRate,
+      revision: comp.updatedAt.toISOString(),
+    };
+  });
+
   const stats = freshStatusStats || cachedStatusStats || {
     qualifiedCount: 0,
     unqualifiedCount: 0,
@@ -348,7 +459,7 @@ export async function getCompaniesWithContacts({
   };
 
   return {
-    companies: rawCompanies,
+    companies: enrichedCompanies,
     total: isFirstPage ? totalCountFromFilter : 0,
     page,
     pageSize,
@@ -956,7 +1067,11 @@ export async function toggleCompanyStatus(companyId: string, status: ContactStat
   return { success: true, status: updated.status };
 }
 
-export async function updateCompanyStarRating(companyId: string, starRating: number) {
+export async function updateCompanyStarRating(
+  companyId: string,
+  starRating: number,
+  mutationId?: string
+) {
   const actor = await getContactActor();
 
   const current = await prisma.company.findUnique({
@@ -972,6 +1087,7 @@ export async function updateCompanyStarRating(companyId: string, starRating: num
     prisma.company.update({
       where: { id: companyId },
       data: { starRating: clamped },
+      select: { id: true, starRating: true, updatedAt: true },
     }),
     prisma.companyLog.create({
       data: {
@@ -986,14 +1102,17 @@ export async function updateCompanyStarRating(companyId: string, starRating: num
     }),
   ]);
 
-  revalidatePath("/contact");
+  const revision = updated.updatedAt.toISOString();
+
   void pusherServer.trigger("private-contacts", "account-updated", {
     action: "RATING_CHANGE",
     companyId,
     starRating: updated.starRating,
+    revision,
+    mutationId,
   }).catch((err) => console.error("Pusher trigger error:", err));
 
-  return { success: true, starRating: updated.starRating };
+  return { success: true, starRating: updated.starRating, revision, companyId, mutationId };
 }
 
 export async function updateCompanyDetails(
@@ -1007,7 +1126,8 @@ export async function updateCompanyDetails(
     starRating?: number;
     notes?: string | null;
     phone?: string | null;
-  }
+  },
+  mutationId?: string
 ) {
   const actor = await getContactActor();
 
@@ -1070,14 +1190,27 @@ export async function updateCompanyDetails(
       : []),
   ]);
 
-  revalidatePath("/contact");
+  const revision = updated.updatedAt.toISOString();
+
   void pusherServer.trigger("private-contacts", "account-updated", {
     action: "DETAILS_CHANGE",
     companyId,
-    company: updated,
+    revision,
+    mutationId,
+    company: {
+      id: updated.id,
+      displayName: updated.displayName,
+      name: updated.name,
+      country: updated.country,
+      type: updated.type,
+      status: updated.status,
+      starRating: updated.starRating,
+      updatedAt: updated.updatedAt,
+      revision,
+    },
   }).catch((err) => console.error("Pusher trigger error:", err));
 
-  return updated;
+  return { ...updated, revision };
 }
 
 export interface CreateCompanyInput {
