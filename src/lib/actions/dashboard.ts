@@ -81,6 +81,10 @@ export async function getDashboardSummaryAction(input: {
     year: String(input.year),
     country: input.country || undefined,
     account: input.account || undefined,
+    dateRange: {
+      start: bangkokBoundary(input.year, 0),
+      end: bangkokBoundary(input.year + 1, 0),
+    },
   });
   return {
     monthly: snapshot.monthly,
@@ -99,6 +103,10 @@ export async function getDashboardTrackingAction(input: {
     year: String(input.year),
     country: input.country || undefined,
     account: input.account || undefined,
+    dateRange: {
+      start: bangkokBoundary(input.year, 0),
+      end: bangkokBoundary(input.year + 1, 0),
+    },
   });
   return snapshot.tracking;
 }
@@ -113,6 +121,10 @@ export async function getDashboardAnnualAction(input: {
     year: String(input.anchorYear),
     country: input.country || undefined,
     account: input.account || undefined,
+    dateRange: {
+      start: bangkokBoundary(input.anchorYear - 4, 0),
+      end: bangkokBoundary(input.anchorYear + 1, 0),
+    },
   });
   return snapshot.annual;
 }

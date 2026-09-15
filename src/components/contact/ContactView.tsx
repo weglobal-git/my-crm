@@ -202,6 +202,8 @@ export function ContactView({
       dedupingInterval: 15_000,
       revalidateOnFocus: false,
       revalidateOnReconnect: true,
+      revalidateOnMount: isInitialState ? false : undefined,
+      revalidateIfStale: !isInitialState,
     }
   );
 

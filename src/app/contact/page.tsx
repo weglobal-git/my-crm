@@ -19,11 +19,14 @@ export default async function ContactPage() {
     redirect("/");
   }
 
-  // Fetch actor once for the entire SSR request to eliminate duplicate auth/user queries
-  const actor = await getContactActor();
+  // Preload actor, types, and countries concurrently with maximum parallelism
+  const actorPromise = getContactActor(session);
+  const typesPromise = getCompanyTypes();
+  const countriesPromise = getCompanyCountries();
 
-  // Preload initial companies, stats, types, and countries on the server concurrently
-  const [{ companies, stats, total }, initialTypes, initialCountries] = await Promise.all([
+  const actor = await actorPromise;
+
+  const [companiesResult, initialTypes, initialCountries] = await Promise.all([
     getCompaniesWithContacts({
       status: "QUALIFIED",
       type: "ALL",
@@ -32,9 +35,11 @@ export default async function ContactPage() {
       pageSize: 20,
       actor,
     }),
-    getCompanyTypes(),
-    getCompanyCountries(),
+    typesPromise,
+    countriesPromise,
   ]);
+
+  const { companies, stats, total } = companiesResult;
 
   return (
     <ContactView

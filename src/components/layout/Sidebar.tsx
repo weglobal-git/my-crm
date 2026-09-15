@@ -222,14 +222,38 @@ export function Sidebar() {
     setSearchSelectedIndex(0);
   }
 
+  const prefetchTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleIntentPrefetch = useCallback((href: string) => {
+    if (!href || href === "#" || href === pathname) return;
+    if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current);
+    prefetchTimerRef.current = setTimeout(() => {
+      router.prefetch(href);
+    }, 120);
+  }, [pathname, router]);
+
+  const handleCancelPrefetch = useCallback(() => {
+    if (prefetchTimerRef.current) {
+      clearTimeout(prefetchTimerRef.current);
+      prefetchTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current);
+    };
+  }, []);
+
   const handleNavigate = useCallback((href: string) => {
+    handleCancelPrefetch();
     setIsTabletSidebarOpen(false);
     setIsMobileMenuOpen(false);
     setIsSearchModalOpen(false);
     setDesktopFilterQuery("");
     setModalSearchQuery("");
     router.push(href);
-  }, [router, setIsTabletSidebarOpen, setIsMobileMenuOpen, setIsSearchModalOpen]);
+  }, [router, setIsTabletSidebarOpen, setIsMobileMenuOpen, setIsSearchModalOpen, handleCancelPrefetch]);
 
   // Keyboard navigation for Search Modal
   const handleModalKeyDown = (e: React.KeyboardEvent) => {
@@ -352,6 +376,10 @@ export function Sidebar() {
                   key={item.key}
                   href={item.href}
                   prefetch={false}
+                  onMouseEnter={() => handleIntentPrefetch(item.href)}
+                  onMouseLeave={handleCancelPrefetch}
+                  onFocus={() => handleIntentPrefetch(item.href)}
+                  onBlur={handleCancelPrefetch}
                   onClick={() => {
                     if (isDrawer) setIsTabletSidebarOpen(false);
                     setDesktopFilterQuery("");
@@ -388,6 +416,10 @@ export function Sidebar() {
                         key={sub.key}
                         href={sub.href}
                         prefetch={false}
+                        onMouseEnter={() => handleIntentPrefetch(sub.href)}
+                        onMouseLeave={handleCancelPrefetch}
+                        onFocus={() => handleIntentPrefetch(sub.href)}
+                        onBlur={handleCancelPrefetch}
                         onClick={() => {
                           if (isDrawer) setIsTabletSidebarOpen(false);
                           setDesktopFilterQuery("");
@@ -660,6 +692,10 @@ export function Sidebar() {
                   key={item.key}
                   href={item.href}
                   prefetch={false}
+                  onMouseEnter={() => handleIntentPrefetch(item.href)}
+                  onMouseLeave={handleCancelPrefetch}
+                  onFocus={() => handleIntentPrefetch(item.href)}
+                  onBlur={handleCancelPrefetch}
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`
                     flex items-center justify-between px-3.5 py-3 rounded-xl transition-colors
@@ -731,7 +767,11 @@ export function Sidebar() {
                     <button
                       key={item.key}
                       onClick={() => handleNavigate(item.href)}
-                      onMouseEnter={() => setSearchSelectedIndex(idx)}
+                      onMouseEnter={() => {
+                        setSearchSelectedIndex(idx);
+                        handleIntentPrefetch(item.href);
+                      }}
+                      onMouseLeave={handleCancelPrefetch}
                       className={`
                         w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors
                         ${isSelected 

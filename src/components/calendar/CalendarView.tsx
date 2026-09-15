@@ -148,6 +148,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     },
     {
       fallbackData: isInitial ? initialSnapshot : undefined,
+      revalidateOnMount: !isInitial,
       revalidateOnFocus: false,
       dedupingInterval: 30_000,
     }

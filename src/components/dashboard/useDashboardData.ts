@@ -96,6 +96,7 @@ export function useDashboardData({
             period: initialSnapshot.period,
           }
         : undefined,
+      revalidateOnMount: !(isInitialPeriod && Boolean(initialSnapshot)),
       revalidateOnFocus: false,
       dedupingInterval: 15_000,
       keepPreviousData: true,
@@ -126,6 +127,7 @@ export function useDashboardData({
     },
     {
       fallbackData: isInitialPeriod ? initialSnapshot?.tracking : undefined,
+      revalidateOnMount: !(isInitialPeriod && Boolean(initialSnapshot?.tracking)),
       revalidateOnFocus: false,
       dedupingInterval: 30_000,
       keepPreviousData: true,
@@ -156,6 +158,7 @@ export function useDashboardData({
     },
     {
       fallbackData: isInitialPeriod ? initialSnapshot?.annual : undefined,
+      revalidateOnMount: !(isInitialPeriod && Boolean(initialSnapshot?.annual)),
       revalidateOnFocus: false,
       dedupingInterval: 30_000,
       keepPreviousData: true,
@@ -184,6 +187,7 @@ export function useDashboardData({
     },
     {
       fallbackData: isInitialPeriod ? initialSnapshot?.worldMap : undefined,
+      revalidateOnMount: !(isInitialPeriod && Boolean(initialSnapshot?.worldMap)),
       revalidateOnFocus: false,
       dedupingInterval: 30_000,
       keepPreviousData: true,
@@ -199,6 +203,7 @@ export function useDashboardData({
     },
     {
       fallbackData: initialSnapshot?.filterOptions,
+      revalidateOnMount: !initialSnapshot?.filterOptions,
       revalidateOnFocus: false,
       revalidateIfStale: false,
       dedupingInterval: 60_000,

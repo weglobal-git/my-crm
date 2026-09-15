@@ -21,8 +21,11 @@ export type ContactActor = {
 const ACTOR_CACHE_TTL_MS = 60 * 1000;
 const actorCache = new Map<string, { actor: ContactActor; expires: number }>();
 
-export async function getContactActor(): Promise<ContactActor> {
-  const session = await getServerSession(authOptions);
+export async function getContactActor(
+  providedSession?: { user?: { id?: string | null; email?: string | null } } | null
+): Promise<ContactActor> {
+  const session =
+    providedSession !== undefined ? providedSession : await getServerSession(authOptions);
   if (!session?.user?.id && !session?.user?.email) {
     throw new Error("Unauthorized");
   }
@@ -357,8 +360,18 @@ export async function getCompaniesWithContacts({
   const now = Date.now();
   const isStatsFresh = cachedStatusStats && now - lastStatusStatsFetch < STATUS_STATS_TTL;
 
+  // If there is no custom search and no type or country filter, the total count for the status
+  // is directly available from the status stats without needing a separate count query
+  const isUnfilteredStatusQuery =
+    isFirstPage &&
+    !search.trim() &&
+    (type === "ALL" || !type) &&
+    (!country || country.trim() === "" || country === "ALL");
+
+  const shouldRunFilterCount = isFirstPage && !isUnfilteredStatusQuery;
+
   const [totalCountFromFilter, rawCompaniesWithExtra, freshStatusStats] = await Promise.all([
-    isFirstPage ? prisma.company.count({ where }) : Promise.resolve(0),
+    shouldRunFilterCount ? prisma.company.count({ where }) : Promise.resolve(0),
     prisma.company.findMany({
       where,
       select: {
@@ -458,9 +471,19 @@ export async function getCompaniesWithContacts({
     totalCount: 0,
   };
 
+  const computedTotal = isFirstPage
+    ? isUnfilteredStatusQuery
+      ? status === "QUALIFIED"
+        ? stats.qualifiedCount
+        : status === "UNQUALIFIED"
+        ? stats.unqualifiedCount
+        : stats.totalCount
+      : totalCountFromFilter
+    : 0;
+
   return {
     companies: enrichedCompanies,
-    total: isFirstPage ? totalCountFromFilter : 0,
+    total: computedTotal,
     page,
     pageSize,
     hasMore,

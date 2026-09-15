@@ -21,17 +21,32 @@ interface AccountCardListProps {
 
 function AccountRowSkeleton() {
   return (
-    <div className="w-full h-14 rounded-2xl bg-[#1E1F21]/60 px-6 py-3 mb-2.5 animate-pulse select-none flex items-center justify-between border border-transparent">
-      <div className="flex items-center gap-4 flex-1">
+    <div className="w-full bg-[#1E1F21] rounded-2xl px-5 py-3 mb-2.5 flex flex-col md:grid md:grid-cols-[72px_minmax(0,1fr)_170px_120px_100px] items-center gap-4 animate-pulse select-none border border-transparent">
+      {/* Col 1: Win Rate % */}
+      <div className="flex items-center gap-2 w-full md:w-auto">
         <div className="h-7 w-14 rounded-lg bg-[#2A2B2D]" />
-        <div className="flex flex-col gap-1.5 flex-1 max-w-sm">
-          <div className="h-4 w-40 rounded bg-[#2A2B2D]" />
-          <div className="h-3 w-28 rounded bg-[#2A2B2D]/70" />
-        </div>
       </div>
-      <div className="hidden sm:flex items-center gap-8">
-        <div className="h-4 w-24 rounded bg-[#2A2B2D]" />
+
+      {/* Col 2: Name & Legal Subtitle */}
+      <div className="flex flex-col gap-1.5 min-w-0 w-full">
+        <div className="h-4 w-36 rounded bg-[#2A2B2D]" />
+        <div className="h-3 w-24 rounded bg-[#2A2B2D]/70" />
+      </div>
+
+      {/* Col 3: 5 Stars (Desktop only) */}
+      <div className="hidden md:flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((s) => (
+          <div key={s} className="w-4 h-4 rounded-sm bg-[#2A2B2D]" />
+        ))}
+      </div>
+
+      {/* Col 4: Type (Desktop only) */}
+      <div className="hidden md:flex items-center">
         <div className="h-4 w-16 rounded bg-[#2A2B2D]" />
+      </div>
+
+      {/* Col 5: Country (Desktop only) */}
+      <div className="hidden md:flex items-center justify-end">
         <div className="h-4 w-16 rounded bg-[#2A2B2D]" />
       </div>
     </div>

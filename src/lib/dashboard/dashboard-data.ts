@@ -69,6 +69,7 @@ export async function getDashboardSalesSnapshot(input: {
   actor?: PipelineActor;
   visibleKeys?: Iterable<string>;
   now?: Date;
+  dateRange?: { start?: Date; end?: Date };
 } = {}): Promise<SalesOverviewSnapshot> {
   const { actor, scopeLabel, sections } = await requireDashboardSalesAccess(
     input.actor,
@@ -91,6 +92,12 @@ export async function getDashboardSalesSnapshot(input: {
         ...accessWhere,
         type: 'SALES_DEAL',
         status: { in: ['OPEN', 'WON'] },
+        ...(input.dateRange ? {
+          goodsLoadingDate: {
+            ...(input.dateRange.start ? { gte: input.dateRange.start } : {}),
+            ...(input.dateRange.end ? { lt: input.dateRange.end } : {}),
+          },
+        } : {}),
       },
       select: {
         id: true,
