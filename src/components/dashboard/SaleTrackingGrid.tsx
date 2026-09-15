@@ -65,7 +65,7 @@ export function SaleTrackingGrid({ tracking, year, sortOption = "lowest" }: Sale
           return (
             <article
               key={`${item.companyId}-${item.currency}`}
-              className="rounded-[1.5rem] border border-[#4E4F50] bg-[#3A3B3C] p-4 flex flex-col justify-between"
+              className="rounded-[1.5rem] border border-[#4E4F50] bg-[#3A3B3C] p-5 flex flex-col justify-between"
             >
               <div>
                 <div className="flex items-start justify-between gap-3">
@@ -73,30 +73,32 @@ export function SaleTrackingGrid({ tracking, year, sortOption = "lowest" }: Sale
                     <h3 className="font-semibold text-slate-100 truncate text-sm">
                       {item.accountName}
                     </h3>
-                    <p className="mt-1 text-xs text-slate-400 flex flex-wrap items-center gap-1">
-                      <span>
+                    <div className="mt-1 text-xs text-slate-400">
+                      <div>
                         {formatMoney(item.actual, item.currency)} /{" "}
                         {formatMoney(item.target, item.currency)}
-                      </span>
-                      {isZeroTarget ? (
-                        <span className="text-amber-400 font-medium">
-                          (Target is 0)
-                        </span>
-                      ) : isReached ? (
-                        <span className="text-[#C7F33C] font-medium">
-                          (Target achieved)
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">
-                          ({formatMoney(Math.max(item.target - item.actual, 0), item.currency)} remaining)
-                        </span>
-                      )}
-                      {item.excludedCurrencyDealCount > 0 && (
-                        <span className="text-slate-500 text-[11px]">
-                          ({item.excludedCurrencyDealCount} other currency {item.excludedCurrencyDealCount === 1 ? "deal" : "deals"} excluded)
-                        </span>
-                      )}
-                    </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                        {isZeroTarget ? (
+                          <span className="text-amber-400 font-medium">
+                            (Target is 0)
+                          </span>
+                        ) : isReached ? (
+                          <span className="text-[#C7F33C] font-medium">
+                            (Target achieved)
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">
+                            ({formatMoney(Math.max(item.target - item.actual, 0), item.currency)} remaining)
+                          </span>
+                        )}
+                        {item.excludedCurrencyDealCount > 0 && (
+                          <span className="text-slate-500 text-[11px]">
+                            ({item.excludedCurrencyDealCount} other currency {item.excludedCurrencyDealCount === 1 ? "deal" : "deals"} excluded)
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="text-right shrink-0">
@@ -116,7 +118,7 @@ export function SaleTrackingGrid({ tracking, year, sortOption = "lowest" }: Sale
 
                 {/* Progress bar (Flat design, no gradient/shadow) */}
                 <div
-                  className="mt-3.5 h-2.5 overflow-hidden rounded-full bg-[#252728]"
+                  className="mt-6 h-2.5 overflow-hidden rounded-full bg-[#252728]"
                   role="progressbar"
                   aria-valuemin={0}
                   aria-valuemax={100}

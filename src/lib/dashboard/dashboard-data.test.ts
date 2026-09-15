@@ -10,7 +10,9 @@ test('dashboard data keeps the route gate and all three server-side section gate
   assert.match(source, /'dashboard\.sale_tracking'/);
   assert.match(source, /'dashboard\.annual_sale_report'/);
   assert.match(source, /getUserVisibleMenuKeys\(actor\.id\)/);
-  assert.match(source, /getOpportunityAccessWhere\(actor\)/);
+  assert.match(source, /visibleKeysOverride/);
+  assert.match(source, /getOpportunityAccessWhere/);
+  assert.match(source, /role:\s*'MANAGEMENT'/);
   assert.doesNotMatch(source, /requirePipelineActor/);
 });
 
@@ -22,7 +24,12 @@ test('denied section payloads are redacted server-side', () => {
 });
 
 test('dashboard query is bounded and does not request heavy deal relations', () => {
-  assert.match(source, /goodsLoadingDate:\s*\{ gte: period\.annualStart, lt: period\.annualEnd \}/);
+  assert.match(source, /loadingDate >= period\.annualStart && loadingDate < period\.annualEnd/);
+  assert.equal(
+    source.match(/prisma\.opportunity\.findMany/g)?.length,
+    1,
+    'dashboard should not fetch the annual deals again when the all-time projection already contains them',
+  );
   for (const forbiddenRelation of ['activityLogs:', 'attachments:', 'notes:', 'quotations:']) {
     assert.equal(source.includes(forbiddenRelation), false, `unexpected heavy projection: ${forbiddenRelation}`);
   }

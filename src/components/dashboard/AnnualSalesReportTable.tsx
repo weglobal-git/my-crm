@@ -12,10 +12,12 @@ import {
 interface AnnualSalesReportTableProps {
   annual: {
     years: number[];
+    allYears?: number[];
     totals: Record<number, MoneyTotal[]>;
     accounts: AnnualAccountSales[];
   };
   anchorYear: number;
+  visibleYears?: number[];
 }
 
 function formatMoney(amount: number, currency: string) {
@@ -29,8 +31,10 @@ function formatMoney(amount: number, currency: string) {
 export function AnnualSalesReportTable({
   annual,
   anchorYear,
+  visibleYears,
 }: AnnualSalesReportTableProps) {
-  const { years, totals, accounts } = annual;
+  const { totals, accounts } = annual;
+  const years = visibleYears || annual.years;
 
   // Build lookup maps for total per year and currency
   const yearCurrencyTotalMap = useMemo(() => {
@@ -47,27 +51,32 @@ export function AnnualSalesReportTable({
   return (
     <div className="overflow-hidden rounded-[2rem] border border-[#4E4F50] bg-[#3A3B3C]">
       <div className="overflow-x-auto">
-        <table className="min-w-[850px] w-full border-collapse text-left text-xs">
+        <table className="min-w-[850px] w-full border-separate border-spacing-0 text-left text-xs">
           <thead>
-            <tr className="border-b border-[#4E4F50] bg-[#2E2F30]">
-              <th className="sticky left-0 z-20 bg-[#2E2F30] px-5 py-4 font-semibold text-slate-300 w-64 shadow-[1px_0_0_#4E4F50]">
+            <tr className="bg-[#2E2F30]">
+              <th className="sticky left-0 z-20 bg-[#2E2F30] px-5 py-4 font-semibold text-slate-300 w-64 shadow-[1px_0_0_#4E4F50] border-b border-[#4E4F50]">
                 Account
               </th>
               {years.map((year) => {
                 const yearTotals = totals[year] || [];
                 const isAnchor = year === anchorYear;
+                const hasAccounts = accounts.length > 0;
 
                 return (
                   <th
                     key={year}
-                    className={`px-4 py-4 font-semibold text-slate-200 min-w-[140px] ${
-                      isAnchor ? "bg-[#C7F33C]/10 border-l border-r border-[#C7F33C]/40" : ""
+                    className={`px-4 py-4 font-semibold text-slate-200 min-w-[140px] transition-colors ${
+                      isAnchor
+                        ? `bg-[#C7F33C]/10 border-t-2 border-l-2 border-r-2 border-[#C7F33C]/60 ${
+                            hasAccounts ? "rounded-t-2xl" : "rounded-2xl border-b-2 border-[#C7F33C]/60"
+                          }`
+                        : "border-b border-[#4E4F50]"
                     }`}
                   >
                     <div className="flex items-center gap-1.5">
                       <span>{year}</span>
                       {isAnchor && (
-                        <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#C7F33C] text-black">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#C7F33C] text-black">
                           Selected
                         </span>
                       )}
@@ -90,41 +99,58 @@ export function AnnualSalesReportTable({
             </tr>
           </thead>
 
-          <tbody className="divide-y divide-[#4E4F50]/60">
+          <tbody>
             {accounts.length === 0 ? (
               <tr>
                 <td
                   colSpan={years.length + 1}
                   className="px-5 py-12 text-center text-slate-400 text-xs"
                 >
-                  No won sales recorded in this five-year period.
+                  No won sales recorded in this period.
                 </td>
               </tr>
             ) : (
-              accounts.map((account) => (
-                <tr
-                  key={account.companyId || account.accountName}
-                  className="hover:bg-[#434445]/40 transition-colors"
-                >
-                  <th className="sticky left-0 z-10 bg-[#3A3B3C] px-5 py-3.5 font-medium text-slate-100 shadow-[1px_0_0_#4E4F50] whitespace-nowrap">
-                    <span className="truncate max-w-[220px] block" title={account.accountName}>
-                      {account.accountName}
-                    </span>
-                  </th>
+              accounts.map((account, accountIndex) => {
+                const isLastRow = accountIndex === accounts.length - 1;
 
-                  {years.map((year, yearIndex) => {
-                    const values = account.values[year] || [];
-                    const previousYear = years[yearIndex + 1]; // Array is sorted descending [2026, 2025, ...]
-                    const previousValues = previousYear ? account.values[previousYear] || [] : [];
-                    const isAnchor = year === anchorYear;
+                return (
+                  <tr
+                    key={account.companyId || account.accountName}
+                    className="hover:bg-[#434445]/40 transition-colors"
+                  >
+                    <th className="sticky left-0 z-10 bg-[#3A3B3C] px-5 py-3.5 font-medium text-slate-100 shadow-[1px_0_0_#4E4F50] whitespace-nowrap">
+                      <span className="truncate max-w-[220px] block" title={account.accountName}>
+                        {account.accountName}
+                      </span>
+                      {account.country && (
+                        <span
+                          className="truncate max-w-[220px] block text-[11px] font-normal text-slate-400 mt-0.5"
+                          title={account.country}
+                        >
+                          {account.country}
+                        </span>
+                      )}
+                    </th>
 
-                    return (
-                      <td
-                        key={year}
-                        className={`px-4 py-3.5 align-top ${
-                          isAnchor ? "bg-[#C7F33C]/5 border-l border-r border-[#C7F33C]/20" : ""
-                        }`}
-                      >
+                    {years.map((year, yearIndex) => {
+                      const values = account.values[year] || [];
+                      const previousYear = years[yearIndex + 1]; // Array is sorted descending [2026, 2025, ...]
+                      const previousValues = previousYear ? account.values[previousYear] || [] : [];
+                      const isAnchor = year === anchorYear;
+
+                      return (
+                        <td
+                          key={year}
+                          className={`px-4 py-3.5 align-top transition-colors ${
+                            isAnchor
+                              ? `bg-[#C7F33C]/5 border-l-2 border-r-2 border-[#C7F33C]/40 ${
+                                  isLastRow
+                                    ? "border-b-2 border-[#C7F33C]/60 rounded-b-2xl"
+                                    : ""
+                                }`
+                              : ""
+                          }`}
+                        >
                         {values.length === 0 ? (
                           <span className="text-slate-600">—</span>
                         ) : (
@@ -191,8 +217,9 @@ export function AnnualSalesReportTable({
                     );
                   })}
                 </tr>
-              ))
-            )}
+              );
+            })
+          )}
           </tbody>
         </table>
       </div>

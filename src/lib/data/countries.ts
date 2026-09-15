@@ -968,7 +968,7 @@ export const COUNTRIES: CountryData[] = [
     "flag": "🇲🇿"
   },
   {
-    "name": "Myanmar (Burma)",
+    "name": "Myanmar",
     "code": "MM",
     "dialCode": "+95",
     "flag": "🇲🇲"
@@ -1469,19 +1469,257 @@ export const COUNTRIES: CountryData[] = [
 
 export const DEFAULT_COUNTRY = COUNTRIES[0]; // Thailand
 
+function simplifyCountryKey(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s\-_.,'’()]/g, "");
+}
+
+// Fast lookup maps
+const codeMap = new Map<string, CountryData>(COUNTRIES.map((c) => [c.code.toUpperCase(), c]));
+const dialCodeMap = new Map<string, CountryData>(COUNTRIES.map((c) => [c.dialCode, c]));
+const simplifiedNameMap = new Map<string, CountryData>(
+  COUNTRIES.map((c) => [simplifyCountryKey(c.name), c])
+);
+
+// Common aliases mapping to alpha-2 ISO codes
+export const COUNTRY_ALIASES: Record<string, string> = {
+  // Vietnam
+  "vietnam": "VN",
+  "viet nam": "VN",
+  "viet-nam": "VN",
+  "เวียดนาม": "VN",
+  "vn": "VN",
+
+  // Thailand
+  "thailand": "TH",
+  "thai": "TH",
+  "ไทย": "TH",
+  "ประเทศไทย": "TH",
+  "th": "TH",
+
+  // United States
+  "usa": "US",
+  "u.s.a.": "US",
+  "u.s.": "US",
+  "united states": "US",
+  "united states of america": "US",
+  "america": "US",
+  "สหรัฐ": "US",
+  "สหรัฐอเมริกา": "US",
+  "อเมริกา": "US",
+
+  // United Kingdom
+  "uk": "GB",
+  "u.k.": "GB",
+  "united kingdom": "GB",
+  "great britain": "GB",
+  "britain": "GB",
+  "england": "GB",
+  "scotland": "GB",
+  "wales": "GB",
+  "สหราชอาณาจักร": "GB",
+  "อังกฤษ": "GB",
+
+  // China
+  "china": "CN",
+  "prc": "CN",
+  "people's republic of china": "CN",
+  "peoples republic of china": "CN",
+  "จีน": "CN",
+
+  // Japan
+  "japan": "JP",
+  "ญี่ปุ่น": "JP",
+
+  // South Korea
+  "korea": "KR",
+  "south korea": "KR",
+  "republic of korea": "KR",
+  "korea, republic of": "KR",
+  "rok": "KR",
+  "เกาหลีใต้": "KR",
+
+  // North Korea
+  "north korea": "KP",
+  "democratic people's republic of korea": "KP",
+  "dprk": "KP",
+
+  // Russia
+  "russia": "RU",
+  "russian federation": "RU",
+  "รัสเซีย": "RU",
+
+  // Laos
+  "laos": "LA",
+  "lao": "LA",
+  "lao pdr": "LA",
+  "lao people's democratic republic": "LA",
+  "lao peoples democratic republic": "LA",
+  "ลาว": "LA",
+
+  // Myanmar
+  "myanmar": "MM",
+  "burma": "MM",
+  "พม่า": "MM",
+
+  // Cambodia
+  "cambodia": "KH",
+  "กัมพูชา": "KH",
+
+  // Singapore
+  "singapore": "SG",
+  "สิงคโปร์": "SG",
+
+  // Malaysia
+  "malaysia": "MY",
+  "มาเลเซีย": "MY",
+
+  // Indonesia
+  "indonesia": "ID",
+  "อินโดนีเซีย": "ID",
+
+  // Philippines
+  "philippines": "PH",
+  "ฟิลิปปินส์": "PH",
+
+  // India
+  "india": "IN",
+  "อินเดีย": "IN",
+
+  // Hong Kong
+  "hong kong": "HK",
+  "hong kong sar": "HK",
+  "hong kong sar china": "HK",
+  "hk": "HK",
+
+  // Taiwan
+  "taiwan": "TW",
+  "taiwan, province of china": "TW",
+  "chinese taipei": "TW",
+  "ไต้หวัน": "TW",
+
+  // United Arab Emirates
+  "uae": "AE",
+  "united arab emirates": "AE",
+  "u.a.e.": "AE",
+  "ดูไบ": "AE",
+
+  // Germany
+  "germany": "DE",
+  "deutschland": "DE",
+  "เยอรมนี": "DE",
+
+  // France
+  "france": "FR",
+  "ฝรั่งเศส": "FR",
+
+  // Australia
+  "australia": "AU",
+  "ออสเตรเลีย": "AU",
+
+  // Canada
+  "canada": "CA",
+  "แคนาดา": "CA",
+
+  // Cote d'Ivoire
+  "cote d'ivoire": "CI",
+  "côte d'ivoire": "CI",
+  "cote divoire": "CI",
+  "ivory coast": "CI",
+
+  // Democratic Republic of the Congo
+  "democratic republic of the congo": "CD",
+  "dr congo": "CD",
+  "drc": "CD",
+  "congo, democratic republic of the": "CD",
+
+  // Republic of the Congo
+  "republic of the congo": "CG",
+  "congo": "CG",
+
+  // Czech Republic
+  "czech republic": "CZ",
+  "czechia": "CZ",
+
+  // Netherlands
+  "netherlands": "NL",
+  "holland": "NL",
+  "เนเธอร์แลนด์": "NL",
+
+  // Switzerland
+  "switzerland": "CH",
+  "สวิตเซอร์แลนด์": "CH",
+
+  // Italy
+  "italy": "IT",
+  "italia": "IT",
+  "อิตาลี": "IT",
+
+  // Spain
+  "spain": "ES",
+  "สเปน": "ES",
+
+  // Saudi Arabia
+  "saudi arabia": "SA",
+  "ซาอุดีอาระเบีย": "SA",
+};
+
+// Simplified alias map for fast normalized lookup
+const simplifiedAliasMap = new Map<string, string>();
+for (const [alias, code] of Object.entries(COUNTRY_ALIASES)) {
+  simplifiedAliasMap.set(simplifyCountryKey(alias), code);
+}
+
 export function findCountry(query?: string | null): CountryData | undefined {
   if (!query) return undefined;
-  const clean = query.trim().toLowerCase();
-  return COUNTRIES.find(
-    (c) =>
-      c.name.toLowerCase() === clean ||
-      c.code.toLowerCase() === clean ||
-      c.dialCode.toLowerCase() === clean
-  );
+  const clean = query.trim();
+  if (!clean) return undefined;
+
+  // 1. Direct ISO code match (case-insensitive)
+  const byCode = codeMap.get(clean.toUpperCase());
+  if (byCode) return byCode;
+
+  // 2. Direct Dial code match
+  const byDial = dialCodeMap.get(clean);
+  if (byDial) return byDial;
+
+  // 3. Exact raw alias match
+  const aliasCode = COUNTRY_ALIASES[clean.toLowerCase()];
+  if (aliasCode) {
+    const matched = codeMap.get(aliasCode);
+    if (matched) return matched;
+  }
+
+  // 4. Simplified key match against country names
+  const simplified = simplifyCountryKey(clean);
+  const bySimplified = simplifiedNameMap.get(simplified);
+  if (bySimplified) return bySimplified;
+
+  // 5. Simplified key match against alias map
+  const simplifiedAliasCode = simplifiedAliasMap.get(simplified);
+  if (simplifiedAliasCode) {
+    const matched = codeMap.get(simplifiedAliasCode);
+    if (matched) return matched;
+  }
+
+  // 6. Substring match fallback (e.g. "Russian Federation" contains "Russia")
+  return COUNTRIES.find((c) => {
+    const sName = simplifyCountryKey(c.name);
+    return simplified.includes(sName) || sName.includes(simplified);
+  });
+}
+
+export function normalizeCountryName(query?: string | null): string {
+  if (!query) return "";
+  const match = findCountry(query);
+  return match ? match.name : query.trim();
 }
 
 export function findCountryByDialCode(dialCode?: string | null): CountryData | undefined {
   if (!dialCode) return undefined;
   const clean = dialCode.trim();
-  return COUNTRIES.find((c) => c.dialCode === clean);
+  return dialCodeMap.get(clean) || COUNTRIES.find((c) => c.dialCode === clean);
 }

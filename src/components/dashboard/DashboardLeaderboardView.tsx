@@ -85,7 +85,7 @@ export function DashboardLeaderboardView({ snapshot, year }: DashboardLeaderboar
             return (
               <article
                 key={acc.companyId || acc.accountName}
-                className={`rounded-[2rem] border p-5 flex flex-col justify-between transition-all ${
+                className={`rounded-[1.5rem] border p-5 flex flex-col justify-between transition-all ${
                   isGold
                     ? "bg-[#C7F33C]/10 border-[#C7F33C]/60"
                     : isSilver

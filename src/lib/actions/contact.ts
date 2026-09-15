@@ -7,6 +7,7 @@ import { ContactType, ContactStatus, Role, Prisma, AddressType } from "@prisma/c
 import { revalidatePath } from "next/cache";
 import { maskEmail, maskPhone } from "@/lib/contact-utils";
 import { pusherServer } from "@/lib/pusher-server";
+import { normalizeCountryName } from "@/lib/data/countries";
 
 export type ContactActor = {
   id: string;
@@ -204,12 +205,15 @@ export async function getCompanyCountries(): Promise<{ country: string; count: n
       },
     });
 
-    const result = raw
-      .filter((r): r is typeof r & { country: string } => Boolean(r.country && r.country.trim()))
-      .map((r) => ({
-        country: r.country.trim(),
-        count: r._count.id,
-      }));
+    const countMap = new Map<string, number>();
+    for (const r of raw) {
+      if (!r.country || !r.country.trim()) continue;
+      const canonical = normalizeCountryName(r.country);
+      countMap.set(canonical, (countMap.get(canonical) || 0) + r._count.id);
+    }
+    const result = Array.from(countMap.entries())
+      .map(([country, count]) => ({ country, count }))
+      .sort((a, b) => b.count - a.count);
     cachedCountries = result;
     lastCountriesFetch = now;
     return result;
@@ -243,7 +247,15 @@ export async function getCompaniesWithContacts({
     where.type = type as ContactType;
   }
   if (country && country.trim() && country !== "ALL") {
-    where.country = country.trim();
+    const trimmed = country.trim();
+    const canonical = normalizeCountryName(trimmed);
+    const variants = new Set([trimmed, canonical]);
+    if (canonical.toLowerCase() === "vietnam") {
+      variants.add("Viet Nam");
+      variants.add("viet nam");
+      variants.add("Vietnam");
+    }
+    where.country = { in: Array.from(variants) };
   }
 
   if (search && search.trim()) {
@@ -659,7 +671,7 @@ export async function updateContact(contactId: string, input: UpdateContactInput
             ? { name: input.companyName }
             : {}),
           ...(input.companyCountry !== undefined
-            ? { country: input.companyCountry || null }
+            ? { country: input.companyCountry ? normalizeCountryName(input.companyCountry) : null }
             : {}),
           ...(input.companyAddress !== undefined
             ? { address: input.companyAddress || null }
@@ -810,7 +822,7 @@ export async function createContact(input: CreateContactInput) {
         company = await tx.company.create({
           data: {
             name: input.companyName.trim(),
-            country: input.companyCountry || null,
+            country: input.companyCountry ? normalizeCountryName(input.companyCountry) : null,
             address: input.companyAddress || null,
           },
         });
@@ -1037,7 +1049,7 @@ export async function updateCompanyDetails(
         displayName: data.displayName !== undefined ? data.displayName.trim() : company.displayName,
         name: data.name !== undefined ? data.name.trim() : company.name,
         phone: data.phone !== undefined ? data.phone?.trim() || null : company.phone,
-        country: data.country !== undefined ? data.country?.trim() || null : company.country,
+        country: data.country !== undefined ? (data.country ? normalizeCountryName(data.country) : null) : company.country,
         type: data.type !== undefined ? data.type : company.type,
         status: data.status !== undefined ? data.status : company.status,
         starRating: data.starRating !== undefined ? data.starRating : company.starRating,
@@ -1102,7 +1114,7 @@ export async function createCompany(input: CreateCompanyInput) {
         displayName,
         name: input.name.trim(),
         phone: input.phone?.trim() || null,
-        country: input.country?.trim() || "Thailand",
+        country: input.country ? normalizeCountryName(input.country) : "Thailand",
         type: input.type || "CUSTOMER",
         notes: input.notes?.trim() || null,
       },
@@ -1150,7 +1162,7 @@ export async function createCompany(input: CreateCompanyInput) {
           district: addr.district?.trim() || null,
           province: addr.province?.trim() || null,
           postalCode: addr.postalCode?.trim() || null,
-          country: addr.country?.trim() || company.country || "Thailand",
+          country: addr.country ? normalizeCountryName(addr.country) : (company.country || "Thailand"),
           formattedAddress,
           googleMapsUrl: mapsUrl || null,
         },
@@ -1244,7 +1256,7 @@ export async function createCompanyAddress(
         district: input.district?.trim() || null,
         province: input.province?.trim() || null,
         postalCode: input.postalCode?.trim() || null,
-        country: input.country?.trim() || "Thailand",
+        country: input.country ? normalizeCountryName(input.country) : "Thailand",
         formattedAddress,
         googleMapsUrl: mapsUrl || null,
       },
@@ -1306,7 +1318,7 @@ export async function updateCompanyAddress(
         ...(input.district !== undefined ? { district: input.district?.trim() || null } : {}),
         ...(input.province !== undefined ? { province: input.province?.trim() || null } : {}),
         ...(input.postalCode !== undefined ? { postalCode: input.postalCode?.trim() || null } : {}),
-        ...(input.country !== undefined ? { country: input.country?.trim() || null } : {}),
+        ...(input.country !== undefined ? { country: input.country ? normalizeCountryName(input.country) : null } : {}),
         formattedAddress,
         googleMapsUrl: mapsUrl || null,
       },

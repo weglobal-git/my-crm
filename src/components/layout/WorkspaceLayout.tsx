@@ -39,7 +39,9 @@ export function WorkspaceLayout({
         } hide-scrollbar p-2 flex flex-col`}
       >
         <div
-          className={`max-w-[1400px] mx-auto w-full flex flex-col h-full min-h-0 min-w-0 ${className}`}
+          className={`max-w-[1400px] mx-auto w-full flex flex-col ${
+            scrollMode === "auto" ? "min-h-full" : "h-full"
+          } min-h-0 min-w-0 ${className}`}
         >
           {children}
         </div>

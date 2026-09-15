@@ -26,7 +26,7 @@ export type DashboardSalesAccess = {
 
 function scopeLabelFor(actor: PipelineActor) {
   if (actor.role === 'ADMIN') return 'All accessible deals';
-  if (actor.role === 'MANAGEMENT') return 'Sales department';
+  if (actor.departments.length > 0) return `${actor.departments.join(', ')} department`;
   return 'Your deals';
 }
 
@@ -41,6 +41,7 @@ export function resolveDashboardSectionAccess(visibleKeys: Iterable<string>, isA
 
 export async function requireDashboardSalesAccess(
   actorOverride?: PipelineActor,
+  visibleKeysOverride?: Iterable<string>,
 ): Promise<DashboardSalesAccess> {
   const contactActor = actorOverride ?? await getContactActor();
   const actor: PipelineActor = {
@@ -49,7 +50,9 @@ export async function requireDashboardSalesAccess(
     role: contactActor.role,
     departments: contactActor.departments,
   };
-  const visibleKeys = await getUserVisibleMenuKeys(actor.id);
+  const visibleKeys = visibleKeysOverride
+    ? [...visibleKeysOverride]
+    : await getUserVisibleMenuKeys(actor.id);
   if (actor.role !== 'ADMIN' && !visibleKeys.includes('crm_overview')) {
     throw new Error('Forbidden');
   }
@@ -61,21 +64,32 @@ export async function requireDashboardSalesAccess(
 export async function getDashboardSalesSnapshot(input: {
   month?: string;
   year?: string;
+  country?: string;
+  account?: string;
   actor?: PipelineActor;
+  visibleKeys?: Iterable<string>;
   now?: Date;
 } = {}): Promise<SalesOverviewSnapshot> {
-  const { actor, scopeLabel, sections } = await requireDashboardSalesAccess(input.actor);
+  const { actor, scopeLabel, sections } = await requireDashboardSalesAccess(
+    input.actor,
+    input.visibleKeys,
+  );
   const period = parseDashboardPeriod(input.month, input.year, input.now);
-  const accessWhere = getOpportunityAccessWhere(actor);
+  // Dashboard is shared for the entire Sales Team in the same department (no need to be MANAGEMENT)
+  const dashboardActor: PipelineActor =
+    actor.departments.length > 0 && actor.role !== 'ADMIN'
+      ? { ...actor, role: 'MANAGEMENT' }
+      : actor;
+  const accessWhere = getOpportunityAccessWhere(dashboardActor);
 
-  // One bounded deal projection feeds all three aggregates. It deliberately
-  // excludes activity, notes, attachments, quotations and user records.
-  const [deals, targets] = await Promise.all([
+  // The all-time map projection also contains the bounded five-year window.
+  // Query it once, then derive the annual slice in memory to avoid transferring
+  // and decoding the same opportunities twice on every filter navigation.
+  const [allTimeDeals, targets] = await Promise.all([
     prisma.opportunity.findMany({
       where: {
         ...accessWhere,
         type: 'SALES_DEAL',
-        goodsLoadingDate: { gte: period.annualStart, lt: period.annualEnd },
         status: { in: ['OPEN', 'WON'] },
       },
       select: {
@@ -86,7 +100,14 @@ export async function getDashboardSalesSnapshot(input: {
         currency: true,
         goodsLoadingDate: true,
         companyId: true,
-        company: { select: { name: true, displayName: true } },
+        company: {
+          select: {
+            name: true,
+            displayName: true,
+            country: true,
+            addresses: { select: { country: true }, take: 1 },
+          },
+        },
       },
     }),
     (prisma.companySaleTarget
@@ -108,8 +129,15 @@ export async function getDashboardSalesSnapshot(input: {
       : Promise.resolve([])),
   ]);
 
+  const deals = allTimeDeals.filter((deal) => {
+    if (!deal.goodsLoadingDate) return false;
+    const loadingDate = new Date(deal.goodsLoadingDate);
+    return loadingDate >= period.annualStart && loadingDate < period.annualEnd;
+  });
+
   const snapshot = buildSalesOverviewSnapshot({
     deals,
+    allTimeDeals,
     targets: targets.map((target) => ({
       companyId: target.companyId,
       accountName: target.company.displayName || target.company.name,
@@ -119,11 +147,14 @@ export async function getDashboardSalesSnapshot(input: {
     })),
     period,
     scopeLabel,
+    filterCountry: input.country,
+    filterAccount: input.account,
   });
 
   if (!sections.saleSummary) {
     const emptyGroup = { count: 0, totals: [], preview: [], deals: [] };
     snapshot.monthly = { waiting: emptyGroup, won: emptyGroup, total: emptyGroup };
+    snapshot.yearly = { waiting: emptyGroup, won: emptyGroup, total: emptyGroup };
   }
   if (!sections.saleTracking) snapshot.tracking = [];
   if (!sections.annualSaleReport) {
