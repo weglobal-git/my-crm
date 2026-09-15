@@ -4,7 +4,14 @@ import {
   projectOpportunityDatesToCalendarItems,
   type OpportunityProjectionRow,
 } from './calendar-queries';
-import { calendarMonthKey } from './calendar-cache';
+import {
+  calendarMonthKey,
+  calendarEventDetailKey,
+  calendarTagsKey,
+  calendarRecipientsKey,
+  calendarDepartmentsKey,
+  calendarFinancialInfoKey,
+} from './calendar-cache';
 import type { CalendarActor } from './calendar-access';
 
 describe('Calendar Month Projection & Access Matrix (Phase 1)', () => {
@@ -198,6 +205,31 @@ describe('Calendar Month Projection & Access Matrix (Phase 1)', () => {
       assert.equal(userAKey[1], 'user-A');
       assert.equal(userAKey[2], 2026);
       assert.equal(userAKey[3], 9);
+    });
+
+    it('scopes event detail, tags, recipients, departments, and financial info by userId', () => {
+      const userA = 'user-A';
+      const userB = 'user-B';
+
+      // Event detail
+      assert.notDeepEqual(calendarEventDetailKey(userA, 'ev-1'), calendarEventDetailKey(userB, 'ev-1'));
+      assert.deepEqual(calendarEventDetailKey(userA, 'ev-1'), ['calendar-event-detail', 'user-A', 'ev-1']);
+
+      // Tags
+      assert.notDeepEqual(calendarTagsKey(userA, 'dept-1'), calendarTagsKey(userB, 'dept-1'));
+      assert.deepEqual(calendarTagsKey(userA, 'dept-1'), ['calendar-tags', 'user-A', 'dept-1']);
+
+      // Recipients
+      assert.notDeepEqual(calendarRecipientsKey(userA, 'dept-1'), calendarRecipientsKey(userB, 'dept-1'));
+      assert.deepEqual(calendarRecipientsKey(userA, 'dept-1'), ['calendar-recipients', 'user-A', 'dept-1']);
+
+      // Departments
+      assert.notDeepEqual(calendarDepartmentsKey(userA), calendarDepartmentsKey(userB));
+      assert.deepEqual(calendarDepartmentsKey(userA), ['calendar-departments', 'user-A']);
+
+      // Financial Info
+      assert.notDeepEqual(calendarFinancialInfoKey(userA, 'opp-1'), calendarFinancialInfoKey(userB, 'opp-1'));
+      assert.deepEqual(calendarFinancialInfoKey(userA, 'opp-1'), ['calendar-financial-info', 'user-A', 'opp-1']);
     });
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import type { DashboardSectionAccess, SalesOverviewSnapshot } from "@/lib/dashboard/sales-overview";
 import dynamic from "next/dynamic";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
@@ -20,26 +20,66 @@ const DashboardLeaderboardView = dynamic(
   }
 );
 
+import { useDashboardData, type DashboardFilterState } from "./useDashboardData";
+import type { ScopeActorInfo } from "@/lib/dashboard/dashboard-keys";
+
 interface DashboardOverviewViewProps {
   snapshot: SalesOverviewSnapshot | null;
   sections: DashboardSectionAccess;
   initialTab?: DashboardTab;
+  actor?: ScopeActorInfo;
 }
 
 export function DashboardOverviewView({
   snapshot,
   sections,
   initialTab,
+  actor,
 }: DashboardOverviewViewProps) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
 
   const currentMonth = getBangkokMonth();
   const currentYear = getBangkokYear();
   const canSeeSales = Object.values(sections).some(Boolean);
 
-  const month = snapshot?.period.month ?? currentMonth;
-  const year = snapshot?.period.year ?? currentYear;
+  const initialFilters: DashboardFilterState = useMemo(
+    () => ({
+      month: snapshot?.period.month ?? currentMonth,
+      year: snapshot?.period.year ?? currentYear,
+      country: snapshot?.filters?.country || null,
+      account: snapshot?.filters?.account || null,
+    }),
+    [
+      snapshot?.period.month,
+      snapshot?.period.year,
+      snapshot?.filters?.country,
+      snapshot?.filters?.account,
+      currentMonth,
+      currentYear,
+    ]
+  );
+
+  const [filters, setFilters] = useState<DashboardFilterState>(initialFilters);
+
+  const resolvedActor: ScopeActorInfo = useMemo(
+    () => actor || { id: "anon", role: "ADMIN", departments: [] },
+    [actor]
+  );
+
+  const {
+    snapshot: activeSnapshot,
+    isPending: isDataPending,
+    revalidateVisibleKeys,
+  } = useDashboardData({
+    initialSnapshot: snapshot,
+    sections,
+    actor: resolvedActor,
+    filters,
+    initialFilters,
+  });
+
+  const month = filters.month;
+  const year = filters.year;
 
   const [activeTab, setActiveTab] = useState<DashboardTab>(
     initialTab || (canSeeSales ? "sale_deal" : "leaderboard")
@@ -69,10 +109,24 @@ export function DashboardOverviewView({
     annualReport: requested.annualReport && sections.annualSaleReport,
   });
 
-  const currentCountry = snapshot?.filters?.country || null;
-  const currentAccount = snapshot?.filters?.account || null;
-  const availableCountries = snapshot?.filterOptions?.countries || [];
-  const availableAccounts = snapshot?.filterOptions?.accounts || [];
+  const currentCountry = filters.country;
+  const currentAccount = filters.account;
+  const availableCountries = activeSnapshot?.filterOptions?.countries || [];
+  const availableAccounts = activeSnapshot?.filterOptions?.accounts || [];
+
+  // Synchronize browser Back/Forward (popstate)
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const m = parseInt(params.get("month") || String(currentMonth), 10);
+      const y = parseInt(params.get("year") || String(currentYear), 10);
+      const c = params.get("country") || null;
+      const a = params.get("account") || null;
+      setFilters({ month: m, year: y, country: c, account: a });
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [currentMonth, currentYear]);
 
   const changeFilters = (next: {
     month: number;
@@ -80,16 +134,36 @@ export function DashboardOverviewView({
     country?: string | null;
     account?: string | null;
   }) => {
+    const normalizedNext: DashboardFilterState = {
+      month: next.month,
+      year: next.year,
+      country: next.country?.trim().toUpperCase() || null,
+      account: next.account?.trim() || null,
+    };
+
+    // No-op on identical filters
+    if (
+      normalizedNext.month === filters.month &&
+      normalizedNext.year === filters.year &&
+      normalizedNext.country === filters.country &&
+      normalizedNext.account === filters.account
+    ) {
+      return;
+    }
+
+    setFilters(normalizedNext);
+
     const params = new URLSearchParams();
-    params.set("month", String(next.month));
-    params.set("year", String(next.year));
-    if (next.country) params.set("country", next.country);
-    if (next.account) params.set("account", next.account);
+    params.set("month", String(normalizedNext.month));
+    params.set("year", String(normalizedNext.year));
+    if (normalizedNext.country) params.set("country", normalizedNext.country);
+    if (normalizedNext.account) params.set("account", normalizedNext.account);
     if (activeTab === "leaderboard") params.set("tab", "leaderboard");
 
-    startTransition(() => {
-      router.replace(`/dashboard/overview?${params.toString()}`, { scroll: false });
-    });
+    const nextUrl = `/dashboard/overview?${params.toString()}`;
+    if (typeof window !== "undefined" && window.location.search !== `?${params.toString()}`) {
+      window.history.pushState(null, "", nextUrl);
+    }
   };
 
   const changePeriod = (nextMonth: number, nextYear: number) => {
@@ -132,9 +206,7 @@ export function DashboardOverviewView({
   };
 
   const handleRefresh = () => {
-    startTransition(() => {
-      router.refresh();
-    });
+    void revalidateVisibleKeys();
   };
 
   const openPrintDialog = useCallback(async () => {
@@ -198,7 +270,7 @@ export function DashboardOverviewView({
           account={currentAccount}
           availableCountries={availableCountries}
           availableAccounts={availableAccounts}
-          isPending={isPending}
+          isPending={isDataPending}
           onChangePeriod={changePeriod}
           onApplyFilters={changeFilters}
           onClearCountry={handleClearCountry}
@@ -213,8 +285,8 @@ export function DashboardOverviewView({
 
         {/* Content Body */}
         {activeTab === "leaderboard" ? (
-          <DashboardLeaderboardView snapshot={snapshot} year={year} />
-        ) : !snapshot ? (
+          <DashboardLeaderboardView snapshot={activeSnapshot} year={year} />
+        ) : !activeSnapshot ? (
           <section className="rounded-[2rem] border border-[#4E4F50] bg-[#3A3B3C] p-8 text-center">
             <h2 className="text-base font-semibold text-slate-100">
               No report sections available
@@ -226,7 +298,7 @@ export function DashboardOverviewView({
           </section>
         ) : (
           <SalesSummarySection
-            snapshot={snapshot}
+            snapshot={activeSnapshot}
             sections={sections}
             onCountryFilterChange={handleCountryFilter}
           />
@@ -236,7 +308,7 @@ export function DashboardOverviewView({
       {/* Mount the large print-only tree only while preparing a print job. */}
       {snapshot && isPrinting && (
         <DashboardPrintReport
-          snapshot={snapshot}
+          snapshot={activeSnapshot || snapshot}
           sections={printSections}
           onReady={() => setIsPrintReportReady(true)}
         />

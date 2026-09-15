@@ -68,3 +68,70 @@ export async function getDashboardAccountDeals(input: {
 
   return deals.map(toRow);
 }
+
+export async function getDashboardSummaryAction(input: {
+  month: number;
+  year: number;
+  country?: string | null;
+  account?: string | null;
+}) {
+  const { getDashboardSalesSnapshot } = await import('@/lib/dashboard/dashboard-data');
+  const snapshot = await getDashboardSalesSnapshot({
+    month: String(input.month),
+    year: String(input.year),
+    country: input.country || undefined,
+    account: input.account || undefined,
+  });
+  return {
+    monthly: snapshot.monthly,
+    yearly: snapshot.yearly,
+    period: snapshot.period,
+  };
+}
+
+export async function getDashboardTrackingAction(input: {
+  year: number;
+  country?: string | null;
+  account?: string | null;
+}) {
+  const { getDashboardSalesSnapshot } = await import('@/lib/dashboard/dashboard-data');
+  const snapshot = await getDashboardSalesSnapshot({
+    year: String(input.year),
+    country: input.country || undefined,
+    account: input.account || undefined,
+  });
+  return snapshot.tracking;
+}
+
+export async function getDashboardAnnualAction(input: {
+  anchorYear: number;
+  country?: string | null;
+  account?: string | null;
+}) {
+  const { getDashboardSalesSnapshot } = await import('@/lib/dashboard/dashboard-data');
+  const snapshot = await getDashboardSalesSnapshot({
+    year: String(input.anchorYear),
+    country: input.country || undefined,
+    account: input.account || undefined,
+  });
+  return snapshot.annual;
+}
+
+export async function getDashboardMapSummaryAction(input: {
+  year: number;
+  month?: number;
+}) {
+  const { getDashboardSalesSnapshot } = await import('@/lib/dashboard/dashboard-data');
+  const snapshot = await getDashboardSalesSnapshot({
+    year: String(input.year),
+    month: input.month ? String(input.month) : undefined,
+  });
+  return snapshot.worldMap;
+}
+
+export async function getDashboardFilterOptionsAction() {
+  const { getDashboardSalesSnapshot } = await import('@/lib/dashboard/dashboard-data');
+  const snapshot = await getDashboardSalesSnapshot();
+  return snapshot.filterOptions;
+}
+

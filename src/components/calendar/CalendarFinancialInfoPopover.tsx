@@ -1,24 +1,34 @@
 "use client";
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { createPortal } from 'react-dom';
 import { Archive, Save, X } from 'lucide-react';
 import { getCalendarFinancialInfoAction, updateCalendarSaleDealAction } from '@/lib/actions/calendar';
 import { useCalendarDialog } from '@/lib/calendar/use-calendar-dialog';
+import { calendarFinancialInfoKey } from '@/lib/calendar/calendar-cache';
+import type { CalendarMonthSnapshotDTO } from '@/lib/calendar/calendar-dto';
 import { CalendarSelect } from './CalendarSelect';
 import { CalendarDatePicker } from '@/components/ui/CalendarDatePicker';
 
-interface Props { opportunityId: string; anchorRect?: DOMRect; triggerRef?: React.RefObject<HTMLElement | null>; presentation?: 'popover' | 'sheet'; onClose: () => void }
+interface Props {
+  opportunityId: string;
+  anchorRect?: DOMRect;
+  triggerRef?: React.RefObject<HTMLElement | null>;
+  presentation?: 'popover' | 'sheet';
+  userId?: string;
+  onClose: () => void;
+}
 function localDate(value: string | null) { if (!value) return ''; const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
 
-export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, triggerRef, presentation = 'popover', onClose }: Props) {
+export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, triggerRef, presentation = 'popover', userId, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({ left: 12, top: 12, width: 420 });
+  const { mutate: globalMutate } = useSWRConfig();
   useCalendarDialog(true, panelRef, onClose);
-  const key = useMemo(() => ['calendar-financial-info', opportunityId] as const, [opportunityId]);
+  const key = useMemo(() => calendarFinancialInfoKey(userId || 'default', opportunityId), [opportunityId, userId]);
   const { data, isLoading, mutate } = useSWR(key, async () => { const response = await getCalendarFinancialInfoAction(opportunityId); if (!response.success || !response.data) throw new Error(response.error || 'Unable to load'); return response.data; }, { revalidateOnFocus: false, dedupingInterval: 30_000 });
   const [draft, setDraft] = useState({ totalValue: '', currency: 'THB', reserveId: '', invoiceNumber: '', goodsReadyDate: '', goodsLoadingDate: '' });
   const [prevData, setPrevData] = useState(data);
@@ -57,10 +67,83 @@ export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, trigge
     if (!data?.canEdit || isSaving) return;
     setIsSaving(true); setError(null);
     const previous = data;
-    const optimistic = { ...data, totalValue: draft.totalValue === '' ? null : Number(draft.totalValue), currency: draft.currency, reserveId: draft.reserveId || null, invoiceNumber: draft.invoiceNumber || null, goodsReadyDate: draft.goodsReadyDate ? new Date(`${draft.goodsReadyDate}T00:00:00`).toISOString() : null, goodsLoadingDate: draft.goodsLoadingDate ? new Date(`${draft.goodsLoadingDate}T00:00:00`).toISOString() : null };
+    const optimistic = {
+      ...data,
+      totalValue: draft.totalValue === '' ? null : Number(draft.totalValue),
+      currency: draft.currency,
+      reserveId: draft.reserveId || null,
+      invoiceNumber: draft.invoiceNumber || null,
+      goodsReadyDate: draft.goodsReadyDate ? new Date(`${draft.goodsReadyDate}T00:00:00`).toISOString() : null,
+      goodsLoadingDate: draft.goodsLoadingDate ? new Date(`${draft.goodsLoadingDate}T00:00:00`).toISOString() : null,
+    };
+
+    // 1. Optimistic update on financial detail
     await mutate(optimistic, false);
-    const response = await updateCalendarSaleDealAction({ opportunityId, totalValue: optimistic.totalValue, currency: draft.currency, reserveId: draft.reserveId || null, invoiceNumber: draft.invoiceNumber || null, goodsReadyDate: draft.goodsReadyDate || null, goodsLoadingDate: draft.goodsLoadingDate || null, expectedRevision: data.revision, mutationId: crypto.randomUUID() });
-    if (!response.success) { await mutate(previous, false); setError(response.error === 'CONFLICT' ? 'This Sale Deal was updated elsewhere. Reload and try again.' : response.error || 'Unable to save'); setIsSaving(false); return; }
+
+    // 2. Optimistic update on affected calendar-month items
+    if (globalMutate) {
+      void globalMutate(
+        (k) => Array.isArray(k) && k[0] === 'calendar-month' && (userId ? k[1] === userId : true),
+        (current: CalendarMonthSnapshotDTO | undefined) => {
+          if (!current) return current;
+          let changed = false;
+          const updatedItems = current.items.map((item) => {
+            if (item.sourceId !== opportunityId) return item;
+            if (item.sourceType === 'DEAL_GOODS_READY' && optimistic.goodsReadyDate) {
+              changed = true;
+              return { ...item, startAt: optimistic.goodsReadyDate };
+            }
+            if (item.sourceType === 'DEAL_GOODS_LOADING' && optimistic.goodsLoadingDate) {
+              changed = true;
+              return { ...item, startAt: optimistic.goodsLoadingDate };
+            }
+            return item;
+          });
+          return changed ? { ...current, items: updatedItems } : current;
+        },
+        false
+      );
+
+      // 3. Optimistic update on pipeline deals
+      void globalMutate(
+        (k) => Array.isArray(k) && k[0] === 'pipeline-deals',
+        (deals: Array<Record<string, unknown>> | undefined) => deals?.map((deal) => {
+          if (deal.id !== opportunityId) return deal;
+          return {
+            ...deal,
+            goodsReadyDate: optimistic.goodsReadyDate,
+            goodsLoadingDate: optimistic.goodsLoadingDate,
+            totalValue: optimistic.totalValue,
+            currency: optimistic.currency,
+          };
+        }),
+        false
+      );
+    }
+
+    const response = await updateCalendarSaleDealAction({
+      opportunityId,
+      totalValue: optimistic.totalValue,
+      currency: draft.currency,
+      reserveId: draft.reserveId || null,
+      invoiceNumber: draft.invoiceNumber || null,
+      goodsReadyDate: draft.goodsReadyDate || null,
+      goodsLoadingDate: draft.goodsLoadingDate || null,
+      expectedRevision: data.revision,
+      mutationId: crypto.randomUUID(),
+    });
+
+    if (!response.success) {
+      await mutate(previous, false);
+      if (globalMutate) {
+        void globalMutate((k) => Array.isArray(k) && k[0] === 'calendar-month');
+        void globalMutate((k) => Array.isArray(k) && k[0] === 'pipeline-deals');
+      }
+      setError(response.error === 'CONFLICT' ? 'This Sale Deal was updated elsewhere. Reload and try again.' : response.error || 'Unable to save');
+      setIsSaving(false);
+      return;
+    }
+
     await mutate((current) => current ? { ...current, revision: response.revision ?? current.revision } : current, false);
     setIsSaving(false);
   };

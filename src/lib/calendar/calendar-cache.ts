@@ -33,3 +33,23 @@ export function calendarTagsKey(
 ): [string, string, string] {
   return ['calendar-tags', userId, departmentId];
 }
+
+export function calendarRecipientsKey(
+  userId: string,
+  departmentId: string
+): [string, string, string] {
+  return ['calendar-recipients', userId, departmentId];
+}
+
+export function calendarDepartmentsKey(
+  userId: string
+): [string, string] {
+  return ['calendar-departments', userId];
+}
+
+export function calendarFinancialInfoKey(
+  userId: string,
+  opportunityId: string
+): [string, string, string] {
+  return ['calendar-financial-info', userId, opportunityId];
+}

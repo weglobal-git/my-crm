@@ -48,6 +48,12 @@ export function canUserAccessChannel(user: PusherAuthUser, channelName: string):
     return false;
   }
 
+  // 6. Private per-user Dashboard channel
+  if (channelName === `private-dashboard-${user.id}`) {
+    return ["ADMIN", "MANAGEMENT", "GENERAL"].includes(user.role) &&
+      (user.role === "ADMIN" || Boolean(user.visibleMenuKeys?.includes("crm_overview")));
+  }
+
   // All other channels forbidden
   return false;
 }
@@ -80,7 +86,12 @@ export async function authorizePusherRequest(
 
   // Resolve menu permissions for feature channels that require an enabled menu.
   let visibleMenuKeys: string[] | undefined = undefined;
-  if ((channelName === "private-contacts" || channelName === `private-calendar-${sessionUser.id}`) && role !== "ADMIN") {
+  if (
+    (channelName === "private-contacts" ||
+      channelName === `private-calendar-${sessionUser.id}` ||
+      channelName === `private-dashboard-${sessionUser.id}`) &&
+    role !== "ADMIN"
+  ) {
     try {
       visibleMenuKeys = await getUserVisibleMenuKeys(sessionUser.id);
     } catch (err) {

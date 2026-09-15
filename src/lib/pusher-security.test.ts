@@ -75,6 +75,14 @@ test.describe('Pusher Security & DTO Sanitization (Phase P0-A & P2)', () => {
     assert.equal(canUserAccessChannel({ ...salesUserWithContacts, visibleMenuKeys: ['calendar'] }, 'private-calendar-other'), false);
   });
 
+  test('canUserAccessChannel: Dashboard requires own channel and crm_overview menu permission (or ADMIN)', () => {
+    assert.equal(canUserAccessChannel(adminUser, 'private-dashboard-admin-1'), true);
+    assert.equal(canUserAccessChannel({ ...salesUserWithContacts, visibleMenuKeys: ['crm_overview'] }, 'private-dashboard-sales-1'), true);
+    assert.equal(canUserAccessChannel(salesUserWithContacts, 'private-dashboard-sales-1'), false);
+    assert.equal(canUserAccessChannel({ ...salesUserWithContacts, visibleMenuKeys: ['crm_overview'] }, 'private-dashboard-other'), false);
+    assert.equal(canUserAccessChannel({ ...externalUser, visibleMenuKeys: ['crm_overview'] }, 'private-dashboard-guest-1'), false);
+  });
+
   test('sanitizePresenceUserInfo: strips email and internal fields from presence payload', () => {
     const rawUser: PusherAuthUser & { password?: string; token?: string } = {
       id: 'usr-1',

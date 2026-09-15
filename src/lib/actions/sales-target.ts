@@ -6,6 +6,7 @@ import prisma from '@/lib/prisma';
 import { getContactActor } from '@/lib/actions/contact';
 import { getUserVisibleMenuKeys } from '@/lib/actions/permission';
 import { getBangkokYear, SUPPORTED_SALES_CURRENCIES } from '@/lib/dashboard/sales-overview';
+import { dispatchDashboardInvalidation } from '@/lib/dashboard/dashboard-realtime-server';
 
 const requiredMenuKeys = ['contact', 'contact.sale_target'] as const;
 const currencySchema = z.enum(SUPPORTED_SALES_CURRENCIES);
@@ -130,6 +131,11 @@ export async function upsertCompanySaleTarget(input: {
     });
     return saved;
   });
+  void dispatchDashboardInvalidation({
+    resources: ['tracking'],
+    affectedYears: [parsed.year],
+    companyIds: [parsed.companyId],
+  });
   return toDTO(target);
 }
 
@@ -164,6 +170,11 @@ export async function deleteCompanySaleTarget(input: {
         summary: `Deleted ${company.displayName || company.name} sale target for ${parsed.year} (${parsed.currency})`,
       },
     });
+  });
+  void dispatchDashboardInvalidation({
+    resources: ['tracking'],
+    affectedYears: [parsed.year],
+    companyIds: [parsed.companyId],
   });
   return { ...parsed, deleted: true };
 }

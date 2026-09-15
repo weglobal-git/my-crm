@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import useSWR from "swr";
 import { Tag as TagIcon, Plus, X, Check, Loader2 } from "lucide-react";
 import { getDepartmentTagsAction, createCalendarTagAction } from "@/lib/actions/calendar";
+import { calendarTagsKey } from "@/lib/calendar/calendar-cache";
 
 interface TagItem {
   id: string;
@@ -17,6 +19,7 @@ interface CalendarTagPickerProps {
   onChange: (tagIds: string[]) => void;
   disabled?: boolean;
   initialTags?: TagItem[];
+  currentUserId?: string;
 }
 
 const PRESET_COLORS = [
@@ -36,11 +39,24 @@ export function CalendarTagPicker({
   onChange,
   disabled = false,
   initialTags = [],
+  currentUserId,
 }: CalendarTagPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [tags, setTags] = useState<TagItem[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasFetched, setHasFetched] = useState(false);
+  const [localTags, setLocalTags] = useState<TagItem[]>(initialTags);
+
+  const tagCacheKey = isOpen && departmentId ? calendarTagsKey(currentUserId || 'default', departmentId) : null;
+  const { data: fetchedTags, isLoading: isSwrLoading, mutate: mutateTags } = useSWR<TagItem[]>(
+    tagCacheKey,
+    async () => {
+      const res = await getDepartmentTagsAction(departmentId);
+      if (!res.success) throw new Error(res.error || "Failed to load tags");
+      return res.tags ?? [];
+    },
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+
+  const tags = fetchedTags && fetchedTags.length > 0 ? fetchedTags : localTags;
+  const isLoading = isSwrLoading && (!tags || tags.length === 0);
 
   // New tag inline form state
   const [isCreating, setIsCreating] = useState(false);
@@ -57,8 +73,7 @@ export function CalendarTagPicker({
   if (departmentId !== prevDepartmentId || initialTags !== prevInitialTags) {
     setPrevDepartmentId(departmentId);
     setPrevInitialTags(initialTags);
-    setTags(initialTags);
-    setHasFetched(false);
+    setLocalTags(initialTags);
     setIsOpen(false);
     setIsCreating(false);
   }
@@ -79,25 +94,9 @@ export function CalendarTagPicker({
   }, [isOpen]);
 
   // On-demand load of tags when opened
-  const handleToggleOpen = async () => {
+  const handleToggleOpen = () => {
     if (disabled || !departmentId) return;
-    const nextOpen = !isOpen;
-    setIsOpen(nextOpen);
-
-    if (nextOpen && !hasFetched) {
-      setIsLoading(true);
-      try {
-        const res = await getDepartmentTagsAction(departmentId);
-        if (res.success && res.tags) {
-          setTags(res.tags);
-          setHasFetched(true);
-        }
-      } catch {
-        // fail gracefully
-      } finally {
-        setIsLoading(false);
-      }
-    }
+    setIsOpen((prev) => !prev);
   };
 
   const handleToggleTag = (tagId: string) => {
@@ -134,12 +133,14 @@ export function CalendarTagPicker({
 
       if (res.success && res.tag) {
         const created = res.tag;
-        // Check if already in list
-        setTags((prev) => {
+        void mutateTags((prev) => {
+          if (prev?.some((t) => t.id === created.id)) return prev;
+          return [...(prev || []), created];
+        }, false);
+        setLocalTags((prev) => {
           if (prev.some((t) => t.id === created.id)) return prev;
           return [...prev, created];
         });
-        // Select it
         if (!selectedTagIds.includes(created.id)) {
           onChange([...selectedTagIds, created.id]);
         }

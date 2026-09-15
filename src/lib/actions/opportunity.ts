@@ -22,6 +22,7 @@ import {
   type PipelineActor,
 } from "@/lib/pipeline-security";
 import { getPipelineOpportunitiesForActor, pipelineOpportunitySelect } from '@/lib/pipeline-opportunities';
+import { dispatchDashboardInvalidation } from '@/lib/dashboard/dashboard-realtime-server';
 
 export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
   const actor = await requirePipelineActor();
@@ -105,6 +106,13 @@ export async function createOpportunity(data: {
     select: pipelineOpportunitySelect
   });
   await notifyPrivatePipelineUpdate(result.id, { action: 'OPPORTUNITY_CREATED', deal: fullDeal });
+  if (result.type === 'SALES_DEAL') {
+    void dispatchDashboardInvalidation({
+      resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options'],
+      affectedYears: result.goodsLoadingDate ? [new Date(result.goodsLoadingDate).getFullYear()] : undefined,
+      companyIds: result.companyId ? [result.companyId] : undefined,
+    });
+  }
   revalidatePath('/pipeline');
   return result;
 }
@@ -250,6 +258,17 @@ export async function moveOpportunity(
     select: pipelineOpportunitySelect
   });
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+  if (opportunity.type === 'SALES_DEAL' || fullDeal?.type === 'SALES_DEAL') {
+    const years = [
+      opportunity.goodsLoadingDate ? new Date(opportunity.goodsLoadingDate).getFullYear() : undefined,
+      fullDeal?.goodsLoadingDate ? new Date(fullDeal.goodsLoadingDate).getFullYear() : undefined,
+    ].filter((y): y is number => typeof y === 'number');
+    void dispatchDashboardInvalidation({
+      resources: ['summary', 'tracking', 'annual', 'map-summary'],
+      affectedYears: years.length > 0 ? [...new Set(years)] : undefined,
+      companyIds: [opportunity.companyId, fullDeal?.company?.id].filter((id): id is string => Boolean(id)),
+    });
+  }
   return result;
 }
 
@@ -321,6 +340,15 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
     revision,
     mutationId,
   });
+  if (fullDeal?.type === 'SALES_DEAL' || result.type === 'SALES_DEAL') {
+    const goodsLoadingDate = fullDeal?.goodsLoadingDate || result.goodsLoadingDate;
+    void dispatchDashboardInvalidation({
+      resources: ['summary', 'tracking', 'annual', 'map-summary'],
+      mutationId,
+      affectedYears: goodsLoadingDate ? [new Date(goodsLoadingDate).getFullYear()] : undefined,
+      companyIds: fullDeal?.company?.id || result.companyId ? [fullDeal?.company?.id || result.companyId!] : undefined,
+    });
+  }
   return fullDeal || result;
 }
 
@@ -925,6 +953,13 @@ export async function deleteOpportunity(id: string) {
       'pipeline-updated',
       { action: 'OPPORTUNITY_DELETED', dealId: id },
     );
+  }
+  if (result.type === 'SALES_DEAL') {
+    void dispatchDashboardInvalidation({
+      resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options'],
+      affectedYears: result.goodsLoadingDate ? [new Date(result.goodsLoadingDate).getFullYear()] : undefined,
+      companyIds: result.companyId ? [result.companyId] : undefined,
+    });
   }
   revalidatePath('/pipeline');
   return result;

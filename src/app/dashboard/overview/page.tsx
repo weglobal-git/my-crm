@@ -55,5 +55,12 @@ export default async function DashboardOverviewPage({
     : null;
   const initialTab = rawTab === "leaderboard" ? "leaderboard" : canSeeSales ? "sale_deal" : "leaderboard";
 
-  return <DashboardOverviewView snapshot={snapshot} sections={sections} initialTab={initialTab} />;
+  return (
+    <DashboardOverviewView
+      snapshot={snapshot}
+      sections={sections}
+      initialTab={initialTab}
+      actor={actor}
+    />
+  );
 }

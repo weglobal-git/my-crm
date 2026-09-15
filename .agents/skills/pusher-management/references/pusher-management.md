@@ -112,6 +112,7 @@ Connection คือ client socket ที่เปิดพร้อมกัน
 | `presence-global` / membership | เฉพาะผู้มีสิทธิ์ดูรายชื่อออนไลน์; shell | เลือกใช้เมื่อจำเป็นต้องเห็นออนไลน์จริง; sanitize user_info เหลือ id, name, image, role |
 | `private-contacts` / `account-updated` | ผู้รับที่มีสิทธิ์เข้าถึง Contacts; ContactView | ย้ายจาก public channel เรียบร้อย; ใช้ authorized private channel ผ่าน subscription manager |
 | `private-calendar-{userId}` / `calendar-updated` | Event: owner, selected recipients, Management ของ Department และ Admin; Deal dates: authorized Pipeline recipients; ทุกกรณีกรองผู้ที่ยังมีสิทธิ์ Calendar ก่อนส่ง | per-user authorized channel; payload เป็น minimal invalidation envelope ไม่มี event/deal detail หรือ user object; merge delete หรือ revalidateเฉพาะ active month |
+| `private-dashboard-{userId}` / `dashboard-invalidated` | ผู้รับที่มีสิทธิ์ `crm_overview` หรือ `ADMIN`; Sale Deal Dashboard | per-user authorized channel; payload เป็น minimal invalidation envelope (< 5 KB) ระบุ resources, affectedYears, countryCodes, companyIds ไม่มี deal row/detail หรือ user object; revalidate เฉพาะ matching active SWR keys |
 | Channel หน้าใหม่ | ยังไม่มีเพิ่มเติม | ต้องลงทะเบียน exact pattern, owner, auth, DTO และ recovery ที่นี่ก่อนใช้ |
 
 Private channel ไม่ทดแทน authorization ของ mutation/read API และการ subscribe สำเร็จครั้งแรกไม่รับรองสิทธิ์ตลอด session เมื่อ revoke ต้องหยุด fanout, clear known inaccessible data และตรวจสิทธิ์ใหม่บน recovery; client offline ไม่สามารถรับประกันล้างข้อมูลทันที
@@ -125,7 +126,7 @@ BroadcastChannel เป็น local hint ไม่ใช่ฐานข้อม
 | หน้า/ส่วน | สถานะที่พบ | Realtime ที่ควรใช้ | Neon fetch/polling | Bell ที่เหมาะสม / สิ่งห้าม |
 |---|---|---|---|---|
 | `/`, `/customers`, `/system` | redirect ไป overview/contact/general | ไม่สร้าง page client/subscription | ไม่มี timer ของ redirect | ไม่สร้าง notification จากการเข้า route |
-| `/dashboard/overview` | SSR aggregate snapshot + URL query filter recovery; flat dark UI | ไม่ subscribe ทุก deal เพื่อคำนวณ dashboard (aggregate snapshot model) | SSR initial snapshot + client filter switch fetch; refresh on focus/button | ไม่แจ้งเตือนทุกครั้งยอดเปลี่ยน; ไม่เปิด socket เพิ่ม |
+| `/dashboard/overview` | SSR shell + granular SWR resource caches (summary, tracking, annual, map, filter-options) + URL query filter recovery; flat dark UI | `private-dashboard-{userId}` สำหรับ invalidation envelope เมื่อ deal/target เปลี่ยน; ไม่ subscribe ทุก deal เพื่อคำนวณใน browser | SSR initial snapshot + client SWR filter cache; targeted revalidation on focus/online/event; manual refresh revalidates active keys only | ไม่แจ้งเตือนทุกครั้งยอดเปลี่ยน; ไม่เปิด socket เพิ่ม |
 | `/pipeline` active board | board + private pipeline events | create/update/delete/stage/member/badge delta เฉพาะ authorized views | initial snapshot; recovery ตาม §8; รักษา filter/order/count | โอน/เชิญ/งานที่ต้องตอบเท่านั้น; ย้ายการ์ดปกติไม่ยิง bell ทั้งทีม |
 | Pipeline completed/history | board มีเงื่อนไขไม่ subscribe เมื่อ completed | เพิ่ม subscription เฉพาะมีเหตุผลทางธุรกิจ | on demand, pagination, focus refresh จำกัดหน้า | ไม่โหลดประวัติทั้งหมดจากทุก event |
 | Deal drawer: Activity/System | tab-based feed | activity delta เฉพาะ deal ที่เปิด; system log ไม่ต้อง toast ทุกอัน | active tab และ targeted recovery | mention/reply ที่เจาะผู้รับค่อยสร้าง inbox; log ทั่วไปไม่สร้าง |
@@ -154,7 +155,7 @@ Event AI และหน้าอนาคตที่ยังไม่มี r
 | Active Pipeline/Contact | event delta + mutation response | visible 60s targeted snapshot | hidden/unmount/offline/access loss |
 | Active Calendar month | typed event + operation optimistic result; safety reconcile 5 นาทีขณะ visible | visible 60s เมื่อ Calendar subscription/socketไม่พร้อม | hidden/unmount/offline/access loss |
 | Active deal detail/tab | delta หรือ invalidation เฉพาะ key | ใช้ recovery coordinator ชุดเดียว ไม่เพิ่ม timer ทุก tab | inactive/unmount/hidden |
-| Dashboard | visible 60–120s เฉพาะเมื่อมี live data requirement | รอบเดิม ไม่ผูกกับ socket | hidden/unmount |
+| Dashboard (active) | `private-dashboard` invalidation envelope + SWR target revalidation; safety reconcile on focus/online | visible recovery on focus/online เมื่อ socket ไม่พร้อม | hidden/unmount/offline/access loss; zero polling |
 | System/Profile/static directory | on demand/mutation/focus | ไม่เพิ่ม interval อัตโนมัติ | ไม่ใช้งาน |
 | Online presence | Pusher presence เป็น primary เมื่อใช้ socket อยู่แล้ว | แสดง unavailable/last seen; DB heartbeat 60–90s เฉพาะถ้าต้องมี fallback | hidden/offline/logout |
 

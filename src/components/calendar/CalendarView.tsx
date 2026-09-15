@@ -25,6 +25,7 @@ import { CALENDAR_EDGE_HOVER_COOLDOWN_MS, CALENDAR_EDGE_HOVER_DELAY_MS, getAdjac
 import { useDialog } from '@/providers/DialogProvider';
 import { calendarFilterCount, EMPTY_CALENDAR_FILTERS, filterCalendarItems, parseCalendarFilters, writeCalendarFilters, type CalendarFilters } from '@/lib/calendar/calendar-filters';
 import type { CalendarSearchResultDTO } from '@/lib/calendar/calendar-dto';
+import { useCalendarPanelTransition } from '@/lib/calendar/use-calendar-panel-transition';
 
 const CalendarEventPanel = dynamic(() => import('./CalendarEventPanel').then((module) => module.CalendarEventPanel), { ssr: false });
 const CalendarFiltersPanel = dynamic(() => import('./CalendarFiltersPanel').then((module) => module.CalendarFiltersPanel), { ssr: false });
@@ -81,7 +82,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const pendingMoveIds = useRef(new Set<string>());
   const eventPanelTrigger = useRef<HTMLElement | null>(null);
   const latestMovedItems = useRef(new Map<string, Pick<CalendarMonthItemDTO, 'startAt' | 'endAt' | 'revision'>>());
+  const isReconcilingRef = useRef(false);
+  const trailingReconcileNeededRef = useRef(false);
   const { toast } = useDialog();
+
+  // Panel mount transitions (keeps initial JS chunk download = 0 and preserves 300ms exit animation)
+  const eventPanelTransition = useCalendarPanelTransition(isPanelOpen);
+  const filtersPanelTransition = useCalendarPanelTransition(isFiltersOpen);
+  const searchPanelTransition = useCalendarPanelTransition(isSearchOpen);
   const { setPageSearchConfig, setPageManageContent, setHasActiveFilters, setColumnNavConfig, setIsManageModalOpen } = useSidebar();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -145,9 +153,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     }
   );
 
+  const isCurrentSnapshot = Boolean(snapshotData && snapshotData.year === year && snapshotData.month === month);
   const activeSnapshot = useMemo<CalendarMonthSnapshotDTO>(() => {
-    if (snapshotData) return snapshotData;
-    if (isInitial) return initialSnapshot;
+    const raw = isCurrentSnapshot && snapshotData ? snapshotData : isInitial ? initialSnapshot : null;
+    if (raw) {
+      // Retain highest local revisions for moved items to prevent stale server responses from regressing UI
+      const mergedItems = raw.items.map((item) => {
+        const moved = latestMovedItems.current.get(item.id);
+        if (moved && moved.revision > item.revision) {
+          return { ...item, startAt: moved.startAt, endAt: moved.endAt, revision: moved.revision };
+        }
+        return item;
+      });
+      return { ...raw, items: mergedItems };
+    }
 
     const pendingRange = getGridRangeForMonth(year, month - 1);
     return {
@@ -158,7 +177,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       items: [],
       generatedAt: new Date().toISOString(),
     };
-  }, [initialSnapshot, isInitial, month, snapshotData, year]);
+  }, [initialSnapshot, isCurrentSnapshot, isInitial, month, snapshotData, year]);
   const filteredItems = useMemo(() => filterCalendarItems(activeSnapshot.items, filters), [activeSnapshot.items, filters]);
   const mobileItemsByDate = useMemo(() => indexCalendarItemsByLocalDate(filteredItems), [filteredItems]);
   const selectedMobileDateKey = `${selectedMobileDate.getFullYear()}-${selectedMobileDate.getMonth()}-${selectedMobileDate.getDate()}`;
@@ -205,10 +224,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   }, [filters]);
 
   const scheduleReconcile = useCallback(() => {
+    if (isReconcilingRef.current) {
+      trailingReconcileNeededRef.current = true;
+      return;
+    }
     if (reconcileTimer.current) return;
-    reconcileTimer.current = setTimeout(() => {
+    reconcileTimer.current = setTimeout(async () => {
       reconcileTimer.current = null;
-      void mutate(currentKey);
+      isReconcilingRef.current = true;
+      try {
+        await mutate(currentKey);
+      } finally {
+        isReconcilingRef.current = false;
+        if (trailingReconcileNeededRef.current) {
+          trailingReconcileNeededRef.current = false;
+          scheduleReconcile();
+        }
+      }
     }, 100);
   }, [currentKey, mutate]);
 
@@ -378,24 +410,45 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     setHasActiveFilters(false);
   }, [setColumnNavConfig, setHasActiveFilters, setPageManageContent, setPageSearchConfig]);
 
+  const prefetchEventPanel = useCallback(() => {
+    void import('./CalendarEventPanel');
+  }, []);
+  const prefetchFiltersPanel = useCallback(() => {
+    void import('./CalendarFiltersPanel');
+  }, []);
+  const prefetchSearchPanel = useCallback(() => {
+    void import('./CalendarSearchPanel');
+  }, []);
+  const prefetchAdjacentMonth = useCallback((offset: -1 | 1) => {
+    const target = getAdjacentCalendarMonth(viewMonth.current.year, viewMonth.current.month, offset);
+    const key = calendarMonthKey(userId, target.year, target.month);
+    void mutate(key, async () => {
+      const res = await getMonthSnapshotAction(target.year, target.month);
+      if (!res.success || !res.data) throw new Error(res.error || 'Failed to load month');
+      return res.data;
+    }, false);
+  }, [mutate, userId]);
+
   const handleDayClick = useCallback((date: Date) => {
+    prefetchEventPanel();
     eventPanelTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setEditingItemId(null);
     setEditingOccurrence(null);
     setPanelDefaultDate(date);
     setIsPanelOpen(true);
-  }, []);
+  }, [prefetchEventPanel]);
 
   const handleItemClick = useCallback((item: CalendarMonthItemDTO) => {
     if (Date.now() - lastDragEndedAt.current < 250) return;
     if (item.sourceType === 'EVENT') {
+      prefetchEventPanel();
       eventPanelTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setEditingItemId(item.sourceId);
       const occurrenceStart = getOccurrenceStartFromItemId(item.id, item.sourceId);
       setEditingOccurrence(occurrenceStart ? { itemId: item.id, startAt: occurrenceStart } : null);
       setIsPanelOpen(true);
     }
-  }, []);
+  }, [prefetchEventPanel]);
 
   const closeEventPanel = useCallback(() => {
     setIsPanelOpen(false);
@@ -653,16 +706,21 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           onPrevMonth={handlePrevMonth}
           onNextMonth={handleNextMonth}
           onToday={handleToday}
+          onPrevMonthIntent={() => prefetchAdjacentMonth(-1)}
+          onNextMonthIntent={() => prefetchAdjacentMonth(1)}
           onNewEventClick={handleNewEventClick}
+          onNewEventIntent={prefetchEventPanel}
           onOpenSearch={() => setIsSearchOpen(true)}
+          onOpenSearchIntent={prefetchSearchPanel}
           onOpenFilters={() => setIsFiltersOpen(true)}
+          onOpenFiltersIntent={prefetchFiltersPanel}
           activeFilterCount={calendarFilterCount(filters)}
           isDragging={Boolean(activeDragItem)}
         />
 
         {isMobileViewport !== true && <div className="hidden flex-1 min-h-0 flex-col relative md:flex">
           {isLoading && !snapshotData && (
-            <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px] z-10 flex items-center justify-center rounded-2xl">
+            <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px] z-10 flex items-center justify-center rounded-2xl pointer-events-none">
               <div className="px-4 py-2 rounded-xl bg-[#3A3B3C] border border-[#4E4F50] text-xs text-slate-300 font-medium">
                 Loading month...
               </div>
@@ -701,21 +759,39 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       </DndContext>
 
       {/* Slide-over Event Editor Drawer */}
-      <CalendarEventPanel
-        isOpen={isPanelOpen}
-        onClose={closeEventPanel}
-        editingItemId={editingItemId}
-        editingOccurrence={editingOccurrence}
-        defaultDate={panelDefaultDate}
-        onSaveSuccess={handleSaveSuccess}
-        onOptimisticSave={handleOptimisticSave}
-        onOptimisticDelete={handleOptimisticDelete}
-        onDeleteSuccess={handleDeleteSuccess}
-        currentUserId={userId}
-        refreshToken={detailRefreshToken}
-      />
-      <CalendarFiltersPanel isOpen={isFiltersOpen} filters={filters} owners={filterOptions.owners} departments={filterOptions.departments} tags={filterOptions.tags} onChange={updateFilters} onClose={() => setIsFiltersOpen(false)} />
-      <CalendarSearchPanel isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} onSelect={handleSearchSelect} />
+      {eventPanelTransition.shouldRender && (
+        <CalendarEventPanel
+          isOpen={isPanelOpen}
+          onClose={closeEventPanel}
+          editingItemId={editingItemId}
+          editingOccurrence={editingOccurrence}
+          defaultDate={panelDefaultDate}
+          onSaveSuccess={handleSaveSuccess}
+          onOptimisticSave={handleOptimisticSave}
+          onOptimisticDelete={handleOptimisticDelete}
+          onDeleteSuccess={handleDeleteSuccess}
+          currentUserId={userId}
+          refreshToken={detailRefreshToken}
+        />
+      )}
+      {filtersPanelTransition.shouldRender && (
+        <CalendarFiltersPanel
+          isOpen={isFiltersOpen}
+          filters={filters}
+          owners={filterOptions.owners}
+          departments={filterOptions.departments}
+          tags={filterOptions.tags}
+          onChange={updateFilters}
+          onClose={() => setIsFiltersOpen(false)}
+        />
+      )}
+      {searchPanelTransition.shouldRender && (
+        <CalendarSearchPanel
+          isOpen={isSearchOpen}
+          onClose={() => setIsSearchOpen(false)}
+          onSelect={handleSearchSelect}
+        />
+      )}
       {pendingMove && (
         <div className="fixed inset-0 z-[220] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Confirm calendar move">
           <button className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="Cancel move" onClick={() => setPendingMove(null)} />

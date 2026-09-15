@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import Image from "next/image";
 import { Bell, Check, ChevronDown, Loader2, Search, UserPlus, Users, X } from "lucide-react";
 import { getCalendarRecipientsAction } from "@/lib/actions/calendar";
+import { calendarRecipientsKey } from "@/lib/calendar/calendar-cache";
 
 export interface RecipientState {
   userId: string;
@@ -25,13 +26,14 @@ interface CalendarRecipientPickerProps {
   onChange: (recipients: RecipientState[]) => void;
   onReminderChange: (enabled: boolean, offsetMins: number) => void;
   disabled?: boolean;
+  currentUserId?: string;
 }
 
 type RecipientUser = { id: string; name: string | null; email: string | null; image: string | null; role: string };
 
 const EMPTY_USERS: RecipientUser[] = [];
 
-export function CalendarRecipientPicker({ departmentId, departmentName, recipients, reminderEnabled, reminderOffsetMins, onChange, onReminderChange, disabled = false }: CalendarRecipientPickerProps) {
+export function CalendarRecipientPicker({ departmentId, departmentName, recipients, reminderEnabled, reminderOffsetMins, onChange, onReminderChange, disabled = false, currentUserId }: CalendarRecipientPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [prevIsOpen, setPrevIsOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -48,7 +50,7 @@ export function CalendarRecipientPicker({ departmentId, departmentName, recipien
 
   const shouldFetch = isOpen && Boolean(departmentId);
   const { data: fetchedUsers, isLoading } = useSWR<RecipientUser[]>(
-    shouldFetch ? ["calendar-recipients", departmentId] : null,
+    shouldFetch ? calendarRecipientsKey(currentUserId || 'default', departmentId) : null,
     async () => {
       const result = await getCalendarRecipientsAction(departmentId);
       if (!result.success) throw new Error(result.error || "Failed to load recipients");

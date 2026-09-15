@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import useSWR from "swr";
 import { X, Calendar as CalendarIcon, Trash2, Save, Loader2, AlertCircle } from "lucide-react";
 import { format, addDays, addHours, startOfDay, subDays } from "date-fns";
 import { CalendarTagPicker } from "./CalendarTagPicker";
@@ -17,6 +18,7 @@ import {
   getCalendarEventDetailAction,
   getUserDepartmentsAction,
 } from "@/lib/actions/calendar";
+import { calendarDepartmentsKey } from "@/lib/calendar/calendar-cache";
 import type { CalendarRepeatFrequency } from "@prisma/client";
 import type { CalendarMonthItemDTO } from "@/lib/calendar/calendar-dto";
 import { useCalendarDialog } from "@/lib/calendar/use-calendar-dialog";
@@ -135,19 +137,28 @@ export function CalendarEventPanel({
     initialFallbackDraft
   );
 
-  // Fetch departments if empty
+  const hasUserModifiedDraftRef = useRef(false);
+
+  // Fetch departments if empty with SWR cache
+  const deptKey = isOpen && departments.length === 0 ? calendarDepartmentsKey(currentUserId || 'default') : null;
+  const { data: cachedDepartments } = useSWR(
+    deptKey,
+    async () => {
+      const res = await getUserDepartmentsAction();
+      if (!res.success) throw new Error(res.error || 'Failed to load departments');
+      return res.departments ?? [];
+    },
+    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+  );
+
   useEffect(() => {
-    if (departments.length === 0 && isOpen) {
-      getUserDepartmentsAction().then((res) => {
-        if (res.success && res.departments && res.departments.length > 0) {
-          setDepartments(res.departments);
-          if (!draft.departmentId) {
-            updateDraft({ departmentId: res.departments[0].id });
-          }
-        }
-      });
+    if (cachedDepartments && cachedDepartments.length > 0 && departments.length === 0) {
+      setDepartments(cachedDepartments);
+      if (!draft.departmentId) {
+        updateDraft({ departmentId: cachedDepartments[0].id });
+      }
     }
-  }, [departments.length, isOpen, draft.departmentId, updateDraft]);
+  }, [cachedDepartments, departments.length, draft.departmentId, updateDraft]);
 
   // If in edit mode, fetch authoritative detail from server
   useEffect(() => {
@@ -162,33 +173,35 @@ export function CalendarEventPanel({
             setCanEdit(ev.canEdit);
             setSelectedTagDetails(ev.tags.map((tag) => ({ ...tag, departmentId: ev.departmentId })));
 
-            updateDraft({
-              name: ev.name,
-              detail: ev.detail || "",
-              departmentId: ev.departmentId,
-              allDay: ev.allDay,
-              startAt: ev.startAt,
-              endAt: ev.endAt,
-              repeatFrequency: ev.repeatFrequency as CalendarRepeatFrequency,
-              repeatUntil: ev.repeatUntil,
-              tagIds: ev.tags.map((t: { id: string }) => t.id),
-              reminderEnabled: ev.recipients.some((r: RecipientState) => r.reminderEnabled),
-              reminderOffsetMins: ev.recipients.find((r: RecipientState) => r.reminderEnabled)?.reminderOffsetMins ?? 0,
-              recipients: ev.recipients.map((r: RecipientState) => ({
-                userId: r.userId,
-                name: r.name,
-                email: r.email,
-                image: r.image,
-                reminderEnabled: r.reminderEnabled,
-                reminderOffsetMins: r.reminderOffsetMins,
-              })),
-            });
+            if (!hasUserModifiedDraftRef.current) {
+              updateDraft({
+                name: ev.name,
+                detail: ev.detail || "",
+                departmentId: ev.departmentId,
+                allDay: ev.allDay,
+                startAt: ev.startAt,
+                endAt: ev.endAt,
+                repeatFrequency: ev.repeatFrequency as CalendarRepeatFrequency,
+                repeatUntil: ev.repeatUntil,
+                tagIds: ev.tags.map((t: { id: string }) => t.id),
+                reminderEnabled: ev.recipients.some((r: RecipientState) => r.reminderEnabled),
+                reminderOffsetMins: ev.recipients.find((r: RecipientState) => r.reminderEnabled)?.reminderOffsetMins ?? 0,
+                recipients: ev.recipients.map((r: RecipientState) => ({
+                  userId: r.userId,
+                  name: r.name,
+                  email: r.email,
+                  image: r.image,
+                  reminderEnabled: r.reminderEnabled,
+                  reminderOffsetMins: r.reminderOffsetMins,
+                })),
+              });
+            }
           } else {
             setErrorMsg(res.error || "Could not load event details");
           }
         })
         .catch((err) => {
-          setErrorMsg(err instanceof Error ? err.message : "Failed to load event");
+          if (isMounted) setErrorMsg(err instanceof Error ? err.message : "Failed to load event");
         })
         .finally(() => {
           if (isMounted) setIsLoadingDetail(false);
@@ -622,6 +635,7 @@ export function CalendarEventPanel({
                 onChange={(tagIds) => updateDraft({ tagIds })}
                 disabled={!canEdit}
                 initialTags={selectedTagDetails}
+                currentUserId={currentUserId}
               />
 
               {/* Recipient Picker */}
@@ -638,6 +652,7 @@ export function CalendarEventPanel({
                   recipients: current.recipients.map((recipient) => ({ ...recipient, reminderEnabled, reminderOffsetMins })),
                 }))}
                 disabled={!canEdit}
+                currentUserId={currentUserId}
               />
 
             </form>
