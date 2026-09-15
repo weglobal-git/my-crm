@@ -71,10 +71,16 @@ export function WorldMapSection({
   const [selectedAccountKey, setSelectedAccountKey] = useState<string | null>(null);
   const [displayedAccountKey, setDisplayedAccountKey] = useState<string | null>(null);
   const [accountSearchQuery, setAccountSearchQuery] = useState("");
+  const [isAccountSearchExpanded, setIsAccountSearchExpanded] = useState(false);
+  const accountSearchContainerRef = useRef<HTMLDivElement | null>(null);
+  const accountSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [accountPage, setAccountPage] = useState(1);
 
   // Level 3: Deal search & pagination & on-demand caching
   const [dealSearchQuery, setDealSearchQuery] = useState("");
+  const [isDealSearchExpanded, setIsDealSearchExpanded] = useState(false);
+  const dealSearchContainerRef = useRef<HTMLDivElement | null>(null);
+  const dealSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [dealPage, setDealPage] = useState(1);
   const [accountDealsCache, setAccountDealsCache] = useState<Record<string, SalesDealRow[]>>({});
   const [isLoadingDeals, setIsLoadingDeals] = useState(false);
@@ -92,28 +98,65 @@ export function WorldMapSection({
     }
   }, [selectedAccountKey]);
 
-  // Click outside listener: collapse if country search input is empty
+  // Click outside listener: collapse search inputs if empty
   useEffect(() => {
-    if (!isCountrySearchExpanded) return;
+    if (!isCountrySearchExpanded && !isAccountSearchExpanded && !isDealSearchExpanded) return;
     const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
       if (
+        isCountrySearchExpanded &&
         countrySearchContainerRef.current &&
-        !countrySearchContainerRef.current.contains(e.target as Node)
+        !countrySearchContainerRef.current.contains(target)
       ) {
         if (!countrySearchQuery.trim()) {
           setIsCountrySearchExpanded(false);
         }
       }
+      if (
+        isAccountSearchExpanded &&
+        accountSearchContainerRef.current &&
+        !accountSearchContainerRef.current.contains(target)
+      ) {
+        if (!accountSearchQuery.trim()) {
+          setIsAccountSearchExpanded(false);
+        }
+      }
+      if (
+        isDealSearchExpanded &&
+        dealSearchContainerRef.current &&
+        !dealSearchContainerRef.current.contains(target)
+      ) {
+        if (!dealSearchQuery.trim()) {
+          setIsDealSearchExpanded(false);
+        }
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isCountrySearchExpanded, countrySearchQuery]);
+  }, [
+    isCountrySearchExpanded,
+    countrySearchQuery,
+    isAccountSearchExpanded,
+    accountSearchQuery,
+    isDealSearchExpanded,
+    dealSearchQuery,
+  ]);
 
-  // Pressing Escape navigates back one level or closes search
+  // Pressing Escape navigates back one level or closes active search
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (isCountrySearchExpanded) {
+        if (isDealSearchExpanded) {
+          e.preventDefault();
+          setDealSearchQuery("");
+          setDealPage(1);
+          setIsDealSearchExpanded(false);
+        } else if (isAccountSearchExpanded) {
+          e.preventDefault();
+          setAccountSearchQuery("");
+          setAccountPage(1);
+          setIsAccountSearchExpanded(false);
+        } else if (isCountrySearchExpanded) {
           e.preventDefault();
           setCountrySearchQuery("");
           setCountryPage(1);
@@ -129,7 +172,13 @@ export function WorldMapSection({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isCountrySearchExpanded, selectedCountryCode, selectedAccountKey]);
+  }, [
+    isDealSearchExpanded,
+    isAccountSearchExpanded,
+    isCountrySearchExpanded,
+    selectedCountryCode,
+    selectedAccountKey,
+  ]);
 
   const currentPeriodData = useMemo(() => {
     if (periodMode === "month") {
@@ -284,8 +333,10 @@ export function WorldMapSection({
     setSelectedAccountKey(null);
     setAccountPage(1);
     setAccountSearchQuery("");
+    setIsAccountSearchExpanded(false);
     setDealPage(1);
     setDealSearchQuery("");
+    setIsDealSearchExpanded(false);
     onCountryFilterChange?.(code);
   };
 
@@ -293,6 +344,7 @@ export function WorldMapSection({
     setSelectedAccountKey(key);
     setDealPage(1);
     setDealSearchQuery("");
+    setIsDealSearchExpanded(false);
   };
 
   return (
@@ -320,7 +372,7 @@ export function WorldMapSection({
 
         {/* Right: Sliding 3-Level Drill-Down Container Card */}
         <div className="lg:col-span-5 xl:col-span-4">
-          <article className="rounded-[1.5rem] border border-[#4E4F50] bg-[#3A3B3C] p-5 flex flex-col relative overflow-hidden min-h-[560px]">
+          <article className="rounded-[1.5rem] border border-[#4E4F50] bg-[#3A3B3C] p-5 flex flex-col relative overflow-hidden min-h-[540px]">
             {/* ============================================================ */}
             {/* PANEL 1: LEVEL 1 - COUNTRIES LIST                            */}
             {/* ============================================================ */}
@@ -624,36 +676,67 @@ export function WorldMapSection({
                   {/* Accounts List Section */}
                   <div className="pt-1.5 flex-1 flex flex-col justify-between space-y-2.5">
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                      <div className="flex items-center justify-between gap-2 min-h-[32px]">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 shrink-0">
                           Accounts ({filteredAccounts.length})
                         </p>
-                      </div>
 
-                      {/* Compact Search Input for Accounts */}
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          value={accountSearchQuery}
-                          onChange={(e) => {
-                            setAccountSearchQuery(e.target.value);
-                            setAccountPage(1);
-                          }}
-                          placeholder="Filter accounts..."
-                          className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl pl-8 pr-7 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C]/60 transition-colors"
-                        />
-                        {accountSearchQuery && (
+                        {!isAccountSearchExpanded ? (
                           <button
                             type="button"
                             onClick={() => {
-                              setAccountSearchQuery("");
-                              setAccountPage(1);
+                              setIsAccountSearchExpanded(true);
+                              setTimeout(() => accountSearchInputRef.current?.focus(), 50);
                             }}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                            className={`flex items-center justify-center w-7 h-7 rounded-full transition-all shrink-0 cursor-pointer ${
+                              accountSearchQuery.trim()
+                                ? "bg-[#252728] border border-[#C7F33C] text-[#C7F33C] shadow-sm"
+                                : "bg-[#252728] border border-[#4E4F50] hover:border-slate-300 text-slate-400 hover:text-white"
+                            }`}
+                            title="Filter accounts"
+                            aria-label="Filter accounts"
                           >
-                            <X className="w-3 h-3" />
+                            <Search className="w-3.5 h-3.5" />
                           </button>
+                        ) : (
+                          <div
+                            ref={accountSearchContainerRef}
+                            className="flex items-center bg-[#252728] border border-[#C7F33C] rounded-full py-0.5 pl-2.5 pr-1.5 gap-1.5 w-44 sm:w-48 shrink-0 transition-all duration-200 ease-out shadow-lg animate-in fade-in zoom-in-95"
+                          >
+                            <Search className="w-3.5 h-3.5 text-[#C7F33C] shrink-0" />
+                            <input
+                              ref={accountSearchInputRef}
+                              type="text"
+                              className="flex-1 bg-transparent border-none outline-none text-xs text-slate-100 placeholder:text-slate-500 min-w-0"
+                              placeholder="Filter accounts..."
+                              value={accountSearchQuery}
+                              onChange={(e) => {
+                                setAccountSearchQuery(e.target.value);
+                                setAccountPage(1);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setAccountSearchQuery("");
+                                  setAccountPage(1);
+                                  setIsAccountSearchExpanded(false);
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAccountSearchQuery("");
+                                setAccountPage(1);
+                                setIsAccountSearchExpanded(false);
+                              }}
+                              className="text-slate-400 hover:text-slate-100 p-0.5 rounded-full hover:bg-[#3A3B3C] transition-colors shrink-0 cursor-pointer"
+                              title="Close search"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -809,36 +892,67 @@ export function WorldMapSection({
                   {/* Deals List Section */}
                   <div className="pt-1.5 flex-1 flex flex-col justify-between space-y-2.5">
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                      <div className="flex items-center justify-between gap-2 min-h-[32px]">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 shrink-0">
                           Deals ({filteredDeals.length})
                         </p>
-                      </div>
 
-                      {/* Compact Search Input for Deals */}
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                        <input
-                          type="text"
-                          value={dealSearchQuery}
-                          onChange={(e) => {
-                            setDealSearchQuery(e.target.value);
-                            setDealPage(1);
-                          }}
-                          placeholder="Filter deals..."
-                          className="w-full bg-[#252728] border border-[#4E4F50] rounded-xl pl-8 pr-7 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C]/60 transition-colors"
-                        />
-                        {dealSearchQuery && (
+                        {!isDealSearchExpanded ? (
                           <button
                             type="button"
                             onClick={() => {
-                              setDealSearchQuery("");
-                              setDealPage(1);
+                              setIsDealSearchExpanded(true);
+                              setTimeout(() => dealSearchInputRef.current?.focus(), 50);
                             }}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                            className={`flex items-center justify-center w-7 h-7 rounded-full transition-all shrink-0 cursor-pointer ${
+                              dealSearchQuery.trim()
+                                ? "bg-[#252728] border border-[#C7F33C] text-[#C7F33C] shadow-sm"
+                                : "bg-[#252728] border border-[#4E4F50] hover:border-slate-300 text-slate-400 hover:text-white"
+                            }`}
+                            title="Filter deals"
+                            aria-label="Filter deals"
                           >
-                            <X className="w-3 h-3" />
+                            <Search className="w-3.5 h-3.5" />
                           </button>
+                        ) : (
+                          <div
+                            ref={dealSearchContainerRef}
+                            className="flex items-center bg-[#252728] border border-[#C7F33C] rounded-full py-0.5 pl-2.5 pr-1.5 gap-1.5 w-44 sm:w-48 shrink-0 transition-all duration-200 ease-out shadow-lg animate-in fade-in zoom-in-95"
+                          >
+                            <Search className="w-3.5 h-3.5 text-[#C7F33C] shrink-0" />
+                            <input
+                              ref={dealSearchInputRef}
+                              type="text"
+                              className="flex-1 bg-transparent border-none outline-none text-xs text-slate-100 placeholder:text-slate-500 min-w-0"
+                              placeholder="Filter deals..."
+                              value={dealSearchQuery}
+                              onChange={(e) => {
+                                setDealSearchQuery(e.target.value);
+                                setDealPage(1);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Escape") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setDealSearchQuery("");
+                                  setDealPage(1);
+                                  setIsDealSearchExpanded(false);
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDealSearchQuery("");
+                                setDealPage(1);
+                                setIsDealSearchExpanded(false);
+                              }}
+                              className="text-slate-400 hover:text-slate-100 p-0.5 rounded-full hover:bg-[#3A3B3C] transition-colors shrink-0 cursor-pointer"
+                              title="Close search"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
                         )}
                       </div>
 
