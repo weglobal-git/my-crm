@@ -17,6 +17,7 @@ interface CalendarMonthGridProps {
   highlightedItemId?: string | null;
   compact?: boolean;
   selectedDateKey?: string | null;
+  userId?: string;
 }
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -32,6 +33,7 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
   highlightedItemId,
   compact = false,
   selectedDateKey = null,
+  userId,
 }) => {
   // Generate all 35 or 42 day cells between rangeStart and rangeEnd
   const days = useMemo(() => {
@@ -96,6 +98,7 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
               highlightedItemId={highlightedItemId}
               compact={compact}
               selected={selectedDateKey === dateKey}
+              userId={userId}
             />
           );
         })}

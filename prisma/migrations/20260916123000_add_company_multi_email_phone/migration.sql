@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Company" ADD COLUMN "emails" TEXT[] DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE "Company" ADD COLUMN "phones" TEXT[] DEFAULT ARRAY[]::TEXT[];

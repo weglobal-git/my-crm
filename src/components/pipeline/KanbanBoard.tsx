@@ -27,7 +27,7 @@ import {
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
-import { useSidebar } from "@/components/layout/SidebarContext";
+import { useSidebar, type ColumnNavConfig } from "@/components/layout/SidebarContext";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
 import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
 import { getPusherClient } from "@/lib/pusher";
@@ -78,6 +78,9 @@ import type { PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-title
 
 import type { TabType } from "./EditDealPanel";
 
+const EMPTY_PENDING_ACCELERATORS: Record<string, number> = {};
+const EMPTY_DEAL_SUMMARIES: Record<string, boolean> = {};
+
 interface KanbanBoardProps {
   currentUserId: string;
   currentUserRole?: string;
@@ -125,11 +128,12 @@ export function KanbanBoard({
   
   const tab = activeTab || searchParams.get('tab') || 'workspace';
   const searchQuery = activeSearch !== undefined ? activeSearch : (searchParams.get('search') || '');
+  const serverSearchQuery = isCompletedTab ? searchQuery : '';
 
   const { data: rawOpportunities, mutate, isLoading } = useSWR<OpportunityWithRelations[]>(
-    ['pipeline-deals', currentUserId, tab, searchQuery],
+    ['pipeline-deals', currentUserId, tab, serverSearchQuery],
     async () => {
-      const res = await getPipelineOpportunities(tab, searchQuery);
+      const res = await getPipelineOpportunities(tab, serverSearchQuery);
       return (typeof res === 'string' ? JSON.parse(res) : res) as OpportunityWithRelations[];
     },
     { 
@@ -166,7 +170,7 @@ export function KanbanBoard({
     allDealIdsRef.current = allDealIds;
   }, [allDealIds]);
 
-  const { data: pendingAcceleratorsMap = initialPendingAccelerators || {}, mutate: mutatePendingAccelerators } = useSWR(
+  const { data: rawPendingAcceleratorsMap, mutate: mutatePendingAccelerators } = useSWR(
     'pending-accelerators',
     () => getPendingAcceleratorsMap(allDealIdsRef.current),
     { 
@@ -176,6 +180,7 @@ export function KanbanBoard({
       dedupingInterval: 10_000 
     }
   );
+  const pendingAcceleratorsMap = rawPendingAcceleratorsMap || initialPendingAccelerators || EMPTY_PENDING_ACCELERATORS;
 
   // When allDealIds updates with new deals, incrementally fetch and merge missing accelerator badges
   const trackedDealIdsRef = useRef<Set<string>>(new Set(Object.keys(initialPendingAccelerators || {})));
@@ -198,7 +203,7 @@ export function KanbanBoard({
   }, [allDealIds, mutatePendingAccelerators]);
 
   // Deal summaries presence map (for showing the Bot icon only when AI summary exists)
-  const { data: dealSummariesMap = initialDealSummaries || {}, mutate: mutateDealSummaries } = useSWR<Record<string, boolean>>(
+  const { data: rawDealSummariesMap, mutate: mutateDealSummaries } = useSWR<Record<string, boolean>>(
     'deals-with-summary',
     () => getDealsWithSummaryMap(allDealIdsRef.current),
     {
@@ -208,6 +213,7 @@ export function KanbanBoard({
       dedupingInterval: 30_000,
     }
   );
+  const dealSummariesMap = rawDealSummariesMap || initialDealSummaries || EMPTY_DEAL_SUMMARIES;
 
   const trackedSummaryDealIdsRef = useRef<Set<string>>(new Set(Object.keys(initialDealSummaries || {})));
   useEffect(() => {
@@ -237,9 +243,17 @@ export function KanbanBoard({
     if (ownerFilter && ownerFilter !== 'ALL') {
       stageDeals = stageDeals.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
     }
+    if (!isCompletedTab && searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      stageDeals = stageDeals.filter(o =>
+        (o.topic && o.topic.toLowerCase().includes(q)) ||
+        (o.company?.name && o.company.name.toLowerCase().includes(q)) ||
+        (o.company?.displayName && o.company.displayName.toLowerCase().includes(q))
+      );
+    }
     acc[stage.id] = sortDeals(stageDeals, pendingAcceleratorsMap);
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, pendingAcceleratorsMap]);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
   const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
@@ -586,19 +600,34 @@ export function KanbanBoard({
   useEffect(() => {
     if (activeDeal) return; // Don't interrupt drag operations
 
-    setTimeout(() => {
-      setDeals(groupedDeals);
+    const timer = setTimeout(() => {
+      setDeals(prev => {
+        const prevKeys = Object.keys(prev);
+        const nextKeys = Object.keys(groupedDeals);
+        if (prevKeys.length !== nextKeys.length) return groupedDeals;
+        for (const key of nextKeys) {
+          const prevList = prev[key];
+          const nextList = groupedDeals[key];
+          if (!prevList || !nextList || prevList.length !== nextList.length) return groupedDeals;
+          for (let i = 0; i < prevList.length; i++) {
+            if (prevList[i] !== nextList[i]) return groupedDeals;
+          }
+        }
+        return prev;
+      });
 
       if (panelOpen) {
         setActivePanelDeal(prev => {
           if (!prev) return prev;
           const fallback = tab === initialTab ? (initialOpportunities || []) : [];
           const freshDeal = (rawOpportunities || fallback).find(o => o.id === prev.deal.id);
-          if (freshDeal) return { ...prev, deal: freshDeal };
+          if (freshDeal && freshDeal !== prev.deal) return { ...prev, deal: freshDeal };
           return prev;
         });
       }
     }, 0);
+
+    return () => clearTimeout(timer);
   }, [groupedDeals, activeDeal, panelOpen, rawOpportunities, tab, initialTab, initialOpportunities]);
 
 
@@ -606,13 +635,21 @@ export function KanbanBoard({
     if (isCompletedTab) {
       const t = setTimeout(() => {
         if (rawOpportunities) {
-          setCompletedDeals(rawOpportunities);
+          setCompletedDeals(prev => {
+            if (prev.length === rawOpportunities.length && prev.every((d, i) => d === rawOpportunities[i])) return prev;
+            return rawOpportunities;
+          });
           setHasMoreCompleted(rawOpportunities.length === 20);
         } else if (tab === initialTab) {
-          setCompletedDeals(initialOpportunities || []);
-          setHasMoreCompleted((initialOpportunities || []).length === 20);
+          const fallback = initialOpportunities || [];
+          setCompletedDeals(prev => {
+            if (prev.length === fallback.length && prev.every((d, i) => d === fallback[i])) return prev;
+            return fallback;
+          });
+          setHasMoreCompleted(fallback.length === 20);
         } else {
-          setCompletedDeals([]);
+          setCompletedDeals(prev => (prev.length === 0 ? prev : []));
+          setHasMoreCompleted(false);
         }
       }, 0);
       return () => clearTimeout(t);
@@ -871,9 +908,13 @@ export function KanbanBoard({
   }, [initialStages, isCompletedTab]);
 
   // Register column navigation with SidebarContext for floating buttons
+  const prevColumnNavConfigRef = useRef<ColumnNavConfig | null>(null);
   useEffect(() => {
     if (isCompletedTab || initialStages.length === 0) {
-      setColumnNavConfig(null);
+      if (prevColumnNavConfigRef.current !== null) {
+        prevColumnNavConfigRef.current = null;
+        setColumnNavConfig(null);
+      }
       return;
     }
 
@@ -881,20 +922,46 @@ export function KanbanBoard({
     const currentDeals = currentStage ? (deals[currentStage.id] || []) : [];
     const currentCount = currentDeals.length;
     const currentRedCount = currentDeals.filter(checkIsRedCard).length;
-    setColumnNavConfig({
-      hasPrev: activeColumnIndex > 0,
-      hasNext: activeColumnIndex < initialStages.length - 1,
+    const hasPrev = activeColumnIndex > 0;
+    const hasNext = activeColumnIndex < initialStages.length - 1;
+    const currentTitle = currentStage?.name || "";
+    const totalColumns = initialStages.length;
+
+    const prev = prevColumnNavConfigRef.current;
+    if (
+      prev &&
+      prev.hasPrev === hasPrev &&
+      prev.hasNext === hasNext &&
+      prev.currentTitle === currentTitle &&
+      prev.currentIndex === activeColumnIndex &&
+      prev.totalColumns === totalColumns &&
+      prev.currentCount === currentCount &&
+      prev.currentRedCount === currentRedCount
+    ) {
+      return;
+    }
+
+    const nextConfig: ColumnNavConfig = {
+      hasPrev,
+      hasNext,
       onPrev: () => scrollToColumn(activeColumnIndex - 1),
       onNext: () => scrollToColumn(activeColumnIndex + 1),
-      currentTitle: currentStage?.name || "",
+      currentTitle,
       currentIndex: activeColumnIndex,
-      totalColumns: initialStages.length,
+      totalColumns,
       currentCount,
       currentRedCount,
-    });
-
-    return () => setColumnNavConfig(null);
+    };
+    prevColumnNavConfigRef.current = nextConfig;
+    setColumnNavConfig(nextConfig);
   }, [isCompletedTab, initialStages, activeColumnIndex, scrollToColumn, setColumnNavConfig, deals]);
+
+  useEffect(() => {
+    return () => {
+      prevColumnNavConfigRef.current = null;
+      setColumnNavConfig(null);
+    };
+  }, [setColumnNavConfig]);
 
   // Auto-scroll selected card into view smoothly
   useEffect(() => {

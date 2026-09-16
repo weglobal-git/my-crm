@@ -135,6 +135,9 @@ model Company {
   displayName   String?
   name          String
   phone         String?
+  email         String?
+  emails        String[]         @default([])
+  phones        String[]         @default([])
   address       String?
   notes         String?
   country       String?

@@ -18,7 +18,7 @@ import {
   getCalendarEventDetailAction,
   getUserDepartmentsAction,
 } from "@/lib/actions/calendar";
-import { calendarDepartmentsKey } from "@/lib/calendar/calendar-cache";
+import { calendarDepartmentsKey, calendarEventDetailKey } from "@/lib/calendar/calendar-cache";
 import type { CalendarRepeatFrequency } from "@prisma/client";
 import type { CalendarMonthItemDTO } from "@/lib/calendar/calendar-dto";
 import { useCalendarDialog } from "@/lib/calendar/use-calendar-dialog";
@@ -26,19 +26,21 @@ import { calendarPanelBackdropClass, calendarPanelMotionClass, useCalendarPanelT
 import { CalendarSelect } from './CalendarSelect';
 import { CalendarDatePicker } from '@/components/ui/CalendarDatePicker';
 import { CalendarTimePicker } from './CalendarTimePicker';
+import { useDialog } from '@/providers/DialogProvider';
 
 export interface CalendarEventPanelProps {
   isOpen: boolean;
   onClose: () => void;
   editingItemId?: string | null;
   editingOccurrence?: { itemId: string; startAt: string } | null;
+  initialItem?: CalendarMonthItemDTO | null;
   defaultDate?: Date | null;
   onSaveSuccess?: (item: CalendarMonthItemDTO, recurring: boolean, optimisticId?: string) => void;
   onOptimisticSave?: (item: CalendarMonthItemDTO, mutationId: string) => () => void;
   onOptimisticDelete?: (eventId: string, mutationId: string) => () => void;
   onDeleteSuccess?: (deletedId: string) => void;
   currentUserId?: string;
-  initialDepartments?: Array<{ id: string; name: string }>;
+  initialDepartments?: Array<{ id: string; name?: string; label?: string }>;
   refreshToken?: number;
 }
 
@@ -47,6 +49,7 @@ export function CalendarEventPanel({
   onClose,
   editingItemId,
   editingOccurrence,
+  initialItem,
   defaultDate,
   onSaveSuccess,
   onOptimisticSave,
@@ -62,14 +65,39 @@ export function CalendarEventPanel({
   const createRequestIdRef = useRef(`cal-${crypto.randomUUID()}`);
   const isEditMode = Boolean(editingItemId);
   const draftKey = editingItemId || "new";
+  const { toast } = useDialog();
+
+  const isInitialMatch = Boolean(
+    initialItem && editingItemId && (initialItem.sourceId === editingItemId || initialItem.id === editingItemId)
+  );
+
+  const normalizedInitialDepartments = useMemo<Array<{ id: string; name: string }>>(() => {
+    return (initialDepartments || []).map((d) => ({
+      id: d.id,
+      name: d.name || d.label || '',
+    }));
+  }, [initialDepartments]);
 
   // Available departments for selector
-  const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>(initialDepartments);
+  const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>(normalizedInitialDepartments);
+
+  useEffect(() => {
+    if (normalizedInitialDepartments.length > 0 && departments.length === 0) {
+      const timer = setTimeout(() => {
+        setDepartments(normalizedInitialDepartments);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [normalizedInitialDepartments, departments.length]);
 
   // Detail / revision state for edit mode
-  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
-  const [expectedRevision, setExpectedRevision] = useState(1);
-  const [canEdit, setCanEdit] = useState(true);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(!isInitialMatch && isEditMode);
+  const [expectedRevision, setExpectedRevision] = useState(
+    isInitialMatch && initialItem?.revision ? initialItem.revision : 1
+  );
+  const [canEdit, setCanEdit] = useState(
+    isInitialMatch && initialItem?.canEdit !== undefined ? initialItem.canEdit : true
+  );
   const [selectedTagDetails, setSelectedTagDetails] = useState<Array<{ id: string; name: string; color: string; departmentId: string }>>([]);
   const [prevEditingItemId, setPrevEditingItemId] = useState<string | null>(null);
 
@@ -101,7 +129,7 @@ export function CalendarEventPanel({
 
   if (isOpen && isEditMode && editingItemId && editingItemId !== prevEditingItemId) {
     setPrevEditingItemId(editingItemId);
-    setIsLoadingDetail(true);
+    setIsLoadingDetail(!isInitialMatch);
     setErrorMsg(null);
   } else if (!isOpen && prevEditingItemId !== null) {
     setPrevEditingItemId(null);
@@ -109,6 +137,25 @@ export function CalendarEventPanel({
 
   // Compute fallback dates
   const initialFallbackDraft = useMemo<CalendarEventDraft>(() => {
+    if (isInitialMatch && initialItem) {
+      const baseStart = editingOccurrence?.startAt || initialItem.startAt;
+      const baseEnd = initialItem.endAt || addHours(new Date(baseStart), 1).toISOString();
+      return {
+        name: initialItem.title || "",
+        detail: "",
+        departmentId: initialItem.departmentId || departments[0]?.id || "",
+        allDay: Boolean(initialItem.allDay),
+        startAt: baseStart,
+        endAt: baseEnd,
+        repeatFrequency: "NONE",
+        repeatUntil: null,
+        tagIds: initialItem.tagIds || [],
+        reminderEnabled: true,
+        reminderOffsetMins: 0,
+        recipients: [],
+      };
+    }
+
     const baseDate = defaultDate ? new Date(defaultDate) : new Date();
     const start = new Date(baseDate);
     start.setHours(9, 0, 0, 0);
@@ -128,7 +175,7 @@ export function CalendarEventPanel({
       reminderOffsetMins: 0,
       recipients: [],
     };
-  }, [defaultDate, departments]);
+  }, [defaultDate, departments, isInitialMatch, initialItem, editingOccurrence]);
 
   // Draft store hook
   const { draft, updateDraft, clearCurrentDraft } = useCalendarDraft(
@@ -153,64 +200,87 @@ export function CalendarEventPanel({
 
   useEffect(() => {
     if (cachedDepartments && cachedDepartments.length > 0 && departments.length === 0) {
-      setDepartments(cachedDepartments);
-      if (!draft.departmentId) {
-        updateDraft({ departmentId: cachedDepartments[0].id });
-      }
+      const timer = setTimeout(() => {
+        setDepartments(cachedDepartments);
+        if (!draft.departmentId) {
+          updateDraft({ departmentId: cachedDepartments[0].id });
+        }
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [cachedDepartments, departments.length, draft.departmentId, updateDraft]);
 
-  // If in edit mode, fetch authoritative detail from server
-  useEffect(() => {
-    if (isOpen && isEditMode && editingItemId) {
-      let isMounted = true;
-      getCalendarEventDetailAction(editingItemId)
-        .then((res) => {
-          if (!isMounted) return;
-          if (res.success && res.event) {
-            const ev = res.event;
-            setExpectedRevision(ev.revision);
-            setCanEdit(ev.canEdit);
-            setSelectedTagDetails(ev.tags.map((tag) => ({ ...tag, departmentId: ev.departmentId })));
+  // SWR hook for authoritative event detail from server
+  const detailKey = isOpen && isEditMode && editingItemId
+    ? calendarEventDetailKey(currentUserId || 'default', editingItemId)
+    : null;
 
-            if (!hasUserModifiedDraftRef.current) {
-              updateDraft({
-                name: ev.name,
-                detail: ev.detail || "",
-                departmentId: ev.departmentId,
-                allDay: ev.allDay,
-                startAt: ev.startAt,
-                endAt: ev.endAt,
-                repeatFrequency: ev.repeatFrequency as CalendarRepeatFrequency,
-                repeatUntil: ev.repeatUntil,
-                tagIds: ev.tags.map((t: { id: string }) => t.id),
-                reminderEnabled: ev.recipients.some((r: RecipientState) => r.reminderEnabled),
-                reminderOffsetMins: ev.recipients.find((r: RecipientState) => r.reminderEnabled)?.reminderOffsetMins ?? 0,
-                recipients: ev.recipients.map((r: RecipientState) => ({
-                  userId: r.userId,
-                  name: r.name,
-                  email: r.email,
-                  image: r.image,
-                  reminderEnabled: r.reminderEnabled,
-                  reminderOffsetMins: r.reminderOffsetMins,
-                })),
-              });
-            }
-          } else {
-            setErrorMsg(res.error || "Could not load event details");
-          }
-        })
-        .catch((err) => {
-          if (isMounted) setErrorMsg(err instanceof Error ? err.message : "Failed to load event");
-        })
-        .finally(() => {
-          if (isMounted) setIsLoadingDetail(false);
-        });
-      return () => {
-        isMounted = false;
-      };
+  const { data: detailRes, error: detailErr, mutate: mutateDetail } = useSWR(
+    detailKey,
+    async () => {
+      const res = await getCalendarEventDetailAction(editingItemId!);
+      if (!res.success || !res.event) {
+        throw new Error(res.error || "Could not load event details");
+      }
+      return res;
+    },
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 30_000,
     }
-  }, [isOpen, isEditMode, editingItemId, refreshToken, updateDraft]);
+  );
+
+  useEffect(() => {
+    if (refreshToken > 0 && detailKey) {
+      mutateDetail();
+    }
+  }, [refreshToken, detailKey, mutateDetail]);
+
+  useEffect(() => {
+    if (!isOpen || !isEditMode || !editingItemId) return;
+
+    const timer = setTimeout(() => {
+      if (detailErr) {
+        setErrorMsg(detailErr instanceof Error ? detailErr.message : "Failed to load event");
+        setIsLoadingDetail(false);
+        return;
+      }
+
+      if (detailRes?.event) {
+        const ev = detailRes.event;
+        setExpectedRevision(ev.revision);
+        setCanEdit(ev.canEdit);
+        setSelectedTagDetails(ev.tags.map((tag) => ({ ...tag, departmentId: ev.departmentId })));
+
+        if (!hasUserModifiedDraftRef.current) {
+          updateDraft({
+            name: ev.name,
+            detail: ev.detail || "",
+            departmentId: ev.departmentId,
+            allDay: ev.allDay,
+            startAt: ev.startAt,
+            endAt: ev.endAt,
+            repeatFrequency: ev.repeatFrequency as CalendarRepeatFrequency,
+            repeatUntil: ev.repeatUntil,
+            tagIds: ev.tags.map((t: { id: string }) => t.id),
+            reminderEnabled: ev.recipients.some((r: RecipientState) => r.reminderEnabled),
+            reminderOffsetMins: ev.recipients.find((r: RecipientState) => r.reminderEnabled)?.reminderOffsetMins ?? 0,
+            recipients: ev.recipients.map((r: RecipientState) => ({
+              userId: r.userId,
+              name: r.name,
+              email: r.email,
+              image: r.image,
+              reminderEnabled: r.reminderEnabled,
+              reminderOffsetMins: r.reminderOffsetMins,
+            })),
+          });
+        }
+        setIsLoadingDetail(false);
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, isEditMode, editingItemId, detailRes, detailErr, updateDraft]);
 
   useCalendarDialog(isOpen, panelRef, onClose, titleInputRef);
 
@@ -297,9 +367,10 @@ export function CalendarEventPanel({
     setIsSubmitting(true);
     setErrorMsg(null);
 
+    const isNonRecurring = draft.repeatFrequency === "NONE";
     const mutationId = isEditMode ? `cal-${crypto.randomUUID()}` : createRequestIdRef.current;
     const requestId = isEditMode && editingItemId ? editingItemId : `optimistic:${createRequestIdRef.current}`;
-    const rollback = draft.repeatFrequency === "NONE" ? onOptimisticSave?.({
+    const rollback = isNonRecurring ? onOptimisticSave?.({
       id: requestId,
       sourceType: "EVENT",
       sourceId: requestId,
@@ -314,6 +385,11 @@ export function CalendarEventPanel({
       canEdit: true,
       revision: isEditMode ? expectedRevision : 0,
     }, mutationId) : undefined;
+
+    if (isNonRecurring) {
+      clearCurrentDraft();
+      onClose();
+    }
 
     try {
       if (isEditMode && editingItemId) {
@@ -340,18 +416,37 @@ export function CalendarEventPanel({
         });
 
         if (res.success && res.item) {
-          clearCurrentDraft();
+          if (!isNonRecurring) {
+            clearCurrentDraft();
+            onClose();
+          }
           onSaveSuccess?.(res.item, draft.repeatFrequency !== "NONE", requestId);
-          onClose();
         } else if (res.error === "REVISION_CONFLICT") {
           rollback?.();
-          setErrorMsg("Another user updated this event. Please close and re-open to review changes.");
+          toast({
+            title: "Revision Conflict",
+            description: "Another user updated this event. Please review changes.",
+            type: "error",
+          });
+          if (!isNonRecurring) {
+            setErrorMsg("Another user updated this event. Please close and re-open to review changes.");
+          }
         } else {
           rollback?.();
-          setErrorMsg(res.error || "Failed to update event");
+          toast({
+            title: "Failed to update event",
+            description: res.error || "An unexpected error occurred.",
+            type: "error",
+          });
+          if (!isNonRecurring) {
+            setErrorMsg(res.error || "Failed to update event");
+          }
         }
       } else {
         // Create action with client-generated idempotency key
+        const currentKey = createRequestIdRef.current;
+        createRequestIdRef.current = `cal-${crypto.randomUUID()}`;
+
         const res = await createCalendarEventAction({
           name: draft.name.trim(),
           detail: draft.detail.trim() || null,
@@ -368,22 +463,37 @@ export function CalendarEventPanel({
             reminderEnabled: draft.reminderEnabled,
             reminderOffsetMins: draft.reminderOffsetMins,
           })),
-          idempotencyKey: createRequestIdRef.current,
+          idempotencyKey: currentKey,
         });
 
         if (res.success && res.item) {
-          createRequestIdRef.current = `cal-${crypto.randomUUID()}`;
-          clearCurrentDraft();
+          if (!isNonRecurring) {
+            clearCurrentDraft();
+            onClose();
+          }
           onSaveSuccess?.(res.item, draft.repeatFrequency !== "NONE", requestId);
-          onClose();
         } else {
           rollback?.();
-          setErrorMsg(res.error || "Failed to create event");
+          toast({
+            title: "Failed to create event",
+            description: res.error || "An unexpected error occurred.",
+            type: "error",
+          });
+          if (!isNonRecurring) {
+            setErrorMsg(res.error || "Failed to create event");
+          }
         }
       }
     } catch (err: unknown) {
       rollback?.();
-      setErrorMsg(err instanceof Error ? err.message : "Error saving event");
+      toast({
+        title: "Error saving event",
+        description: err instanceof Error ? err.message : "Network error",
+        type: "error",
+      });
+      if (!isNonRecurring) {
+        setErrorMsg(err instanceof Error ? err.message : "Error saving event");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -502,7 +612,7 @@ export function CalendarEventPanel({
 
         {/* Form Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-          {isLoadingDetail ? (
+          {isLoadingDetail && !isInitialMatch && !draft.name ? (
             <div className="flex flex-col items-center justify-center py-12 text-neutral-400 gap-2">
               <Loader2 className="w-6 h-6 animate-spin text-[#C7F33C]" />
               <span>Loading event details...</span>

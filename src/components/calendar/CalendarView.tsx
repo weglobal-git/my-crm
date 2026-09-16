@@ -57,6 +57,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   // Drawer state
   const [isPanelOpen, setIsPanelOpen] = useState(Boolean(initialEventId));
   const [editingItemId, setEditingItemId] = useState<string | null>(initialEventId || null);
+  const [editingItem, setEditingItem] = useState<CalendarMonthItemDTO | null>(null);
   const [editingOccurrence, setEditingOccurrence] = useState<{ itemId: string; startAt: string } | null>(
     initialEventId && initialOccurrenceStartAt
       ? { itemId: `event:${initialEventId}:${initialOccurrenceStartAt}`, startAt: initialOccurrenceStartAt }
@@ -217,6 +218,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     }
     if (item.sourceType === 'EVENT') {
       setEditingItemId(item.sourceId);
+      setEditingItem(item);
       const occurrenceStart = getOccurrenceStartFromItemId(item.id, item.sourceId);
       setEditingOccurrence(occurrenceStart ? { itemId: item.id, startAt: occurrenceStart } : null);
       setIsPanelOpen(true);
@@ -430,10 +432,23 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     }, false);
   }, [mutate, userId]);
 
+  // Automatically prefetch adjacent months (next and prev) in the background during idle time
+  useEffect(() => {
+    if (!isCurrentSnapshot || isLoading) return;
+
+    const timer = window.setTimeout(() => {
+      prefetchAdjacentMonth(1);
+      prefetchAdjacentMonth(-1);
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [isCurrentSnapshot, isLoading, month, prefetchAdjacentMonth, year]);
+
   const handleDayClick = useCallback((date: Date) => {
     prefetchEventPanel();
     eventPanelTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setEditingItemId(null);
+    setEditingItem(null);
     setEditingOccurrence(null);
     setPanelDefaultDate(date);
     setIsPanelOpen(true);
@@ -445,6 +460,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       prefetchEventPanel();
       eventPanelTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setEditingItemId(item.sourceId);
+      setEditingItem(item);
       const occurrenceStart = getOccurrenceStartFromItemId(item.id, item.sourceId);
       setEditingOccurrence(occurrenceStart ? { itemId: item.id, startAt: occurrenceStart } : null);
       setIsPanelOpen(true);
@@ -717,14 +733,13 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           onOpenFiltersIntent={prefetchFiltersPanel}
           activeFilterCount={calendarFilterCount(filters)}
           isDragging={Boolean(activeDragItem)}
+          isLoading={isLoading && !isCurrentSnapshot}
         />
 
         {isMobileViewport !== true && <div className="hidden flex-1 min-h-0 flex-col relative md:flex">
-          {isLoading && !snapshotData && (
-            <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px] z-10 flex items-center justify-center rounded-2xl pointer-events-none">
-              <div className="px-4 py-2 rounded-xl bg-[#3A3B3C] border border-[#4E4F50] text-xs text-slate-300 font-medium">
-                Loading month...
-              </div>
+          {isLoading && !isCurrentSnapshot && (
+            <div className="absolute top-0 inset-x-0 z-20 h-0.5 bg-[#3A3B3C] overflow-hidden rounded-t-2xl">
+              <div className="h-full bg-[#C7F33C] w-1/3 animate-pulse" />
             </div>
           )}
 
@@ -737,10 +752,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             onItemClick={handleItemClick}
             onDayClick={handleDayClick}
             highlightedItemId={highlightedItemId}
+            userId={userId}
           />
         </div>}
         {isMobileViewport === true && <div className="flex min-h-0 flex-1 flex-col gap-3 md:hidden">
-          <CalendarMonthGrid rangeStart={new Date(activeSnapshot.rangeStart)} rangeEnd={new Date(activeSnapshot.rangeEnd)} currentYear={year} currentMonth={month} items={filteredItems} compact selectedDateKey={selectedMobileDateKey} onDayClick={setSelectedMobileDate} />
+          <CalendarMonthGrid rangeStart={new Date(activeSnapshot.rangeStart)} rangeEnd={new Date(activeSnapshot.rangeEnd)} currentYear={year} currentMonth={month} items={filteredItems} compact selectedDateKey={selectedMobileDateKey} onDayClick={setSelectedMobileDate} userId={userId} />
           <CalendarMobileAgenda date={selectedMobileDate} items={selectedMobileItems} onEventClick={handleItemClick} />
         </div>}
       </div>
@@ -766,12 +782,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           onClose={closeEventPanel}
           editingItemId={editingItemId}
           editingOccurrence={editingOccurrence}
+          initialItem={editingItem}
           defaultDate={panelDefaultDate}
           onSaveSuccess={handleSaveSuccess}
           onOptimisticSave={handleOptimisticSave}
           onOptimisticDelete={handleOptimisticDelete}
           onDeleteSuccess={handleDeleteSuccess}
           currentUserId={userId}
+          initialDepartments={filterOptions.departments}
           refreshToken={detailRefreshToken}
         />
       )}

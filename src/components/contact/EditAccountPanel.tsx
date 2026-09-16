@@ -267,7 +267,20 @@ export function EditAccountPanel({
   // Company Profile Form State
   const [displayName, setDisplayName] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.displayName || initialOverview.company.name || "") : "");
   const [name, setName] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.name || "") : "");
-  const [phone, setPhone] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.phone || "") : "");
+  const [phones, setPhones] = useState<string[]>(() => {
+    if (isInitialMatch && initialOverview) {
+      if (initialOverview.company.phones && initialOverview.company.phones.length > 0) return initialOverview.company.phones;
+      if (initialOverview.company.phone) return [initialOverview.company.phone];
+    }
+    return [""];
+  });
+  const [emails, setEmails] = useState<string[]>(() => {
+    if (isInitialMatch && initialOverview) {
+      if (initialOverview.company.emails && initialOverview.company.emails.length > 0) return initialOverview.company.emails;
+      if (initialOverview.company.email) return [initialOverview.company.email];
+    }
+    return [""];
+  });
   const [accountType, setAccountType] = useState<ContactType>(() => isInitialMatch && initialOverview ? (initialOverview.company.type || "CUSTOMER") : "CUSTOMER");
   const [country, setCountry] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.country || "") : "");
   const [notes, setNotes] = useState(() => isInitialMatch && initialOverview ? (initialOverview.company.notes || "") : "");
@@ -324,7 +337,10 @@ export function EditAccountPanel({
     setOverview(res);
     setName(res.company.name || "");
     setDisplayName(res.company.displayName || res.company.name || "");
-    setPhone(res.company.phone || "");
+    const overviewEmails = res.company.emails?.length ? res.company.emails : (res.company.email ? [res.company.email] : [""]);
+    const overviewPhones = res.company.phones?.length ? res.company.phones : (res.company.phone ? [res.company.phone] : [""]);
+    setEmails(overviewEmails);
+    setPhones(overviewPhones);
     setAccountType(res.company.type || "CUSTOMER");
     setCountry(res.company.country || "");
     setNotes(res.company.notes || "");
@@ -360,29 +376,38 @@ export function EditAccountPanel({
 
   useEffect(() => {
     if (swrOverview) {
-      applyOverviewData(swrOverview);
-      setIsLoading(false);
+      const timer = setTimeout(() => {
+        applyOverviewData(swrOverview);
+        setIsLoading(false);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [swrOverview, applyOverviewData]);
 
   useEffect(() => {
     if (swrError) {
-      setIsLoading(false);
-      const msg = swrError instanceof Error ? swrError.message : "Failed to load account details";
-      toast({ title: "Error", description: msg, type: "error" });
+      const timer = setTimeout(() => {
+        setIsLoading(false);
+        const msg = swrError instanceof Error ? swrError.message : "Failed to load account details";
+        toast({ title: "Error", description: msg, type: "error" });
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [swrError, toast]);
 
   useEffect(() => {
-    if (!isOpen) {
-      setIsAddingPerson(false);
-      setExpandedPersonIds(new Set());
-      return;
-    }
+    const timer = setTimeout(() => {
+      if (!isOpen) {
+        setIsAddingPerson(false);
+        setExpandedPersonIds(new Set());
+        return;
+      }
 
-    if (selectedContactId) {
-      setExpandedPersonIds(new Set([selectedContactId]));
-    }
+      if (selectedContactId) {
+        setExpandedPersonIds(new Set([selectedContactId]));
+      }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [isOpen, selectedContactId]);
 
   // Idle Background Preloading: warms JS chunks & SWR cache for Account AI & Shared Media (0ms tab switch)
@@ -437,13 +462,22 @@ export function EditAccountPanel({
     if (!name.trim()) {
       return toast({ title: "Validation", description: "Account name is required", type: "warning" });
     }
+    const validEmails = emails.map((e) => e.trim()).filter(Boolean);
+    const invalidEmail = validEmails.find((e) => !isValidEmail(e));
+    if (invalidEmail) {
+      return toast({ title: "Validation", description: `"${invalidEmail}" is not a valid email address`, type: "warning" });
+    }
+    const validPhones = phones.map((p) => p.trim()).filter(Boolean);
 
     setIsSavingDetails(true);
     try {
       await updateCompanyDetails(companyId, {
         displayName: displayName.trim(),
         name: name.trim(),
-        phone: phone.trim() || null,
+        phone: validPhones[0] || null,
+        email: validEmails[0] || null,
+        phones: validPhones,
+        emails: validEmails,
         country: country.trim() || undefined,
         type: accountType,
         notes: notes.trim() || undefined,
@@ -459,7 +493,10 @@ export function EditAccountPanel({
           ...prev.company,
           name: name.trim(),
           displayName: displayName.trim(),
-          phone: phone.trim() || null,
+          phone: validPhones[0] || null,
+          email: validEmails[0] || null,
+          phones: validPhones,
+          emails: validEmails,
           country: country.trim() || null,
           type: accountType,
           notes: notes.trim() || null,
@@ -470,6 +507,9 @@ export function EditAccountPanel({
         displayName: displayName.trim(),
         country: country.trim() || null,
         type: accountType,
+        email: validEmails[0] || null,
+        emails: validEmails,
+        phones: validPhones,
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to update account";
@@ -1124,24 +1164,88 @@ export function EditAccountPanel({
                         />
                       </div>
 
-                      {/* Office Phone / Landline */}
+                      {/* Email Addresses */}
                       <div className="flex flex-col gap-1.5 md:col-span-2">
-                        <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                          <span className="flex items-center gap-1.5">
-                            <Building2 className="w-3.5 h-3.5 text-[#C7F33C]" />
-                            <span>Office Phone / Landline</span>
-                          </span>
-                          <span className="text-xs text-slate-400 font-normal">
-                            e.g. 02 123 4567 ext. 12 or +66 2 123 4567
-                          </span>
-                        </label>
-                        <input
-                          type="text"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="e.g. 02 123 4567 ext. 12"
-                          className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
-                        />
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                            <Mail className="w-3.5 h-3.5 text-slate-400" />
+                            <span>Email Addresses</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setEmails((prev) => [...prev, ""])}
+                            className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            + Add Email
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {emails.map((emailVal, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <EmailInput
+                                value={emailVal}
+                                onChange={(val) => {
+                                  const next = [...emails];
+                                  next[idx] = val;
+                                  setEmails(next);
+                                }}
+                                placeholder="e.g. somchai@company.com"
+                                className="flex-1"
+                              />
+                              {emails.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEmails((prev) => prev.filter((_, i) => i !== idx))}
+                                  className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Phone Numbers */}
+                      <div className="flex flex-col gap-1.5 md:col-span-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                            <Phone className="w-3.5 h-3.5 text-slate-400" />
+                            <span>Phone Numbers</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setPhones((prev) => [...prev, ""])}
+                            className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            + Add Phone
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {phones.map((phoneVal, idx) => (
+                            <div key={idx} className="flex items-center gap-2">
+                              <PhoneInputWithCountry
+                                value={phoneVal}
+                                onChange={(val) => {
+                                  const next = [...phones];
+                                  next[idx] = val;
+                                  setPhones(next);
+                                }}
+                                placeholder="081 234 5678"
+                                className="flex-1"
+                              />
+                              {phones.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPhones((prev) => prev.filter((_, i) => i !== idx))}
+                                  className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
 
@@ -1459,11 +1563,6 @@ export function EditAccountPanel({
                                     <span className="text-xs font-bold text-slate-200 truncate">
                                       Address #{idx + 1}
                                     </span>
-
-                                    <span className="text-xs text-slate-400 px-2 py-0.5 rounded-full bg-[#252728] w-fit">
-                                      {addr.type}
-                                    </span>
-
                                     {!isExpanded && summary && (
                                       <span className="text-xs text-slate-400 truncate max-w-xs sm:max-w-md hidden sm:inline ml-1">
                                         • {summary}
@@ -2394,7 +2493,7 @@ export function EditAccountPanel({
 
               <EmailTab
                 customerName={activeEmailContact?.name || name}
-                customerEmail={activeEmailContact?.email || null}
+                customerEmail={activeEmailContact?.email || emails[0] || null}
               />
             </div>
           )}

@@ -396,10 +396,12 @@ export async function createCalendarEventAction(
     });
 
     const createdRange = getCalendarEventAffectedRange(event);
-    await dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
+    void dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
       action: 'ITEM_CREATED', itemId: event.id, revision: event.revision,
       mutationId: input.idempotencyKey, ...createdRange,
-    }), [{ ownerId: event.owner.id, departmentId: event.departmentId, recipientIds: input.recipients.map((recipient) => recipient.userId) }]);
+    }), [{ ownerId: event.owner.id, departmentId: event.departmentId, recipientIds: input.recipients.map((recipient) => recipient.userId) }]).catch((err) => {
+      console.error('[CALENDAR-REALTIME] Create event dispatch failed:', err);
+    });
 
     return { success: true, item: toMonthItem(event) };
   } catch (err: unknown) {
@@ -540,13 +542,15 @@ export async function updateCalendarEventAction(
     const newRange = getCalendarEventAffectedRange(updated);
     const affectedStart = new Date(Math.min(oldRange.startAt.getTime(), newRange.startAt.getTime()));
     const affectedEnd = new Date(Math.max(oldRange.endAt.getTime(), newRange.endAt.getTime()));
-    await dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
+    void dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
       action: 'ITEM_UPDATED', itemId: updated.id, revision: updated.revision,
       mutationId: input.mutationId, startAt: affectedStart, endAt: affectedEnd,
     }), [
       { ownerId: existing.ownerId, departmentId: existing.departmentId, recipientIds: existing.recipients.map((recipient) => recipient.userId) },
       { ownerId: existing.ownerId, departmentId: updated.departmentId, recipientIds: input.recipients.map((recipient) => recipient.userId) },
-    ]);
+    ]).catch((err) => {
+      console.error('[CALENDAR-REALTIME] Update event dispatch failed:', err);
+    });
 
     const tagColor = updated.tags?.[0]?.tag?.color || '#3B82F6';
     const tagIds = updated.tags?.map((t) => t.tagId) || [];
@@ -622,10 +626,12 @@ export async function deleteCalendarEventAction(
     }
 
     const deletedRange = getCalendarEventAffectedRange(existing);
-    await dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
+    void dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
       action: 'ITEM_DELETED', itemId: existing.id, revision: existing.revision + 1,
       mutationId: input.mutationId, ...deletedRange,
-    }), [{ ownerId: existing.ownerId, departmentId: existing.departmentId, recipientIds: existing.recipients.map((recipient) => recipient.userId) }]);
+    }), [{ ownerId: existing.ownerId, departmentId: existing.departmentId, recipientIds: existing.recipients.map((recipient) => recipient.userId) }]).catch((err) => {
+      console.error('[CALENDAR-REALTIME] Delete event dispatch failed:', err);
+    });
 
     return { success: true, deletedId: input.id };
   } catch (err: unknown) {
@@ -673,10 +679,12 @@ export async function cancelCalendarEventOccurrenceAction(input: {
       });
       return tx.calendarEvent.findUniqueOrThrow({ where: { id: existing.id }, select: { revision: true } });
     });
-    await dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
+    void dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
       action: 'ITEM_UPDATED', itemId: existing.id, revision: updated.revision, mutationId: input.mutationId,
       startAt: occurrenceStartAt, endAt: new Date(occurrenceStartAt.getTime() + duration),
-    }), [{ ownerId: existing.ownerId, departmentId: existing.departmentId, recipientIds: existing.recipients.map(({ userId }) => userId) }]);
+    }), [{ ownerId: existing.ownerId, departmentId: existing.departmentId, recipientIds: existing.recipients.map(({ userId }) => userId) }]).catch((err) => {
+      console.error('[CALENDAR-REALTIME] Cancel occurrence dispatch failed:', err);
+    });
     return { success: true, revision: updated.revision, cancelledItemId: `event:${existing.id}:${occurrenceStartAt.toISOString()}` };
   } catch (err: unknown) {
     return { success: false, error: err instanceof Error ? err.message : 'Failed to cancel occurrence' };
@@ -1061,10 +1069,12 @@ export async function moveCalendarItemAction(input: {
       affectedStart = new Date(Math.min(oldRange.startAt.getTime(), newRange.startAt.getTime()));
       affectedEnd = new Date(Math.max(oldRange.endAt.getTime(), newRange.endAt.getTime()));
     }
-    await dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
+    void dispatchCalendarRealtimeEvent(buildCalendarRealtimeEvent({
       action: 'ITEM_UPDATED', itemId: existing.id, revision: moved.revision, mutationId: input.mutationId,
       startAt: affectedStart, endAt: affectedEnd,
-    }), [{ ownerId: existing.ownerId, departmentId: existing.departmentId, recipientIds: existing.recipients.map((recipient) => recipient.userId) }]);
+    }), [{ ownerId: existing.ownerId, departmentId: existing.departmentId, recipientIds: existing.recipients.map((recipient) => recipient.userId) }]).catch((err) => {
+      console.error('[CALENDAR-REALTIME] Move item dispatch failed:', err);
+    });
     return { success: true, revision: moved.revision, startAt: startAt.toISOString(), endAt: endAt.toISOString() };
   } catch (err: unknown) {
     return { success: false, error: err instanceof Error ? err.message : 'Failed to move calendar item' };

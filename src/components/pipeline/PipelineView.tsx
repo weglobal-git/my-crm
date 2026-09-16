@@ -56,10 +56,13 @@ export function PipelineView({
   const [stageTitlesByDepartment, setStageTitlesByDepartment] = useState(initialStageTitlesByDepartment);
   const { setPageManageContent, setHasActiveFilters, setPageSearchConfig } = useSidebar();
 
+  const isCompletedTab = tab === 'completed';
+  const serverSearchQuery = isCompletedTab ? searchQuery : '';
+
   const { data: rawOpportunities } = useSWR<OpportunityWithRelations[]>(
-    ['pipeline-deals', userId, tab, searchQuery],
+    ['pipeline-deals', userId, tab, serverSearchQuery],
     async () => {
-      const res = await getPipelineOpportunities(tab, searchQuery);
+      const res = await getPipelineOpportunities(tab, serverSearchQuery);
       return (typeof res === 'string' ? JSON.parse(res) : res) as OpportunityWithRelations[];
     },
     {
@@ -85,8 +88,16 @@ export function PipelineView({
     if (ownerFilter && ownerFilter !== 'ALL') {
       list = list.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
     }
+    if (!isCompletedTab && searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(o =>
+        (o.topic && o.topic.toLowerCase().includes(q)) ||
+        (o.company?.name && o.company.name.toLowerCase().includes(q)) ||
+        (o.company?.displayName && o.company.displayName.toLowerCase().includes(q))
+      );
+    }
     return list;
-  }, [rawOpportunities, initialOpportunities, tab, initialTab, stages, cardType, ownerFilter]);
+  }, [rawOpportunities, initialOpportunities, tab, initialTab, stages, cardType, ownerFilter, isCompletedTab, searchQuery]);
 
   const totalCards = visibleDeals.length;
   const redCardsCount = useMemo(() => visibleDeals.filter(checkIsRedCard).length, [visibleDeals]);

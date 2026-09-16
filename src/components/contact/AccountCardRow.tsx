@@ -59,7 +59,7 @@ export const AccountCardRow = memo(function AccountCardRow({
       className={`group w-full text-left rounded-xl transition-all duration-150 cursor-pointer select-none px-6 py-1.5 mb-2.5 flex items-center border border-transparent ${
         isSelected
           ? "bg-[#C7F33C] text-black shadow-md"
-          : "bg-[#1E1F21] hover:bg-[#2C2D30] text-slate-100"
+          : "bg-[#3A3B3C] hover:bg-[#2C2D30] text-slate-100"
       }`}
     >
       {/* Desktop Grid Layout */}

@@ -12,9 +12,10 @@ interface CalendarDayItemsPopoverProps {
   items: CalendarMonthItemDTO[];
   onClose: () => void;
   onItemClick?: (item: CalendarMonthItemDTO) => void;
+  userId?: string;
 }
 
-export function CalendarDayItemsPopover({ date, items, onClose, onItemClick }: CalendarDayItemsPopoverProps) {
+export function CalendarDayItemsPopover({ date, items, onClose, onItemClick, userId }: CalendarDayItemsPopoverProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
   useCalendarDialog(true, sectionRef, onClose);
 
@@ -63,6 +64,7 @@ export function CalendarDayItemsPopover({ date, items, onClose, onItemClick }: C
               item={item}
               dragInstanceId={`popover-${dateKey}`}
               onClick={(selected) => { onClose(); onItemClick?.(selected); }}
+              userId={userId}
             />
           ))}
         </div>

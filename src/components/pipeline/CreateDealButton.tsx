@@ -11,7 +11,7 @@ import { usePermissions } from "@/providers/PermissionProvider";
 import { SearchableSelect } from "../ui/SearchableSelect";
 import { DealTypeIcon } from "./DealTypeBadge";
 import { MemberSelectDrawer, UserItem } from "./MemberSelectDrawer";
-import useSWR, { preload } from "swr";
+import useSWR, { mutate as globalMutate, preload } from "swr";
 import { useSession } from "next-auth/react";
 
 interface CompanyOptionItem {
@@ -116,22 +116,89 @@ export function CreateDealButton({ stages, companies, disabled = false }: Create
       return;
     }
 
+    const currentTopic = topic.trim();
+    const currentType = type;
+    const currentCompanyId = companyId || undefined;
+    const currentStageId = firstStage.id;
+    const currentMemberIds = selectedMemberIds.length > 0 ? selectedMemberIds : undefined;
+
+    // 1. Instant 0ms dismissal & reset
+    setIsOpen(false);
+    setTopic("");
+    setSelectedType("SALES_DEAL");
+    setCompanyId("");
+    setSelectedMemberIds([]);
+
+    // 2. Build optimistic deal
+    const tempId = `temp-${Date.now()}`;
+    const selectedCompany = companyList.find(c => c.id === currentCompanyId);
+    const optimisticDeal = {
+      id: tempId,
+      topic: currentTopic,
+      type: currentType,
+      status: "OPEN",
+      value: null,
+      currency: "THB",
+      dueDate: null,
+      goodsReadyDate: null,
+      goodsLoadingDate: null,
+      pipelineStageId: currentStageId,
+      ownerId: currentUserId || "",
+      closedAt: null,
+      oemProgress: 0,
+      lossReason: null,
+      reserveId: null,
+      invoiceId: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      company: selectedCompany ? { id: selectedCompany.id, name: selectedCompany.name, displayName: selectedCompany.displayName || null } : null,
+      owner: session?.user ? { id: currentUserId || "", name: session.user.name || null, email: session.user.email || null, image: session.user.image || null, departments: [] } : null,
+      teamMembers: (currentMemberIds || []).map(id => {
+        const u = allUsersMap.get(id);
+        return u ? { id: u.id, name: u.name || "Member", email: u.email || "", image: u.image || null } : { id, name: "Member", email: "", image: null };
+      }),
+      activityLogs: [],
+    };
+
+    // 3. Optimistic SWR cache update
+    void globalMutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (currentDeals: unknown) => {
+        if (!Array.isArray(currentDeals)) return currentDeals;
+        return [optimisticDeal, ...currentDeals];
+      },
+      false
+    );
+
+    // 4. Server action in background
     setIsSubmitting(true);
     try {
-      await createOpportunity({
-        topic,
-        type,
-        companyId: companyId || undefined,
-        pipelineStageId: firstStage.id,
-        teamMemberIds: selectedMemberIds.length > 0 ? selectedMemberIds : undefined,
+      const res = await createOpportunity({
+        topic: currentTopic,
+        type: currentType,
+        companyId: currentCompanyId,
+        pipelineStageId: currentStageId,
+        teamMemberIds: currentMemberIds,
       });
+      const realDeal = typeof res === 'string' ? JSON.parse(res) : res;
+      void globalMutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentDeals: unknown) => {
+          if (!Array.isArray(currentDeals)) return currentDeals;
+          return currentDeals.map((d: { id: string }) => d.id === tempId ? realDeal : d);
+        },
+        false
+      );
       toast({ title: "Created successfully", type: "success" });
-      setIsOpen(false);
-      setTopic("");
-      setSelectedType("SALES_DEAL");
-      setCompanyId("");
-      setSelectedMemberIds([]);
     } catch (e: unknown) {
+      void globalMutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentDeals: unknown) => {
+          if (!Array.isArray(currentDeals)) return currentDeals;
+          return currentDeals.filter((d: { id: string }) => d.id !== tempId);
+        },
+        true
+      );
       toast({ title: "Failed to create", description: e instanceof Error ? e.message : "Unknown error", type: "error" });
     } finally {
       setIsSubmitting(false);

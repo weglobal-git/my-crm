@@ -39,7 +39,7 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
     const delayDebounceFn = setTimeout(() => {
       setLastEmitted(term);
       onSearch(term);
-    }, 300);
+    }, 50);
 
     return () => clearTimeout(delayDebounceFn);
   }, [term, lastEmitted, onSearch]);

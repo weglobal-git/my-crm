@@ -15,13 +15,17 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
-  RotateCcw
+  RotateCcw,
+  Mail,
+  Phone
 } from "lucide-react";
 import { SlideOverPanel } from "@/components/ui/SlideOverPanel";
 import { CountrySelect } from "@/components/ui/CountrySelect";
 import { AccountTypeSelect } from "@/components/ui/AccountTypeSelect";
 import { AddressTypeSelect } from "@/components/ui/AddressTypeSelect";
 import { AddressAutocomplete } from "@/components/contact/AddressAutocomplete";
+import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
+import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
 import { useDialog } from "@/providers/DialogProvider";
 import { createCompany, CreateCompanyAddressInput } from "@/lib/actions/contact";
 import { ContactType } from "@prisma/client";
@@ -65,7 +69,8 @@ export function CreateAccountPanel({
   // Account General Fields
   const [displayName, setDisplayName] = useState("");
   const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [phones, setPhones] = useState<string[]>([""]);
+  const [emails, setEmails] = useState<string[]>([""]);
   const [accountType, setAccountType] = useState<ContactType>("CUSTOMER");
   const [country, setCountry] = useState("Thailand");
   const [notes, setNotes] = useState("");
@@ -180,7 +185,8 @@ export function CreateAccountPanel({
   const resetForm = useCallback(() => {
     setDisplayName("");
     setName("");
-    setPhone("");
+    setPhones([""]);
+    setEmails([""]);
     setAccountType("CUSTOMER");
     setCountry("Thailand");
     setNotes("");
@@ -226,6 +232,12 @@ export function CreateAccountPanel({
     if (!name.trim()) {
       return toast({ title: "Validation", description: "Account name is required", type: "warning" });
     }
+    const validEmails = emails.map((e) => e.trim()).filter(Boolean);
+    const invalidEmail = validEmails.find((e) => !isValidEmail(e));
+    if (invalidEmail) {
+      return toast({ title: "Validation", description: `"${invalidEmail}" is not a valid email address`, type: "warning" });
+    }
+    const validPhones = phones.map((p) => p.trim()).filter(Boolean);
 
     // Filter valid addresses that have at least Address Line 1
     const validAddresses = addresses
@@ -251,7 +263,10 @@ export function CreateAccountPanel({
       const created = await createCompany({
         displayName: displayName.trim(),
         name: name.trim(),
-        phone: phone.trim() || undefined,
+        phone: validPhones[0] || undefined,
+        email: validEmails[0] || undefined,
+        phones: validPhones.length > 0 ? validPhones : undefined,
+        emails: validEmails.length > 0 ? validEmails : undefined,
         type: accountType,
         country: country.trim() || "Thailand",
         notes: notes.trim() || undefined,
@@ -367,24 +382,88 @@ export function CreateAccountPanel({
               />
             </div>
 
-            {/* Office Phone / Landline */}
+            {/* Email Addresses */}
             <div className="flex flex-col gap-1.5 md:col-span-2">
-              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                <span className="flex items-center gap-1.5">
-                  <Building2 className="w-3.5 h-3.5 text-[#C7F33C]" />
-                  <span>Office Phone / Landline</span>
-                </span>
-                <span className="text-xs text-slate-400 font-normal">
-                  e.g. 02 123 4567 ext. 12 or +66 2 123 4567
-                </span>
-              </label>
-              <input
-                type="text"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="e.g. 02 123 4567 ext. 12"
-                className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0 transition-colors"
-              />
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Email Addresses</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setEmails((prev) => [...prev, ""])}
+                  className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  + Add Email
+                </button>
+              </div>
+              <div className="space-y-2">
+                {emails.map((emailVal, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <EmailInput
+                      value={emailVal}
+                      onChange={(val) => {
+                        const next = [...emails];
+                        next[idx] = val;
+                        setEmails(next);
+                      }}
+                      placeholder="e.g. somchai@company.com"
+                      className="flex-1"
+                    />
+                    {emails.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setEmails((prev) => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Phone Numbers */}
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <Phone className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Phone Numbers</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setPhones((prev) => [...prev, ""])}
+                  className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  + Add Phone
+                </button>
+              </div>
+              <div className="space-y-2">
+                {phones.map((phoneVal, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <PhoneInputWithCountry
+                      value={phoneVal}
+                      onChange={(val) => {
+                        const next = [...phones];
+                        next[idx] = val;
+                        setPhones(next);
+                      }}
+                      placeholder="081 234 5678"
+                      className="flex-1"
+                    />
+                    {phones.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setPhones((prev) => prev.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-[#252728] rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Notes */}

@@ -1,11 +1,14 @@
 "use client";
 
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { PackageCheck, Truck, Calendar } from 'lucide-react';
 import type { CalendarMonthItemDTO } from '@/lib/calendar/calendar-dto';
 import { useDraggable } from '@dnd-kit/core';
 import { getCalendarSourceLabel } from '@/lib/calendar/calendar-presentation';
+import { preload } from 'swr';
+import { calendarFinancialInfoKey, calendarEventDetailKey } from '@/lib/calendar/calendar-cache';
+import { getCalendarFinancialInfoAction, getCalendarEventDetailAction } from '@/lib/actions/calendar';
 
 const CalendarFinancialInfoPopover = dynamic(() => import('./CalendarFinancialInfoPopover').then((module) => module.CalendarFinancialInfoPopover), { ssr: false });
 
@@ -14,9 +17,10 @@ interface CalendarItemPillProps {
   dragInstanceId: string;
   highlighted?: boolean;
   onClick?: (item: CalendarMonthItemDTO) => void;
+  userId?: string;
 }
 
-export const CalendarItemPill: React.FC<CalendarItemPillProps> = memo(function CalendarItemPill({ item, dragInstanceId, highlighted = false, onClick }: CalendarItemPillProps) {
+export const CalendarItemPill: React.FC<CalendarItemPillProps> = memo(function CalendarItemPill({ item, dragInstanceId, highlighted = false, onClick, userId }: CalendarItemPillProps) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const [financialAnchor, setFinancialAnchor] = useState<DOMRect | null>(null);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -69,6 +73,28 @@ export const CalendarItemPill: React.FC<CalendarItemPillProps> = memo(function C
     setNodeRef(node);
   };
 
+  const handleIntent = useCallback(() => {
+    if (isDeal) {
+      void import('./CalendarFinancialInfoPopover');
+      void preload(
+        calendarFinancialInfoKey(userId || 'default', item.sourceId),
+        async () => {
+          const res = await getCalendarFinancialInfoAction(item.sourceId);
+          return res.data;
+        }
+      );
+    } else {
+      void import('./CalendarEventPanel');
+      void preload(
+        calendarEventDetailKey(userId || 'default', item.sourceId),
+        async () => {
+          const res = await getCalendarEventDetailAction(item.sourceId);
+          return res.event;
+        }
+      );
+    }
+  }, [isDeal, item.sourceId, userId]);
+
   return (
     <>
       <button
@@ -76,6 +102,8 @@ export const CalendarItemPill: React.FC<CalendarItemPillProps> = memo(function C
       {...attributes}
       {...listeners}
       type="button"
+      onMouseEnter={handleIntent}
+      onFocus={handleIntent}
       onClick={(event) => {
         event.stopPropagation();
         if (isDragging) return;
@@ -104,6 +132,21 @@ export const CalendarItemPill: React.FC<CalendarItemPillProps> = memo(function C
       {financialAnchor && (
         <CalendarFinancialInfoPopover
           opportunityId={item.sourceId}
+          initialData={{
+            opportunityId: item.sourceId,
+            accountName: item.accountName || null,
+            topicName: item.title,
+            totalValue: null,
+            currency: 'THB',
+            reserveId: null,
+            invoiceNumber: null,
+            goodsReadyDate: item.sourceType === 'DEAL_GOODS_READY' ? item.startAt : null,
+            goodsLoadingDate: item.sourceType === 'DEAL_GOODS_LOADING' ? item.startAt : null,
+            status: 'OPEN',
+            revision: 0,
+            canEdit: Boolean(item.canEdit),
+          }}
+          userId={userId}
           anchorRect={financialAnchor}
           triggerRef={buttonRef}
           onClose={() => setFinancialAnchor(null)}

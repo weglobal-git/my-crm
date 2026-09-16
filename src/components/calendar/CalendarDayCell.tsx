@@ -19,6 +19,7 @@ interface CalendarDayCellProps {
   highlightedItemId?: string | null;
   compact?: boolean;
   selected?: boolean;
+  userId?: string;
 }
 
 export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function CalendarDayCell({
@@ -31,6 +32,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
   highlightedItemId,
   compact = false,
   selected = false,
+  userId,
 }: CalendarDayCellProps) {
   const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
   const { setNodeRef, isOver } = useDroppable({ id: `calendar-day:${dateKey}`, data: { date: date.toISOString() }, disabled: compact });
@@ -152,6 +154,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
               dragInstanceId={dateKey}
               highlighted={item.id === highlightedItemId}
               onClick={(clickedItem) => onItemClick?.(clickedItem)}
+              userId={userId}
             />
           ))}
         </div>
@@ -162,6 +165,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
           items={items}
           onClose={() => setShowAllItems(false)}
           onItemClick={onItemClick}
+          userId={userId}
         />
       )}
     </div>

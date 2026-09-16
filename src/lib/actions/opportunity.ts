@@ -48,7 +48,7 @@ export async function createOpportunity(data: {
 
   const validMemberIds = (data.teamMemberIds || []).filter(id => id && id !== actor.id);
 
-  const result = await prisma.opportunity.create({
+  const fullDeal = await prisma.opportunity.create({
     data: {
       topic,
       type: data.type || "SALES_DEAL",
@@ -61,60 +61,64 @@ export async function createOpportunity(data: {
           connect: validMemberIds.map(id => ({ id }))
         }
       } : {})
-    }
+    },
+    select: pipelineOpportunitySelect
   });
 
   const typeLabel = data.type === 'INTERNAL_TASK' ? 'Internal Task' : (data.type === 'PARTNERSHIP' ? 'Partnership' : 'Sales Deal');
   
-  await prisma.activityLog.create({
+  // Background activity log creation (non-blocking)
+  void prisma.activityLog.create({
     data: {
-      opportunityId: result.id,
+      opportunityId: fullDeal.id,
       userId: actor.id,
       type: "SYSTEM_UPDATE",
       content: `Created this opportunity as a ${typeLabel}.`
     }
-  });
+  }).catch(err => console.warn("[createOpportunity] Failed to create activityLog:", err));
 
-  // Batch notifications for invited team members
+  // Batch notifications for invited team members (non-blocking)
   if (validMemberIds.length > 0) {
-    try {
-      const notifications = await prisma.$transaction(
-        validMemberIds.map(recipientId =>
-          prisma.notification.create({
-            data: {
-              type: "SYSTEM_ALERT",
-              senderId: actor.id,
-              recipientId,
-              referenceId: result.id,
-              title: "Added to Team",
-              message: `Added you to the team for deal: ${result.topic}`,
-            },
-            include: { sender: true }
-          })
-        )
-      );
-      notifications.forEach(n => {
-        void dispatchNotification(n.recipientId, n);
-      });
-    } catch (err) {
-      console.warn("[createOpportunity] Failed to send notifications:", err);
-    }
+    void (async () => {
+      try {
+        const notifications = await prisma.$transaction(
+          validMemberIds.map(recipientId =>
+            prisma.notification.create({
+              data: {
+                type: "SYSTEM_ALERT",
+                senderId: actor.id,
+                recipientId,
+                referenceId: fullDeal.id,
+                title: "Added to Team",
+                message: `Added you to the team for deal: ${fullDeal.topic}`,
+              },
+              include: { sender: true }
+            })
+          )
+        );
+        notifications.forEach(n => {
+          void dispatchNotification(n.recipientId, n);
+        });
+      } catch (err) {
+        console.warn("[createOpportunity] Failed to send notifications:", err);
+      }
+    })();
   }
 
-  const fullDeal = await prisma.opportunity.findUnique({
-    where: { id: result.id },
-    select: pipelineOpportunitySelect
+  // Non-blocking Pusher trigger
+  void notifyPrivatePipelineUpdate(fullDeal.id, { action: 'OPPORTUNITY_CREATED', deal: fullDeal }).catch(err => {
+    console.warn("[createOpportunity] Pusher trigger error:", err);
   });
-  await notifyPrivatePipelineUpdate(result.id, { action: 'OPPORTUNITY_CREATED', deal: fullDeal });
-  if (result.type === 'SALES_DEAL') {
+
+  if (fullDeal.type === 'SALES_DEAL') {
     void dispatchDashboardInvalidation({
       resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options'],
-      affectedYears: result.goodsLoadingDate ? [new Date(result.goodsLoadingDate).getFullYear()] : undefined,
-      companyIds: result.companyId ? [result.companyId] : undefined,
+      affectedYears: fullDeal.goodsLoadingDate ? [new Date(fullDeal.goodsLoadingDate).getFullYear()] : undefined,
+      companyIds: fullDeal.company?.id ? [fullDeal.company.id] : undefined,
     });
   }
-  revalidatePath('/pipeline');
-  return result;
+
+  return JSON.stringify(fullDeal);
 }
 
 export async function moveOpportunity(

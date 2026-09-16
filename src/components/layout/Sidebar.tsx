@@ -17,8 +17,6 @@ import {
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
 import { useSidebar } from "./SidebarContext";
-import { useSession } from "next-auth/react";
-import Image from "next/image";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 
 interface FlattenedMenuItem {
@@ -34,7 +32,6 @@ interface FlattenedMenuItem {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { data: session } = useSession();
   const { visibleMainMenus, visibleSubMenus, canSee, isLoading } = usePermissions();
   const { 
     isTabletSidebarOpen, 

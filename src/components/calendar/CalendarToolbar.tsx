@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, Filter, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, Plus, Search, Loader2 } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 
 interface CalendarToolbarProps {
@@ -20,6 +20,7 @@ interface CalendarToolbarProps {
   onNewEventIntent?: () => void;
   onOpenSearchIntent?: () => void;
   isDragging?: boolean;
+  isLoading?: boolean;
 }
 
 const MONTH_NAMES = [
@@ -43,15 +44,24 @@ export const CalendarToolbar: React.FC<CalendarToolbarProps> = ({
   onNewEventIntent,
   onOpenSearchIntent,
   isDragging = false,
+  isLoading = false,
 }) => {
-  const { setNodeRef: setPrevDropRef, isOver: isPrevOver } = useDroppable({ id: 'calendar-nav:previous', disabled: !isDragging });
-  const { setNodeRef: setNextDropRef, isOver: isNextOver } = useDroppable({ id: 'calendar-nav:next', disabled: !isDragging });
-  const monthName = MONTH_NAMES[currentMonth - 1] || '';
+  const monthName = MONTH_NAMES[currentMonth - 1] ?? '';
+  const { setNodeRef: setPrevDropRef, isOver: isPrevOver } = useDroppable({
+    id: 'cal-nav-prev',
+    data: { action: 'navigate-prev' },
+    disabled: !isDragging,
+  });
+  const { setNodeRef: setNextDropRef, isOver: isNextOver } = useDroppable({
+    id: 'cal-nav-next',
+    data: { action: 'navigate-next' },
+    disabled: !isDragging,
+  });
 
   return (
-    <div className="hidden items-center justify-between gap-4 py-1 md:flex shrink-0 select-none">
-      {/* Left side: Navigation */}
-      <div className="flex items-center justify-between gap-2 sm:justify-start sm:gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 bg-[#252728]">
+      {/* Left side: Month navigation */}
+      <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={onToday}
@@ -72,9 +82,14 @@ export const CalendarToolbar: React.FC<CalendarToolbarProps> = ({
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <h1 className="min-w-32 flex-1 text-center text-base font-bold text-slate-100 tracking-tight sm:min-w-44 sm:text-lg">
-            {monthName} {currentYear}
-          </h1>
+          <div className="min-w-32 flex-1 flex items-center justify-center gap-2 sm:min-w-44">
+            <h1 className="text-center text-base font-bold text-slate-100 tracking-tight sm:text-lg">
+              {monthName} {currentYear}
+            </h1>
+            {isLoading && (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#C7F33C] shrink-0" />
+            )}
+          </div>
           <button
             ref={setNextDropRef}
             type="button"

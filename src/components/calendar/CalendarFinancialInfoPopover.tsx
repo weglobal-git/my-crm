@@ -5,6 +5,7 @@ import useSWR, { useSWRConfig } from 'swr';
 import { createPortal } from 'react-dom';
 import { Archive, Save, X } from 'lucide-react';
 import { getCalendarFinancialInfoAction, updateCalendarSaleDealAction } from '@/lib/actions/calendar';
+import type { CalendarFinancialInfoDTO } from '@/lib/calendar/calendar-dto';
 import { useCalendarDialog } from '@/lib/calendar/use-calendar-dialog';
 import { calendarFinancialInfoKey } from '@/lib/calendar/calendar-cache';
 import type { CalendarMonthSnapshotDTO } from '@/lib/calendar/calendar-dto';
@@ -13,6 +14,7 @@ import { CalendarDatePicker } from '@/components/ui/CalendarDatePicker';
 
 interface Props {
   opportunityId: string;
+  initialData?: CalendarFinancialInfoDTO | null;
   anchorRect?: DOMRect;
   triggerRef?: React.RefObject<HTMLElement | null>;
   presentation?: 'popover' | 'sheet';
@@ -21,7 +23,7 @@ interface Props {
 }
 function localDate(value: string | null) { if (!value) return ''; const date = new Date(value); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`; }
 
-export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, triggerRef, presentation = 'popover', userId, onClose }: Props) {
+export function CalendarFinancialInfoPopover({ opportunityId, initialData, anchorRect, triggerRef, presentation = 'popover', userId, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,8 +31,27 @@ export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, trigge
   const { mutate: globalMutate } = useSWRConfig();
   useCalendarDialog(true, panelRef, onClose);
   const key = useMemo(() => calendarFinancialInfoKey(userId || 'default', opportunityId), [opportunityId, userId]);
-  const { data, isLoading, mutate } = useSWR(key, async () => { const response = await getCalendarFinancialInfoAction(opportunityId); if (!response.success || !response.data) throw new Error(response.error || 'Unable to load'); return response.data; }, { revalidateOnFocus: false, dedupingInterval: 30_000 });
-  const [draft, setDraft] = useState({ totalValue: '', currency: 'THB', reserveId: '', invoiceNumber: '', goodsReadyDate: '', goodsLoadingDate: '' });
+  const { data, isLoading, mutate } = useSWR(
+    key,
+    async () => {
+      const response = await getCalendarFinancialInfoAction(opportunityId);
+      if (!response.success || !response.data) throw new Error(response.error || 'Unable to load');
+      return response.data;
+    },
+    {
+      fallbackData: initialData ?? undefined,
+      revalidateOnFocus: false,
+      dedupingInterval: 30_000,
+    }
+  );
+  const [draft, setDraft] = useState(() => ({
+    totalValue: initialData?.totalValue == null ? '' : String(initialData.totalValue),
+    currency: initialData?.currency || 'THB',
+    reserveId: initialData?.reserveId || '',
+    invoiceNumber: initialData?.invoiceNumber || '',
+    goodsReadyDate: localDate(initialData?.goodsReadyDate ?? null),
+    goodsLoadingDate: localDate(initialData?.goodsLoadingDate ?? null),
+  }));
   const [prevData, setPrevData] = useState(data);
 
   if (data && data !== prevData) {
@@ -62,13 +83,14 @@ export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, trigge
   }, [anchorRect, data, presentation]);
   if (typeof document === 'undefined') return null;
   const fieldClass = 'mt-1 w-full rounded-xl border border-[#4E4F50] bg-[#252728] px-3 py-2.5 text-sm text-slate-100 outline-none transition-colors focus:border-[#C7F33C] disabled:cursor-not-allowed disabled:opacity-60';
+  const displayData = data ?? initialData;
   const set = (field: keyof typeof draft) => (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setDraft((current) => ({ ...current, [field]: event.target.value }));
   const save = async () => {
-    if (!data?.canEdit || isSaving) return;
+    if (!displayData?.canEdit || isSaving) return;
     setIsSaving(true); setError(null);
     const previous = data;
-    const optimistic = {
-      ...data,
+    const optimistic: CalendarFinancialInfoDTO = {
+      ...displayData,
       totalValue: draft.totalValue === '' ? null : Number(draft.totalValue),
       currency: draft.currency,
       reserveId: draft.reserveId || null,
@@ -129,7 +151,7 @@ export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, trigge
       invoiceNumber: draft.invoiceNumber || null,
       goodsReadyDate: draft.goodsReadyDate || null,
       goodsLoadingDate: draft.goodsLoadingDate || null,
-      expectedRevision: data.revision,
+      expectedRevision: displayData.revision,
       mutationId: crypto.randomUUID(),
     });
 
@@ -151,19 +173,19 @@ export function CalendarFinancialInfoPopover({ opportunityId, anchorRect, trigge
   return createPortal(<>
     {presentation === 'sheet' && <button className="fixed inset-0 z-[349] bg-black/60" aria-label="Close Sale Deal" onClick={onClose} />}
     <div ref={panelRef} role="dialog" aria-modal="true" aria-label="Sale Deal" tabIndex={-1} style={presentation === 'popover' ? popoverStyle : undefined} onClick={(event) => event.stopPropagation()} className={`calendar-dialog fixed z-[350] max-h-[calc(100dvh-24px)] overflow-y-auto border border-[#4E4F50] bg-[#3A3B3C] p-4 ${presentation === 'sheet' ? 'inset-x-0 bottom-0 rounded-t-[2rem]' : 'animate-fade-in-up rounded-2xl'}`}>
-      <header className="mb-4 flex items-start justify-between gap-3 border-b border-[#4E4F50] pb-3"><div><h2 className="text-base font-semibold text-slate-100">Sale Deal</h2><p className="mt-0.5 text-xs text-slate-400">{data?.accountName || 'Account unavailable'} · {data?.topicName || 'Loading…'}</p></div><button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-[#4E4F50] hover:text-white" aria-label="Close"><X className="h-4 w-4" /></button></header>
-      {isLoading || !data ? <div className="py-8 text-center text-sm text-slate-400">Loading Sale Deal…</div> : <div className="space-y-4">
-        {!data.canEdit && <div className="flex gap-2 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200"><Archive className="h-4 w-4 shrink-0" /><span>This project is archived. Its details and milestone dates are read-only.</span></div>}
+      <header className="mb-4 flex items-start justify-between gap-3 border-b border-[#4E4F50] pb-3"><div><h2 className="text-base font-semibold text-slate-100">Sale Deal</h2><p className="mt-0.5 text-xs text-slate-400">{displayData?.accountName || 'Account unavailable'} · {displayData?.topicName || 'Loading…'}</p></div><button type="button" onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-[#4E4F50] hover:text-white" aria-label="Close"><X className="h-4 w-4" /></button></header>
+      {!displayData ? <div className="py-8 text-center text-sm text-slate-400">Loading Sale Deal…</div> : <div className="space-y-4">
+        {!displayData.canEdit && <div className="flex gap-2 rounded-xl border border-amber-700/40 bg-amber-950/30 p-3 text-xs text-amber-200"><Archive className="h-4 w-4 shrink-0" /><span>This project is archived. Its details and milestone dates are read-only.</span></div>}
         {error && <div className="rounded-xl border border-red-900/50 bg-red-900/30 p-3 text-xs text-red-300">{error}</div>}
         <div className="grid grid-cols-2 gap-3">
-          <label className="col-span-2 text-xs text-slate-400">Total Value<input className={fieldClass} type="number" min="0" step="0.01" value={draft.totalValue} onChange={set('totalValue')} disabled={!data.canEdit} /></label>
-          <label className="text-xs text-slate-400">Currency<div className="mt-1"><CalendarSelect ariaLabel="Currency" value={draft.currency} onChange={(currency) => setDraft((current) => ({ ...current, currency }))} disabled={!data.canEdit} options={['THB','USD','EUR','CNY'].map((value) => ({ value, label: value }))} /></div></label>
-          <label className="text-xs text-slate-400">Reserve ID<input className={fieldClass} value={draft.reserveId} onChange={set('reserveId')} disabled={!data.canEdit} /></label>
-          <label className="text-xs text-slate-400">Goods Ready<div className="mt-1"><CalendarDatePicker ariaLabel="Goods Ready" value={draft.goodsReadyDate} onChange={(goodsReadyDate) => setDraft((current) => ({ ...current, goodsReadyDate }))} disabled={!data.canEdit} /></div></label>
-          <label className="text-xs text-slate-400">Goods Loading<div className="mt-1"><CalendarDatePicker ariaLabel="Goods Loading" value={draft.goodsLoadingDate} onChange={(goodsLoadingDate) => setDraft((current) => ({ ...current, goodsLoadingDate }))} disabled={!data.canEdit} /></div></label>
-          <label className="col-span-2 text-xs text-slate-400">Invoice Number<input className={fieldClass} value={draft.invoiceNumber} onChange={set('invoiceNumber')} disabled={!data.canEdit} /></label>
+          <label className="col-span-2 text-xs text-slate-400">Total Value<input className={fieldClass} type="number" min="0" step="0.01" value={draft.totalValue} onChange={set('totalValue')} disabled={!displayData.canEdit} /></label>
+          <label className="text-xs text-slate-400">Currency<div className="mt-1"><CalendarSelect ariaLabel="Currency" value={draft.currency} onChange={(currency) => setDraft((current) => ({ ...current, currency }))} disabled={!displayData.canEdit} options={['THB','USD','EUR','CNY'].map((value) => ({ value, label: value }))} /></div></label>
+          <label className="text-xs text-slate-400">Reserve ID<input className={fieldClass} value={draft.reserveId} onChange={set('reserveId')} disabled={!displayData.canEdit} /></label>
+          <label className="text-xs text-slate-400">Goods Ready<div className="mt-1"><CalendarDatePicker ariaLabel="Goods Ready" value={draft.goodsReadyDate} onChange={(goodsReadyDate) => setDraft((current) => ({ ...current, goodsReadyDate }))} disabled={!displayData.canEdit} /></div></label>
+          <label className="text-xs text-slate-400">Goods Loading<div className="mt-1"><CalendarDatePicker ariaLabel="Goods Loading" value={draft.goodsLoadingDate} onChange={(goodsLoadingDate) => setDraft((current) => ({ ...current, goodsLoadingDate }))} disabled={!displayData.canEdit} /></div></label>
+          <label className="col-span-2 text-xs text-slate-400">Invoice Number<input className={fieldClass} value={draft.invoiceNumber} onChange={set('invoiceNumber')} disabled={!displayData.canEdit} /></label>
         </div>
-        {data.canEdit && <button type="button" onClick={save} disabled={isSaving} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#C7F33C] px-4 py-2.5 text-sm font-semibold text-black hover:bg-[#b0d635] disabled:opacity-60"><Save className="h-4 w-4" />{isSaving ? 'Saving…' : 'Save changes'}</button>}
+        {displayData.canEdit && <button type="button" onClick={save} disabled={isSaving} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#C7F33C] px-4 py-2.5 text-sm font-semibold text-black hover:bg-[#b0d635] disabled:opacity-60"><Save className="h-4 w-4" />{isSaving ? 'Saving…' : 'Save changes'}</button>}
       </div>}
     </div>
   </>, document.body);

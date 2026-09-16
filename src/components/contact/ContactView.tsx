@@ -294,6 +294,9 @@ export function ContactView({
     const acc = selectedAccount as AccountCardDTO & {
       notes?: string | null;
       phone?: string | null;
+      email?: string | null;
+      emails?: string[];
+      phones?: string[];
       contacts?: Array<{
         id: string;
         name: string;
@@ -312,6 +315,9 @@ export function ContactView({
         name: acc.name,
         displayName: acc.displayName || null,
         phone: acc.phone || null,
+        email: acc.email || null,
+        emails: acc.emails || (acc.email ? [acc.email] : []),
+        phones: acc.phones || (acc.phone ? [acc.phone] : []),
         type: acc.type,
         status: acc.status,
         starRating: acc.starRating || 0,

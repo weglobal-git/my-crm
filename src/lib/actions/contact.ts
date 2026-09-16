@@ -379,6 +379,10 @@ export async function getCompaniesWithContacts({
         displayName: true,
         name: true,
         country: true,
+        phone: true,
+        email: true,
+        emails: true,
+        phones: true,
         status: true,
         type: true,
         starRating: true,
@@ -1149,6 +1153,9 @@ export async function updateCompanyDetails(
     starRating?: number;
     notes?: string | null;
     phone?: string | null;
+    email?: string | null;
+    phones?: string[];
+    emails?: string[];
   },
   mutationId?: string
 ) {
@@ -1166,8 +1173,24 @@ export async function updateCompanyDetails(
   if (data.name !== undefined && data.name.trim() !== company.name) {
     changes.push(`Changed name from "${company.name}" to "${data.name.trim()}"`);
   }
+  const newEmails = data.emails !== undefined ? data.emails.map((e) => e.trim()).filter(Boolean) : undefined;
+  const newPhones = data.phones !== undefined ? data.phones.map((p) => p.trim()).filter(Boolean) : undefined;
+  const primaryEmail = newEmails !== undefined ? (newEmails[0] || null) : (data.email !== undefined ? data.email?.trim() || null : company.email);
+  const primaryPhone = newPhones !== undefined ? (newPhones[0] || null) : (data.phone !== undefined ? data.phone?.trim() || null : company.phone);
+  const finalEmails = newEmails !== undefined ? newEmails : (primaryEmail ? [primaryEmail] : company.emails || []);
+  const finalPhones = newPhones !== undefined ? newPhones : (primaryPhone ? [primaryPhone] : company.phones || []);
+
   if (data.phone !== undefined && data.phone?.trim() !== (company.phone || "")) {
     changes.push(`Updated office phone to ${data.phone?.trim() || "None"}`);
+  }
+  if (data.email !== undefined && data.email?.trim() !== (company.email || "")) {
+    changes.push(`Updated company email to ${data.email?.trim() || "None"}`);
+  }
+  if (newEmails !== undefined && JSON.stringify(newEmails) !== JSON.stringify(company.emails)) {
+    changes.push(`Updated company emails list (${newEmails.length} email${newEmails.length === 1 ? "" : "s"})`);
+  }
+  if (newPhones !== undefined && JSON.stringify(newPhones) !== JSON.stringify(company.phones)) {
+    changes.push(`Updated company phones list (${newPhones.length} phone${newPhones.length === 1 ? "" : "s"})`);
   }
   if (data.country !== undefined && data.country?.trim() !== (company.country || "")) {
     changes.push(`Updated country to ${data.country || "None"}`);
@@ -1191,7 +1214,10 @@ export async function updateCompanyDetails(
       data: {
         displayName: data.displayName !== undefined ? data.displayName.trim() : company.displayName,
         name: data.name !== undefined ? data.name.trim() : company.name,
-        phone: data.phone !== undefined ? data.phone?.trim() || null : company.phone,
+        phone: primaryPhone,
+        email: primaryEmail,
+        emails: finalEmails,
+        phones: finalPhones,
         country: data.country !== undefined ? (data.country ? normalizeCountryName(data.country) : null) : company.country,
         type: data.type !== undefined ? data.type : company.type,
         status: data.status !== undefined ? data.status : company.status,
@@ -1224,6 +1250,10 @@ export async function updateCompanyDetails(
       id: updated.id,
       displayName: updated.displayName,
       name: updated.name,
+      phone: updated.phone,
+      email: updated.email,
+      emails: updated.emails,
+      phones: updated.phones,
       country: updated.country,
       type: updated.type,
       status: updated.status,
@@ -1240,6 +1270,9 @@ export interface CreateCompanyInput {
   displayName?: string;
   name: string;
   phone?: string;
+  email?: string;
+  phones?: string[];
+  emails?: string[];
   country?: string;
   type?: ContactType;
   notes?: string;
@@ -1265,11 +1298,21 @@ export async function createCompany(input: CreateCompanyInput) {
       throw new Error(`An account with the name "${input.name.trim()}" already exists`);
     }
 
+    const rawEmails = (input.emails || []).map((e) => e.trim()).filter(Boolean);
+    const rawPhones = (input.phones || []).map((p) => p.trim()).filter(Boolean);
+    const primaryEmail = rawEmails[0] || input.email?.trim() || null;
+    const primaryPhone = rawPhones[0] || input.phone?.trim() || null;
+    const finalEmails = rawEmails.length > 0 ? rawEmails : (primaryEmail ? [primaryEmail] : []);
+    const finalPhones = rawPhones.length > 0 ? rawPhones : (primaryPhone ? [primaryPhone] : []);
+
     const company = await tx.company.create({
       data: {
         displayName,
         name: input.name.trim(),
-        phone: input.phone?.trim() || null,
+        phone: primaryPhone,
+        email: primaryEmail,
+        emails: finalEmails,
+        phones: finalPhones,
         country: input.country ? normalizeCountryName(input.country) : "Thailand",
         type: input.type || "CUSTOMER",
         notes: input.notes?.trim() || null,
@@ -1570,6 +1613,9 @@ export async function getAccountOverview(
         name: true,
         displayName: true,
         phone: true,
+        email: true,
+        emails: true,
+        phones: true,
         type: true,
         status: true,
         starRating: true,
@@ -1791,6 +1837,9 @@ export async function getAccountOverview(
       name: company.name,
       displayName: company.displayName,
       phone: company.phone,
+      email: company.email,
+      emails: company.emails || (company.email ? [company.email] : []),
+      phones: company.phones || (company.phone ? [company.phone] : []),
       type: company.type,
       status: company.status,
       starRating: company.starRating,
