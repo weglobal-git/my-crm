@@ -50,7 +50,7 @@ function SidebarItem({
     <button
       type="button"
       onClick={onClick}
-      className={`group/item w-full flex items-center justify-between gap-2 px-3 py-2 text-left transition-colors rounded-xl cursor-pointer border-0 ${
+      className={`group/item w-full flex items-center justify-between gap-2 px-3 py-0.5 text-left transition-colors rounded-md cursor-pointer border-0 ${
         isActive
           ? "bg-[#C7F33C] text-black"
           : "hover:bg-[#4E4F50] border-transparent text-slate-300"
@@ -58,13 +58,13 @@ function SidebarItem({
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <div
-          className={`p-1.5 rounded-lg transition-colors shrink-0 flex items-center justify-center ${
+          className={`p-1.5 rounded-sm transition-colors shrink-0 flex items-center justify-center ${
             isActive
               ? "bg-black text-white"
               : "text-slate-400 bg-[#3A3B3C] group-hover/item:bg-[#4E4F50] group-hover/item:text-slate-200"
           }`}
         >
-          <div className="flex items-center justify-center [&>svg]:w-5 [&>svg]:h-5">
+          <div className="flex items-center justify-center [&>svg]:w-3 [&>svg]:h-3">
             {icon}
           </div>
         </div>
@@ -73,7 +73,7 @@ function SidebarItem({
 
       {count !== undefined && (
         <span
-          className={`text-xs font-bold px-2 py-0.5 rounded-full shrink-0 transition-colors ${
+          className={`text-xs font-normal px-1 rounded-sm shrink-0 transition-colors ${
             isActive
               ? "bg-black/15 text-black"
               : "bg-[#2A2B2D] text-slate-400 group-hover/item:text-slate-200"
@@ -195,8 +195,13 @@ export function AccountFilterSidebar({
             type="text"
             value={countrySearch}
             onChange={(e) => setCountrySearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setCountrySearch("");
+              }
+            }}
             placeholder="Search country..."
-            className="w-full bg-[#3A3B3C] border border-transparent rounded-xl pl-9 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-all"
+            className="w-full bg-[#3A3B3C] border border-transparent rounded-full pl-9 pr-8 py-1 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-all"
           />
           {countrySearch && (
             <button

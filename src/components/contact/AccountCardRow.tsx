@@ -67,7 +67,7 @@ export const AccountCardRow = memo(function AccountCardRow({
         {/* Col 1: Success Rate Percentage */}
         <div className="w-[72px] shrink-0 flex items-center">
           <span
-            className={`text-2xl font-black tracking-tight leading-none ${
+            className={`text-lg font-bold tracking-tight leading-none ${
               isSelected ? "text-black" : "text-white"
             }`}
           >
@@ -88,7 +88,7 @@ export const AccountCardRow = memo(function AccountCardRow({
           {showOfficialSubtitle && (
             <p
               className={`text-xs truncate mt-0.5 leading-tight ${
-                isSelected ? "text-black/70 font-semibold" : "text-slate-400 font-medium"
+                isSelected ? "text-black/70 font-medium" : "text-slate-400 font-medium"
               }`}
               title={officialName}
             >
