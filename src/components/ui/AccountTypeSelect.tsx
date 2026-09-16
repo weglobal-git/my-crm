@@ -17,6 +17,9 @@ export const ACCOUNT_TYPE_OPTIONS: { value: ContactType; label: string }[] = [
   { value: "TRADER", label: "Trader" },
   { value: "SHIPPING", label: "Shipping" },
   { value: "MY_OFFICE", label: "My Office" },
+  { value: "SUPPLIER", label: "Supplier" },
+  { value: "PARTNER", label: "Partner" },
+  { value: "OTHER", label: "Other" },
 ];
 
 export function AccountTypeSelect({

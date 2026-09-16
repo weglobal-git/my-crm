@@ -33,7 +33,8 @@ import { AddressAutocomplete } from "@/components/contact/AddressAutocomplete";
 import type { ParsedAddressResult } from "@/lib/actions/places";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
 import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
-import { preload } from "swr";
+import useSWR, { preload } from "swr";
+import { getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
 import { 
   getAccountOverview, 
   updateCompanyDetails, 
@@ -157,6 +158,17 @@ export function EditAccountPanel({
   const [isLoading, setIsLoading] = useState(!isInitialMatch);
   const [isSavingDetails, setIsSavingDetails] = useState(false);
   const [overview, setOverview] = useState<AccountOverviewResult | null>(() => isInitialMatch ? initialOverview : null);
+
+  const overviewKey = isOpen && companyId ? getAccountOverviewKey(companyId) : null;
+  const { data: swrOverview, error: swrError, mutate: mutateOverview } = useSWR<AccountOverviewResult>(
+    overviewKey,
+    () => getAccountOverview(companyId!, { includeAddresses: true, includeLogs: false }),
+    {
+      fallbackData: isInitialMatch && initialOverview ? initialOverview : undefined,
+      revalidateOnFocus: false,
+      dedupingInterval: 15_000,
+    }
+  );
 
   const currentStatus: ContactStatus =
     status || overview?.company?.status || "QUALIFIED";
@@ -332,10 +344,10 @@ export function EditAccountPanel({
 
   const loadData = useCallback(async (silent = false) => {
     if (!companyId) return;
-    if (!silent) setIsLoading(true);
+    if (!silent && !overview) setIsLoading(true);
     try {
-      const res = await getAccountOverview(companyId, { includeAddresses: true, includeLogs: false });
-      applyOverviewData(res);
+      const res = await mutateOverview();
+      if (res) applyOverviewData(res);
     } catch (err: unknown) {
       if (!silent) {
         const msg = err instanceof Error ? err.message : "Failed to load account details";
@@ -344,41 +356,38 @@ export function EditAccountPanel({
     } finally {
       if (!silent) setIsLoading(false);
     }
-  }, [companyId, applyOverviewData, toast]);
+  }, [companyId, overview, mutateOverview, applyOverviewData, toast]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!isOpen) {
-        setIsAddingPerson(false);
-        setExpandedPersonIds(new Set());
-        return;
-      }
+    if (swrOverview) {
+      applyOverviewData(swrOverview);
+      setIsLoading(false);
+    }
+  }, [swrOverview, applyOverviewData]);
 
-      if (selectedContactId) {
-        setExpandedPersonIds(new Set([selectedContactId]));
-      }
+  useEffect(() => {
+    if (swrError) {
+      setIsLoading(false);
+      const msg = swrError instanceof Error ? swrError.message : "Failed to load account details";
+      toast({ title: "Error", description: msg, type: "error" });
+    }
+  }, [swrError, toast]);
 
-      if (!companyId) return;
+  useEffect(() => {
+    if (!isOpen) {
+      setIsAddingPerson(false);
+      setExpandedPersonIds(new Set());
+      return;
+    }
 
-      // Direct Object Passing (0ms instant render):
-      // If initialOverview matches current companyId, apply it immediately without full-panel loading!
-      if (initialOverview && initialOverview.company.id === companyId) {
-        applyOverviewData(initialOverview);
-        setIsLoading(false);
-        // Silently fetch complete details (including addresses and full logs) in the background
-        // so tabs like Address and Logs are fully populated without blocking the 0ms panel open
-        void loadData(true);
-        return;
-      }
-
-      void loadData(false);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [isOpen, companyId, selectedContactId, initialOverview, applyOverviewData, loadData]);
+    if (selectedContactId) {
+      setExpandedPersonIds(new Set([selectedContactId]));
+    }
+  }, [isOpen, selectedContactId]);
 
   // Idle Background Preloading: warms JS chunks & SWR cache for Account AI & Shared Media (0ms tab switch)
   useEffect(() => {
-    if (!isOpen || !companyId) return;
+    if (!isOpen || !companyId || isLoading) return;
 
     const timer = setTimeout(() => {
       // 1. Preload dynamic component JS bundles
@@ -389,10 +398,10 @@ export function EditAccountPanel({
       void preload(["account-ai-cached", companyId], () => getCachedAccountAnalysis(companyId)).catch(() => {});
       void preload(["account-web-intel", companyId], () => getCachedWebIntelligence(companyId)).catch(() => {});
       void preload(["account-shared-media", companyId], () => getAccountSharedMedia(companyId)).catch(() => {});
-    }, 150);
+    }, 800);
 
     return () => clearTimeout(timer);
-  }, [isOpen, companyId]);
+  }, [isOpen, companyId, isLoading]);
 
   // Address expand/collapse
   const toggleAddressExpand = (id: string) => {

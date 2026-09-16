@@ -1758,7 +1758,7 @@ export async function getAccountOverview(
     share: string;
   }[] = [];
 
-  if (userContributions.size > 0) {
+  if (includeLogs && userContributions.size > 0) {
     const sortedEntries = Array.from(userContributions.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);

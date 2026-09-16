@@ -78,7 +78,7 @@ export const AccountCardRow = memo(function AccountCardRow({
         {/* Col 2: Account Name & Legal/Company Subtitle */}
         <div className="min-w-0 pr-2">
           <h4
-            className={`text-sm font-bold truncate leading-tight ${
+            className={`font-semibold text-[13px] leading-tight truncate ${
               isSelected ? "text-black" : "text-white"
             }`}
             title={displayName}
@@ -146,7 +146,7 @@ export const AccountCardRow = memo(function AccountCardRow({
         {/* Col 4: Account Type */}
         <div className="w-[120px] shrink-0 flex items-center">
           <span
-            className={`text-xs sm:text-sm font-semibold truncate ${
+            className={`font-normal text-[13px] leading-tight truncate ${
               isSelected ? "text-black" : "text-slate-200"
             }`}
           >
@@ -157,7 +157,7 @@ export const AccountCardRow = memo(function AccountCardRow({
         {/* Col 5: Country */}
         <div className="w-[100px] shrink-0 flex items-center justify-end">
           <span
-            className={`text-xs sm:text-sm font-semibold truncate text-right ${
+            className={`font-normal text-[13px] leading-tight truncate text-right ${
               isSelected ? "text-black" : "text-slate-200"
             }`}
           >

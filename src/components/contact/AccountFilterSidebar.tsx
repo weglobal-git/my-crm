@@ -14,29 +14,24 @@ interface AccountFilterSidebarProps {
 }
 
 const TYPE_LABEL_MAP: Record<string, string> = {
-  CUSTOMER: "CUSTOMER",
-  TRADER: "TRADING",
-  SHIPPING: "SHIPPING",
-  MY_OFFICE: "MY OFFICE",
-  SUPPLIER: "SUPPLIER",
-  PARTNER: "PARTNER",
-  OTHER: "OTHER",
+  CUSTOMER: "Customer",
+  TRADER: "Trading",
+  SHIPPING: "Shipping",
+  MY_OFFICE: "My Office",
+  SUPPLIER: "Supplier",
+  PARTNER: "Partner",
+  OTHER: "Other",
 };
 
 function formatTypeLabel(type: string): string {
-  return TYPE_LABEL_MAP[type] || type.replace(/_/g, " ").toUpperCase();
+  if (TYPE_LABEL_MAP[type]) return TYPE_LABEL_MAP[type];
+  return type
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const DEFAULT_COUNTRIES = [
-  "Thailand",
-  "Vietnam",
-  "Laos",
-  "Cambodia",
-  "China",
-  "USA",
-  "Japan",
-  "Singapore",
-];
+
 
 function SidebarItem({
   icon,
@@ -73,7 +68,7 @@ function SidebarItem({
             {icon}
           </div>
         </div>
-        <span className="font-bold text-xs tracking-wide truncate">{label}</span>
+        <span className="font-normal text-xs tracking-wide truncate">{label}</span>
       </div>
 
       {count !== undefined && (
@@ -139,13 +134,6 @@ export function AccountFilterSidebar({
         }
       }
     }
-    for (const d of DEFAULT_COUNTRIES) {
-      const upper = d.toUpperCase();
-      if (!seen.has(upper)) {
-        seen.add(upper);
-        list.push(d);
-      }
-    }
     return list;
   }, [availableCountries]);
 
@@ -172,7 +160,7 @@ export function AccountFilterSidebar({
           {/* ALL TYPE item */}
           <SidebarItem
             icon={<Building2 className="w-5 h-5" />}
-            label="ALL TYPE"
+            label="All Type"
             count={totalTypeCount}
             isActive={activeType === "ALL"}
             onClick={() => onTypeChange("ALL")}
@@ -225,7 +213,7 @@ export function AccountFilterSidebar({
         <div className="shrink-0 mb-1">
           <SidebarItem
             icon={<Globe className="w-5 h-5" />}
-            label="ALL COUNTRY"
+            label="All Country"
             count={totalCountryCount}
             isActive={isAllCountryActive}
             onClick={() => onCountryChange("ALL")}
@@ -244,7 +232,7 @@ export function AccountFilterSidebar({
               <SidebarItem
                 key={countryName}
                 icon={<Globe className="w-5 h-5" />}
-                label={countryName.toUpperCase()}
+                label={countryName}
                 count={count}
                 isActive={isActive}
                 onClick={() => onCountryChange(countryName)}

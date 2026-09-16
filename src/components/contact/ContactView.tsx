@@ -11,7 +11,7 @@ import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
 
 import type { AccountCardDTO } from "@/lib/contact/account-card-dto";
-import { getAccountFilterKey } from "@/lib/contact/account-cache-keys";
+import { getAccountFilterKey, getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
 import {
   getCompaniesWithContacts,
   getCompanyCountries,
@@ -19,6 +19,7 @@ import {
   updateCompanyStarRating,
   getAccountOverview,
   CompanyMasterItem,
+  AccountOverviewResult,
 } from "@/lib/actions/contact";
 
 import { AccountFilterSidebar } from "./AccountFilterSidebar";
@@ -35,7 +36,7 @@ const loadCreateAccountPanel = () =>
 const CreateAccountPanel = dynamic(loadCreateAccountPanel, { ssr: false });
 
 // Canonical fetcher for account overview
-const fetchAccountOverview = ([, compId]: [string, string]) =>
+const fetchAccountOverview = ([, compId]: readonly [string, string] | [string, string]) =>
   getAccountOverview(compId, { includeAddresses: true, includeLogs: false });
 
 interface ContactViewProps {
@@ -264,7 +265,10 @@ export function ContactView({
 
   // Intent preloading on hover/focus
   const handleCardIntent = useCallback((companyId: string) => {
-    void preload(["account-overview", companyId], fetchAccountOverview);
+    const key = getAccountOverviewKey(companyId);
+    if (key) {
+      void preload(key, fetchAccountOverview);
+    }
     void loadEditAccountPanel();
   }, []);
 
@@ -278,6 +282,87 @@ export function ContactView({
     setIsEditAccountOpen(true);
     void loadEditAccountPanel();
   }, []);
+
+  // Selected account for instant slide-over preview (0ms direct object passing)
+  const selectedAccount = useMemo(() => {
+    if (!selectedAccountId) return null;
+    return accounts.find((c) => c.id === selectedAccountId) || null;
+  }, [accounts, selectedAccountId]);
+
+  const initialOverviewForSelected = useMemo<AccountOverviewResult | null>(() => {
+    if (!selectedAccount) return null;
+    const acc = selectedAccount as AccountCardDTO & {
+      notes?: string | null;
+      phone?: string | null;
+      contacts?: Array<{
+        id: string;
+        name: string;
+        role: string | null;
+        contactDepartment?: string | null;
+        email: string | null;
+        phone: string | null;
+        emails?: string[];
+        phones?: string[];
+      }>;
+    };
+
+    return {
+      company: {
+        id: acc.id,
+        name: acc.name,
+        displayName: acc.displayName || null,
+        phone: acc.phone || null,
+        type: acc.type,
+        status: acc.status,
+        starRating: acc.starRating || 0,
+        country: acc.country || null,
+        notes: acc.notes || null,
+        address: null,
+        createdAt: new Date(),
+        logs: [],
+      },
+      addresses: [],
+      contacts: (acc.contacts || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        role: c.role || null,
+        contactDepartment: c.contactDepartment || null,
+        email: c.email || null,
+        phone: c.phone || null,
+        emails: c.emails || (c.email ? [c.email] : []),
+        phones: c.phones || (c.phone ? [c.phone] : []),
+        isEmailVerified: false,
+        isPhoneVerified: false,
+        image: null,
+        isActive: true,
+        type: "CUSTOMER" as const,
+        status: "QUALIFIED" as const,
+        isMasked: false,
+        departmentId: null,
+        department: null,
+        createdAt: new Date(),
+        logs: [],
+      })),
+      deals: [],
+      topContributors: [],
+      businessSummary: null,
+      metrics: {
+        totalPipelineValue: 0,
+        totalWonValue: 0,
+        totalDeals: acc.totalDealsCount || 0,
+        openDealsCount: Math.max(0, (acc.totalDealsCount || 0) - (acc.wonDealsCount || 0)),
+        wonDealsCount: acc.wonDealsCount || 0,
+        lostDealsCount: 0,
+        avgWonValue: 0,
+        winRate: acc.successRate || 0,
+        activePersonsCount: (acc.contacts || []).length,
+        inactivePersonsCount: 0,
+        totalPersonsCount: (acc.contacts || []).length,
+        funnelStages: [],
+        radarMetrics: [],
+      },
+    };
+  }, [selectedAccount]);
 
   // Star Rating Mutation with optimistic paint & per-company sequence guard
   const handleRatingChange = useCallback(async (companyId: string, newRating: number) => {
@@ -697,8 +782,10 @@ export function ContactView({
       {/* Edit Account Slide-over Panel */}
       {isEditAccountOpen && selectedAccountId && (
         <EditAccountPanel
+          key={selectedAccountId}
           isOpen={isEditAccountOpen}
           companyId={selectedAccountId}
+          initialOverview={initialOverviewForSelected}
           onClose={() => {
             setIsEditAccountOpen(false);
           }}
