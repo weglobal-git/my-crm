@@ -7,7 +7,6 @@ import {
   Loader2, 
   Plus, 
   Trash2, 
-  Copy, 
   Star,
   Globe,
   FileText,
@@ -28,12 +27,22 @@ import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
 import { useDialog } from "@/providers/DialogProvider";
 import { createCompany, CreateCompanyAddressInput } from "@/lib/actions/contact";
-import { ContactType } from "@prisma/client";
+import { ContactType, ContactStatus } from "@prisma/client";
+
+export interface CreatedCompanyPayload {
+  id: string;
+  name: string;
+  displayName?: string | null;
+  status?: ContactStatus;
+  type?: ContactType;
+  country?: string | null;
+  starRating?: number;
+}
 
 interface CreateAccountPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  onAccountCreated: (account: { id: string; name: string }) => void;
+  onAccountCreated: (account: CreatedCompanyPayload) => void;
 }
 
 interface AddressDraftItem extends CreateCompanyAddressInput {
@@ -113,31 +122,6 @@ export function CreateAccountPanel({
     const newDraft = emptyAddressDraft(country, false, addresses.length + 1);
     setAddresses((prev) => [...prev, newDraft]);
     setExpandedIds((prev) => new Set(prev).add(newDraft.tempId));
-  };
-
-  const handleDuplicateAddress = (index: number) => {
-    const source = addresses[index];
-    if (!source) return;
-
-    const copy: AddressDraftItem = {
-      ...source,
-      tempId: `addr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      title: `${source.title || "Address"} (Copy)`,
-      isDefault: false,
-    };
-
-    setAddresses((prev) => {
-      const next = [...prev];
-      next.splice(index + 1, 0, copy);
-      return next;
-    });
-    setExpandedIds((prev) => new Set(prev).add(copy.tempId));
-
-    toast({
-      title: "Address Copied",
-      description: `Duplicated "${source.title || `Address #${index + 1}`}"`,
-      type: "success",
-    });
   };
 
   const handleRemoveAddress = async (index: number) => {
@@ -275,7 +259,7 @@ export function CreateAccountPanel({
 
       toast({
         title: "Account Created",
-        description: `Successfully registered ${created.name}`,
+        description: `Successfully registered ${created.displayName || created.name}`,
         type: "success",
       });
 
@@ -507,16 +491,6 @@ export function CreateAccountPanel({
           <div className="space-y-4">
             {addresses.map((addr, idx) => {
               const isExpanded = isAddressExpanded(addr.tempId);
-              const summaryText = [
-                addr.addressLine1,
-                addr.subdistrict,
-                addr.district,
-                addr.province,
-                addr.postalCode,
-                addr.country,
-              ]
-                .filter(Boolean)
-                .join(", ");
 
               return (
                 <div
@@ -544,19 +518,6 @@ export function CreateAccountPanel({
                       </div>
 
                       <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 min-w-0">
-                        <span className="text-xs font-bold text-slate-200 truncate">
-                          Address #{idx + 1}
-                        </span>
-                        
-                        <span className="text-xs text-slate-400 px-2 py-0.5 rounded-full bg-[#252728] w-fit">
-                          {addr.type}
-                        </span>
-
-                        {!isExpanded && summaryText && (
-                          <span className="text-xs text-slate-400 truncate max-w-xs sm:max-w-md hidden sm:inline ml-1">
-                            • {summaryText}
-                          </span>
-                        )}
                       </div>
 
                       {/* Main Address Badge / Toggle */}
@@ -581,16 +542,6 @@ export function CreateAccountPanel({
                       className="flex items-center gap-1.5 shrink-0 ml-2"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {/* Copy / Duplicate Address Button */}
-                      <button
-                        type="button"
-                        onClick={() => handleDuplicateAddress(idx)}
-                        className="px-2.5 py-1 rounded-xl text-xs font-medium text-slate-300 bg-[#252728] hover:bg-[#4E4F50] hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
-                        title="Duplicate this address form"
-                      >
-                        <Copy className="w-3 h-3 text-slate-400" />
-                        <span>Copy</span>
-                      </button>
 
                       {/* Clear / Reset Address Fields Button */}
                       <button

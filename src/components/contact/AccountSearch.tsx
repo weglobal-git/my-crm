@@ -10,7 +10,7 @@ interface AccountSearchProps {
   className?: string;
 }
 
-export function AccountSearch({
+export const AccountSearch = React.memo(function AccountSearch({
   value,
   onChange,
   placeholder = "Search accounts...",
@@ -177,4 +177,5 @@ export function AccountSearch({
       </button>
     </div>
   );
-}
+});
+

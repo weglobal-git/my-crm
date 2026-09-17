@@ -15,7 +15,6 @@ import {
   Mail, 
   ChevronDown, 
   ChevronUp, 
-  Copy, 
   Phone, 
   History, 
   Bot, 
@@ -139,6 +138,25 @@ const buildPersonForms = (contacts?: AccountOverviewResult['contacts']) => {
   });
   return forms;
 };
+
+function isAddressEqual(a: CompanyAddress, b?: CompanyAddress): boolean {
+  if (!b) return false;
+  return (
+    (a.title || "").trim() === (b.title || "").trim() &&
+    a.type === b.type &&
+    (a.taxId || "").trim() === (b.taxId || "").trim() &&
+    (a.branchNumber || "").trim() === (b.branchNumber || "").trim() &&
+    (a.addressLine1 || "").trim() === (b.addressLine1 || "").trim() &&
+    (a.addressLine2 || "").trim() === (b.addressLine2 || "").trim() &&
+    (a.subdistrict || "").trim() === (b.subdistrict || "").trim() &&
+    (a.district || "").trim() === (b.district || "").trim() &&
+    (a.province || "").trim() === (b.province || "").trim() &&
+    (a.postalCode || "").trim() === (b.postalCode || "").trim() &&
+    (a.country || "").trim() === (b.country || "").trim() &&
+    (a.googleMapsUrl || "").trim() === (b.googleMapsUrl || "").trim() &&
+    Boolean(a.isDefault) === Boolean(b.isDefault)
+  );
+}
 
 export function EditAccountPanel({
   companyId,
@@ -319,11 +337,8 @@ export function EditAccountPanel({
   const [newPersonEmails, setNewPersonEmails] = useState<string[]>([""]);
   const [newPersonPhones, setNewPersonPhones] = useState<string[]>([""]);
 
-  // In-memory draft address state (not saved until explicitly confirmed)
+  // In-memory draft address state (persisted when saving account)
   const [draftAddress, setDraftAddress] = useState<Partial<CompanyAddress> | null>(null);
-  const isSavingDraftRef = useRef(false);
-  const [isSavingDraftAddress, setIsSavingDraftAddress] = useState(false);
-  const [savingAddressId, setSavingAddressId] = useState<string | null>(null);
 
   // Email tab selection
   const [selectedEmailContactId, setSelectedEmailContactId] = useState<string | null>(() => {
@@ -469,39 +484,152 @@ export function EditAccountPanel({
     }
     const validPhones = phones.map((p) => p.trim()).filter(Boolean);
 
+    // 1. Validate all existing addresses
+    for (const addr of addresses) {
+      if (!addr.addressLine1?.trim()) {
+        return toast({
+          title: "Validation",
+          description: `Address Line 1 is required for ${addr.title || "an address"}`,
+          type: "warning",
+        });
+      }
+    }
+
+    // 2. Validate draft address if present
+    const hasDraftContent = Boolean(
+      draftAddress && (
+        draftAddress.addressLine1?.trim() ||
+        draftAddress.addressLine2?.trim() ||
+        draftAddress.subdistrict?.trim() ||
+        draftAddress.district?.trim() ||
+        draftAddress.province?.trim() ||
+        draftAddress.postalCode?.trim() ||
+        draftAddress.taxId?.trim() ||
+        draftAddress.branchNumber?.trim()
+      )
+    );
+    if (draftAddress && hasDraftContent && !draftAddress.addressLine1?.trim()) {
+      return toast({
+        title: "Validation",
+        description: "Address Line 1 is required for the new address (or click Cancel to discard it)",
+        type: "warning",
+      });
+    }
+
     setIsSavingDetails(true);
     try {
-      await updateCompanyDetails(companyId, {
-        displayName: displayName.trim(),
-        name: name.trim(),
-        phone: validPhones[0] || null,
-        email: validEmails[0] || null,
-        phones: validPhones,
-        emails: validEmails,
-        country: country.trim() || undefined,
-        type: accountType,
-        notes: notes.trim() || undefined,
-      });
-      toast({
-        title: "Account Updated",
-        description: "Account details saved successfully.",
-        type: "success",
-      });
-      setOverview((prev) => prev ? {
-        ...prev,
-        company: {
-          ...prev.company,
-          name: name.trim(),
+      const originalMap = new Map((overview?.addresses || []).map((a) => [a.id, a]));
+      const dirtyAddresses = addresses.filter((addr) => !isAddressEqual(addr, originalMap.get(addr.id)));
+
+      const updatedAddressesMap = new Map<string, CompanyAddress>();
+      let createdDraftAddr: CompanyAddress | null = null;
+
+      const savePromises: Promise<unknown>[] = [
+        updateCompanyDetails(companyId, {
           displayName: displayName.trim(),
+          name: name.trim(),
           phone: validPhones[0] || null,
           email: validEmails[0] || null,
           phones: validPhones,
           emails: validEmails,
-          country: country.trim() || null,
+          country: country.trim() || undefined,
           type: accountType,
-          notes: notes.trim() || null,
-        }
+          notes: notes.trim() || undefined,
+        }),
+      ];
+
+      for (const addr of dirtyAddresses) {
+        savePromises.push(
+          updateCompanyAddress(addr.id, {
+            title: addr.title || "Address",
+            type: addr.type,
+            taxId: addr.taxId || undefined,
+            branchNumber: addr.branchNumber || undefined,
+            addressLine1: addr.addressLine1.trim(),
+            addressLine2: addr.addressLine2?.trim() || undefined,
+            subdistrict: addr.subdistrict || undefined,
+            district: addr.district || undefined,
+            province: addr.province || undefined,
+            postalCode: addr.postalCode || undefined,
+            country: addr.country || "Thailand",
+            googleMapsUrl: addr.googleMapsUrl || undefined,
+          }).then((res) => {
+            updatedAddressesMap.set(addr.id, res);
+          })
+        );
+      }
+
+      if (draftAddress && draftAddress.addressLine1?.trim()) {
+        const nextIdx = addresses.length + 1;
+        const shouldBeDefault = addresses.length === 0 || Boolean(draftAddress.isDefault);
+        savePromises.push(
+          createCompanyAddress(companyId, {
+            title: draftAddress.title || `Address #${nextIdx}`,
+            type: draftAddress.type || (nextIdx === 1 ? "HEADQUARTERS" : "BRANCH"),
+            taxId: draftAddress.taxId?.trim() || undefined,
+            branchNumber: draftAddress.branchNumber?.trim() || undefined,
+            addressLine1: draftAddress.addressLine1.trim(),
+            addressLine2: draftAddress.addressLine2?.trim() || undefined,
+            subdistrict: draftAddress.subdistrict?.trim() || undefined,
+            district: draftAddress.district?.trim() || undefined,
+            province: draftAddress.province?.trim() || undefined,
+            postalCode: draftAddress.postalCode?.trim() || undefined,
+            country: draftAddress.country || country || "Thailand",
+            googleMapsUrl: draftAddress.googleMapsUrl?.trim() || undefined,
+            isDefault: shouldBeDefault,
+          }).then((res) => {
+            createdDraftAddr = res;
+          })
+        );
+      }
+
+      await Promise.all(savePromises);
+
+      let nextAddresses = addresses.map((a) => updatedAddressesMap.get(a.id) || a);
+      if (createdDraftAddr) {
+        nextAddresses = [...nextAddresses, createdDraftAddr];
+        setDraftAddress(null);
+      } else if (draftAddress && !hasDraftContent) {
+        setDraftAddress(null);
+      }
+      setAddresses(nextAddresses);
+
+      const nextCompany = {
+        name: name.trim(),
+        displayName: displayName.trim(),
+        phone: validPhones[0] || null,
+        email: validEmails[0] || null,
+        phones: validPhones,
+        emails: validEmails,
+        country: country.trim() || null,
+        type: accountType,
+        notes: notes.trim() || null,
+      };
+
+      setOverview((prev) => prev ? {
+        ...prev,
+        company: {
+          ...prev.company,
+          ...nextCompany,
+        },
+        addresses: nextAddresses,
       } : prev);
+
+      mutateOverview((prev) => prev ? {
+        ...prev,
+        company: {
+          ...prev.company,
+          ...nextCompany,
+        },
+        addresses: nextAddresses,
+      } : prev, false);
+
+      toast({
+        title: "Account Saved",
+        description: "Account details and address information saved successfully.",
+        type: "success",
+      });
+
       onAccountUpdated({
         name: name.trim(),
         displayName: displayName.trim(),
@@ -538,169 +666,10 @@ export function EditAccountPanel({
     });
   };
 
-  const handleSaveDraftAddress = async () => {
-    if (!companyId || !draftAddress) return;
-    if (isSavingDraftRef.current) return;
-    const addrLine1 = draftAddress.addressLine1?.trim();
-    if (!addrLine1) {
-      return toast({ title: "Validation", description: "Address Line 1 is required", type: "warning" });
-    }
-
-    isSavingDraftRef.current = true;
-    setIsSavingDraftAddress(true);
-
-    const nextIdx = addresses.length + 1;
-    const draftSnapshot = { ...draftAddress };
-    const tempId = `temp_addr_${Date.now()}`;
-    const shouldBeDefault = addresses.length === 0 || Boolean(draftSnapshot.isDefault);
-
-    const optimisticAddr: CompanyAddress = {
-      id: tempId,
-      companyId,
-      title: draftSnapshot.title || `Address #${nextIdx}`,
-      type: draftSnapshot.type || (nextIdx === 1 ? "HEADQUARTERS" : "BRANCH"),
-      taxId: draftSnapshot.taxId || null,
-      branchNumber: draftSnapshot.branchNumber || null,
-      addressLine1: addrLine1,
-      addressLine2: draftSnapshot.addressLine2?.trim() || null,
-      subdistrict: draftSnapshot.subdistrict?.trim() || null,
-      district: draftSnapshot.district?.trim() || null,
-      province: draftSnapshot.province?.trim() || null,
-      postalCode: draftSnapshot.postalCode?.trim() || null,
-      country: draftSnapshot.country || country || "Thailand",
-      googleMapsUrl: draftSnapshot.googleMapsUrl?.trim() || null,
-      formattedAddress: [
-        addrLine1,
-        draftSnapshot.addressLine2?.trim(),
-        draftSnapshot.subdistrict?.trim(),
-        draftSnapshot.district?.trim(),
-        draftSnapshot.province?.trim(),
-        draftSnapshot.postalCode?.trim(),
-        draftSnapshot.country || country || "Thailand",
-      ]
-        .filter(Boolean)
-        .join(" "),
-      isDefault: shouldBeDefault,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    // Instant optimistic update (<5ms): close draft form and show card immediately
-    setDraftAddress(null);
-    setAddresses((prev) => {
-      const list = shouldBeDefault ? prev.map((a) => ({ ...a, isDefault: false })) : prev;
-      return [...list, optimisticAddr];
-    });
-    setExpandedAddressIds((prev) => new Set(prev).add(tempId));
-
-    try {
-      const created = await createCompanyAddress(companyId, {
-        title: optimisticAddr.title || undefined,
-        type: optimisticAddr.type,
-        taxId: optimisticAddr.taxId || undefined,
-        branchNumber: optimisticAddr.branchNumber || undefined,
-        addressLine1: optimisticAddr.addressLine1,
-        addressLine2: optimisticAddr.addressLine2 || undefined,
-        subdistrict: optimisticAddr.subdistrict || undefined,
-        district: optimisticAddr.district || undefined,
-        province: optimisticAddr.province || undefined,
-        postalCode: optimisticAddr.postalCode || undefined,
-        country: optimisticAddr.country || undefined,
-        googleMapsUrl: optimisticAddr.googleMapsUrl || undefined,
-        isDefault: shouldBeDefault,
-      });
-
-      // Replace optimistic temp ID with server ID
-      setAddresses((prev) =>
-        prev.map((a) => (a.id === tempId ? created : a))
-      );
-      setExpandedAddressIds((prev) => {
-        const next = new Set(prev);
-        next.delete(tempId);
-        next.add(created.id);
-        return next;
-      });
-
-      toast({ title: "Address Created", description: `Added ${created.title} successfully.`, type: "success" });
-      onAccountUpdated();
-    } catch (err: unknown) {
-      // Revert on error
-      setAddresses((prev) => prev.filter((a) => a.id !== tempId));
-      setDraftAddress(draftSnapshot);
-      const msg = err instanceof Error ? err.message : "Failed to add address";
-      toast({ title: "Error", description: msg, type: "error" });
-    } finally {
-      isSavingDraftRef.current = false;
-      setIsSavingDraftAddress(false);
-    }
-  };
-
   const handleUpdateAddressField = (addrId: string, field: keyof CompanyAddress, val: unknown) => {
     setAddresses((prev) =>
       prev.map((a) => (a.id === addrId ? { ...a, [field]: val } : a))
     );
-  };
-
-  const handleSaveAddressCard = async (addr: CompanyAddress) => {
-    if (!addr.addressLine1?.trim()) {
-      return toast({ title: "Validation", description: "Address Line 1 is required", type: "warning" });
-    }
-    setSavingAddressId(addr.id);
-    const previous = addresses;
-    try {
-      const updated = await updateCompanyAddress(addr.id, {
-        title: addr.title || "Address",
-        type: addr.type,
-        taxId: addr.taxId || undefined,
-        branchNumber: addr.branchNumber || undefined,
-        addressLine1: addr.addressLine1,
-        addressLine2: addr.addressLine2 || undefined,
-        subdistrict: addr.subdistrict || undefined,
-        district: addr.district || undefined,
-        province: addr.province || undefined,
-        postalCode: addr.postalCode || undefined,
-        country: addr.country || "Thailand",
-        googleMapsUrl: addr.googleMapsUrl || undefined,
-      });
-      setAddresses((prev) => prev.map((a) => (a.id === addr.id ? updated : a)));
-      toast({ title: "Address Saved", description: `${addr.title || "Address"} updated successfully.`, type: "success" });
-      onAccountUpdated();
-    } catch (err: unknown) {
-      setAddresses(previous);
-      const msg = err instanceof Error ? err.message : "Failed to save address";
-      toast({ title: "Error", description: msg, type: "error" });
-    } finally {
-      setSavingAddressId(null);
-    }
-  };
-
-  const handleDuplicateAddress = async (addr: CompanyAddress) => {
-    if (!companyId) return;
-    const nextIdx = addresses.length + 1;
-    try {
-      const created = await createCompanyAddress(companyId, {
-        title: `Address #${nextIdx}`,
-        type: addr.type,
-        taxId: addr.taxId || undefined,
-        branchNumber: addr.branchNumber || undefined,
-        addressLine1: addr.addressLine1,
-        addressLine2: addr.addressLine2 || undefined,
-        subdistrict: addr.subdistrict || undefined,
-        district: addr.district || undefined,
-        province: addr.province || undefined,
-        postalCode: addr.postalCode || undefined,
-        country: addr.country || "Thailand",
-        isDefault: false,
-        googleMapsUrl: addr.googleMapsUrl || undefined,
-      });
-      setAddresses((prev) => [...prev, created]);
-      setExpandedAddressIds((prev) => new Set(prev).add(created.id));
-      toast({ title: "Address Duplicated", description: `Created Address #${nextIdx}.`, type: "success" });
-      onAccountUpdated();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to duplicate address";
-      toast({ title: "Error", description: msg, type: "error" });
-    }
   };
 
   const handleDeleteAddress = async (addrId: string, title?: string | null) => {
@@ -1048,7 +1017,7 @@ export function EditAccountPanel({
     <SlideOverPanel
       isOpen={isOpen && !!companyId}
       onClose={onClose}
-      title={name || "Edit Account"}
+      title={displayName || name || "Edit Account"}
       subtitle={
         country
           ? `${accountType} • ${country} • ${overview?.contacts?.length || 0} Contacts`
@@ -1490,26 +1459,16 @@ export function EditAccountPanel({
                               />
                             </div>
 
-                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#252728]">
+                            <div className="flex items-center justify-between pt-2 border-t border-[#252728]">
+                              <span className="text-[11px] text-slate-400">
+                                This address will be saved when clicking &quot;Save Account&quot; on the toolbar.
+                              </span>
                               <button
                                 type="button"
                                 onClick={() => setDraftAddress(null)}
                                 className="px-3.5 py-1.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition-colors cursor-pointer"
                               >
                                 Cancel
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleSaveDraftAddress}
-                                disabled={isSavingDraftAddress}
-                                className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                              >
-                                {isSavingDraftAddress ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
-                                ) : (
-                                  <Save className="w-3.5 h-3.5 text-black" />
-                                )}
-                                <span>Save Address</span>
                               </button>
                             </div>
                           </div>
@@ -1523,16 +1482,6 @@ export function EditAccountPanel({
                       ) : (
                         addresses.map((addr, idx) => {
                           const isExpanded = expandedAddressIds.has(addr.id);
-                          const summary = [
-                            addr.addressLine1,
-                            addr.subdistrict,
-                            addr.district,
-                            addr.province,
-                            addr.postalCode,
-                            addr.country,
-                          ]
-                            .filter(Boolean)
-                            .join(", ");
 
                           return (
                             <div
@@ -1559,15 +1508,10 @@ export function EditAccountPanel({
                                     )}
                                   </div>
 
-                                  <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 min-w-0">
-                                    <span className="text-xs font-bold text-slate-200 truncate">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-xs font-bold text-slate-200 shrink-0">
                                       Address #{idx + 1}
                                     </span>
-                                    {!isExpanded && summary && (
-                                      <span className="text-xs text-slate-400 truncate max-w-xs sm:max-w-md hidden sm:inline ml-1">
-                                        • {summary}
-                                      </span>
-                                    )}
                                   </div>
 
                                   {/* Main Address Star Button */}
@@ -1592,15 +1536,6 @@ export function EditAccountPanel({
                                   className="flex items-center gap-1.5 shrink-0 ml-2"
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDuplicateAddress(addr)}
-                                    className="px-2.5 py-1 rounded-xl text-xs font-medium text-slate-300 bg-[#252728] hover:bg-[#4E4F50] hover:text-white transition-colors flex items-center gap-1 cursor-pointer"
-                                    title="Duplicate address"
-                                  >
-                                    <Copy className="w-3 h-3 text-slate-400" />
-                                    <span>Copy</span>
-                                  </button>
 
                                   {addresses.length > 1 && (
                                     <button
@@ -1808,22 +1743,6 @@ export function EditAccountPanel({
                                       placeholder="https://maps.google.com/?q=..."
                                       className="w-full bg-[#252728] rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-[#C7F33C] border-0"
                                     />
-                                  </div>
-
-                                  <div className="flex items-center justify-end pt-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSaveAddressCard(addr)}
-                                      disabled={savingAddressId === addr.id}
-                                      className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                                    >
-                                      {savingAddressId === addr.id ? (
-                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
-                                      ) : (
-                                        <Save className="w-3.5 h-3.5 text-black" />
-                                      )}
-                                      <span>Save Address</span>
-                                    </button>
                                   </div>
                                 </div>
                               )}

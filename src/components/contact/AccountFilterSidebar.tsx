@@ -33,7 +33,7 @@ function formatTypeLabel(type: string): string {
 
 
 
-function SidebarItem({
+const SidebarItem = React.memo(function SidebarItem({
   icon,
   label,
   count,
@@ -84,9 +84,9 @@ function SidebarItem({
       )}
     </button>
   );
-}
+});
 
-export function AccountFilterSidebar({
+export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
   activeType,
   onTypeChange,
   availableTypes = [],
@@ -248,4 +248,5 @@ export function AccountFilterSidebar({
       </div>
     </div>
   );
-}
+});
+

@@ -441,6 +441,7 @@ export async function getCompaniesWithContacts({
       by: ["companyId", "status"],
       where: {
         companyId: { in: companyIds },
+        value: { gt: 0 },
       },
       _count: { id: true },
     });
@@ -1742,8 +1743,12 @@ export async function getAccountOverview(
   const totalPipelineValue = openDeals.reduce((sum, d) => sum + (d.value || 0), 0);
   const totalWonValue = wonDeals.reduce((sum, d) => sum + (d.value || 0), 0);
 
-  const winRate = totalDeals > 0 
-    ? Math.round((wonDeals.length / totalDeals) * 100) 
+  const valuedDeals = deals.filter((d) => (d.value || 0) > 0);
+  const totalValuedDeals = valuedDeals.length;
+  const wonValuedDeals = valuedDeals.filter((d) => d.status === "WON" || (d.status as string) === "COMPLETED");
+
+  const winRate = totalValuedDeals > 0 
+    ? Math.round((wonValuedDeals.length / totalValuedDeals) * 100) 
     : 0;
 
   const activePersonsCount = sanitizedContacts.filter((c) => c.isActive).length;

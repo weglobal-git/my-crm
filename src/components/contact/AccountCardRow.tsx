@@ -22,9 +22,9 @@ export const AccountCardRow = memo(function AccountCardRow({
 }: AccountCardRowProps) {
   const [hoverRating, setHoverRating] = useState<number | null>(null);
 
-  const displayName = account.displayName || account.name;
+  const displayName = account.displayName?.trim() || account.name;
   const officialName = account.name;
-  const showOfficialSubtitle = Boolean(account.displayName && account.displayName !== account.name) || Boolean(officialName);
+  const showOfficialSubtitle = Boolean(officialName);
 
   const currentRating = account.starRating || 0;
   const effectiveRating = hoverRating !== null ? hoverRating : currentRating;
@@ -56,7 +56,7 @@ export const AccountCardRow = memo(function AccountCardRow({
       onKeyDown={handleKeyDown}
       onPointerEnter={() => onIntent?.(account.id)}
       onFocus={() => onIntent?.(account.id)}
-      className={`group w-full text-left rounded-xl transition-all duration-150 cursor-pointer select-none px-6 py-1.5 mb-2.5 flex items-center border border-transparent ${
+      className={`group w-full text-left rounded-xl transition-all duration-150 cursor-pointer select-none px-6 py-1.5 mb-2.5 flex items-center min-h-[52px] border border-transparent ${
         isSelected
           ? "bg-[#C7F33C] text-black shadow-md"
           : "bg-[#3A3B3C] hover:bg-[#2C2D30] text-slate-100"
@@ -64,8 +64,8 @@ export const AccountCardRow = memo(function AccountCardRow({
     >
       {/* Desktop Grid Layout */}
       <div className="hidden sm:grid grid-cols-[72px_minmax(0,1fr)_170px_120px_100px] gap-4 items-center w-full">
-        {/* Col 1: Success Rate Percentage */}
-        <div className="w-[72px] shrink-0 flex items-center">
+        {/* Col 1: Success Rate Percentage & Won/Total Valued Deals */}
+        <div className="w-[72px] shrink-0 flex flex-col justify-center">
           <span
             className={`text-lg font-bold tracking-tight leading-none ${
               isSelected ? "text-black" : "text-white"
@@ -73,10 +73,17 @@ export const AccountCardRow = memo(function AccountCardRow({
           >
             {account.successRate}%
           </span>
+          <span
+            className={`text-[11px] font-medium leading-tight mt-0.5 tabular-nums ${
+              isSelected ? "text-black/70" : "text-slate-400"
+            }`}
+          >
+            {account.wonDealsCount}/{account.totalDealsCount}
+          </span>
         </div>
 
         {/* Col 2: Account Name & Legal/Company Subtitle */}
-        <div className="min-w-0 pr-2">
+        <div className="min-w-0 pr-2 flex flex-col justify-center">
           <h4
             className={`font-semibold text-[13px] leading-tight truncate ${
               isSelected ? "text-black" : "text-white"
@@ -120,7 +127,7 @@ export const AccountCardRow = memo(function AccountCardRow({
                   className="rounded transition-transform hover:scale-125 focus:outline-none cursor-pointer"
                 >
                   <Star
-                    className={`w-5 h-5 mr-0.5 transition-colors ${
+                    className={`w-3 h-3 mr-0.5 transition-colors ${
                       isSelected
                         ? isFilled
                           ? "fill-black text-black"
@@ -169,13 +176,22 @@ export const AccountCardRow = memo(function AccountCardRow({
       {/* Mobile Layout (Clean Single-Row for Mobile) */}
       <div className="flex sm:hidden items-center justify-between w-full py-1">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <span
-            className={`text-xl font-black tracking-tight ${
-              isSelected ? "text-black" : "text-white"
-            }`}
-          >
-            {account.successRate}%
-          </span>
+          <div className="shrink-0 flex flex-col items-center justify-center min-w-[50px]">
+            <span
+              className={`text-base font-bold tracking-tight leading-none ${
+                isSelected ? "text-black" : "text-white"
+              }`}
+            >
+              {account.successRate}%
+            </span>
+            <span
+              className={`text-[10px] font-medium leading-tight mt-0.5 tabular-nums ${
+                isSelected ? "text-black/70" : "text-slate-400"
+              }`}
+            >
+              {account.wonDealsCount}/{account.totalDealsCount}
+            </span>
+          </div>
           <div className="min-w-0 flex-1">
             <h4
               className={`text-sm font-bold truncate ${

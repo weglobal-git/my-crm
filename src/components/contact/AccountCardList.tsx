@@ -21,33 +21,50 @@ interface AccountCardListProps {
 
 function AccountRowSkeleton() {
   return (
-    <div className="w-full bg-[#1E1F21] rounded-2xl px-5 py-3 mb-2.5 flex flex-col md:grid md:grid-cols-[72px_minmax(0,1fr)_170px_120px_100px] items-center gap-4 animate-pulse select-none border border-transparent">
-      {/* Col 1: Win Rate % */}
-      <div className="flex items-center gap-2 w-full md:w-auto">
-        <div className="h-7 w-14 rounded-lg bg-[#2A2B2D]" />
+    <div className="w-full bg-[#1E1F21] rounded-xl px-6 py-1.5 mb-2.5 min-h-[52px] flex items-center border border-transparent animate-pulse select-none">
+      <div className="hidden sm:grid grid-cols-[72px_minmax(0,1fr)_170px_120px_100px] gap-4 items-center w-full">
+        {/* Col 1: Win Rate % & Valued Deals Ratio */}
+        <div className="w-[72px] shrink-0 flex flex-col justify-center gap-1">
+          <div className="h-4 w-10 rounded bg-[#2A2B2D]" />
+          <div className="h-2.5 w-6 rounded bg-[#2A2B2D]/70" />
+        </div>
+
+        {/* Col 2: Name & Legal Subtitle */}
+        <div className="min-w-0 pr-2 flex flex-col justify-center gap-1.5">
+          <div className="h-3.5 w-36 rounded bg-[#2A2B2D]" />
+          <div className="h-2.5 w-24 rounded bg-[#2A2B2D]/70" />
+        </div>
+
+        {/* Col 3: 5 Stars */}
+        <div className="w-[170px] shrink-0 flex items-center gap-1">
+          {[1, 2, 3, 4, 5].map((s) => (
+            <div key={s} className="w-3 h-3 rounded-sm bg-[#2A2B2D]" />
+          ))}
+        </div>
+
+        {/* Col 4: Type */}
+        <div className="w-[120px] shrink-0 flex items-center">
+          <div className="h-3.5 w-16 rounded bg-[#2A2B2D]" />
+        </div>
+
+        {/* Col 5: Country */}
+        <div className="w-[100px] shrink-0 flex items-center justify-end">
+          <div className="h-3.5 w-16 rounded bg-[#2A2B2D]" />
+        </div>
       </div>
 
-      {/* Col 2: Name & Legal Subtitle */}
-      <div className="flex flex-col gap-1.5 min-w-0 w-full">
-        <div className="h-4 w-36 rounded bg-[#2A2B2D]" />
-        <div className="h-3 w-24 rounded bg-[#2A2B2D]/70" />
-      </div>
-
-      {/* Col 3: 5 Stars (Desktop only) */}
-      <div className="hidden md:flex items-center gap-1">
-        {[1, 2, 3, 4, 5].map((s) => (
-          <div key={s} className="w-4 h-4 rounded-sm bg-[#2A2B2D]" />
-        ))}
-      </div>
-
-      {/* Col 4: Type (Desktop only) */}
-      <div className="hidden md:flex items-center">
-        <div className="h-4 w-16 rounded bg-[#2A2B2D]" />
-      </div>
-
-      {/* Col 5: Country (Desktop only) */}
-      <div className="hidden md:flex items-center justify-end">
-        <div className="h-4 w-16 rounded bg-[#2A2B2D]" />
+      {/* Mobile Skeleton */}
+      <div className="flex sm:hidden items-center justify-between w-full py-1">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="shrink-0 flex flex-col items-center justify-center min-w-[50px] gap-1">
+            <div className="h-4 w-10 rounded bg-[#2A2B2D]" />
+            <div className="h-2.5 w-6 rounded bg-[#2A2B2D]/70" />
+          </div>
+          <div className="flex flex-col gap-1 min-w-0 flex-1">
+            <div className="h-3.5 w-32 rounded bg-[#2A2B2D]" />
+            <div className="h-2.5 w-20 rounded bg-[#2A2B2D]/70" />
+          </div>
+        </div>
       </div>
     </div>
   );

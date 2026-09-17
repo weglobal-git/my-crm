@@ -11,6 +11,7 @@ import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
 
 import type { AccountCardDTO } from "@/lib/contact/account-card-dto";
+import { accountMatchesFilters } from "@/lib/contact/account-card-dto";
 import { getAccountFilterKey, getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
 import {
   getCompaniesWithContacts,
@@ -109,6 +110,30 @@ export function ContactView({
   // Sequence & Mutation tracking for instant race-safe ratings
   const starSequenceRef = useRef<Map<string, number>>(new Map());
   const activeMutationsRef = useRef<Set<string>>(new Set());
+
+  // Persistent registry of all known accounts across filters & pages for 0ms optimistic filtering
+  const knownAccountsMapRef = useRef<Map<string, AccountCardDTO>>(new Map());
+
+  useEffect(() => {
+    for (const c of initialCompanies) {
+      if (!knownAccountsMapRef.current.has(c.id)) {
+        knownAccountsMapRef.current.set(c.id, c as AccountCardDTO);
+      }
+    }
+  }, [initialCompanies]);
+
+  // Stable filter callbacks for 0ms interaction
+  const handleTypeChange = useCallback((type: ContactType | "ALL") => {
+    setActiveType(type);
+  }, []);
+
+  const handleCountryChange = useCallback((country: string) => {
+    setActiveCountry(country);
+  }, []);
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query);
+  }, []);
 
   // Refs for stable callbacks
   const isLoadingMoreRef = useRef(false);
@@ -215,6 +240,9 @@ export function ContactView({
   if (lastAppliedKey !== currentKeyString && serverFilterData) {
     setLastAppliedKey(currentKeyString);
     const items = serverFilterData.companies as AccountCardDTO[];
+    for (const item of items) {
+      knownAccountsMapRef.current.set(item.id, item);
+    }
     setAccounts(items);
     setPage(1);
     setHasMore(serverFilterData.hasMore);
@@ -225,6 +253,38 @@ export function ContactView({
       setSelectedAccountId(items[0].id);
     }
   }
+
+  // 0ms Optimistic Filtered Accounts:
+  // Immediately filters candidate accounts in-memory (0.19ms) without waiting for server round-trip.
+  const isCurrentFilterDataReady = Boolean(serverFilterData && lastAppliedKey === currentKeyString);
+
+  const displayAccounts = useMemo(() => {
+    const candidateList = isCurrentFilterDataReady
+      ? accounts
+      : Array.from(knownAccountsMapRef.current.values());
+
+    return candidateList.filter((acc) =>
+      accountMatchesFilters(acc, {
+        status: activeTab,
+        type: activeType,
+        country: activeCountry,
+        search: searchQuery,
+      })
+    );
+  }, [
+    isCurrentFilterDataReady,
+    accounts,
+    activeTab,
+    activeType,
+    activeCountry,
+    searchQuery,
+  ]);
+
+  useEffect(() => {
+    if (displayAccounts.length > 0 && !displayAccounts.some((c) => c.id === selectedAccountId)) {
+      setSelectedAccountId(displayAccounts[0].id);
+    }
+  }, [displayAccounts, selectedAccountId]);
 
   // Infinite Scroll: Load more accounts
   const handleLoadMore = useCallback(async () => {
@@ -245,6 +305,9 @@ export function ContactView({
 
       if (res.companies.length > 0) {
         const newItems = res.companies as AccountCardDTO[];
+        for (const item of newItems) {
+          knownAccountsMapRef.current.set(item.id, item);
+        }
         setAccounts((prev) => {
           const existingIds = new Set(prev.map((c) => c.id));
           const filtered = newItems.filter((c) => !existingIds.has(c.id));
@@ -385,6 +448,10 @@ export function ContactView({
       );
       return [...updated].sort((a, b) => (b.starRating || 0) - (a.starRating || 0));
     });
+    const oldKnown = knownAccountsMapRef.current.get(companyId);
+    if (oldKnown) {
+      knownAccountsMapRef.current.set(companyId, { ...oldKnown, starRating: newRating });
+    }
 
     const mutationId = `mut_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     activeMutationsRef.current.add(mutationId);
@@ -395,6 +462,10 @@ export function ContactView({
         setAccounts((prev) =>
           prev.map((c) => (c.id === companyId ? { ...c, revision: res.revision } : c))
         );
+        const curKnown = knownAccountsMapRef.current.get(companyId);
+        if (curKnown) {
+          knownAccountsMapRef.current.set(companyId, { ...curKnown, revision: res.revision });
+        }
       }
     } catch (err) {
       console.error("[ContactView] Rating mutation failed:", err);
@@ -405,6 +476,10 @@ export function ContactView({
           );
           return [...reverted].sort((a, b) => (b.starRating || 0) - (a.starRating || 0));
         });
+        const revKnown = knownAccountsMapRef.current.get(companyId);
+        if (revKnown) {
+          knownAccountsMapRef.current.set(companyId, { ...revKnown, starRating: previousRating });
+        }
       }
     } finally {
       setTimeout(() => {
@@ -432,6 +507,19 @@ export function ContactView({
         };
       })
     );
+    const existing = knownAccountsMapRef.current.get(selectedAccountId);
+    if (existing) {
+      knownAccountsMapRef.current.set(selectedAccountId, {
+        ...existing,
+        ...updatedCompany,
+        displayName: updatedCompany.displayName !== undefined ? updatedCompany.displayName : existing.displayName,
+        name: updatedCompany.name !== undefined ? updatedCompany.name : existing.name,
+        country: updatedCompany.country !== undefined ? updatedCompany.country : existing.country,
+        type: updatedCompany.type !== undefined ? updatedCompany.type : existing.type,
+        status: updatedCompany.status !== undefined ? updatedCompany.status : existing.status,
+        starRating: updatedCompany.starRating !== undefined ? updatedCompany.starRating : existing.starRating,
+      });
+    }
   }, [selectedAccountId]);
 
   // Escape key handler
@@ -583,11 +671,11 @@ export function ContactView({
   useEffect(() => {
     setPageSearchConfig({
       query: searchQuery,
-      onSearch: (q: string) => setSearchQuery(q),
+      onSearch: handleSearchChange,
       placeholder: "Search accounts...",
     });
     return () => setPageSearchConfig(null);
-  }, [searchQuery, setPageSearchConfig]);
+  }, [searchQuery, handleSearchChange, setPageSearchConfig]);
 
   useEffect(() => {
     setPageManageContent(
@@ -595,10 +683,10 @@ export function ContactView({
         activeTab={activeTab}
         onTabChange={setActiveTab}
         activeType={activeType}
-        onTypeChange={setActiveType}
+        onTypeChange={handleTypeChange}
         availableTypes={availableTypes}
         activeCountry={activeCountry}
-        onCountryChange={setActiveCountry}
+        onCountryChange={handleCountryChange}
         availableCountries={availableCountries}
         stats={stats}
         activeFilterCount={activeFilterCount}
@@ -613,8 +701,10 @@ export function ContactView({
   }, [
     activeTab,
     activeType,
+    handleTypeChange,
     availableTypes,
     activeCountry,
+    handleCountryChange,
     availableCountries,
     stats,
     activeFilterCount,
@@ -629,21 +719,21 @@ export function ContactView({
           {/* LEFT: 2 Groups Filter Sidebar (Type & Country - Desktop Only) */}
           <AccountFilterSidebar
             activeType={activeType}
-            onTypeChange={setActiveType}
+            onTypeChange={handleTypeChange}
             availableTypes={availableTypes}
             activeCountry={activeCountry}
-            onCountryChange={setActiveCountry}
+            onCountryChange={handleCountryChange}
             availableCountries={availableCountries}
           />
 
           {/* RIGHT: Main Account List Area */}
           <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden w-full">
             <AccountCardList
-              accounts={accounts}
-              isLoading={isFilterLoading}
+              accounts={displayAccounts}
+              isLoading={isFilterLoading && displayAccounts.length === 0}
               isLoadingMore={isLoadingMore}
               hasMore={hasMore}
-              totalAccounts={totalAccounts}
+              totalAccounts={searchQuery.trim() ? displayAccounts.length : totalAccounts}
               selectedAccountId={selectedAccountId}
               onSelectAccount={handleSelectAccount}
               onRatingChange={handleRatingChange}
@@ -686,7 +776,7 @@ export function ContactView({
                   {/* Account Search */}
                   <AccountSearch
                     value={searchQuery}
-                    onChange={setSearchQuery}
+                    onChange={handleSearchChange}
                     placeholder="Search accounts..."
                   />
 
@@ -737,10 +827,10 @@ export function ContactView({
         activeTab={activeTab}
         onTabChange={setActiveTab}
         activeType={activeType}
-        onTypeChange={setActiveType}
+        onTypeChange={handleTypeChange}
         availableTypes={availableTypes}
         activeCountry={activeCountry}
-        onCountryChange={setActiveCountry}
+        onCountryChange={handleCountryChange}
         availableCountries={availableCountries}
         stats={stats}
         activeFilterCount={activeFilterCount}
@@ -761,17 +851,18 @@ export function ContactView({
             if (newCompany) {
               const dto: AccountCardDTO = {
                 id: newCompany.id,
-                displayName: newCompany.name,
+                displayName: newCompany.displayName || newCompany.name,
                 name: newCompany.name,
-                status: activeTab,
-                type: activeType !== "ALL" ? activeType : "CUSTOMER",
-                country: activeCountry !== "ALL" ? activeCountry : null,
-                starRating: 0,
+                status: newCompany.status || activeTab,
+                type: newCompany.type || (activeType !== "ALL" ? activeType : "CUSTOMER"),
+                country: newCompany.country || (activeCountry !== "ALL" ? activeCountry : null),
+                starRating: newCompany.starRating || 0,
                 successRate: 0,
                 wonDealsCount: 0,
                 totalDealsCount: 0,
                 revision: new Date().toISOString(),
               };
+              knownAccountsMapRef.current.set(dto.id, dto);
               setAccounts((prev) => [dto, ...prev]);
               setStats((prev) => ({
                 ...prev,

@@ -1,48 +1,79 @@
 "use client";
 
 import { Search } from "lucide-react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 interface PipelineSearchProps {
   initialSearch?: string;
   onSearch: (term: string) => void;
+  debounceMs?: number;
 }
 
-export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchProps) {
+export const PipelineSearch = React.memo(function PipelineSearch({
+  initialSearch = "",
+  onSearch,
+  debounceMs = 280,
+}: PipelineSearchProps) {
   const [term, setTerm] = useState(initialSearch);
-  const [prevInitialSearch, setPrevInitialSearch] = useState(initialSearch);
-  const [lastEmitted, setLastEmitted] = useState(initialSearch);
   const [isExpanded, setIsExpanded] = useState(Boolean(initialSearch.trim()));
-  const initialMount = useRef(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastEmittedRef = useRef(initialSearch);
+  const termRef = useRef(term);
+  const isExpandedRef = useRef(isExpanded);
+  const isFocusedRef = useRef(false);
+  const isComposingRef = useRef(false);
 
-  // Sync external search changes (e.g. from quick filter clicks or URL changes)
-  if (initialSearch !== prevInitialSearch) {
-    setPrevInitialSearch(initialSearch);
+  // Sync refs
+  useEffect(() => {
+    termRef.current = term;
+  }, [term]);
+
+  useEffect(() => {
+    isExpandedRef.current = isExpanded;
+  }, [isExpanded]);
+
+  // Sync genuine EXTERNAL search changes (e.g. quick filter clicks or reset), ignore echoes of our own emissions
+  useEffect(() => {
+    // If the user is currently focused and typing in this search input, NEVER wipe their text!
+    if (isFocusedRef.current) {
+      return;
+    }
+    if (initialSearch === lastEmittedRef.current || initialSearch === termRef.current) {
+      return;
+    }
     setTerm(initialSearch);
-    setLastEmitted(initialSearch);
+    lastEmittedRef.current = initialSearch;
     if (initialSearch.trim()) {
       setIsExpanded(true);
     }
-  }
+  }, [initialSearch]);
 
-  // Debounce search emit
+  // Debounced search emitter (280ms)
   useEffect(() => {
-    if (initialMount.current) {
-      initialMount.current = false;
+    if (term === lastEmittedRef.current) {
       return;
     }
 
-    if (term === lastEmitted) return;
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
 
-    const delayDebounceFn = setTimeout(() => {
-      setLastEmitted(term);
+    debounceTimerRef.current = setTimeout(() => {
+      if (isComposingRef.current) {
+        return;
+      }
+      lastEmittedRef.current = term;
       onSearch(term);
-    }, 50);
+    }, debounceMs);
 
-    return () => clearTimeout(delayDebounceFn);
-  }, [term, lastEmitted, onSearch]);
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [term, debounceMs, onSearch]);
 
   // Focus input on expand
   useEffect(() => {
@@ -50,25 +81,21 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
       const timer = setTimeout(() => {
         inputRef.current?.focus();
         inputRef.current?.select();
-      }, 50);
+      }, 0);
       return () => clearTimeout(timer);
     }
   }, [isExpanded]);
 
-  const isExpandedRef = useRef(isExpanded);
-  const termRef = useRef(term);
-
-  useEffect(() => {
-    isExpandedRef.current = isExpanded;
-    termRef.current = term;
-  }, [isExpanded, term]);
-
+  // Instant clear and close
   const handleClearAndClose = useCallback(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
     setTerm("");
-    setLastEmitted("");
+    lastEmittedRef.current = "";
     onSearch("");
     setIsExpanded(false);
-    if (document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+    if (document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
       (document.activeElement as HTMLElement).blur();
     }
   }, [onSearch]);
@@ -78,6 +105,15 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignore if modifier keys are pressed (Cmd+S, Ctrl+S, Alt+S)
       if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
+      // Ignore if user is already focused in an input, textarea, select, or editable element
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")
+      ) {
         return;
       }
 
@@ -98,15 +134,6 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
         }
       }
 
-      // Ignore if user is already focused in an input, textarea, select, or editable element
-      const target = e.target as HTMLElement | null;
-      if (
-        target?.isContentEditable ||
-        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")
-      ) {
-        return;
-      }
-
       const isSearchKey =
         e.key === "s" ||
         e.key === "S" ||
@@ -117,10 +144,10 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
       if (isSearchKey) {
         e.preventDefault();
         setIsExpanded(true);
-        setTimeout(() => {
+        requestAnimationFrame(() => {
           inputRef.current?.focus();
           inputRef.current?.select();
-        }, 50);
+        });
       }
     };
 
@@ -133,14 +160,14 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
     if (!isExpanded) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        if (!term.trim()) {
+        if (!termRef.current.trim()) {
           setIsExpanded(false);
         }
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isExpanded, term]);
+  }, [isExpanded]);
 
   if (!isExpanded) {
     return (
@@ -172,12 +199,35 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
         placeholder="Search..."
         value={term}
         onChange={(e) => setTerm(e.target.value)}
+        onFocus={() => {
+          isFocusedRef.current = true;
+        }}
+        onBlur={() => {
+          isFocusedRef.current = false;
+        }}
+        onCompositionStart={() => {
+          isComposingRef.current = true;
+        }}
+        onCompositionEnd={(e) => {
+          isComposingRef.current = false;
+          setTerm(e.currentTarget.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
             handleClearAndClose();
-          } else if (e.key === "ArrowDown" || e.key === "Enter") {
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (debounceTimerRef.current) {
+              clearTimeout(debounceTimerRef.current);
+            }
+            if (term !== lastEmittedRef.current) {
+              lastEmittedRef.current = term;
+              onSearch(term);
+            }
+            inputRef.current?.blur();
+          } else if (e.key === "ArrowDown") {
             inputRef.current?.blur();
           }
         }}
@@ -196,4 +246,4 @@ export function PipelineSearch({ initialSearch = "", onSearch }: PipelineSearchP
       </button>
     </div>
   );
-}
+});

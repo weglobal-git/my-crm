@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import { KanbanBoard } from "@/components/pipeline/KanbanBoard";
 import { PipelineSearch } from "@/components/pipeline/PipelineSearch";
@@ -112,26 +112,36 @@ export function PipelineView({
     });
   }, [activeStageTitleDepartmentId]);
   
+  // Listen for browser Back/Forward (popstate) navigation
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const urlTab = searchParams.get('tab') || initialTab;
-      if (urlTab !== tab) setTab(urlTab);
-      const urlSearch = searchParams.get('search') || '';
-      if (urlSearch !== searchQuery) setSearchQuery(urlSearch);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [searchParams, initialTab, tab, searchQuery]);
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const urlTab = params.get('tab') || initialTab;
+      const urlSearch = params.get('search') || '';
+      setTab(urlTab);
+      setSearchQuery(urlSearch);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [initialTab]);
 
   const updateUrl = useCallback((newTab: string, newSearch: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("tab", newTab);
-    if (newSearch) {
-      params.set("search", newSearch);
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (newTab) {
+      params.set("tab", newTab);
+    } else {
+      params.delete("tab");
+    }
+    if (newSearch && newSearch.trim()) {
+      params.set("search", newSearch.trim());
     } else {
       params.delete("search");
     }
-    window.history.pushState(null, '', `/pipeline?${params.toString()}`);
-  }, [searchParams]);
+    const query = params.toString();
+    const newUrl = `/pipeline${query ? `?${query}` : ''}`;
+    window.history.replaceState(null, '', newUrl);
+  }, []);
 
   const handleTabChange = useCallback((newTab: string) => {
     setTab(newTab);

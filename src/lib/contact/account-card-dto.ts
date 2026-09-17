@@ -55,7 +55,8 @@ export function accountMatchesFilters(
     const nameMatch = (account.name || "").toLowerCase().includes(q);
     const displayMatch = (account.displayName || "").toLowerCase().includes(q);
     const countryMatch = (account.country || "").toLowerCase().includes(q);
-    if (!nameMatch && !displayMatch && !countryMatch) {
+    const typeMatch = (account.type || "").toLowerCase().includes(q);
+    if (!nameMatch && !displayMatch && !countryMatch && !typeMatch) {
       return false;
     }
   }

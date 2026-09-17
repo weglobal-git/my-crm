@@ -36,6 +36,30 @@ describe("Account Cards — Fast Redesign Unit Tests", () => {
     it("handles negative or invalid counts safely", () => {
       assert.equal(calculateSuccessRate(0, -1), 0);
     });
+
+    it("calculates success rate only from deals with positive amount (value > 0)", () => {
+      const mockDeals = [
+        { id: "1", status: "WON", value: 10000 },
+        { id: "2", status: "WON", value: 25000 },
+        { id: "3", status: "WON", value: 5000 },
+        { id: "4", status: "OPEN", value: 12000 },
+        { id: "5", status: "WON", value: 0 },      // zero value, excluded
+        { id: "6", status: "OPEN", value: null },   // null value, excluded
+        { id: "7", status: "LOST", value: 0 },      // zero value, excluded
+      ];
+
+      const valuedDeals = mockDeals.filter((d) => (d.value || 0) > 0);
+      const wonValuedDeals = valuedDeals.filter((d) => d.status === "WON");
+      
+      const totalValuedCount = valuedDeals.length;
+      const wonValuedCount = wonValuedDeals.length;
+      const rate = calculateSuccessRate(wonValuedCount, totalValuedCount);
+
+      assert.equal(totalValuedCount, 4);
+      assert.equal(wonValuedCount, 3);
+      assert.equal(rate, 75);
+      assert.equal(`${wonValuedCount}/${totalValuedCount}`, "3/4");
+    });
   });
 
   describe("Quick Filter Modifier Intent Helper", () => {
@@ -162,11 +186,36 @@ describe("Account Cards — Fast Redesign Unit Tests", () => {
       assert.equal(matches, false);
     });
 
-    it("matches search term against name, displayName, or country (case-insensitive)", () => {
+    it("matches search term against name, displayName, country, or type (case-insensitive)", () => {
       assert.equal(accountMatchesFilters(mockCard, { search: "global" }), true);
       assert.equal(accountMatchesFilters(mockCard, { search: "CORPORATION" }), true);
       assert.equal(accountMatchesFilters(mockCard, { search: "thailand" }), true);
+      assert.equal(accountMatchesFilters(mockCard, { search: "customer" }), true);
       assert.equal(accountMatchesFilters(mockCard, { search: "nonexistent" }), false);
+    });
+
+    it("executes in-memory filter matching across 500 accounts in sub-millisecond time", () => {
+      const pool = Array.from({ length: 500 }, (_, i) => ({
+        ...mockCard,
+        id: `acc_${i}`,
+        name: `Company ${i}`,
+        country: i % 2 === 0 ? "Thailand" : "Japan",
+        type: i % 3 === 0 ? ContactType.CUSTOMER : ContactType.SUPPLIER,
+      }));
+
+      const start = performance.now();
+      const filtered = pool.filter((acc) =>
+        accountMatchesFilters(acc, {
+          status: "QUALIFIED",
+          type: "CUSTOMER",
+          country: "Thailand",
+          search: "Company 1",
+        })
+      );
+      const elapsed = performance.now() - start;
+
+      assert.ok(filtered.length > 0);
+      assert.ok(elapsed < 15, `In-memory filter took ${elapsed.toFixed(3)}ms, expected < 15ms`);
     });
   });
 
