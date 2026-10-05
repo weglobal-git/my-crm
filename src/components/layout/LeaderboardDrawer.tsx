@@ -203,7 +203,7 @@ export function LeaderboardDrawer({
           </div>
 
           {/* Scrollable Body */}
-          <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#252728] p-4 space-y-6">
+          <div className="flex-1 overflow-y-auto hide-scrollbar p-4 space-y-6">
             {error ? (
               <div className="p-6 text-center space-y-2 rounded-2xl bg-[#1C1C1D] border border-[#3A3B3C]">
                 <AlertCircle className="w-6 h-6 text-rose-400 mx-auto" />
