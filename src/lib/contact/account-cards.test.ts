@@ -275,4 +275,32 @@ describe("Account Cards — Fast Redesign Unit Tests", () => {
       assert.equal(sequenceMap.get(accountId), seq3);
     });
   });
+
+  describe("AI Summary Indicator Support", () => {
+    it("supports hasAiSummary boolean flag on AccountCardDTO", () => {
+      const cardWithAi: AccountCardDTO = {
+        id: "acc_ai_1",
+        displayName: "Smart Brand",
+        name: "Smart Brand Co., Ltd.",
+        status: ContactStatus.QUALIFIED,
+        type: ContactType.CUSTOMER,
+        country: "Myanmar",
+        starRating: 5,
+        successRate: 85,
+        wonDealsCount: 6,
+        totalDealsCount: 7,
+        hasAiSummary: true,
+        revision: "2026-09-17T10:00:00.000Z",
+      };
+
+      const cardWithoutAi: AccountCardDTO = {
+        ...cardWithAi,
+        id: "acc_plain_2",
+        hasAiSummary: false,
+      };
+
+      assert.equal(cardWithAi.hasAiSummary, true);
+      assert.equal(cardWithoutAi.hasAiSummary, false);
+    });
+  });
 });

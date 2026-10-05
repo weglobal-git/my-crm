@@ -53,7 +53,7 @@ export default async function DashboardOverviewPage({
         visibleKeys,
       })
     : null;
-  const initialTab = rawTab === "leaderboard" ? "leaderboard" : canSeeSales ? "sale_deal" : "leaderboard";
+  const initialTab = "sale_deal";
 
   return (
     <DashboardOverviewView

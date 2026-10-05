@@ -101,37 +101,6 @@ export function DashboardToolbar({
     <>
       <header className="sticky -top-2 z-20 bg-[#252728] -mt-2 pt-2.5 pb-2 px-1 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          {/* Pill Tab Switcher matching PipelineView */}
-          <div className="flex gap-1.5 bg-[#252728] p-1 rounded-full shrink-0 border border-[#3A3B3C]">
-            <button
-              type="button"
-              onClick={() => onTabChange?.("leaderboard")}
-              className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all cursor-pointer ${
-                activeTab === "leaderboard"
-                  ? "bg-[#3A3B3C] text-slate-100"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <Trophy className="w-3.5 h-3.5" />
-              <span>Leaderboard</span>
-            </button>
-
-            {canSeeSales && (
-              <button
-                type="button"
-                onClick={() => onTabChange?.("sale_deal")}
-                className={`px-5 py-2 text-xs font-semibold flex items-center gap-2 rounded-full transition-all cursor-pointer ${
-                  activeTab === "sale_deal"
-                    ? "bg-[#3A3B3C] text-slate-100"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <Briefcase className="w-3.5 h-3.5" />
-                <span>Sale Deal</span>
-              </button>
-            )}
-          </div>
-
           {/* Active Global Filter Badges */}
           {country && (
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-[#3A3B3C] border border-amber-500/50 text-amber-300">

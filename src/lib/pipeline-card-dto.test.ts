@@ -76,6 +76,28 @@ test('KanbanCardDTO: Red Card threshold detection works with card DTO', () => {
     dueDate: futureDueDate,
   };
   assert.equal(checkIsRedCard(futureDeal), false, 'Future due deal should not be a red card');
+
+  // Test owner leave exemption: deal 4 calendar days ago
+  const fourDaysAgo = new Date(Date.now() - 4 * 24 * 60 * 60 * 1000);
+  const overdueNoDueDate: KanbanCardDTO = {
+    ...expiredDeal,
+    id: 'deal-overdue-nodd',
+    dueDate: null,
+    createdAt: fourDaysAgo,
+    activityLogs: [],
+  };
+  // Without leaves, it is red (elapsed > 2 business days)
+  const isRedDefault = checkIsRedCard(overdueNoDueDate, new Set());
+  
+  // With owner leaves covering all intermediate days, it should NOT be red
+  const dateStr1 = fourDaysAgo.toISOString().split('T')[0];
+  const dateStr2 = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const dateStr3 = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const dateStr4 = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const ownerLeaves = new Map<string, Set<string>>([
+    ['user-1', new Set([dateStr1, dateStr2, dateStr3, dateStr4])],
+  ]);
+  assert.equal(checkIsRedCard(overdueNoDueDate, new Set(), ownerLeaves), false, 'Deal with owner leaves should not be red card');
 });
 
 test('KanbanCardDTO: sortDeals correctly prioritizes Urgent, Red, and Normal DTO cards', () => {

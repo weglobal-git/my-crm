@@ -372,7 +372,7 @@
 
 - Created the long-term architecture and Phase 0-8 roadmap.
 - Added repository-level Codex continuity instructions to `AGENTS.md`.
-- Added always-applied cross-agent continuity rule in `.cursor/rules/event-ai-continuity.mdc`.
+- Consolidated cross-agent continuity into root `AGENTS.md`; editor-specific Cursor rules were retired because the project uses Antigravity.
 - Created this execution checkpoint and an append-only decision log.
 - Started the initial server-action inventory for deal/card events.
 - Completed the server mutation inventory across deal fields/status, activity/replies, notifications, notes, attachments, and archive behavior.
@@ -563,7 +563,7 @@ Superseded by the complete inventory in `event-ai-agent-phase-0-spec.md`. The ta
 ## Files changed in this slice
 
 - `AGENTS.md`
-- `.cursor/rules/event-ai-continuity.mdc`
+- `AGENTS.md` (canonical Event AI continuity instruction; former Cursor rule retired)
 - `.agents/plans/event-ai-agent-roadmap.md` (created in the preceding planning slice)
 - `.agents/plans/event-ai-agent-execution.md`
 - `.agents/plans/event-ai-agent-decisions.md`

@@ -87,6 +87,7 @@ export function ContactView({
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [isCreateAccountOpen, setIsCreateAccountOpen] = useState(false);
   const [isEditAccountOpen, setIsEditAccountOpen] = useState(false);
+  const [editAccountInitialTab, setEditAccountInitialTab] = useState<string>("account");
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
     initialCompanies[0]?.id || null
   );
@@ -342,6 +343,15 @@ export function ContactView({
   // Card select -> lights up in lime + opens EditAccountPanel
   const handleSelectAccount = useCallback((companyId: string) => {
     setSelectedAccountId(companyId);
+    setEditAccountInitialTab("account");
+    setIsEditAccountOpen(true);
+    void loadEditAccountPanel();
+  }, []);
+
+  // Robot icon click -> lights up in lime + opens EditAccountPanel directly to AI Summary tab
+  const handleOpenAISummary = useCallback((companyId: string) => {
+    setSelectedAccountId(companyId);
+    setEditAccountInitialTab("ai_analysis");
     setIsEditAccountOpen(true);
     void loadEditAccountPanel();
   }, []);
@@ -736,6 +746,7 @@ export function ContactView({
               totalAccounts={searchQuery.trim() ? displayAccounts.length : totalAccounts}
               selectedAccountId={selectedAccountId}
               onSelectAccount={handleSelectAccount}
+              onOpenAISummary={handleOpenAISummary}
               onRatingChange={handleRatingChange}
               onLoadMore={handleLoadMore}
               onRowIntent={handleCardIntent}
@@ -879,7 +890,7 @@ export function ContactView({
       {/* Edit Account Slide-over Panel */}
       {isEditAccountOpen && selectedAccountId && (
         <EditAccountPanel
-          key={selectedAccountId}
+          key={`${selectedAccountId}-${editAccountInitialTab}`}
           isOpen={isEditAccountOpen}
           companyId={selectedAccountId}
           initialOverview={initialOverviewForSelected}
@@ -887,7 +898,16 @@ export function ContactView({
             setIsEditAccountOpen(false);
           }}
           onAccountUpdated={handleAccountUpdated}
-          initialTab="account"
+          onBusinessSummaryUpdated={(summary) => {
+            setAccounts((prev) =>
+              prev.map((c) =>
+                c.id === selectedAccountId
+                  ? { ...c, hasAiSummary: Boolean(summary?.trim()) }
+                  : c
+              )
+            );
+          }}
+          initialTab={editAccountInitialTab}
         />
       )}
     </WorkspaceLayout>

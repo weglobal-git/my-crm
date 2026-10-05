@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, useMemo } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { BellRing, Bot, FileText, Loader2 } from "lucide-react";
@@ -21,6 +21,7 @@ import {
   type KanbanCardDTO,
   type PipelineCardDTO,
 } from "@/lib/pipeline-card-dto";
+import { calculateElapsedBusinessMs, WORK_HOURS_PER_DAY } from "@/lib/business-days";
 
 export { checkIsRedCard, getRedThreshold };
 export type { KanbanCardDTO, PipelineCardDTO };
@@ -53,6 +54,8 @@ interface KanbanCardProps {
 }
 
 const KanbanClockContext = createContext(0);
+export const CompanyHolidaysContext = createContext<Set<string>>(new Set());
+export const UserLeavesContext = createContext<Map<string, Set<string>>>(new Map());
 
 export function KanbanClockProvider({ children }: { children: React.ReactNode }) {
   const [currentMinute, setCurrentMinute] = useState(() => Math.floor(Date.now() / 60_000));
@@ -67,20 +70,31 @@ export function KanbanClockProvider({ children }: { children: React.ReactNode })
   return <KanbanClockContext.Provider value={currentMinute}>{children}</KanbanClockContext.Provider>;
 }
 
-function RedTimer({ threshold }: { threshold: Date }) {
+function RedTimer({ threshold, ownerId }: { threshold: Date; ownerId?: string }) {
   const currentMinute = useContext(KanbanClockContext);
-  const nowMs = currentMinute * 60_000;
+  const companyHolidays = useContext(CompanyHolidaysContext);
+  const userLeavesByOwner = useContext(UserLeavesContext);
+  const now = new Date(currentMinute * 60_000);
 
-  const diffMs = Math.max(0, nowMs - threshold.getTime());
+  const effectiveOffDates = useMemo(() => {
+    if (ownerId && userLeavesByOwner.has(ownerId)) {
+      return new Set([...companyHolidays, ...userLeavesByOwner.get(ownerId)!]);
+    }
+    return companyHolidays;
+  }, [companyHolidays, userLeavesByOwner, ownerId]);
+
+  const diffMs = calculateElapsedBusinessMs(threshold, now, effectiveOffDates);
   const diffSec = Math.floor(diffMs / 1000);
-  const days = Math.floor(diffSec / (24 * 3600));
-  const hours = Math.floor((diffSec % (24 * 3600)) / 3600);
-  const minutes = Math.floor((diffSec % 3600) / 60);
+  const workingDaySec = WORK_HOURS_PER_DAY * 3600; // 32,400 seconds per 1 working day (08:00 - 17:00)
+  const workingDays = Math.floor(diffSec / workingDaySec);
+  const remSec = diffSec % workingDaySec;
+  const hours = Math.floor(remSec / 3600);
+  const minutes = Math.floor((remSec % 3600) / 60);
 
   const pad = (n: number) => n.toString().padStart(2, '0');
   
-  if (days > 0) {
-    return <span className="text-slate-700 tabular-nums font-medium text-xs tracking-wide">{days}DAY | {pad(hours)}:{pad(minutes)}</span>;
+  if (workingDays > 0) {
+    return <span className="text-slate-700 tabular-nums font-medium text-xs tracking-wide">{workingDays}DAY | {pad(hours)}:{pad(minutes)}</span>;
   }
   return <span className="text-slate-700 tabular-nums font-medium text-xs tracking-wide">{pad(hours)}:{pad(minutes)}</span>;
 }
@@ -134,7 +148,9 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const pendingEntry = pendingAcceleratorsMap[deal.id];
   const pendingCount = typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
   const isOrange = pendingCount > 0;
-  const highlight = checkIsRedCard(deal);
+  const companyHolidays = useContext(CompanyHolidaysContext);
+  const userLeavesByOwner = useContext(UserLeavesContext);
+  const highlight = checkIsRedCard(deal, companyHolidays, userLeavesByOwner);
 
   if (deal.topic?.includes("Light Test Deal") || deal.topic?.toLowerCase().includes("test")) {
     console.log(`[CARD-RENDER] "${deal.topic}" (id=${deal.id}) -> pendingCount=${pendingCount}, isOrange=${isOrange}, highlight=${highlight}`);
@@ -382,7 +398,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
       </div>
 
       {/* Bottom row: Customer Name & Timer */}
-      {(customerName || isOrange || (highlight && getRedThreshold(deal))) && (
+      {(customerName || isOrange || (highlight && getRedThreshold(deal, companyHolidays, userLeavesByOwner))) && (
         <div className="flex justify-between items-end mt-auto">
           {customerName ? (
             <div 
@@ -433,9 +449,9 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
               <span>Urgent ({pendingCount})</span>
             </div>
           ) : (
-            highlight && getRedThreshold(deal) && (
+            highlight && getRedThreshold(deal, companyHolidays, userLeavesByOwner) && (
               <div className="px-3 py-1.5 rounded-full bg-black/20 flex items-center justify-center min-w-[90px] ml-auto">
-                <RedTimer threshold={getRedThreshold(deal)!} />
+                <RedTimer threshold={getRedThreshold(deal, companyHolidays, userLeavesByOwner)!} ownerId={deal.ownerId} />
               </div>
             )
           )}

@@ -1,8 +1,10 @@
 "use client";
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, Filter, Plus, Search, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Filter, Plus, Search, Loader2, CalendarDays, PackageCheck, Truck, Coffee } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
+import type { CalendarFilters } from '@/lib/calendar/calendar-filters';
+import type { CalendarItemType } from '@/lib/calendar/calendar-dto';
 
 interface CalendarToolbarProps {
   currentYear: number;
@@ -21,6 +23,9 @@ interface CalendarToolbarProps {
   onOpenSearchIntent?: () => void;
   isDragging?: boolean;
   isLoading?: boolean;
+  filters?: CalendarFilters;
+  onToggleSource?: (source: CalendarItemType) => void;
+  onToggleDayoff?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -45,7 +50,10 @@ export const CalendarToolbar: React.FC<CalendarToolbarProps> = ({
   onOpenSearchIntent,
   isDragging = false,
   isLoading = false,
-}) => {
+  filters,
+  onToggleSource,
+  onToggleDayoff,
+}: CalendarToolbarProps) => {
   const monthName = MONTH_NAMES[currentMonth - 1] ?? '';
   const { setNodeRef: setPrevDropRef, isOver: isPrevOver } = useDroppable({
     id: 'cal-nav-prev',
@@ -117,6 +125,65 @@ export const CalendarToolbar: React.FC<CalendarToolbarProps> = ({
         >
           <Search className="h-4 w-4" />
         </button>
+
+        {/* Desktop Compact Filter: Event / Goods Ready Date / Goods Loading Date / Dayoff */}
+        {filters && (
+          <div className="hidden md:flex items-center rounded-xl bg-[#252728] border border-[#4E4F50] p-0.5 gap-0.5">
+            <button
+              type="button"
+              onClick={() => onToggleSource?.('EVENT')}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                filters.sources.includes('EVENT')
+                  ? 'bg-[#3A3B3C] text-[#C7F33C]'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-[#3A3B3C]/50'
+              }`}
+              title={filters.sources.includes('EVENT') ? 'Hide Events' : 'Show Events'}
+              aria-label="Events"
+            >
+              <CalendarDays className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleSource?.('DEAL_GOODS_READY')}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                filters.sources.includes('DEAL_GOODS_READY')
+                  ? 'bg-[#3A3B3C] text-emerald-400'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-[#3A3B3C]/50'
+              }`}
+              title={filters.sources.includes('DEAL_GOODS_READY') ? 'Hide Goods Ready Date' : 'Show Goods Ready Date'}
+              aria-label="Goods Ready Date"
+            >
+              <PackageCheck className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onToggleSource?.('DEAL_GOODS_LOADING')}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                filters.sources.includes('DEAL_GOODS_LOADING')
+                  ? 'bg-[#3A3B3C] text-sky-400'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-[#3A3B3C]/50'
+              }`}
+              title={filters.sources.includes('DEAL_GOODS_LOADING') ? 'Hide Goods Loading Date' : 'Show Goods Loading Date'}
+              aria-label="Goods Loading Date"
+            >
+              <Truck className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onToggleDayoff}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                filters.showDayoff !== false
+                  ? 'bg-[#3A3B3C] text-amber-400'
+                  : 'text-slate-500 hover:text-slate-300 hover:bg-[#3A3B3C]/50'
+              }`}
+              title={filters.showDayoff !== false ? 'Hide Dayoff & Leave' : 'Show Dayoff & Leave'}
+              aria-label="Dayoff & Leave"
+            >
+              <Coffee className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={onOpenFilters}

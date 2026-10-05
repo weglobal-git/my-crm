@@ -45,6 +45,13 @@
 - Decision: Agent continuity relies on `AGENTS.md`, `.cursor/rules/event-ai-continuity.mdc`, and the execution checkpoint rather than chat memory.
 - Reason: Quota, context, model, or agent changes must not make implementation state ambiguous.
 
+## D-014 — Retire editor-specific Cursor governance
+
+- Date: 2026-09-25
+- Status: Accepted; supersedes the `.cursor/rules` portion of D-006.
+- Decision: Agent continuity relies on root `AGENTS.md`, `.agents/skills/`, and execution checkpoints. The project uses Antigravity and does not maintain `.cursor/` rules.
+- Reason: One repository-native source prevents duplicated or drifting instructions across AI editors while preserving resumability and mandatory verification.
+
 ## D-007 — Canonical domain event beats System Log
 
 - Date: 2026-09-02

@@ -23,8 +23,10 @@ import { closestCenter, DndContext, DragOverlay, KeyboardSensor, PointerSensor, 
 import { moveCalendarItemAction } from '@/lib/actions/calendar';
 import { CALENDAR_EDGE_HOVER_COOLDOWN_MS, CALENDAR_EDGE_HOVER_DELAY_MS, getAdjacentCalendarMonth, getCalendarEdgeDirection, isRecurringCalendarOccurrence, moveCalendarItemToDate } from '@/lib/calendar/calendar-move';
 import { useDialog } from '@/providers/DialogProvider';
-import { calendarFilterCount, EMPTY_CALENDAR_FILTERS, filterCalendarItems, parseCalendarFilters, writeCalendarFilters, type CalendarFilters } from '@/lib/calendar/calendar-filters';
-import type { CalendarSearchResultDTO } from '@/lib/calendar/calendar-dto';
+import { getCompanyHolidaysAction, toggleCompanyHolidayAction, toggleUserLeaveAction } from '@/lib/actions/holiday';
+import { useUserLeaves } from '@/lib/useCompanyHolidays';
+import { calendarFilterCount, EMPTY_CALENDAR_FILTERS, DEFAULT_CALENDAR_FILTERS, filterCalendarItems, parseCalendarFilters, writeCalendarFilters, type CalendarFilters } from '@/lib/calendar/calendar-filters';
+import type { CalendarSearchResultDTO, CalendarItemType } from '@/lib/calendar/calendar-dto';
 import { useCalendarPanelTransition } from '@/lib/calendar/use-calendar-panel-transition';
 
 const CalendarEventPanel = dynamic(() => import('./CalendarEventPanel').then((module) => module.CalendarEventPanel), { ssr: false });
@@ -65,7 +67,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   );
   const [panelDefaultDate, setPanelDefaultDate] = useState<Date | null>(null);
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
-  const [filters, setFilters] = useState<CalendarFilters>(EMPTY_CALENDAR_FILTERS);
+  const [filters, setFilters] = useState<CalendarFilters>(DEFAULT_CALENDAR_FILTERS);
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [highlightedItemId, setHighlightedItemId] = useState<string | null>(null);
@@ -112,7 +114,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   useEffect(() => {
     const syncUrlState = () => {
       const params = new URLSearchParams(window.location.search);
-      setFilters(parseCalendarFilters(params));
+      const parsed = parseCalendarFilters(params);
+      if (!params.has('sources')) {
+        parsed.sources = ['EVENT', 'DEAL_GOODS_LOADING'];
+      }
+      setFilters(parsed);
       const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(params.get('month') || '');
       if (match) {
         const target = { year: Number(match[1]), month: Number(match[2]) };
@@ -126,6 +132,109 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   const { mutate } = useSWRConfig();
   const currentKey = useMemo(() => calendarMonthKey(userId, year, month), [userId, year, month]);
+
+  // Company holidays hook
+  const { data: holidaysList, mutate: mutateHolidays } = useSWR(
+    'company-holidays',
+    getCompanyHolidaysAction,
+    { revalidateOnFocus: false }
+  );
+
+  const companyHolidaysSet = useMemo(() => new Set(holidaysList || []), [holidaysList]);
+  const { leavesByDate, currentUserLeavesSet, mutate: mutateUserLeaves } = useUserLeaves(userId);
+
+  const handleToggleHoliday = useCallback(
+    async (dateStr: string) => {
+      mutateHolidays((prev) => {
+        const set = new Set(prev || []);
+        if (set.has(dateStr)) set.delete(dateStr);
+        else set.add(dateStr);
+        return Array.from(set);
+      }, false);
+
+      try {
+        const res = await toggleCompanyHolidayAction(dateStr);
+        if (res.success) {
+          mutateHolidays(res.holidays, false);
+          toast({
+            title: res.holidays.includes(dateStr) ? 'Set as Company Day-Off' : 'Day-Off Removed',
+            description: `Company day-off on ${dateStr} has been updated.`,
+          });
+        }
+      } catch {
+        mutateHolidays();
+        toast({
+          title: 'Error',
+          description: 'Failed to update company day-off.',
+          type: 'error',
+        });
+      }
+    },
+    [mutateHolidays, toast]
+  );
+
+  const handleToggleUserLeave = useCallback(
+    async (dateStr: string) => {
+      mutateUserLeaves((prev) => {
+        const list = prev || [];
+        const idx = list.findIndex((l) => l.userId === userId && l.dateStr === dateStr);
+        if (idx >= 0) {
+          return list.filter((_, i) => i !== idx);
+        }
+        return [
+          ...list,
+          {
+            userId: userId || 'anonymous',
+            userName: 'You',
+            userImage: null,
+            dateStr,
+          },
+        ];
+      }, false);
+
+      try {
+        const res = await toggleUserLeaveAction(dateStr);
+        if (res.success) {
+          mutateUserLeaves(res.leaves, false);
+          const isNowOnLeave = res.leaves.some((l) => l.userId === userId && l.dateStr === dateStr);
+          toast({
+            title: isNowOnLeave ? 'Leave Marked (บันทึกวันลา)' : 'Leave Cancelled (ยกเลิกวันลา)',
+            description: `Your leave on ${dateStr} has been updated.`,
+          });
+        }
+      } catch {
+        mutateUserLeaves();
+        toast({
+          title: 'Error',
+          description: 'Failed to update leave.',
+          type: 'error',
+        });
+      }
+    },
+    [mutateUserLeaves, toast, userId]
+  );
+
+  const handleToggleSource = useCallback((source: CalendarItemType) => {
+    setFilters((prev) => {
+      const nextSources = prev.sources.includes(source)
+        ? prev.sources.filter((s) => s !== source)
+        : [...prev.sources, source];
+      const nextFilters: CalendarFilters = { ...prev, sources: nextSources };
+      const params = writeCalendarFilters(new URLSearchParams(window.location.search), nextFilters);
+      window.history.replaceState(null, '', `/calendar?${params.toString()}`);
+      return nextFilters;
+    });
+  }, []);
+
+  const handleToggleDayoff = useCallback(() => {
+    setFilters((prev) => {
+      const currentVal = prev.showDayoff !== false;
+      const nextFilters: CalendarFilters = { ...prev, showDayoff: !currentVal };
+      const params = writeCalendarFilters(new URLSearchParams(window.location.search), nextFilters);
+      window.history.replaceState(null, '', `/calendar?${params.toString()}`);
+      return nextFilters;
+    });
+  }, []);
 
   // Synchronize URL query parameter ?month=YYYY-MM without triggering full page re-render
   useEffect(() => {
@@ -734,6 +843,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           activeFilterCount={calendarFilterCount(filters)}
           isDragging={Boolean(activeDragItem)}
           isLoading={isLoading && !isCurrentSnapshot}
+          filters={filters}
+          onToggleSource={handleToggleSource}
+          onToggleDayoff={handleToggleDayoff}
         />
 
         {isMobileViewport !== true && <div className="hidden flex-1 min-h-0 flex-col relative md:flex">
@@ -753,10 +865,32 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             onDayClick={handleDayClick}
             highlightedItemId={highlightedItemId}
             userId={userId}
+            companyHolidays={companyHolidaysSet}
+            onToggleHoliday={handleToggleHoliday}
+            userLeavesByDate={leavesByDate}
+            currentUserLeavesSet={currentUserLeavesSet}
+            onToggleUserLeave={handleToggleUserLeave}
+            showDayoff={filters.showDayoff !== false}
           />
         </div>}
         {isMobileViewport === true && <div className="flex min-h-0 flex-1 flex-col gap-3 md:hidden">
-          <CalendarMonthGrid rangeStart={new Date(activeSnapshot.rangeStart)} rangeEnd={new Date(activeSnapshot.rangeEnd)} currentYear={year} currentMonth={month} items={filteredItems} compact selectedDateKey={selectedMobileDateKey} onDayClick={setSelectedMobileDate} userId={userId} />
+          <CalendarMonthGrid
+            rangeStart={new Date(activeSnapshot.rangeStart)}
+            rangeEnd={new Date(activeSnapshot.rangeEnd)}
+            currentYear={year}
+            currentMonth={month}
+            items={filteredItems}
+            compact
+            selectedDateKey={selectedMobileDateKey}
+            onDayClick={setSelectedMobileDate}
+            userId={userId}
+            companyHolidays={companyHolidaysSet}
+            onToggleHoliday={handleToggleHoliday}
+            userLeavesByDate={leavesByDate}
+            currentUserLeavesSet={currentUserLeavesSet}
+            onToggleUserLeave={handleToggleUserLeave}
+            showDayoff={filters.showDayoff !== false}
+          />
           <CalendarMobileAgenda date={selectedMobileDate} items={selectedMobileItems} onEventClick={handleItemClick} />
         </div>}
       </div>

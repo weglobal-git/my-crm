@@ -3,6 +3,7 @@
 import React, { useMemo } from 'react';
 import { addDays } from 'date-fns';
 import type { CalendarMonthItemDTO } from '@/lib/calendar/calendar-dto';
+import type { UserLeaveDTO } from '@/lib/actions/holiday';
 import { CalendarDayCell } from './CalendarDayCell';
 import { indexCalendarItemsByLocalDate } from '@/lib/calendar/calendar-presentation';
 
@@ -18,6 +19,12 @@ interface CalendarMonthGridProps {
   compact?: boolean;
   selectedDateKey?: string | null;
   userId?: string;
+  companyHolidays?: Set<string>;
+  onToggleHoliday?: (dateStr: string) => void;
+  userLeavesByDate?: Map<string, UserLeaveDTO[]>;
+  currentUserLeavesSet?: Set<string>;
+  onToggleUserLeave?: (dateStr: string) => void;
+  showDayoff?: boolean;
 }
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -34,6 +41,12 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
   compact = false,
   selectedDateKey = null,
   userId,
+  companyHolidays,
+  onToggleHoliday,
+  userLeavesByDate,
+  currentUserLeavesSet,
+  onToggleUserLeave,
+  showDayoff = true,
 }) => {
   // Generate all 35 or 42 day cells between rangeStart and rangeEnd
   const days = useMemo(() => {
@@ -86,6 +99,12 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
           const isToday = dateKey === todayStr;
           const cellItems = itemsByDateKey.get(dateKey) ?? [];
 
+          const y = date.getFullYear();
+          const m = String(date.getMonth() + 1).padStart(2, '0');
+          const d = String(date.getDate()).padStart(2, '0');
+          const formattedIso = `${y}-${m}-${d}`;
+          const isCompanyHoliday = companyHolidays?.has(formattedIso) ?? false;
+
           return (
             <CalendarDayCell
               key={dateKey}
@@ -99,6 +118,12 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
               compact={compact}
               selected={selectedDateKey === dateKey}
               userId={userId}
+              isCompanyHoliday={isCompanyHoliday}
+              onToggleHoliday={onToggleHoliday}
+              userLeaves={userLeavesByDate?.get(formattedIso) || []}
+              isCurrentUserOnLeave={currentUserLeavesSet?.has(formattedIso) ?? false}
+              onToggleUserLeave={onToggleUserLeave}
+              showDayoff={showDayoff}
             />
           );
         })}

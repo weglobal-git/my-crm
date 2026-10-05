@@ -12,6 +12,7 @@ export interface AccountCardDTO {
   successRate: number;
   wonDealsCount: number;
   totalDealsCount: number;
+  hasAiSummary?: boolean;
   revision: string; // server-issued ordering token, updatedAt ISO string
 }
 

@@ -16,6 +16,7 @@ import useSWR from "swr";
 import { getPipelineOpportunities } from "@/lib/actions/opportunity";
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import type { PipelineDepartmentOption, PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
+import { useCompanyHolidays, useUserLeaves } from "@/lib/useCompanyHolidays";
 
 interface PipelineViewProps {
   userId: string;
@@ -99,8 +100,13 @@ export function PipelineView({
     return list;
   }, [rawOpportunities, initialOpportunities, tab, initialTab, stages, cardType, ownerFilter, isCompletedTab, searchQuery]);
 
+  const { holidaysSet } = useCompanyHolidays();
+  const { leavesByUser } = useUserLeaves();
   const totalCards = visibleDeals.length;
-  const redCardsCount = useMemo(() => visibleDeals.filter(checkIsRedCard).length, [visibleDeals]);
+  const redCardsCount = useMemo(
+    () => visibleDeals.filter((d) => checkIsRedCard(d, holidaysSet, leavesByUser)).length,
+    [visibleDeals, holidaysSet, leavesByUser]
+  );
 
   const handleStageTitleChanged = useCallback((stageId: string, title: string | null) => {
     if (!activeStageTitleDepartmentId) return;

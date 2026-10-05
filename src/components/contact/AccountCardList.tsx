@@ -16,6 +16,7 @@ interface AccountCardListProps {
   onRatingChange: (id: string, newRating: number) => void;
   onLoadMore: () => void;
   onRowIntent?: (id: string) => void;
+  onOpenAISummary?: (id: string) => void;
   headerAction?: React.ReactNode;
 }
 
@@ -81,6 +82,7 @@ export function AccountCardList({
   onRatingChange,
   onLoadMore,
   onRowIntent,
+  onOpenAISummary,
   headerAction,
 }: AccountCardListProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -149,6 +151,7 @@ export function AccountCardList({
               onSelect={onSelectAccount}
               onRatingChange={onRatingChange}
               onIntent={onRowIntent}
+              onOpenAISummary={onOpenAISummary}
             />
           ))}
 

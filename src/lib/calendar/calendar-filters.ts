@@ -5,25 +5,56 @@ export interface CalendarFilters {
   tagIds: string[];
   ownerIds: string[];
   departmentIds: string[];
+  showDayoff?: boolean;
 }
 
-export const EMPTY_CALENDAR_FILTERS: CalendarFilters = { sources: [], tagIds: [], ownerIds: [], departmentIds: [] };
+export const DEFAULT_CALENDAR_SOURCES: CalendarItemType[] = ['EVENT', 'DEAL_GOODS_LOADING'];
+
+export const EMPTY_CALENDAR_FILTERS: CalendarFilters = {
+  sources: [],
+  tagIds: [],
+  ownerIds: [],
+  departmentIds: [],
+  showDayoff: true,
+};
+
+export const DEFAULT_CALENDAR_FILTERS: CalendarFilters = {
+  sources: ['EVENT', 'DEAL_GOODS_LOADING'],
+  tagIds: [],
+  ownerIds: [],
+  departmentIds: [],
+  showDayoff: true,
+};
+
 const SOURCE_TYPES: CalendarItemType[] = ['EVENT', 'DEAL_GOODS_READY', 'DEAL_GOODS_LOADING'];
 
 const split = (value: string | null) => value?.split(',').filter(Boolean) || [];
 
 export function parseCalendarFilters(params: URLSearchParams): CalendarFilters {
-  return {
-    sources: split(params.get('sources')).filter((value): value is CalendarItemType => SOURCE_TYPES.includes(value as CalendarItemType)),
+  const result: CalendarFilters = {
+    sources: params.has('sources')
+      ? split(params.get('sources')).filter((value): value is CalendarItemType => SOURCE_TYPES.includes(value as CalendarItemType))
+      : DEFAULT_CALENDAR_SOURCES,
     tagIds: split(params.get('tags')),
     ownerIds: split(params.get('owners')),
     departmentIds: split(params.get('departments')),
   };
+
+  if (params.has('dayoff')) {
+    result.showDayoff = params.get('dayoff') !== '0';
+  }
+
+  return result;
 }
 
 export function writeCalendarFilters(params: URLSearchParams, filters: CalendarFilters): URLSearchParams {
   const next = new URLSearchParams(params);
-  const entries: Array<[string, string[]]> = [['sources', filters.sources], ['tags', filters.tagIds], ['owners', filters.ownerIds], ['departments', filters.departmentIds]];
+  const entries: Array<[string, string[]]> = [
+    ['sources', filters.sources],
+    ['tags', filters.tagIds],
+    ['owners', filters.ownerIds],
+    ['departments', filters.departmentIds],
+  ];
   for (const [key, values] of entries) {
     if (values.length) {
       next.set(key, [...values].sort().join(','));
@@ -31,6 +62,13 @@ export function writeCalendarFilters(params: URLSearchParams, filters: CalendarF
       next.delete(key);
     }
   }
+
+  if (filters.showDayoff === false) {
+    next.set('dayoff', '0');
+  } else {
+    next.delete('dayoff');
+  }
+
   return next;
 }
 

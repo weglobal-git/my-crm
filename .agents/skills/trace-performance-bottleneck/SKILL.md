@@ -1,22 +1,20 @@
 ---
 name: trace-performance-bottleneck
-description: Diagnose and resolve performance bottlenecks in web actions. Features Fast Mode (lean 3-step, ~2-3 mins) and Deep Mode (multi-layer benchmark). MANDATORY: Always ask user confirmation to choose mode before starting.
+description: Diagnose an elusive or action-specific browser, server, API, or database latency problem with targeted instrumentation and repeatable before/after measurements. Use when the user explicitly asks to trace or benchmark a bottleneck, investigate intermittent latency, or when the general performance workflow cannot localize the cause. Do not activate merely because a page is described as slow.
 ---
 
 # Trace Performance Bottleneck
 
-Diagnose and resolve performance bottlenecks across the stack (Browser UI, Server Actions, Neon DB, APIs) without guesswork and without unnecessary ceremony.
+Diagnose and resolve performance bottlenecks across the stack (Browser UI, Server Actions, Neon DB, APIs) when ordinary performance measurement cannot localize the cause.
+
+Use the general `performance` skill as the entry point for ordinary slow-page requests. For CRM changes, `crm-feature-architecture` and relevant domain skills take precedence over optimization patterns in this skill.
 
 ---
 
-> [!CRITICAL]
-> ## 🛑 MANDATORY STEP 0: MUST ASK USER TO CONFIRM MODE BEFORE DOING ANYTHING
+> [!IMPORTANT]
+> ## Choose the smallest sufficient mode
 >
-> Whenever this skill is activated (e.g. user mentions "trace performance", "ช้า", "โหลดนาน", "จูนความเร็ว", "bottleneck", or calls `$trace-performance-bottleneck`):
->
-> **YOU MUST NOT PROCEED TO READ CODE, PROFILE, OR RUN ANY COMMANDS.**
->
-> You **MUST STOP IMMEDIATELY** and ask the user to confirm which mode to use (preferably via the `ask_question` tool or a clear prompt):
+> Proceed without a mode question when the request and evidence clearly fit Fast Mode. Ask the user to choose only when Deep Mode would add material instrumentation, production-like benchmarking, or time that they did not request.
 >
 > 1. **⚡ Fast Mode (Recommended / แนะนำ)**:
 >    - Quick 3-step diagnostic: **Locate ➔ Optimize ➔ Confirm**
@@ -29,7 +27,7 @@ Diagnose and resolve performance bottlenecks across the stack (Browser UI, Serve
 >    - Reserved for elusive bugs, sporadic latency spikes (Heisenbugs), or formal performance audit reports.
 >    - **Estimated time: ~10–15 minutes.**
 >
-> **HARD RULE**: If the user has not selected or confirmed a mode, **DO NOT START ANY WORK**. Wait for the user's response.
+> Use Deep Mode for intermittent or cross-layer latency, an unresolved Fast Mode investigation, or an explicitly requested formal benchmark.
 
 ---
 
@@ -39,13 +37,13 @@ Fast Mode gets straight to the point: diagnose the actual layer, fix it surgical
 
 ```mermaid
 graph LR
-    S1["Step 1: Locate<br/>(1-2 Sample Runs)"] --> S2["Step 2: Optimize<br/>(Surgical Fix)"]
+    S1["Step 1: Locate<br/>(Representative Samples)"] --> S2["Step 2: Optimize<br/>(Surgical Fix)"]
     S2 --> S3["Step 3: Confirm<br/>(Verify Speed & Function)"]
 ```
 
-### Step 1: Locate Bottleneck (ชี้เป้า — 1–2 runs max)
+### Step 1: Locate Bottleneck (ชี้เป้า)
 - Do not guess or do random refactoring. Inspect the slow action directly:
-  - Check browser Network tab / Server Action duration / Prisma query logs for 1–2 requests.
+  - Check browser Network tab / Server Action duration / Prisma query logs with enough representative requests to identify the dominant layer.
   - Identify the primary bottleneck layer:
     - **Client Render**: Unnecessary re-render loops, blocking layout recalculations, or heavy mount effects.
     - **Payload / Over-fetching**: Serializing huge unused JSON relations or leaking data via SSR props.
@@ -55,9 +53,9 @@ graph LR
 ### Step 2: Optimize (ผ่าตัดแก้ตรงจุด)
 - Implement the targeted fix directly without intermediate stubs or fake mocks:
   - **Pruning**: Replace `include` with `select`; prune fields/relations not displayed on the target view.
-  - **Auth Caching**: Use an in-memory TTL cache for user/actor lookups within the session lifecycle.
+  - **Auth work**: Reduce proven duplicate lookups without weakening authorization freshness. Treat cross-request auth caching as a security-sensitive architecture decision, not a default fix.
   - **Query Deferral**: Defer non-critical heavy logs or audit trails to modal/drawer views (`includeLogs: false`).
-  - **Index**: Add database index (`@@index`) in `schema.prisma` if filtering/sorting on unindexed fields.
+  - **Index**: Add a database index only from query-plan or timing evidence and use the repository's normal migration workflow.
   - **Optimistic UI**: Provide instant visual feedback before background server completion where appropriate.
 
 ### Step 3: Confirm (ยืนยันผล & สิทธิ์)
@@ -75,15 +73,17 @@ Used only when the bottleneck is elusive, sporadic, or when formal statistical b
 
 ```mermaid
 graph LR
-    P1["Phase 1<br/>Instrumentation"] --> P2["Phase 2<br/>Baseline (3x)"]
+    P1["Phase 1<br/>Instrumentation"] --> P2["Phase 2<br/>Repeatable Baseline"]
     P2 --> P3["Phase 3<br/>Targeted Fix"]
     P3 --> P4["Phase 4<br/>Post-Fix & Cleanup"]
 ```
 
-1. **Phase 1: Instrumentation**: Inject non-blocking monotonic `[PERF-TRACE]` probes across Browser, Server, and DB boundaries.
-2. **Phase 2: Baseline Benchmark**: Run 3 consecutive measurements on local production build to establish baseline p50/p95.
+1. **Phase 1: Instrumentation**: Inject correlated monotonic `[PERF-TRACE]` probes only at boundaries needed to distinguish the competing hypotheses.
+2. **Phase 2: Baseline Benchmark**: Use enough equivalent measurements for the observed variance; record environment and cold/warm state. Do not label three samples as reliable p95 evidence.
 3. **Phase 3: Targeted Fix**: Implement the surgical fix directly (NO wasteful fake stubbing).
-4. **Phase 4: Post-Fix & Cleanup**: Measure 3 post-fix runs, verify delta, **clean up all `[PERF-TRACE]` probes**, and generate the before/after report.
+4. **Phase 4: Post-Fix & Cleanup**: Repeat the equivalent measurement set, verify the delta, **clean up all `[PERF-TRACE]` probes**, and generate the before/after report.
+
+The files under `phases/` and `references/` are legacy deep-trace material. Read them only when their procedure fits the current investigation; this entrypoint controls when they conflict. Do not use fixed sample counts or mock/stub steps when they would change the code path being measured.
 
 ---
 
@@ -93,5 +93,9 @@ graph LR
    - Never bypass department menu permissions, RBAC checks, or contact masking rules for the sake of speed.
 2. **Lean Querying**:
    - Prefer `select` over `include` for relational data.
+   - Do not move SSR data to CSR solely to reduce HTML size; compare total workflow transfer and first usable content.
 3. **Clean Codebase**:
    - In Deep Mode, every temporary `[PERF-TRACE]` probe MUST be completely removed before completing the task.
+4. **Reliable outcomes**:
+   - Do not make critical audit or business side effects fire-and-forget for speed.
+   - Optimistic UI must expose failure and reconcile authoritative state.

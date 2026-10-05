@@ -54,12 +54,30 @@ export const pipelineCardSelect = Prisma.validator<Prisma.OpportunitySelect>()({
 export type KanbanCardDTO = Prisma.OpportunityGetPayload<{ select: typeof pipelineCardSelect }>;
 export type PipelineCardDTO = KanbanCardDTO;
 
-export function checkIsRedCard(deal: KanbanCardDTO): boolean {
+import {
+  calculateElapsedWorkingMs,
+  addWorkingMs,
+  RED_CARD_WORKING_MS_THRESHOLD,
+} from './business-days';
+
+export function checkIsRedCard(
+  deal: KanbanCardDTO,
+  companyHolidays: Set<string> = new Set(),
+  userLeavesByOwner?: Map<string, Set<string>>,
+  asOfDate: Date = new Date()
+): boolean {
   if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
     return false;
   }
 
-  const today = new Date();
+  let effectiveOffDates = companyHolidays;
+  if (deal.ownerId && userLeavesByOwner?.has(deal.ownerId)) {
+    const ownerLeaves = userLeavesByOwner.get(deal.ownerId)!;
+    effectiveOffDates = new Set([...companyHolidays, ...ownerLeaves]);
+  }
+
+  const evaluationDate = asOfDate;
+  const today = new Date(evaluationDate);
   today.setHours(0, 0, 0, 0);
 
   const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
@@ -75,37 +93,42 @@ export function checkIsRedCard(deal: KanbanCardDTO): boolean {
     return false;
   }
 
-  // 2. If NO Due Date is set: 3 days without update -> Red Card
+  // 2. If NO Due Date is set: 28.5 working hours without update -> Red Card
+  // Working hours: 08:00 - 17:30, paused on nights, Sundays, Dayoffs & Leaves
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
     const validLogs = deal.activityLogs.filter(
-      log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_')
+      (log) =>
+        log.type === 'COMMENT' &&
+        new Date(log.createdAt) <= evaluationDate &&
+        !log.content.startsWith('[DUE DATE:') &&
+        !log.content.startsWith('[URGENT_')
     );
     if (validLogs.length > 0) {
       newestDate = new Date(validLogs[0].createdAt);
-      newestDate.setHours(0, 0, 0, 0);
     }
   }
 
-  let diffDays = 0;
-  if (newestDate) {
-    const diffTime = Math.abs(today.getTime() - newestDate.getTime());
-    diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  } else if (deal.createdAt) {
-    const createdDate = new Date(deal.createdAt);
-    createdDate.setHours(0, 0, 0, 0);
-    const diffTime = Math.abs(today.getTime() - createdDate.getTime());
-    diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  } else {
-    diffDays = 999;
-  }
+  const baseDate = newestDate || (deal.createdAt ? new Date(deal.createdAt) : null);
+  if (!baseDate) return true;
 
-  return diffDays > 2;
+  const elapsedWorkingMs = calculateElapsedWorkingMs(baseDate, evaluationDate, effectiveOffDates);
+  return elapsedWorkingMs >= RED_CARD_WORKING_MS_THRESHOLD;
 }
 
-export function getRedThreshold(deal: KanbanCardDTO): Date | null {
+export function getRedThreshold(
+  deal: KanbanCardDTO,
+  companyHolidays: Set<string> = new Set(),
+  userLeavesByOwner?: Map<string, Set<string>>
+): Date | null {
   if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
     return null;
+  }
+
+  let effectiveOffDates = companyHolidays;
+  if (deal.ownerId && userLeavesByOwner?.has(deal.ownerId)) {
+    const ownerLeaves = userLeavesByOwner.get(deal.ownerId)!;
+    effectiveOffDates = new Set([...companyHolidays, ...ownerLeaves]);
   }
 
   const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
@@ -124,26 +147,25 @@ export function getRedThreshold(deal: KanbanCardDTO): Date | null {
     return null;
   }
 
-  // If NO Due Date: 3 days threshold from latest activity or creation
+  // If NO Due Date: 28.5 working hours threshold from latest activity or creation
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
     const validLogs = deal.activityLogs.filter(
-      log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_')
+      (log) =>
+        log.type === 'COMMENT' &&
+        !log.content.startsWith('[DUE DATE:') &&
+        !log.content.startsWith('[URGENT_')
     );
     if (validLogs.length > 0) {
       newestDate = new Date(validLogs[0].createdAt);
     }
   }
 
-  let baseDate = newestDate;
-  if (!baseDate && deal.createdAt) {
-    baseDate = new Date(deal.createdAt);
-  }
-
+  const baseDate = newestDate || (deal.createdAt ? new Date(deal.createdAt) : null);
   if (baseDate) {
-    const threeDaysAfter = new Date(baseDate.getTime() + 3 * 24 * 60 * 60 * 1000);
-    if (now > threeDaysAfter) {
-      return threeDaysAfter;
+    const threshold = addWorkingMs(baseDate, RED_CARD_WORKING_MS_THRESHOLD, effectiveOffDates);
+    if (now >= threshold) {
+      return threshold;
     }
   }
 
@@ -154,7 +176,9 @@ export type PendingAcceleratorItem = { count?: number; earliestPendingAt?: strin
 
 export function sortDeals<T extends KanbanCardDTO>(
   dealsList: T[],
-  pendingAcceleratorsMap: Record<string, PendingAcceleratorItem> = {}
+  pendingAcceleratorsMap: Record<string, PendingAcceleratorItem> = {},
+  companyHolidays: Set<string> = new Set(),
+  userLeavesByOwner?: Map<string, Set<string>>
 ): T[] {
   return [...dealsList].sort((a, b) => {
     // 1. Orange Card check (Urgent / Manager Call with pendingCount > 0)
@@ -166,15 +190,15 @@ export function sortDeals<T extends KanbanCardDTO>(
     if (!aPending && bPending) return 1;
 
     // 2. Red Card check
-    const aRed = checkIsRedCard(a);
-    const bRed = checkIsRedCard(b);
+    const aRed = checkIsRedCard(a, companyHolidays, userLeavesByOwner);
+    const bRed = checkIsRedCard(b, companyHolidays, userLeavesByOwner);
     if (aRed && !bRed) return -1;
     if (!aRed && bRed) return 1;
 
     // Sub-sort within Red Cards: longest overdue RedTimer first
     if (aRed && bRed) {
-      const aThreshold = getRedThreshold(a);
-      const bThreshold = getRedThreshold(b);
+      const aThreshold = getRedThreshold(a, companyHolidays, userLeavesByOwner);
+      const bThreshold = getRedThreshold(b, companyHolidays, userLeavesByOwner);
       if (aThreshold && bThreshold) {
         const diff = aThreshold.getTime() - bThreshold.getTime();
         if (diff !== 0) return diff;

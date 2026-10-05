@@ -125,8 +125,9 @@ export const CalendarItemPill: React.FC<CalendarItemPillProps> = memo(function C
       <span className="mt-0.5">{style.icon}</span>
       <span className="sr-only">{sourceLabel}</span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate leading-4">{item.title}</span>
-        {isDeal && <span className="block truncate text-[10px] font-normal leading-3.5 text-slate-400">{item.accountName || 'No account'}</span>}
+        {isDeal && <span className="block truncate leading-4">{item.accountName || 'No account'}</span>}
+        <span className="block truncate text-[10px] font-normal leading-3.5 text-slate-400">{item.title}</span>
+
       </span>
       </button>
       {financialAnchor && (

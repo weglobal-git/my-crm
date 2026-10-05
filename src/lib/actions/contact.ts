@@ -433,18 +433,29 @@ export async function getCompaniesWithContacts({
     ? rawCompaniesWithExtra.slice(0, pageSize)
     : rawCompaniesWithExtra;
 
-  // Single bounded aggregation query for deal metrics and success rate calculation (No N+1)
+  // Bounded aggregation queries for deal metrics and AI summary status (No N+1)
   const companyIds = rawCompanies.map((c) => c.id);
   const oppStatsMap = new Map<string, { won: number; total: number }>();
+  const aiSummaryMap = new Map<string, boolean>();
+
   if (companyIds.length > 0) {
-    const oppGroups = await prisma.opportunity.groupBy({
-      by: ["companyId", "status"],
-      where: {
-        companyId: { in: companyIds },
-        value: { gt: 0 },
-      },
-      _count: { id: true },
-    });
+    const [oppGroups, aiConfigs] = await Promise.all([
+      prisma.opportunity.groupBy({
+        by: ["companyId", "status"],
+        where: {
+          companyId: { in: companyIds },
+          value: { gt: 0 },
+        },
+        _count: { id: true },
+      }),
+      prisma.systemConfig.findMany({
+        where: {
+          id: { in: companyIds.map((id) => `account_ai_${id}`) },
+        },
+        select: { id: true, googleRefreshToken: true },
+      }),
+    ]);
+
     for (const row of oppGroups) {
       if (!row.companyId) continue;
       const cur = oppStatsMap.get(row.companyId) || { won: 0, total: 0 };
@@ -453,6 +464,25 @@ export async function getCompaniesWithContacts({
         cur.won += row._count.id;
       }
       oppStatsMap.set(row.companyId, cur);
+    }
+
+    for (const conf of aiConfigs) {
+      if (!conf.googleRefreshToken) continue;
+      try {
+        const parsed = JSON.parse(conf.googleRefreshToken);
+        const hasSummary = Boolean(
+          (typeof parsed.companyProfile?.businessSummary === "string" &&
+            parsed.companyProfile.businessSummary.trim().length > 0) ||
+          (typeof parsed.businessSummary === "string" &&
+            parsed.businessSummary.trim().length > 0)
+        );
+        if (hasSummary) {
+          const compId = conf.id.replace("account_ai_", "");
+          aiSummaryMap.set(compId, true);
+        }
+      } catch {
+        // ignore parse error
+      }
     }
   }
 
@@ -466,6 +496,7 @@ export async function getCompaniesWithContacts({
       wonDealsCount,
       totalDealsCount,
       successRate,
+      hasAiSummary: aiSummaryMap.get(comp.id) ?? false,
       revision: comp.updatedAt.toISOString(),
     };
   });

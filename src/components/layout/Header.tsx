@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Bell, PanelLeft } from "lucide-react";
 import { NotificationDrawer } from "./NotificationDrawer";
+import { LeaderboardHeaderWidget } from "./LeaderboardHeaderWidget";
 import { useSession, signOut } from "next-auth/react";
 import Image from "next/image";
 import { useEffect, useState, useRef, useMemo, useCallback } from "react";
@@ -452,10 +453,12 @@ export function Header() {
           )}
         </div>
 
-        <div className="h-8 w-px bg-slate-200 mx-2 hidden md:block"></div>
+        <div className="h-8 w-px bg-[#3A3B3C] mx-2 hidden md:block"></div>
 
         {/* Notifications & Profile */}
         <div className="flex items-center gap-1">
+          {/* Top 3 MVP Leaderboard Widget */}
+          <LeaderboardHeaderWidget />
           
           <button 
             type="button"

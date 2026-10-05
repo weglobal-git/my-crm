@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useState } from "react";
-import { Star } from "lucide-react";
+import { Star, Bot } from "lucide-react";
 import type { AccountCardDTO } from "@/lib/contact/account-card-dto";
 import { normalizeCountryName } from "@/lib/data/countries";
 
@@ -11,6 +11,7 @@ interface AccountCardRowProps {
   onSelect: (id: string) => void;
   onRatingChange: (id: string, newRating: number) => void;
   onIntent?: (id: string) => void;
+  onOpenAISummary?: (id: string) => void;
 }
 
 export const AccountCardRow = memo(function AccountCardRow({
@@ -19,6 +20,7 @@ export const AccountCardRow = memo(function AccountCardRow({
   onSelect,
   onRatingChange,
   onIntent,
+  onOpenAISummary,
 }: AccountCardRowProps) {
   const [hoverRating, setHoverRating] = useState<number | null>(null);
 
@@ -84,14 +86,34 @@ export const AccountCardRow = memo(function AccountCardRow({
 
         {/* Col 2: Account Name & Legal/Company Subtitle */}
         <div className="min-w-0 pr-2 flex flex-col justify-center">
-          <h4
-            className={`font-semibold text-[13px] leading-tight truncate ${
-              isSelected ? "text-black" : "text-white"
-            }`}
-            title={displayName}
-          >
-            {displayName}
-          </h4>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h4
+              className={`font-semibold text-[13px] leading-tight truncate ${
+                isSelected ? "text-black" : "text-white"
+              }`}
+              title={displayName}
+            >
+              {displayName}
+            </h4>
+            {account.hasAiSummary && (
+              <button
+                type="button"
+                aria-label="View AI Summary & Web Research"
+                title="View AI Summary & Web Research"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenAISummary?.(account.id);
+                }}
+                className={`p-1 -my-1 rounded transition-all duration-150 shrink-0 cursor-pointer flex items-center justify-center ${
+                  isSelected
+                    ? "text-black/80 hover:text-black hover:bg-black/10 active:scale-95"
+                    : "text-[#C7F33C] hover:text-[#d4f85e] hover:bg-[#C7F33C]/15 active:scale-95"
+                }`}
+              >
+                <Bot className="w-5 h-5" />
+              </button>
+            )}
+          </div>
           {showOfficialSubtitle && (
             <p
               className={`text-xs truncate mt-0.5 leading-tight ${
@@ -193,13 +215,33 @@ export const AccountCardRow = memo(function AccountCardRow({
             </span>
           </div>
           <div className="min-w-0 flex-1">
-            <h4
-              className={`text-sm font-bold truncate ${
-                isSelected ? "text-black" : "text-white"
-              }`}
-            >
-              {displayName}
-            </h4>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <h4
+                className={`text-sm font-bold truncate ${
+                  isSelected ? "text-black" : "text-white"
+                }`}
+              >
+                {displayName}
+              </h4>
+              {account.hasAiSummary && (
+                <button
+                  type="button"
+                  aria-label="View AI Summary & Web Research"
+                  title="View AI Summary & Web Research"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenAISummary?.(account.id);
+                  }}
+                  className={`p-1 -my-1 rounded transition-all duration-150 shrink-0 cursor-pointer flex items-center justify-center ${
+                    isSelected
+                      ? "text-black/80 hover:text-black hover:bg-black/10 active:scale-95"
+                      : "text-[#C7F33C] hover:text-[#d4f85e] hover:bg-[#C7F33C]/15 active:scale-95"
+                  }`}
+                >
+                  <Bot className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
             {showOfficialSubtitle && (
               <p
                 className={`text-xs truncate ${

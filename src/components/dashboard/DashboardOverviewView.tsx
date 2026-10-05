@@ -10,16 +10,6 @@ import { SalesSummarySection } from "./SalesSummarySection";
 import { DashboardPrintReport, type PrintSections } from "./DashboardPrintReport";
 import { getBangkokMonth, getBangkokYear } from "@/lib/dashboard/sales-overview";
 
-const DashboardLeaderboardView = dynamic(
-  () => import("./DashboardLeaderboardView").then((mod) => mod.DashboardLeaderboardView),
-  {
-    loading: () => (
-      <div className="rounded-[2rem] border border-[#4E4F50] bg-[#3A3B3C] p-8 animate-pulse h-[400px]" />
-    ),
-    ssr: false,
-  }
-);
-
 import { useDashboardData, type DashboardFilterState } from "./useDashboardData";
 import type { ScopeActorInfo } from "@/lib/dashboard/dashboard-keys";
 
@@ -284,9 +274,7 @@ export function DashboardOverviewView({
         />
 
         {/* Content Body */}
-        {activeTab === "leaderboard" ? (
-          <DashboardLeaderboardView snapshot={activeSnapshot} year={year} />
-        ) : !activeSnapshot ? (
+        {!activeSnapshot ? (
           <section className="rounded-[2rem] border border-[#4E4F50] bg-[#3A3B3C] p-8 text-center">
             <h2 className="text-base font-semibold text-slate-100">
               No report sections available

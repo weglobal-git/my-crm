@@ -147,3 +147,30 @@ export async function getDashboardFilterOptionsAction() {
   return snapshot.filterOptions;
 }
 
+export async function getDashboardLeaderboardAction(input: {
+  departmentId?: string | null;
+  month: number;
+  year: number;
+  country?: string | null;
+  account?: string | null;
+}) {
+  const { getContactActor } = await import('@/lib/actions/contact');
+  const contactActor = await getContactActor();
+  const actor = {
+    id: contactActor.id,
+    name: contactActor.name,
+    role: contactActor.role,
+    departments: contactActor.departments,
+  };
+
+  const { getDepartmentLeaderboardData } = await import('@/lib/dashboard/leaderboard-data');
+  return await getDepartmentLeaderboardData({
+    actor,
+    departmentId: input.departmentId,
+    month: input.month,
+    year: input.year,
+    country: input.country,
+    account: input.account,
+  });
+}
+

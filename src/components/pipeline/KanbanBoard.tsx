@@ -16,7 +16,8 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, KanbanClockProvider, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, OwnerFilterContext, DealSummariesContext } from "./KanbanCard";
+import { KanbanCardUI, KanbanClockProvider, CompanyHolidaysContext, UserLeavesContext, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, OwnerFilterContext, DealSummariesContext } from "./KanbanCard";
+import { useCompanyHolidays, useUserLeaves } from "@/lib/useCompanyHolidays";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import { getDealsWithSummaryMap } from "@/lib/actions/deal-summary";
 import {
@@ -122,6 +123,8 @@ export function KanbanBoard({
   onOwnerFilterChange,
   onSearchChange,
 }: KanbanBoardProps) {
+  const { holidaysSet } = useCompanyHolidays();
+  const { leavesByUser } = useUserLeaves();
   const { toast } = useDialog();
   const { setColumnNavConfig } = useSidebar();
   const searchParams = useSearchParams();
@@ -251,9 +254,9 @@ export function KanbanBoard({
         (o.company?.displayName && o.company.displayName.toLowerCase().includes(q))
       );
     }
-    acc[stage.id] = sortDeals(stageDeals, pendingAcceleratorsMap);
+    acc[stage.id] = sortDeals(stageDeals, pendingAcceleratorsMap, holidaysSet, leavesByUser);
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery]);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery, holidaysSet, leavesByUser]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
   const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
@@ -792,7 +795,7 @@ export function KanbanBoard({
       // Re-sort within same column according to system logic (Orange -> Red [longest overdue first] -> Normal)
       setDeals(prev => ({
         ...prev,
-        [targetCol]: sortDeals(prev[targetCol] || [], pendingAcceleratorsMap),
+        [targetCol]: sortDeals(prev[targetCol] || [], pendingAcceleratorsMap, holidaysSet, leavesByUser),
       }));
       dragOriginRef.current = null;
       return;
@@ -811,10 +814,10 @@ export function KanbanBoard({
       }
       if (draggedDeal) {
         const updatedDeal = { ...draggedDeal, pipelineStageId: targetCol };
-        next[targetCol] = sortDeals([...(next[targetCol] || []), updatedDeal], pendingAcceleratorsMap);
+        next[targetCol] = sortDeals([...(next[targetCol] || []), updatedDeal], pendingAcceleratorsMap, holidaysSet, leavesByUser);
       }
       if (originCol && next[originCol]) {
-        next[originCol] = sortDeals(next[originCol], pendingAcceleratorsMap);
+        next[originCol] = sortDeals(next[originCol], pendingAcceleratorsMap, holidaysSet, leavesByUser);
       }
       return next;
     });
@@ -921,7 +924,7 @@ export function KanbanBoard({
     const currentStage = initialStages[activeColumnIndex];
     const currentDeals = currentStage ? (deals[currentStage.id] || []) : [];
     const currentCount = currentDeals.length;
-    const currentRedCount = currentDeals.filter(checkIsRedCard).length;
+    const currentRedCount = currentDeals.filter(d => checkIsRedCard(d, holidaysSet, leavesByUser)).length;
     const hasPrev = activeColumnIndex > 0;
     const hasNext = activeColumnIndex < initialStages.length - 1;
     const currentTitle = currentStage?.name || "";
@@ -1112,7 +1115,9 @@ export function KanbanBoard({
     <OwnerFilterContext.Provider value={{ ownerFilter, onOwnerFilterChange, searchQuery, onSearchChange }}>
       <PendingAcceleratorsContext.Provider value={pendingAcceleratorsMap}>
         <DealSummariesContext.Provider value={dealSummariesMap}>
-          <KanbanClockProvider>
+          <CompanyHolidaysContext.Provider value={holidaysSet}>
+            <UserLeavesContext.Provider value={leavesByUser}>
+              <KanbanClockProvider>
         <div 
           ref={boardContainerRef}
           className={`relative flex gap-0 md:gap-1 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-auto xl:overflow-x-auto touch-pan-x xl:touch-auto snap-x snap-mandatory md:snap-none'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
@@ -1243,7 +1248,9 @@ export function KanbanBoard({
           }}
         />
       )}
-          </KanbanClockProvider>
+              </KanbanClockProvider>
+            </UserLeavesContext.Provider>
+          </CompanyHolidaysContext.Provider>
         </DealSummariesContext.Provider>
       </PendingAcceleratorsContext.Provider>
     </OwnerFilterContext.Provider>

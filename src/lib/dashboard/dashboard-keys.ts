@@ -66,6 +66,18 @@ export function dashboardFilterOptionsKey(scope: string): string {
   return `dashboard:filter-options:${scope}`;
 }
 
-export function dashboardLeaderboardKey(scope: string, params: { year: number }): string {
-  return `dashboard:leaderboard:${scope}:${params.year}`;
+export interface LeaderboardKeyParams {
+  departmentId?: string | null;
+  month?: number;
+  year: number;
+  country?: string | null;
+  account?: string | null;
+}
+
+export function dashboardLeaderboardKey(scope: string, params: LeaderboardKeyParams): string {
+  const dept = params.departmentId || 'DEFAULT';
+  const month = params.month ?? 'ALL';
+  const country = params.country?.trim().toUpperCase() || 'ALL';
+  const account = params.account?.trim() || 'ALL';
+  return `dashboard:leaderboard:${scope}:${dept}:${params.year}:${month}:${country}:${account}`;
 }
