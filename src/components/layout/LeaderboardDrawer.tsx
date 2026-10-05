@@ -249,7 +249,7 @@ export function LeaderboardDrawer({
                                 </span>
                               )}
                             </div>
-                            <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#4E4F50] text-slate-200 text-xs sm:text-sm font-black flex items-center justify-center">
+                            <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#4E4F50] text-slate-200 text-xs sm:text-sm font-black flex items-center justify-center">
                               2
                             </span>
                           </div>
@@ -341,7 +341,7 @@ export function LeaderboardDrawer({
                                 </span>
                               )}
                             </div>
-                            <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#4E4F50] text-slate-200 text-xs sm:text-sm font-black flex items-center justify-center">
+                            <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#4E4F50] text-slate-200 text-xs sm:text-sm font-black flex items-center justify-center">
                               3
                             </span>
                           </div>

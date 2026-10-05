@@ -199,7 +199,7 @@ export function DashboardCategoryColumns({
                               ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
                               : activeCards === 0
                               ? "bg-slate-800/40 text-slate-500 border border-slate-700/50"
-                              : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
+                              : "bg-[#C7F33C]/10 text-[#C7F33C] border border-[#C7F33C]"
                           }`}
                           title={`Today: ${redCards} red / ${activeCards} total active cards`}
                         >
