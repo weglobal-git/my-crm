@@ -135,7 +135,7 @@ export function LeaderboardDrawer({
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-[#1C1C1D] border border-[#3A3B3C] flex items-center justify-center shrink-0">
+              <div className="w-8 h-8 flex items-center justify-center shrink-0">
                 <Trophy className="w-7 h-7 text-[#C7F33C]" />
               </div>
               <div className="min-w-0">
