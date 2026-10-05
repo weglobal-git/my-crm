@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
   Clock,
+  ChevronDown,
 } from "lucide-react";
 import type { LeaderboardCategoryData, LeaderboardItem } from "@/lib/dashboard/leaderboard-types";
 
@@ -65,6 +66,7 @@ export function DashboardCategoryColumns({
   onTabChange,
 }: DashboardCategoryColumnsProps) {
   const [internalActiveTab, setInternalActiveTab] = useState<string>("card_health");
+  const [isRulesExpanded, setIsRulesExpanded] = useState<boolean>(false);
   const activeTab = activeTabProp ?? internalActiveTab;
 
   const handleTabChange = (tabId: string) => {
@@ -257,155 +259,217 @@ export function DashboardCategoryColumns({
   const renderCategoryRules = (categoryId: string) => {
     if (categoryId === "card_health") {
       return (
-        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 space-y-2 text-xs">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 text-xs transition-all">
+          <button
+            type="button"
+            onClick={() => setIsRulesExpanded((prev) => !prev)}
+            className="w-full flex items-center justify-between text-[11px] cursor-pointer select-none text-left group"
+            title={isRulesExpanded ? "Click to collapse rules" : "Click to expand rules"}
+            aria-expanded={isRulesExpanded}
+          >
+            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-slate-100 transition-colors">
               <ShieldCheck className="w-3.5 h-3.5 text-[#C7F33C]" />
               <span>Scoring Rules</span>
             </span>
-            <span className="font-mono text-[#C7F33C] font-semibold">Max 50 XP</span>
-          </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[#C7F33C] font-semibold">Max 50 XP</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 transition-transform duration-200 ${
+                  isRulesExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </div>
+          </button>
 
-          <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 text-[11px] font-mono text-slate-300 space-y-0.5">
-            <div>Red Rate % = (Red Hours ÷ Total Card Hours) × 100</div>
-            <div className="text-[10px] font-sans text-slate-400">
-              1 active card = 9h/day (08:00–17:00). Daily cutoff at 23:00.
-            </div>
-          </div>
+          {isRulesExpanded && (
+            <div className="mt-2.5 space-y-2 pt-2 border-t border-[#3A3B3C]/50">
+              <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 text-[11px] font-mono text-slate-300 space-y-0.5">
+                <div>Red Rate % = (Red Hours ÷ Total Card Hours) × 100</div>
+                <div className="text-[10px] font-sans text-slate-400">
+                  1 active card = 9h/day (08:00–17:00). Daily cutoff at 23:00.
+                </div>
+              </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400 px-0.5">
-              <span>Red Rate Target</span>
-              <span>Reward XP</span>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400 px-0.5">
+                  <span>Red Rate Target</span>
+                  <span>Reward XP</span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-300">&lt; 1%</span>
+                    <span className="text-[#C7F33C] font-bold">50 XP</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-300">&lt; 2%</span>
+                    <span className="text-[#C7F33C] font-bold">45 XP</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-300">&lt; 3%</span>
+                    <span className="text-[#C7F33C] font-bold">40 XP</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-300">&lt; 4%</span>
+                    <span className="text-[#C7F33C] font-bold">35 XP</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-300">&lt; 5%</span>
+                    <span className="text-[#C7F33C] font-bold">30 XP</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-300">&lt; 10%</span>
+                    <span className="text-slate-200 font-semibold">20 XP</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-300">&lt; 20%</span>
+                    <span className="text-slate-200 font-semibold">10 XP</span>
+                  </div>
+                  <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                    <span className="text-slate-400">&gt; 20%</span>
+                    <span className="text-slate-500 font-medium">0 XP</span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-300">&lt; 1%</span>
-                <span className="text-[#C7F33C] font-bold">50 XP</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-300">&lt; 2%</span>
-                <span className="text-[#C7F33C] font-bold">45 XP</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-300">&lt; 3%</span>
-                <span className="text-[#C7F33C] font-bold">40 XP</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-300">&lt; 4%</span>
-                <span className="text-[#C7F33C] font-bold">35 XP</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-300">&lt; 5%</span>
-                <span className="text-[#C7F33C] font-bold">30 XP</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-300">&lt; 10%</span>
-                <span className="text-slate-200 font-semibold">20 XP</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-300">&lt; 20%</span>
-                <span className="text-slate-200 font-semibold">10 XP</span>
-              </div>
-              <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-                <span className="text-slate-400">&gt; 20%</span>
-                <span className="text-slate-500 font-medium">0 XP</span>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       );
     }
 
     if (categoryId === "clean_bonus") {
       return (
-        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 space-y-2 text-xs">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 text-xs transition-all">
+          <button
+            type="button"
+            onClick={() => setIsRulesExpanded((prev) => !prev)}
+            className="w-full flex items-center justify-between text-[11px] cursor-pointer select-none text-left group"
+            title={isRulesExpanded ? "Click to collapse rules" : "Click to expand rules"}
+            aria-expanded={isRulesExpanded}
+          >
+            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-slate-100 transition-colors">
               <Sparkles className="w-3.5 h-3.5 text-[#C7F33C]" />
               <span>Scoring Rules</span>
             </span>
-            <span className="font-mono text-[#C7F33C] font-semibold">Max 20 XP</span>
-          </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[#C7F33C] font-semibold">Max 20 XP</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 transition-transform duration-200 ${
+                  isRulesExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </div>
+          </button>
 
-          <div className="space-y-1.5 text-[11px]">
-            <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 space-y-0.5">
-              <div className="text-slate-200 font-semibold flex items-center justify-between">
-                <span>Daily 100% Clean Board (0 Red Cards)</span>
-                <span className="font-mono font-bold text-[#C7F33C]">+1 XP</span>
+          {isRulesExpanded && (
+            <div className="mt-2.5 space-y-1.5 text-[11px] pt-2 border-t border-[#3A3B3C]/50">
+              <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 space-y-0.5">
+                <div className="text-slate-200 font-semibold flex items-center justify-between">
+                  <span>Daily 100% Clean Board (0 Red Cards)</span>
+                  <span className="font-mono font-bold text-[#C7F33C]">+1 XP</span>
+                </div>
+                <div className="text-slate-400 text-[10px]">
+                  Evaluated at 23:00 daily cutoff.
+                </div>
               </div>
-              <div className="text-slate-400 text-[10px]">
-                Evaluated at 23:00 daily cutoff.
+              <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 space-y-0.5">
+                <div className="text-slate-200 font-semibold flex items-center justify-between">
+                  <span>Active Red Card at Cutoff</span>
+                  <span className="font-mono text-slate-500 font-semibold">0 XP</span>
+                </div>
+                <div className="text-slate-400 text-[10px]">
+                  0 XP earned on that day if even 1 Red Card is active.
+                </div>
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                <span className="text-slate-400">Monthly Cap</span>
+                <span className="font-mono font-bold text-[#C7F33C]">Max 20 XP</span>
               </div>
             </div>
-            <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 space-y-0.5">
-              <div className="text-slate-200 font-semibold flex items-center justify-between">
-                <span>Active Red Card at Cutoff</span>
-                <span className="font-mono text-slate-500 font-semibold">0 XP</span>
-              </div>
-              <div className="text-slate-400 text-[10px]">
-                0 XP earned on that day if even 1 Red Card is active.
-              </div>
-            </div>
-            <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-              <span className="text-slate-400">Monthly Cap</span>
-              <span className="font-mono font-bold text-[#C7F33C]">Max 20 XP</span>
-            </div>
-          </div>
+          )}
         </div>
       );
     }
 
     if (categoryId === "ltc") {
       return (
-        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 space-y-2 text-xs">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 text-xs transition-all">
+          <button
+            type="button"
+            onClick={() => setIsRulesExpanded((prev) => !prev)}
+            className="w-full flex items-center justify-between text-[11px] cursor-pointer select-none text-left group"
+            title={isRulesExpanded ? "Click to collapse rules" : "Click to expand rules"}
+            aria-expanded={isRulesExpanded}
+          >
+            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-slate-100 transition-colors">
               <Clock className="w-3.5 h-3.5 text-[#C7F33C]" />
               <span>Scoring Rules</span>
             </span>
-            <span className="font-mono text-slate-400 font-semibold">Max 20 XP</span>
-          </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-slate-400 font-semibold">Max 20 XP</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 transition-transform duration-200 ${
+                  isRulesExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </div>
+          </button>
 
-          <div className="space-y-1.5 text-[11px]">
-            <p className="text-slate-300 leading-relaxed">
-              Team metric encouraging reps to follow up and resolve Long-Time-Contact deals across the department.
-            </p>
-            <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 text-slate-400 space-y-0.5">
-              <div className="text-slate-200 font-semibold">Status: Phase 2 In Development</div>
-              <div className="text-[10px]">
-                Operates similarly to Red Card health. Scored at 0 XP for Phase 1.
+          {isRulesExpanded && (
+            <div className="mt-2.5 space-y-1.5 text-[11px] pt-2 border-t border-[#3A3B3C]/50">
+              <p className="text-slate-300 leading-relaxed">
+                Team metric encouraging reps to follow up and resolve Long-Time-Contact deals across the department.
+              </p>
+              <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 text-slate-400 space-y-0.5">
+                <div className="text-slate-200 font-semibold">Status: Phase 2 In Development</div>
+                <div className="text-[10px]">
+                  Operates similarly to Red Card health. Scored at 0 XP for Phase 1.
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       );
     }
 
     if (categoryId === "quotation") {
       return (
-        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 space-y-2 text-xs">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+        <div className="rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] p-3 text-xs transition-all">
+          <button
+            type="button"
+            onClick={() => setIsRulesExpanded((prev) => !prev)}
+            className="w-full flex items-center justify-between text-[11px] cursor-pointer select-none text-left group"
+            title={isRulesExpanded ? "Click to collapse rules" : "Click to expand rules"}
+            aria-expanded={isRulesExpanded}
+          >
+            <span className="font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5 group-hover:text-slate-100 transition-colors">
               <FileText className="w-3.5 h-3.5 text-[#C7F33C]" />
               <span>Scoring Rules</span>
             </span>
-            <span className="font-mono text-[#C7F33C] font-semibold">Max 10 XP</span>
-          </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[#C7F33C] font-semibold">Max 10 XP</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 transition-transform duration-200 ${
+                  isRulesExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </div>
+          </button>
 
-          <div className="space-y-1.5 text-[11px]">
-            <p className="text-slate-300 leading-relaxed">
-              Shared team metric rewarding monthly proposal and quotation activity across the department.
-            </p>
-            <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-              <span className="text-slate-200">1 Quotation issued</span>
-              <span className="font-mono font-bold text-[#C7F33C]">+1 XP</span>
+          {isRulesExpanded && (
+            <div className="mt-2.5 space-y-1.5 text-[11px] pt-2 border-t border-[#3A3B3C]/50">
+              <p className="text-slate-300 leading-relaxed">
+                Shared team metric rewarding monthly proposal and quotation activity across the department.
+              </p>
+              <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                <span className="text-slate-200">1 Quotation issued</span>
+                <span className="font-mono font-bold text-[#C7F33C]">+1 XP</span>
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                <span className="text-slate-400">Monthly Team Cap</span>
+                <span className="font-mono font-bold text-[#C7F33C]">Max 10 XP</span>
+              </div>
             </div>
-            <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
-              <span className="text-slate-400">Monthly Team Cap</span>
-              <span className="font-mono font-bold text-[#C7F33C]">Max 10 XP</span>
-            </div>
-          </div>
+          )}
         </div>
       );
     }
