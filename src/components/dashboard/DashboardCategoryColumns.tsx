@@ -21,6 +21,7 @@ interface DashboardCategoryColumnsProps {
   categories: LeaderboardCategoryData[];
   onSelectUser?: (item: LeaderboardItem) => void;
   onSelectHealthUser?: (item: LeaderboardItem) => void;
+  onSelectLtcUser?: (item: LeaderboardItem) => void;
   onOpenCategoryRules?: (categoryId: string) => void;
   layout?: "grid" | "vertical" | "tabs";
   activeTab?: string;
@@ -61,6 +62,7 @@ export function DashboardCategoryColumns({
   categories,
   onSelectUser,
   onSelectHealthUser,
+  onSelectLtcUser,
   layout = "tabs",
   activeTab: activeTabProp,
   onTabChange,
@@ -102,12 +104,10 @@ export function DashboardCategoryColumns({
             <div
               key={item.userId}
               onClick={() => {
-                if (
-                  (isHealth || isCleanBonus) &&
-                  onSelectHealthUser &&
-                  item.dailyHealthSummary
-                ) {
+                if ((isHealth || isCleanBonus) && onSelectHealthUser) {
                   onSelectHealthUser(item);
+                } else if (isLtc && onSelectLtcUser) {
+                  onSelectLtcUser(item);
                 } else {
                   onSelectUser?.(item);
                 }
@@ -120,6 +120,8 @@ export function DashboardCategoryColumns({
               title={
                 isHealth || isCleanBonus
                   ? "View daily card health history"
+                  : isLtc
+                  ? "View daily LTC history"
                   : item.breakdown
                   ? "View score breakdown"
                   : undefined
@@ -240,9 +242,29 @@ export function DashboardCategoryColumns({
                     {item.formattedValue}
                   </span>
                 ) : isLtc ? (
-                  <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-[#252728] text-slate-400 border border-[#4E4F50] font-mono">
-                    Phase 2
-                  </span>
+                  <div className="flex items-center gap-1.5 justify-end">
+                    {item.dailyLtcSummary && item.dailyLtcSummary.totalWorkingDays > 0 && (
+                      <span
+                        className={`px-1.5 py-0.5 text-[10px] font-mono font-bold rounded leading-none shrink-0 ${
+                          item.dailyLtcSummary.cleanLtcDaysCount >= item.dailyLtcSummary.totalWorkingDays
+                            ? "bg-emerald-500/15 text-[#C7F33C] border border-emerald-500/30"
+                            : item.dailyLtcSummary.cleanLtcDaysCount > 0
+                            ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                            : "bg-slate-800 text-slate-400 border border-slate-700"
+                        }`}
+                        title={`Daily Cleared: ${item.dailyLtcSummary.cleanLtcDaysCount}/${item.dailyLtcSummary.totalWorkingDays} days`}
+                      >
+                        Daily {item.dailyLtcSummary.cleanLtcDaysCount}/{item.dailyLtcSummary.totalWorkingDays}D
+                      </span>
+                    )}
+                    <span
+                      className={`text-xs font-mono font-bold min-w-[38px] text-right shrink-0 ${
+                        item.score > 0 ? "text-[#C7F33C]" : "text-slate-400"
+                      }`}
+                    >
+                      {item.score} XP
+                    </span>
+                  </div>
                 ) : (
                   <span className="text-xs font-bold text-slate-100 font-mono">
                     {item.formattedValue}
@@ -405,7 +427,7 @@ export function DashboardCategoryColumns({
               <span>Scoring Rules</span>
             </span>
             <div className="flex items-center gap-2">
-              <span className="font-mono text-slate-400 font-semibold">Max 20 XP</span>
+              <span className="font-mono text-[#C7F33C] font-semibold">Max 20 XP</span>
               <ChevronDown
                 className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-200 transition-transform duration-200 ${
                   isRulesExpanded ? "rotate-180" : ""
@@ -416,14 +438,31 @@ export function DashboardCategoryColumns({
 
           {isRulesExpanded && (
             <div className="mt-2.5 space-y-1.5 text-[11px] pt-2 border-t border-[#3A3B3C]/50">
-              <p className="text-slate-300 leading-relaxed">
-                Team metric encouraging reps to follow up and resolve Long-Time-Contact deals across the department.
-              </p>
-              <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 text-slate-400 space-y-0.5">
-                <div className="text-slate-200 font-semibold">Status: Phase 2 In Development</div>
-                <div className="text-[10px]">
-                  Operates similarly to Red Card health. Scored at 0 XP for Phase 1.
+              <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 space-y-0.5">
+                <div className="text-slate-200 font-semibold flex items-center justify-between">
+                  <span>Daily 100% Cleared (0 LTC Accounts)</span>
+                  <span className="font-mono font-bold text-[#C7F33C]">+1 XP</span>
                 </div>
+                <div className="text-slate-400 text-[10px]">
+                  Evaluated at 17:00 end of workday cutoff for all team members.
+                </div>
+              </div>
+              <div className="p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60 space-y-0.5">
+                <div className="text-slate-200 font-semibold flex items-center justify-between">
+                  <span>Pending LTC at 17:00 Cutoff</span>
+                  <span className="font-mono text-slate-500 font-semibold">0 XP</span>
+                </div>
+                <div className="text-slate-400 text-[10px]">
+                  0 XP earned on that day if even 1 LTC account remains uncleared.
+                </div>
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                <span className="text-slate-400">Sundays &amp; Company Holidays</span>
+                <span className="font-mono text-amber-400">Auto-Pause</span>
+              </div>
+              <div className="flex items-center justify-between p-2 rounded-lg bg-[#252728] border border-[#3A3B3C]/60">
+                <span className="text-slate-400">Monthly Team Cap</span>
+                <span className="font-mono font-bold text-[#C7F33C]">Max 20 XP</span>
               </div>
             </div>
           )}

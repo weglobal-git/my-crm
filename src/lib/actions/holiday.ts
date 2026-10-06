@@ -3,6 +3,13 @@
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import { Prisma } from '@prisma/client';
+import { parseHolidayDates, parseUserLeaves, toggleHolidayDate, toggleUserLeave, type UserLeaveDTO } from '@/lib/holiday-config';
+import { dispatchCalendarHolidaysUpdate } from '@/lib/calendar/calendar-realtime-server';
+import { notifyPipelineAudience } from '@/lib/pipeline-security';
+import { dispatchDashboardInvalidation } from '@/lib/dashboard/dashboard-realtime-server';
+
+export type { UserLeaveDTO } from '@/lib/holiday-config';
 
 const CONFIG_ID = 'company_day_offs';
 
@@ -20,11 +27,7 @@ export async function getCompanyHolidaysAction(): Promise<string[]> {
       return [];
     }
 
-    const parsed = JSON.parse(row.googleRefreshToken);
-    if (Array.isArray(parsed)) {
-      return parsed.filter((d): d is string => typeof d === 'string');
-    }
-    return [];
+    return parseHolidayDates(row.googleRefreshToken);
   } catch (err) {
     console.error('Failed to get company holidays:', err);
     return [];
@@ -47,39 +50,19 @@ export async function toggleCompanyHolidayAction(
     throw new Error('Invalid date format. Expected YYYY-MM-DD.');
   }
 
-  const currentHolidays = await getCompanyHolidaysAction();
-  const set = new Set(currentHolidays);
+  const updatedHolidays = await updateConfigWithSerializableRetry(CONFIG_ID, (value) =>
+    toggleHolidayDate(parseHolidayDates(value), dateStr)
+  );
 
-  if (set.has(dateStr)) {
-    set.delete(dateStr);
-  } else {
-    set.add(dateStr);
-  }
-
-  const updatedHolidays = Array.from(set).sort();
-
-  await prisma.systemConfig.upsert({
-    where: { id: CONFIG_ID },
-    update: {
-      googleRefreshToken: JSON.stringify(updatedHolidays),
-    },
-    create: {
-      id: CONFIG_ID,
-      googleRefreshToken: JSON.stringify(updatedHolidays),
-    },
-  });
+  // Broadcast realtime updates across Calendar, Pipeline, and Leaderboard
+  void dispatchCalendarHolidaysUpdate({ action: 'HOLIDAYS_UPDATED' });
+  void notifyPipelineAudience({ action: 'HOLIDAYS_UPDATED' });
+  void dispatchDashboardInvalidation({ resources: ['leaderboard'] });
 
   return {
     success: true,
     holidays: updatedHolidays,
   };
-}
-
-export interface UserLeaveDTO {
-  userId: string;
-  userName: string;
-  userImage?: string | null;
-  dateStr: string; // "YYYY-MM-DD"
 }
 
 const LEAVES_CONFIG_ID = 'user_leaves';
@@ -98,11 +81,7 @@ export async function getUserLeavesAction(): Promise<UserLeaveDTO[]> {
       return [];
     }
 
-    const parsed = JSON.parse(row.googleRefreshToken);
-    if (Array.isArray(parsed)) {
-      return parsed.filter((item): item is UserLeaveDTO => Boolean(item?.userId && item?.dateStr));
-    }
-    return [];
+    return parseUserLeaves(row.googleRefreshToken);
   } catch (err) {
     console.error('Failed to get user leaves:', err);
     return [];
@@ -128,39 +107,50 @@ export async function toggleUserLeaveAction(
   const userName = session.user.name || 'Anonymous User';
   const userImage = session.user.image || null;
 
-  const currentLeaves = await getUserLeavesAction();
-  const existingIndex = currentLeaves.findIndex(
-    (l) => l.userId === userId && l.dateStr === dateStr
-  );
-
-  let updatedLeaves: UserLeaveDTO[];
-  if (existingIndex >= 0) {
-    updatedLeaves = currentLeaves.filter((_, idx) => idx !== existingIndex);
-  } else {
-    updatedLeaves = [
-      ...currentLeaves,
-      {
+  const updatedLeaves = await updateConfigWithSerializableRetry(LEAVES_CONFIG_ID, (value) =>
+    toggleUserLeave(parseUserLeaves(value), {
         userId,
         userName,
         userImage,
         dateStr,
-      },
-    ];
-  }
+      })
+  );
 
-  await prisma.systemConfig.upsert({
-    where: { id: LEAVES_CONFIG_ID },
-    update: {
-      googleRefreshToken: JSON.stringify(updatedLeaves),
-    },
-    create: {
-      id: LEAVES_CONFIG_ID,
-      googleRefreshToken: JSON.stringify(updatedLeaves),
-    },
-  });
+  // Broadcast realtime updates across Calendar, Pipeline, and Leaderboard
+  void dispatchCalendarHolidaysUpdate({ action: 'LEAVES_UPDATED' });
+  void notifyPipelineAudience({ action: 'LEAVES_UPDATED' });
+  void dispatchDashboardInvalidation({ resources: ['leaderboard'] });
 
   return {
     success: true,
     leaves: updatedLeaves,
   };
+}
+
+async function updateConfigWithSerializableRetry<T>(
+  id: string,
+  update: (currentValue: string | null) => T[],
+): Promise<T[]> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const current = await tx.systemConfig.findUnique({
+          where: { id },
+          select: { googleRefreshToken: true },
+        });
+        const next = update(current?.googleRefreshToken ?? null);
+        await tx.systemConfig.upsert({
+          where: { id },
+          update: { googleRefreshToken: JSON.stringify(next) },
+          create: { id, googleRefreshToken: JSON.stringify(next) },
+        });
+        return next;
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2034' || attempt === 2) {
+        throw error;
+      }
+    }
+  }
+  throw new Error('Unable to update calendar configuration');
 }

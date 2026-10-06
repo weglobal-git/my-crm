@@ -25,6 +25,8 @@ interface CalendarMonthGridProps {
   currentUserLeavesSet?: Set<string>;
   onToggleUserLeave?: (dateStr: string) => void;
   showDayoff?: boolean;
+  pendingHolidayDates?: ReadonlySet<string>;
+  pendingUserLeaveDates?: ReadonlySet<string>;
 }
 
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -47,6 +49,8 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
   currentUserLeavesSet,
   onToggleUserLeave,
   showDayoff = true,
+  pendingHolidayDates,
+  pendingUserLeaveDates,
 }) => {
   // Generate all 35 or 42 day cells between rangeStart and rangeEnd
   const days = useMemo(() => {
@@ -124,6 +128,8 @@ export const CalendarMonthGrid: React.FC<CalendarMonthGridProps> = ({
               isCurrentUserOnLeave={currentUserLeavesSet?.has(formattedIso) ?? false}
               onToggleUserLeave={onToggleUserLeave}
               showDayoff={showDayoff}
+              isHolidayPending={pendingHolidayDates?.has(formattedIso)}
+              isUserLeavePending={pendingUserLeaveDates?.has(formattedIso)}
             />
           );
         })}

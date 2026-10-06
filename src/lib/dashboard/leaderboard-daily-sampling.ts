@@ -8,10 +8,11 @@ import {
   WORK_DAY_END_HOUR,
   WORK_DAY_END_MINUTE,
   WORK_HOURS_PER_DAY,
+  toBangkokDateParts,
+  createBangkokDate,
 } from '@/lib/business-days';
 import { checkIsRedCard, type KanbanCardDTO } from '@/lib/pipeline-card-dto';
 import type {
-  DailyCardHealthRecord,
   RedCardMiniDetail,
   UserMonthlyCardHealthSummary,
 } from './leaderboard-types';
@@ -38,19 +39,20 @@ export function calculateDailySamplingForMonth(params: {
 
   const result = new Map<string, UserMonthlyCardHealthSummary>();
 
-  // Determine calendar boundary for this month
-  const daysInMonth = new Date(year, month, 0).getDate();
+  // Determine calendar boundary for this month in Asia/Bangkok
+  const asOfParts = toBangkokDateParts(asOfDate);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const isCurrentMonth =
-    year === asOfDate.getFullYear() && month === asOfDate.getMonth() + 1;
+    year === asOfParts.year && month === asOfParts.month + 1;
   const isFutureMonth =
-    year > asOfDate.getFullYear() ||
-    (year === asOfDate.getFullYear() && month > asOfDate.getMonth() + 1);
+    year > asOfParts.year ||
+    (year === asOfParts.year && month > asOfParts.month + 1);
 
   // If month is in future, maxDay is 0 (no days to sample)
   const maxDay = isFutureMonth
     ? 0
     : isCurrentMonth
-    ? Math.min(asOfDate.getDate(), daysInMonth)
+    ? Math.min(asOfParts.date, daysInMonth)
     : daysInMonth;
 
   // Initialize summary for each user
@@ -75,16 +77,16 @@ export function calculateDailySamplingForMonth(params: {
 
   // Iterate day by day from day 1 to maxDay
   for (let day = 1; day <= maxDay; day++) {
-    // Cutoff is 23:00 on that day (full 08:00–17:00 working day = 9h per card)
-    const evalDate = new Date(year, month - 1, day, 23, 0, 0, 0);
+    // Cutoff is 23:00 Bangkok time on that day (full 08:00–17:00 working day = 9h per card)
+    const evalDate = createBangkokDate(year, month - 1, day, 23, 0, 0, 0);
 
     const dateKey = formatDateToDateKey(evalDate);
-    const dayOfWeek = evalDate.getDay();
+    const dayOfWeek = toBangkokDateParts(evalDate).day;
     const isSunday = dayOfWeek === 0;
     const isCompanyHoliday = companyHolidays.has(dateKey);
 
-    const workStart = new Date(year, month - 1, day, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
-    const workEnd = new Date(year, month - 1, day, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0, 0);
+    const workStart = createBangkokDate(year, month - 1, day, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
+    const workEnd = createBangkokDate(year, month - 1, day, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0, 0);
 
     for (const user of departmentUsers) {
       const userSummary = result.get(user.id)!;
@@ -128,7 +130,7 @@ export function calculateDailySamplingForMonth(params: {
         if (d.ownerId !== user.id) return false;
         const created = d.createdAt ? new Date(d.createdAt) : null;
         if (created && created > evalDate) return false;
-        if (d.closedAt) {
+        if (d.status !== 'OPEN' && d.closedAt) {
           const closed = new Date(d.closedAt);
           if (closed <= evalDate) return false;
         }
@@ -170,21 +172,25 @@ export function calculateDailySamplingForMonth(params: {
 
           let redStartTime: Date;
           if (card.dueDate) {
-            const due = new Date(card.dueDate);
-            due.setHours(8, 0, 0, 0);
-            redStartTime = due;
+            const dueParts = toBangkokDateParts(new Date(card.dueDate));
+            redStartTime = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
           } else {
             let newestDate: Date | null = null;
             if (card.activityLogs && card.activityLogs.length > 0) {
               const validLogs = card.activityLogs.filter(
                 (log) =>
                   log.type === 'COMMENT' &&
-                  new Date(log.createdAt) <= evalDate &&
+                  new Date(log.createdAt).getTime() <= evalDate.getTime() &&
                   !log.content.startsWith('[DUE DATE:') &&
                   !log.content.startsWith('[URGENT_')
               );
               if (validLogs.length > 0) {
-                newestDate = new Date(validLogs[0].createdAt);
+                const latest = validLogs.reduce((latestLog, curLog) =>
+                  new Date(curLog.createdAt).getTime() > new Date(latestLog.createdAt).getTime()
+                    ? curLog
+                    : latestLog
+                );
+                newestDate = new Date(latest.createdAt);
               }
             }
             const baseDate = newestDate || (card.createdAt ? new Date(card.createdAt) : workStart);
@@ -291,7 +297,7 @@ export function calculateDailySamplingForMonth(params: {
     }
 
     // Assign fixed score from Red Rate ladder
-    const { points, label, badge, status } = getCardHealthScoreFromRedRate(
+    const { points, badge, status } = getCardHealthScoreFromRedRate(
       summary.avgMonthlyRedRate,
       summary.currentActiveCards
     );

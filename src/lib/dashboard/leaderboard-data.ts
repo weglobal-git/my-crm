@@ -3,16 +3,17 @@ import 'server-only';
 import prisma from '@/lib/prisma';
 import type { PipelineActor } from '@/lib/pipeline-security';
 import { bangkokBoundary, resolveCountryFromDeal, type SalesOverviewDeal } from '@/lib/dashboard/sales-overview';
-import { checkIsRedCard, pipelineCardSelect, type KanbanCardDTO } from '@/lib/pipeline-card-dto';
+import { pipelineCardSelect, type KanbanCardDTO } from '@/lib/pipeline-card-dto';
 import { getCompanyHolidaysAction, getUserLeavesAction } from '@/lib/actions/holiday';
+import { toBangkokDateParts } from '@/lib/business-days';
 import { calculateDailySamplingForMonth } from './leaderboard-daily-sampling';
+import { calculateDailyLtcForMonth } from '@/lib/ltc-utils';
 import type {
   DepartmentInfo,
   DepartmentLeaderboardData,
   LeaderboardCategoryData,
 } from './leaderboard-types';
 import {
-  calculateSalesXp,
   calculateSalesXpBreakdown,
   calculateNonSalesXp,
   formatScoreValue,
@@ -111,7 +112,8 @@ export async function getDepartmentLeaderboardData(params: {
   const startDate = bangkokBoundary(year, month - 1);
   const endDate = bangkokBoundary(year, month);
   const now = new Date();
-  const isCurrentMonth = year === now.getFullYear() && month === (now.getMonth() + 1);
+  const nowParts = toBangkokDateParts(now);
+  const isCurrentMonth = year === nowParts.year && month === (nowParts.month + 1);
   const asOfDate = isCurrentMonth ? now : new Date(endDate.getTime() - 1000);
 
   const normCountry = country?.trim().toLowerCase() || null;
@@ -119,7 +121,7 @@ export async function getDepartmentLeaderboardData(params: {
 
   if (hasSalesAccess) {
     // --- Mode A: Sales Department ---
-    const [deals, openDeals, activityLogs, holidaysList, userLeavesList, monthlyQuotationCount] = await Promise.all([
+    const [deals, openDeals, activityLogs, holidaysList, userLeavesList, monthlyQuotationCount, ltcCompanies] = await Promise.all([
       prisma.opportunity.findMany({
         where: {
           status: 'WON',
@@ -169,11 +171,33 @@ export async function getDepartmentLeaderboardData(params: {
           ownerId: { in: userIds },
           createdAt: { lt: asOfDate },
           OR: [
+            { status: 'OPEN' },
             { closedAt: null },
             { closedAt: { gte: startDate } },
           ],
         },
-        select: pipelineCardSelect,
+        select: {
+          ...pipelineCardSelect,
+          activityLogs: {
+            where: {
+              parentId: null,
+              type: 'COMMENT' as const,
+              createdAt: { lte: asOfDate },
+              NOT: [
+                { content: { startsWith: '[DUE DATE:' } },
+                { content: { startsWith: '[URGENT_' } },
+              ],
+            },
+            orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
+            select: {
+              id: true,
+              content: true,
+              type: true,
+              createdAt: true,
+              user: { select: { name: true, image: true } },
+            },
+          },
+        },
       }),
       prisma.activityLog.findMany({
         where: {
@@ -200,6 +224,31 @@ export async function getDepartmentLeaderboardData(params: {
           },
         })
         .catch(() => 0),
+      prisma.company.findMany({
+        where: {
+          type: 'CUSTOMER',
+          status: 'QUALIFIED',
+        },
+        select: {
+          id: true,
+          createdAt: true,
+          opportunities: {
+            select: {
+              id: true,
+              value: true,
+              status: true,
+              closedAt: true,
+              goodsLoadingDate: true,
+              createdAt: true,
+              activityLogs: {
+                select: { createdAt: true },
+                orderBy: { createdAt: 'desc' },
+                take: 5,
+              },
+            },
+          },
+        },
+      }),
     ]);
 
     const companyHolidays = new Set<string>(holidaysList);
@@ -212,15 +261,29 @@ export async function getDepartmentLeaderboardData(params: {
     }
 
     // Apply On-the-fly Daily 23:00 Sampling across the month
+    const sanitizedOpenDeals = (openDeals as unknown as KanbanCardDTO[]).map((d) => ({
+      ...d,
+      closedAt: d.status === 'OPEN' ? null : d.closedAt,
+    }));
+
     const dailySamplingMap = calculateDailySamplingForMonth({
       departmentUsers,
-      deals: openDeals as unknown as KanbanCardDTO[],
+      deals: sanitizedOpenDeals,
       month,
       year,
       companyHolidays,
       leavesByUser,
       asOfDate,
     });
+
+    const ltcDailySummary = calculateDailyLtcForMonth({
+      companies: ltcCompanies,
+      month,
+      year,
+      companyHolidays,
+      asOfDate,
+    });
+    const teamLtcXp = ltcDailySummary.teamLtcXp;
 
     // Apply global filters (country and account) to deals
     const filteredDeals = deals.filter((deal) => {
@@ -306,7 +369,7 @@ export async function getDepartmentLeaderboardData(params: {
         m.totalRedHours,
         summary?.avgMonthlyRedRate ?? m.redRate,
         cleanDays,
-        0, // teamLtcXp (Phase 2)
+        teamLtcXp,
         teamQuotationScore,
         monthlyQuotationCount ?? 0
       );
@@ -350,10 +413,11 @@ export async function getDepartmentLeaderboardData(params: {
         userId: u.id,
         name: u.name || 'Anonymous Rep',
         image: u.image,
-        score: 0,
-        formattedValue: 'Phase 2',
+        score: teamLtcXp,
+        formattedValue: `${teamLtcXp} XP`,
         unit: 'XP',
         isCurrentUser: u.id === actor.id,
+        dailyLtcSummary: ltcDailySummary,
       };
     });
 
@@ -383,7 +447,7 @@ export async function getDepartmentLeaderboardData(params: {
         m.totalRedHours,
         summary?.avgMonthlyRedRate ?? m.redRate,
         cleanDays,
-        0, // teamLtcXp
+        teamLtcXp,
         teamQuotationScore,
         monthlyQuotationCount ?? 0
       );
@@ -459,7 +523,7 @@ export async function getDepartmentLeaderboardData(params: {
         label: 'LTC',
         iconName: 'Clock',
         unit: 'Max 20 XP',
-        description: 'Long-Time-Contact team health (Phase 2)',
+        description: '+1 XP per day when all LTC accounts are cleared (max 20 XP)',
         items: rankedLtc,
       },
       {

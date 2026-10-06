@@ -22,6 +22,8 @@ export const pipelineCardSelect = Prisma.validator<Prisma.OpportunitySelect>()({
   lossReason: true,
   reserveId: true,
   invoiceId: true,
+  isPinned: true,
+  hotNote: true,
   createdAt: true,
   updatedAt: true,
   company: { select: { id: true, name: true, displayName: true } },
@@ -58,6 +60,8 @@ import {
   calculateElapsedWorkingMs,
   addWorkingMs,
   RED_CARD_WORKING_MS_THRESHOLD,
+  toBangkokDateParts,
+  createBangkokDate,
 } from './business-days';
 
 export function checkIsRedCard(
@@ -77,12 +81,13 @@ export function checkIsRedCard(
   }
 
   const evaluationDate = asOfDate;
-  const today = new Date(evaluationDate);
-  today.setHours(0, 0, 0, 0);
+  const evalParts = toBangkokDateParts(evaluationDate);
+  const today = createBangkokDate(evalParts.year, evalParts.month, evalParts.date, 0, 0, 0);
 
-  const dueDate = deal.dueDate ? new Date(deal.dueDate) : null;
-  if (dueDate) {
-    dueDate.setHours(0, 0, 0, 0);
+  let dueDate: Date | null = null;
+  if (deal.dueDate) {
+    const dueParts = toBangkokDateParts(new Date(deal.dueDate));
+    dueDate = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, 0, 0, 0);
   }
 
   // 1. If Due Date is set:
@@ -93,19 +98,24 @@ export function checkIsRedCard(
     return false;
   }
 
-  // 2. If NO Due Date is set: 28.5 working hours without update -> Red Card
-  // Working hours: 08:00 - 17:30, paused on nights, Sundays, Dayoffs & Leaves
+  // 2. If NO Due Date is set: 27 working hours without update -> Red Card
+  // Working hours: 08:00 - 17:00 in Asia/Bangkok, paused on nights, Sundays, Dayoffs & Leaves
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
     const validLogs = deal.activityLogs.filter(
       (log) =>
         log.type === 'COMMENT' &&
-        new Date(log.createdAt) <= evaluationDate &&
+        new Date(log.createdAt).getTime() <= evaluationDate.getTime() &&
         !log.content.startsWith('[DUE DATE:') &&
         !log.content.startsWith('[URGENT_')
     );
     if (validLogs.length > 0) {
-      newestDate = new Date(validLogs[0].createdAt);
+      const latest = validLogs.reduce((latestLog, curLog) =>
+        new Date(curLog.createdAt).getTime() > new Date(latestLog.createdAt).getTime()
+          ? curLog
+          : latestLog
+      );
+      newestDate = new Date(latest.createdAt);
     }
   }
 
@@ -136,10 +146,10 @@ export function getRedThreshold(
 
   // If there is an active Due Date:
   if (dueDate) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dueMidnight = new Date(dueDate);
-    dueMidnight.setHours(0, 0, 0, 0);
+    const nowParts = toBangkokDateParts(now);
+    const today = createBangkokDate(nowParts.year, nowParts.month, nowParts.date, 0, 0, 0);
+    const dueParts = toBangkokDateParts(dueDate);
+    const dueMidnight = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, 0, 0, 0);
 
     if (dueMidnight <= today) {
       return dueDate;
@@ -147,7 +157,7 @@ export function getRedThreshold(
     return null;
   }
 
-  // If NO Due Date: 28.5 working hours threshold from latest activity or creation
+  // If NO Due Date: 27 working hours threshold from latest activity or creation
   let newestDate: Date | null = null;
   if (deal.activityLogs && deal.activityLogs.length > 0) {
     const validLogs = deal.activityLogs.filter(
@@ -157,7 +167,12 @@ export function getRedThreshold(
         !log.content.startsWith('[URGENT_')
     );
     if (validLogs.length > 0) {
-      newestDate = new Date(validLogs[0].createdAt);
+      const latest = validLogs.reduce((latestLog, curLog) =>
+        new Date(curLog.createdAt).getTime() > new Date(latestLog.createdAt).getTime()
+          ? curLog
+          : latestLog
+      );
+      newestDate = new Date(latest.createdAt);
     }
   }
 
@@ -180,7 +195,22 @@ export function sortDeals<T extends KanbanCardDTO>(
   companyHolidays: Set<string> = new Set(),
   userLeavesByOwner?: Map<string, Set<string>>
 ): T[] {
+  const redState = new Map<string, { isRed: boolean; threshold: Date | null }>();
+  for (const deal of dealsList) {
+    const isRed = checkIsRedCard(deal, companyHolidays, userLeavesByOwner);
+    redState.set(deal.id, {
+      isRed,
+      threshold: isRed ? getRedThreshold(deal, companyHolidays, userLeavesByOwner) : null,
+    });
+  }
+
   return [...dealsList].sort((a, b) => {
+    // 0. Star / Pinned Card check (Rule 0: pinned cards are ALWAYS at the top above all other rules)
+    const aPinned = Boolean(a.isPinned);
+    const bPinned = Boolean(b.isPinned);
+    if (aPinned && !bPinned) return -1;
+    if (!aPinned && bPinned) return 1;
+
     // 1. Orange Card check (Urgent / Manager Call with pendingCount > 0)
     const aInfo = pendingAcceleratorsMap[a.id];
     const bInfo = pendingAcceleratorsMap[b.id];
@@ -190,15 +220,15 @@ export function sortDeals<T extends KanbanCardDTO>(
     if (!aPending && bPending) return 1;
 
     // 2. Red Card check
-    const aRed = checkIsRedCard(a, companyHolidays, userLeavesByOwner);
-    const bRed = checkIsRedCard(b, companyHolidays, userLeavesByOwner);
+    const aRed = redState.get(a.id)?.isRed ?? false;
+    const bRed = redState.get(b.id)?.isRed ?? false;
     if (aRed && !bRed) return -1;
     if (!aRed && bRed) return 1;
 
     // Sub-sort within Red Cards: longest overdue RedTimer first
     if (aRed && bRed) {
-      const aThreshold = getRedThreshold(a, companyHolidays, userLeavesByOwner);
-      const bThreshold = getRedThreshold(b, companyHolidays, userLeavesByOwner);
+      const aThreshold = redState.get(a.id)?.threshold ?? null;
+      const bThreshold = redState.get(b.id)?.threshold ?? null;
       if (aThreshold && bThreshold) {
         const diff = aThreshold.getTime() - bThreshold.getTime();
         if (diff !== 0) return diff;

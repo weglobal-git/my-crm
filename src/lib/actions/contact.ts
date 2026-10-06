@@ -8,6 +8,8 @@ import { revalidatePath } from "next/cache";
 import { maskEmail, maskPhone } from "@/lib/contact-utils";
 import { pusherServer } from "@/lib/pusher-server";
 import { normalizeCountryName } from "@/lib/data/countries";
+import { notifyPipelineAudience } from "@/lib/pipeline-security";
+import { dispatchDashboardInvalidation } from "@/lib/dashboard/dashboard-realtime-server";
 
 export type ContactActor = {
   id: string;
@@ -1122,6 +1124,16 @@ export async function toggleCompanyStatus(companyId: string, status: ContactStat
     companyId,
     status: updated.status,
   }).catch((err) => console.error("Pusher trigger error:", err));
+
+  // Sync LTC count in Pipeline and Leaderboard in real-time
+  void notifyPipelineAudience({
+    action: "LTC_UPDATED",
+    companyId,
+  });
+  void dispatchDashboardInvalidation({
+    resources: ["leaderboard", "summary"],
+    companyIds: [companyId],
+  });
 
   return { success: true, status: updated.status };
 }

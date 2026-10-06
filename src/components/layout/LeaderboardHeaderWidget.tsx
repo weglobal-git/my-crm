@@ -27,8 +27,10 @@ export function LeaderboardHeaderWidget() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
 
-  const month = getBangkokMonth();
-  const year = getBangkokYear();
+  const currentMonth = getBangkokMonth();
+  const currentYear = getBangkokYear();
+  const [drawerMonth, setDrawerMonth] = useState<number>(currentMonth);
+  const [drawerYear, setDrawerYear] = useState<number>(currentYear);
 
   const actor: ScopeActorInfo = useMemo(() => {
     if (!session?.user) {
@@ -45,23 +47,24 @@ export function LeaderboardHeaderWidget() {
 
   const scope = useMemo(() => createScopeToken(actor), [actor]);
 
-  const leaderboardKey = useMemo(
+  // Widget Key (always current month for the navbar leader rank1)
+  const widgetKey = useMemo(
     () =>
       dashboardLeaderboardKey(scope, {
         departmentId: selectedDeptId,
-        month,
-        year,
+        month: currentMonth,
+        year: currentYear,
       }),
-    [scope, selectedDeptId, month, year]
+    [scope, selectedDeptId, currentMonth, currentYear]
   );
 
-  const { data, error, isLoading } = useSWR(
-    session?.user?.id ? leaderboardKey : null,
+  const { data: widgetData } = useSWR(
+    session?.user?.id ? widgetKey : null,
     async () => {
       return await getDashboardLeaderboardAction({
         departmentId: selectedDeptId,
-        month,
-        year,
+        month: currentMonth,
+        year: currentYear,
       });
     },
     {
@@ -71,11 +74,42 @@ export function LeaderboardHeaderWidget() {
     }
   );
 
+  // Drawer Key (fetches for selected month & year)
+  const isCurrentPeriod = drawerMonth === currentMonth && drawerYear === currentYear;
+  const drawerKey = useMemo(
+    () =>
+      dashboardLeaderboardKey(scope, {
+        departmentId: selectedDeptId,
+        month: drawerMonth,
+        year: drawerYear,
+      }),
+    [scope, selectedDeptId, drawerMonth, drawerYear]
+  );
+
+  const { data: drawerData, error, isLoading } = useSWR(
+    session?.user?.id && isDrawerOpen ? drawerKey : null,
+    async () => {
+      return await getDashboardLeaderboardAction({
+        departmentId: selectedDeptId,
+        month: drawerMonth,
+        year: drawerYear,
+      });
+    },
+    {
+      fallbackData: isCurrentPeriod ? widgetData : undefined,
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+      dedupingInterval: 10000,
+    }
+  );
+
+  const activeDrawerData = drawerData || (isCurrentPeriod ? widgetData : null);
+
   if (!session?.user) return null;
 
-  // Winner (Rank 1) from overall ranking
-  const podium = data?.overallPodium;
-  const rank1 = podium?.rank1 || data?.overallXpItems?.[0] || null;
+  // Winner (Rank 1) from overall ranking (for header widget)
+  const podium = widgetData?.overallPodium;
+  const rank1 = podium?.rank1 || widgetData?.overallXpItems?.[0] || null;
 
   return (
     <>
@@ -86,7 +120,7 @@ export function LeaderboardHeaderWidget() {
         title="Leaderboard: Click to view full standings"
         aria-label="Open leaderboard"
       >
-        {isLoading && !data ? (
+        {!widgetData && isLoading ? (
           <div className="w-9 h-9 rounded-full bg-[#3A3B3C]/50 border border-[#4E4F50]/40 flex items-center justify-center animate-pulse">
             <Trophy className="w-4 h-4 text-[#C7F33C]" />
           </div>
@@ -128,13 +162,19 @@ export function LeaderboardHeaderWidget() {
       <LeaderboardDrawer
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        data={data}
+        data={activeDrawerData}
         isLoading={isLoading}
         error={error}
-        selectedDeptId={selectedDeptId ?? data?.departmentId ?? null}
+        selectedDeptId={selectedDeptId ?? activeDrawerData?.departmentId ?? null}
         onSelectDepartment={(id) => setSelectedDeptId(id)}
-        currentMonth={month}
-        currentYear={year}
+        currentMonth={currentMonth}
+        currentYear={currentYear}
+        selectedMonth={drawerMonth}
+        selectedYear={drawerYear}
+        onChangePeriod={(m, y) => {
+          setDrawerMonth(m);
+          setDrawerYear(y);
+        }}
       />
     </>
   );

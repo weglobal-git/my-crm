@@ -246,3 +246,57 @@ export async function notifyPrivatePipelineUpdate(
     console.error('[PUSHER-SERVER-TRIGGER] Private pipeline Pusher trigger error:', error);
   }
 }
+
+/**
+ * Resolves all user IDs authorized to view the Pipeline workspace.
+ * Limited to ADMIN or users belonging to a department with visible pipeline permission.
+ */
+export async function resolvePipelineAudience(): Promise<string[]> {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { role: 'ADMIN' },
+          {
+            departments: {
+              some: {
+                permissions: {
+                  some: {
+                    visible: true,
+                    menuItem: { key: 'pipeline' },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+      select: { id: true },
+    });
+    return users.map((u) => u.id);
+  } catch (err) {
+    console.error('[PIPELINE-SECURITY] Failed to resolve pipeline audience:', err);
+    return [];
+  }
+}
+
+/**
+ * Broadcasts a lightweight pipeline notification across all authorized pipeline users.
+ * Uses batching of 90 channels per trigger call to respect Pusher limits.
+ */
+export async function notifyPipelineAudience(payload: unknown): Promise<void> {
+  try {
+    const recipientIds = await resolvePipelineAudience();
+    if (recipientIds.length === 0) return;
+
+    const action = (payload as { action?: string } | null | undefined)?.action || 'UNKNOWN';
+    console.log(`[PUSHER-SERVER-TRIGGER] notifyPipelineAudience action="${action}" to ${recipientIds.length} recipients`);
+
+    for (let i = 0; i < recipientIds.length; i += 90) {
+      const channels = recipientIds.slice(i, i + 90).map((uid) => `private-pipeline-${uid}`);
+      await pusherServer.trigger(channels, 'pipeline-updated', payload);
+    }
+  } catch (error) {
+    console.error('[PUSHER-SERVER-TRIGGER] notifyPipelineAudience error:', error);
+  }
+}

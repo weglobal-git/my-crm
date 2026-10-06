@@ -29,7 +29,6 @@ export default async function DashboardOverviewPage({
   const resolved = await searchParams;
   const month = typeof resolved?.month === "string" ? resolved.month : undefined;
   const year = typeof resolved?.year === "string" ? resolved.year : undefined;
-  const rawTab = typeof resolved?.tab === "string" ? resolved.tab : undefined;
   const country = typeof resolved?.country === "string" ? resolved.country : undefined;
   const account = typeof resolved?.account === "string" ? resolved.account : undefined;
 
@@ -53,13 +52,11 @@ export default async function DashboardOverviewPage({
         visibleKeys,
       })
     : null;
-  const initialTab = "sale_deal";
 
   return (
     <DashboardOverviewView
       snapshot={snapshot}
       sections={sections}
-      initialTab={initialTab}
       actor={actor}
     />
   );

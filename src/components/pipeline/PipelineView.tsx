@@ -1,22 +1,21 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import { KanbanBoard } from "@/components/pipeline/KanbanBoard";
 import { PipelineSearch } from "@/components/pipeline/PipelineSearch";
 import { CreateDealButton } from "@/components/pipeline/CreateDealButton";
 import { CardTypeFilterValue } from "@/components/pipeline/CardTypeFilter";
 import { PipelineFiltersDrawer, PipelineFilterContent } from "@/components/pipeline/PipelineFiltersDrawer";
+import { LtcPillButton, LtcDrawer } from "@/components/pipeline/ltc";
 import { useSearchParams } from "next/navigation";
 import { PipelineStage } from "@prisma/client";
-import { OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
+import { OpportunityWithRelations } from "./KanbanCard";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
-import useSWR from "swr";
-import { getPipelineOpportunities } from "@/lib/actions/opportunity";
+import { usePermissions } from "@/providers/PermissionProvider";
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import type { PipelineDepartmentOption, PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
-import { useCompanyHolidays, useUserLeaves } from "@/lib/useCompanyHolidays";
 
 interface PipelineViewProps {
   userId: string;
@@ -25,11 +24,22 @@ interface PipelineViewProps {
   companies?: { id: string; name: string; displayName?: string | null; contacts?: { id: string; name: string }[] }[];
   initialOpportunities?: OpportunityWithRelations[];
   initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
-  initialDealSummaries?: Record<string, boolean>;
   stageTitleDepartments?: PipelineDepartmentOption[];
   initialStageTitlesByDepartment?: PipelineStageTitlesByDepartment;
   canEditStageTitles?: boolean;
   initialTab?: string;
+}
+
+function formatBoardRevenue(val: number): string {
+  try {
+    return new Intl.NumberFormat('th-TH', {
+      style: 'currency',
+      currency: 'THB',
+      maximumFractionDigits: 0,
+    }).format(val || 0);
+  } catch {
+    return `฿${(val || 0).toLocaleString()}`;
+  }
 }
 
 export function PipelineView({ 
@@ -39,7 +49,6 @@ export function PipelineView({
   companies, 
   initialOpportunities, 
   initialPendingAccelerators,
-  initialDealSummaries,
   stageTitleDepartments = [],
   initialStageTitlesByDepartment = {},
   canEditStageTitles = false,
@@ -51,62 +60,27 @@ export function PipelineView({
   const [cardType, setCardType] = useState<CardTypeFilterValue>('ALL');
   const [ownerFilter, setOwnerFilter] = useState<string>('ALL');
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [isLtcOpen, setIsLtcOpen] = useState(false);
+  const [boardStats, setBoardStats] = useState(() => ({ 
+    total: initialOpportunities?.length || 0, 
+    red: 0,
+    revenue: initialOpportunities?.reduce((sum, d) => sum + (d.value != null && Number(d.value) > 0 ? Number(d.value) : 0), 0) || 0,
+  }));
+
+  const handleStatsChange = useCallback((newStats: { total: number; red: number; revenue?: number }) => {
+    setBoardStats((prev) => {
+      const newRev = newStats.revenue !== undefined ? newStats.revenue : prev.revenue;
+      if (prev.total === newStats.total && prev.red === newStats.red && prev.revenue === newRev) {
+        return prev;
+      }
+      return { total: newStats.total, red: newStats.red, revenue: newRev };
+    });
+  }, []);
   const [activeStageTitleDepartmentId, setActiveStageTitleDepartmentId] = useState(
     () => stageTitleDepartments[0]?.id || ''
   );
   const [stageTitlesByDepartment, setStageTitlesByDepartment] = useState(initialStageTitlesByDepartment);
   const { setPageManageContent, setHasActiveFilters, setPageSearchConfig } = useSidebar();
-
-  const isCompletedTab = tab === 'completed';
-  const serverSearchQuery = isCompletedTab ? searchQuery : '';
-
-  const { data: rawOpportunities } = useSWR<OpportunityWithRelations[]>(
-    ['pipeline-deals', userId, tab, serverSearchQuery],
-    async () => {
-      const res = await getPipelineOpportunities(tab, serverSearchQuery);
-      return (typeof res === 'string' ? JSON.parse(res) : res) as OpportunityWithRelations[];
-    },
-    {
-      fallbackData: tab === initialTab ? initialOpportunities : undefined,
-      revalidateOnMount: !(tab === initialTab && initialOpportunities !== undefined),
-      revalidateOnFocus: false,
-      revalidateOnReconnect: true,
-      focusThrottleInterval: 15_000,
-      dedupingInterval: 5_000,
-    }
-  );
-
-  const visibleDeals = useMemo(() => {
-    const fallback = tab === initialTab ? (initialOpportunities || []) : [];
-    let list = rawOpportunities || fallback;
-    if (tab === 'workspace') {
-      const stageIds = new Set(stages.map(s => s.id));
-      list = list.filter(o => Boolean(o.pipelineStageId && stageIds.has(o.pipelineStageId)));
-    }
-    if (cardType && cardType !== 'ALL') {
-      list = list.filter(o => o.type === cardType);
-    }
-    if (ownerFilter && ownerFilter !== 'ALL') {
-      list = list.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
-    }
-    if (!isCompletedTab && searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      list = list.filter(o =>
-        (o.topic && o.topic.toLowerCase().includes(q)) ||
-        (o.company?.name && o.company.name.toLowerCase().includes(q)) ||
-        (o.company?.displayName && o.company.displayName.toLowerCase().includes(q))
-      );
-    }
-    return list;
-  }, [rawOpportunities, initialOpportunities, tab, initialTab, stages, cardType, ownerFilter, isCompletedTab, searchQuery]);
-
-  const { holidaysSet } = useCompanyHolidays();
-  const { leavesByUser } = useUserLeaves();
-  const totalCards = visibleDeals.length;
-  const redCardsCount = useMemo(
-    () => visibleDeals.filter((d) => checkIsRedCard(d, holidaysSet, leavesByUser)).length,
-    [visibleDeals, holidaysSet, leavesByUser]
-  );
 
   const handleStageTitleChanged = useCallback((stageId: string, title: string | null) => {
     if (!activeStageTitleDepartmentId) return;
@@ -159,16 +133,46 @@ export function PipelineView({
     updateUrl(tab, newSearch);
   }, [tab, updateUrl]);
 
+  const { canSee, isAdmin } = usePermissions();
+  const [hasValueFilter, setHasValueFilter] = useState(false);
+  const [hasRedFilter, setHasRedFilter] = useState(false);
+
+  // Determine active department based on activeStageTitleDepartmentId
+  const activeDept = stageTitleDepartments?.find(
+    (d) => d.id === activeStageTitleDepartmentId
+  ) || stageTitleDepartments?.[0];
+
+  const canShowRevenuePill = activeDept
+    ? (isAdmin ? Boolean(activeDept.hasSalesAccess) : (Boolean(activeDept.hasSalesAccess) && canSee("pipeline.information")))
+    : canSee("pipeline.information");
+
+  // Esc to clear value filter or red card filter
+  useEffect(() => {
+    if (!hasValueFilter && !hasRedFilter) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setHasValueFilter(false);
+        setHasRedFilter(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [hasValueFilter, hasRedFilter]);
+
   const handleResetFilters = useCallback(() => {
     setCardType('ALL');
     setOwnerFilter('ALL');
+    setHasValueFilter(false);
+    setHasRedFilter(false);
     handleSearchChange('');
     handleTabChange('workspace');
   }, [handleSearchChange, handleTabChange]);
 
   const activeFilterCount = 
     (cardType !== 'ALL' ? 1 : 0) + 
-    (ownerFilter !== 'ALL' ? 1 : 0);
+    (ownerFilter !== 'ALL' ? 1 : 0) +
+    (hasValueFilter ? 1 : 0) +
+    (hasRedFilter ? 1 : 0);
 
   const hasFilters = activeFilterCount > 0;
   useEffect(() => {
@@ -200,8 +204,12 @@ export function PipelineView({
         userId={userId}
         stages={stages}
         companies={companies}
+        stageTitleDepartments={stageTitleDepartments}
+        activeStageTitleDepartmentId={activeStageTitleDepartmentId}
+        onActiveStageTitleDepartmentChange={setActiveStageTitleDepartmentId}
         activeFilterCount={activeFilterCount}
         onResetFilters={handleResetFilters}
+        onOpenLtc={() => setIsLtcOpen(true)}
       />
     );
     return () => setPageManageContent(null);
@@ -212,6 +220,8 @@ export function PipelineView({
     ownerFilter, 
     stages, 
     companies, 
+    stageTitleDepartments,
+    activeStageTitleDepartmentId,
     userId, 
     activeFilterCount, 
     handleSearchChange, 
@@ -241,41 +251,63 @@ export function PipelineView({
           </button>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0 ml-auto flex-wrap">
-          {stageTitleDepartments.length > 1 && (
-            <label className="h-8 px-3 rounded-full bg-[#252728] border border-[#3A3B3C] flex items-center gap-2 text-xs text-slate-400">
-              <span>Column labels</span>
-              <select
-                value={activeStageTitleDepartmentId}
-                onChange={(event) => setActiveStageTitleDepartmentId(event.target.value)}
-                className="bg-transparent text-slate-100 focus:outline-none cursor-pointer"
-                aria-label="Department for column labels"
-              >
-                {stageTitleDepartments.map((department) => (
-                  <option key={department.id} value={department.id} className="bg-[#252728]">
-                    {department.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
+        <div className="flex items-center gap-1.5 shrink-0 ml-auto flex-wrap">
           {/* Expanding Search Component */}
           <PipelineSearch initialSearch={searchQuery} onSearch={handleSearchChange} />
 
-          {/* Board Red / Total Cards Count Badge */}
-          <span 
-            className="h-8 px-3 rounded-full bg-[#252728] border border-[#3A3B3C] flex items-center justify-center text-xs font-semibold shrink-0 tabular-nums select-none"
-            title={`Red Cards: ${redCardsCount} / ทั้งหมด: ${totalCards}`}
+          {/* Board Total Revenue Pill Badge / Filter Button */}
+          {canShowRevenuePill && (
+            <button 
+              type="button"
+              onClick={() => setHasValueFilter((prev) => !prev)}
+              className={`h-8 px-3 rounded-full border flex items-center justify-center text-xs font-semibold shrink-0 tabular-nums select-none gap-1.5 transition-all cursor-pointer ${
+                hasValueFilter
+                  ? "bg-[#C7F33C]/20 border-[#C7F33C] text-[#C7F33C] shadow-[0_0_12px_rgba(199,243,60,0.25)]"
+                  : "bg-[#252728] border-[#3A3B3C] hover:border-[#4E4F50] text-[#C7F33C]"
+              }`}
+              title={
+                hasValueFilter
+                  ? `Filtering: Deals with revenue (${formatBoardRevenue(boardStats.revenue || 0)}) - Click or press Esc to clear`
+                  : `Total Revenue: ${formatBoardRevenue(boardStats.revenue || 0)} (Click to filter deals with value)`
+              }
+              aria-pressed={hasValueFilter}
+            >
+              <span className="text-[#C7F33C] font-bold">
+                {formatBoardRevenue(boardStats.revenue || 0)}
+              </span>
+            </button>
+          )}
+
+          {/* Board Red / Total Cards Count Badge (Clickable Toggle Filter) */}
+          <button 
+            type="button"
+            onClick={() => setHasRedFilter((prev) => !prev)}
+            className={`h-8 px-3 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 tabular-nums select-none transition-all cursor-pointer ${
+              hasRedFilter
+                ? "bg-rose-500/20 border-2 border-rose-500 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.35)]"
+                : "bg-[#252728] border border-[#3A3B3C] hover:border-[#4E4F50] text-slate-300"
+            }`}
+            title={
+              hasRedFilter
+                ? `Filtering: Showing only Red Cards (${boardStats.red}) - Click or press Esc to clear`
+                : `Red Cards: ${boardStats.red} / ทั้งหมด: ${boardStats.total} (Click to filter only Red Cards)`
+            }
+            aria-pressed={hasRedFilter}
           >
-            <span className={redCardsCount > 0 ? "text-[#C7F33C] font-bold" : "text-slate-400"}>
-              {redCardsCount}
+            <span className={hasRedFilter ? "text-rose-400 font-bold" : boardStats.red > 0 ? "text-[#C7F33C] font-bold" : "text-slate-400"}>
+              {boardStats.red}
             </span>
             <span className="text-slate-500 font-normal mx-0.5">/</span>
-            <span className="text-slate-300">
-              {totalCards}
+            <span className={hasRedFilter ? "text-rose-200" : "text-slate-300"}>
+              {boardStats.total} RED
             </span>
-          </span>
+          </button>
+
+          {/* LTC (Long-Time Contact) Pill Button (Desktop) */}
+          <LtcPillButton 
+            onClick={() => setIsLtcOpen(true)}
+            className="hidden sm:inline-flex"
+          />
 
           {/* Centralized Filters Button */}
           <button
@@ -321,27 +353,20 @@ export function PipelineView({
         userId={userId}
         stages={stages}
         companies={companies}
+        stageTitleDepartments={stageTitleDepartments}
+        activeStageTitleDepartmentId={activeStageTitleDepartmentId}
+        onActiveStageTitleDepartmentChange={setActiveStageTitleDepartmentId}
         activeFilterCount={activeFilterCount}
         onResetFilters={handleResetFilters}
+        onOpenLtc={() => setIsLtcOpen(true)}
       />
 
-      {stageTitleDepartments.length > 1 && (
-        <label className="md:hidden mb-3 h-10 px-3 rounded-xl bg-[#252728] border border-[#3A3B3C] flex items-center justify-between gap-3 text-xs text-slate-400">
-          <span>Column labels</span>
-          <select
-            value={activeStageTitleDepartmentId}
-            onChange={(event) => setActiveStageTitleDepartmentId(event.target.value)}
-            className="bg-transparent text-slate-100 focus:outline-none cursor-pointer max-w-[60%]"
-            aria-label="Department for column labels"
-          >
-            {stageTitleDepartments.map((department) => (
-              <option key={department.id} value={department.id} className="bg-[#252728]">
-                {department.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
+      {/* LTC (Long-Time Contact) Drawer */}
+      <LtcDrawer
+        isOpen={isLtcOpen}
+        onClose={() => setIsLtcOpen(false)}
+        stages={stages}
+      />
 
       <KanbanBoard 
         currentUserId={userId} 
@@ -349,7 +374,6 @@ export function PipelineView({
         initialStages={stages} 
         initialOpportunities={initialOpportunities}
         initialPendingAccelerators={initialPendingAccelerators}
-        initialDealSummaries={initialDealSummaries}
         activeStageTitleDepartmentId={activeStageTitleDepartmentId}
         stageTitlesByDepartment={stageTitlesByDepartment}
         canEditStageTitles={canEditStageTitles}
@@ -360,8 +384,11 @@ export function PipelineView({
         activeSearch={searchQuery}
         cardTypeFilter={cardType}
         ownerFilter={ownerFilter}
+        hasValueFilter={hasValueFilter}
+        hasRedFilter={hasRedFilter}
         onOwnerFilterChange={setOwnerFilter}
         onSearchChange={handleSearchChange}
+        onStatsChange={handleStatsChange}
       />
     </WorkspaceLayout>
   );

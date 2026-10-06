@@ -15,7 +15,7 @@ import {
 import { OpportunityWithRelations } from "./KanbanCard";
 import { useDialog } from "@/providers/DialogProvider";
 import { renderCommentText } from "@/components/ui/HighlightText";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { rollbackDeletedItem } from "@/lib/pipeline-delete-rollback";
 import {
@@ -41,6 +41,7 @@ export function NotesTab({
 }: NotesTabProps) {
   const { data: session } = useSession();
   const { toast } = useDialog();
+  const { mutate: globalMutate } = useSWRConfig();
 
   const { data: notes = [], mutate: mutateNotes, isLoading } = useSWR<NoteItem[]>(
     ["deal-notes", deal.id],
@@ -172,6 +173,7 @@ export function NotesTab({
         { revalidate: false }
       );
       toast({ title: "To-Do created", type: "success" });
+      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       setNewNote(content);
       await mutateNotes(
@@ -192,6 +194,7 @@ export function NotesTab({
     try {
       await deleteNote(id);
       toast({ title: "To-Do deleted", type: "success" });
+      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       if (targetNote) {
         await mutateNotes(
@@ -216,6 +219,7 @@ export function NotesTab({
         title: nextPinned ? "Marked as priority" : "Priority removed",
         type: "success",
       });
+      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       toast({ title: "Failed to update priority", type: "error" });
       await mutateNotes(previousNotes, { revalidate: false });
@@ -234,6 +238,7 @@ export function NotesTab({
         title: targetCompleted ? "Moved to Completed" : "Moved back to To-Do",
         type: "success",
       });
+      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       toast({ title: "Failed to update status", type: "error" });
       await mutateNotes(previousNotes, { revalidate: false });

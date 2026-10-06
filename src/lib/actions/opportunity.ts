@@ -112,9 +112,13 @@ export async function createOpportunity(data: {
 
   if (fullDeal.type === 'SALES_DEAL') {
     void dispatchDashboardInvalidation({
-      resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options'],
+      resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options', 'leaderboard'],
       affectedYears: fullDeal.goodsLoadingDate ? [new Date(fullDeal.goodsLoadingDate).getFullYear()] : undefined,
       companyIds: fullDeal.company?.id ? [fullDeal.company.id] : undefined,
+    });
+  } else {
+    void dispatchDashboardInvalidation({
+      resources: ['leaderboard'],
     });
   }
 
@@ -268,9 +272,13 @@ export async function moveOpportunity(
       fullDeal?.goodsLoadingDate ? new Date(fullDeal.goodsLoadingDate).getFullYear() : undefined,
     ].filter((y): y is number => typeof y === 'number');
     void dispatchDashboardInvalidation({
-      resources: ['summary', 'tracking', 'annual', 'map-summary'],
+      resources: ['summary', 'tracking', 'annual', 'map-summary', 'leaderboard'],
       affectedYears: years.length > 0 ? [...new Set(years)] : undefined,
       companyIds: [opportunity.companyId, fullDeal?.company?.id].filter((id): id is string => Boolean(id)),
+    });
+  } else {
+    void dispatchDashboardInvalidation({
+      resources: ['leaderboard'],
     });
   }
   return result;
@@ -347,10 +355,15 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
   if (fullDeal?.type === 'SALES_DEAL' || result.type === 'SALES_DEAL') {
     const goodsLoadingDate = fullDeal?.goodsLoadingDate || result.goodsLoadingDate;
     void dispatchDashboardInvalidation({
-      resources: ['summary', 'tracking', 'annual', 'map-summary'],
+      resources: ['summary', 'tracking', 'annual', 'map-summary', 'leaderboard'],
       mutationId,
       affectedYears: goodsLoadingDate ? [new Date(goodsLoadingDate).getFullYear()] : undefined,
       companyIds: fullDeal?.company?.id || result.companyId ? [fullDeal?.company?.id || result.companyId!] : undefined,
+    });
+  } else {
+    void dispatchDashboardInvalidation({
+      resources: ['leaderboard'],
+      mutationId,
     });
   }
   return fullDeal || result;
@@ -633,6 +646,9 @@ export async function addActivityLog(opportunityId: string, content: string, par
   }
 
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: newLog });
+  void dispatchDashboardInvalidation({
+    resources: ['leaderboard'],
+  });
   return newLog;
 }
 
@@ -960,7 +976,7 @@ export async function deleteOpportunity(id: string) {
   }
   if (result.type === 'SALES_DEAL') {
     void dispatchDashboardInvalidation({
-      resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options'],
+      resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options', 'leaderboard'],
       affectedYears: result.goodsLoadingDate ? [new Date(result.goodsLoadingDate).getFullYear()] : undefined,
       companyIds: result.companyId ? [result.companyId] : undefined,
     });
@@ -968,3 +984,43 @@ export async function deleteOpportunity(id: string) {
   revalidatePath('/pipeline');
   return result;
 }
+
+export async function togglePinOpportunity(id: string, isPinned: boolean) {
+  await requireOpportunityAccess(id);
+  const updated = await prisma.opportunity.update({
+    where: { id },
+    data: { isPinned },
+    select: pipelineOpportunitySelect,
+  });
+
+  const revision = updated.updatedAt ? new Date(updated.updatedAt).getTime() : Date.now();
+  await notifyPrivatePipelineUpdate(id, {
+    action: 'OPPORTUNITY_UPDATED',
+    deal: updated,
+    dealId: id,
+    revision,
+  });
+
+  return updated;
+}
+
+export async function updateOpportunityHotNote(id: string, hotNote: string | null) {
+  await requireOpportunityAccess(id);
+  const trimmed = hotNote?.trim() ? hotNote.trim() : null;
+  const updated = await prisma.opportunity.update({
+    where: { id },
+    data: { hotNote: trimmed },
+    select: pipelineOpportunitySelect,
+  });
+
+  const revision = updated.updatedAt ? new Date(updated.updatedAt).getTime() : Date.now();
+  await notifyPrivatePipelineUpdate(id, {
+    action: 'OPPORTUNITY_UPDATED',
+    deal: updated,
+    dealId: id,
+    revision,
+  });
+
+  return updated;
+}
+

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trophy, X, ChevronDown, ShieldCheck, AlertCircle } from "lucide-react";
+import { Trophy, X, ChevronDown, ShieldCheck, AlertCircle, SlidersHorizontal } from "lucide-react";
 import type {
   DepartmentLeaderboardData,
   LeaderboardItem,
@@ -9,7 +9,9 @@ import type {
 import { DashboardCategoryColumns } from "@/components/dashboard/DashboardCategoryColumns";
 import { ScoreBreakdownModal } from "@/components/dashboard/ScoreBreakdownModal";
 import { DailyCardHealthDrawer } from "@/components/dashboard/DailyCardHealthDrawer";
+import { DailyLtcDrawer } from "@/components/dashboard/DailyLtcDrawer";
 import { Crown2DIcon } from "@/components/dashboard/Crown2DIcon";
+import { LeaderboardPeriodModal } from "@/components/dashboard/LeaderboardPeriodModal";
 
 export interface LeaderboardDrawerProps {
   isOpen: boolean;
@@ -21,6 +23,9 @@ export interface LeaderboardDrawerProps {
   onSelectDepartment: (deptId: string) => void;
   currentMonth: number;
   currentYear: number;
+  selectedMonth?: number;
+  selectedYear?: number;
+  onChangePeriod?: (month: number, year: number) => void;
 }
 
 const MONTH_NAMES = [
@@ -47,10 +52,18 @@ export function LeaderboardDrawer({
   onSelectDepartment,
   currentMonth,
   currentYear,
+  selectedMonth,
+  selectedYear,
+  onChangePeriod,
 }: LeaderboardDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
   const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
+  const [isPeriodModalOpen, setIsPeriodModalOpen] = useState(false);
   const deptDropdownRef = useRef<HTMLDivElement>(null);
+
+  const activeMonth = selectedMonth ?? currentMonth;
+  const activeYear = selectedYear ?? currentYear;
+  const isCustomPeriod = activeMonth !== currentMonth || activeYear !== currentYear;
 
   // Active Category Tab for Section 2
   const [activeCategoryTab, setActiveCategoryTab] = useState<string>("card_health");
@@ -62,6 +75,7 @@ export function LeaderboardDrawer({
   // Sub-modal states
   const [breakdownItem, setBreakdownItem] = useState<LeaderboardItem | null>(null);
   const [healthDrawerItem, setHealthDrawerItem] = useState<LeaderboardItem | null>(null);
+  const [ltcDrawerItem, setLtcDrawerItem] = useState<LeaderboardItem | null>(null);
 
   // Close on Escape or click outside
   useEffect(() => {
@@ -69,14 +83,14 @@ export function LeaderboardDrawer({
 
     const handleClickOutside = (e: MouseEvent) => {
       // Don't close if a sub-modal or sub-drawer is open
-      if (breakdownItem || healthDrawerItem) return;
+      if (breakdownItem || healthDrawerItem || ltcDrawerItem || isPeriodModalOpen) return;
       if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !breakdownItem && !healthDrawerItem) {
+      if (e.key === "Escape" && !breakdownItem && !healthDrawerItem && !ltcDrawerItem && !isPeriodModalOpen) {
         onClose();
       }
     };
@@ -87,7 +101,7 @@ export function LeaderboardDrawer({
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, breakdownItem, healthDrawerItem]);
+  }, [isOpen, onClose, breakdownItem, healthDrawerItem, ltcDrawerItem, isPeriodModalOpen]);
 
   // Close department dropdown on outside click
   useEffect(() => {
@@ -187,7 +201,7 @@ export function LeaderboardDrawer({
                   )}
                 </div>
                 <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
-                  {monthName} {currentYear}
+                  {MONTH_NAMES[activeMonth - 1]} {activeYear}
                 </p>
               </div>
             </div>
@@ -222,9 +236,26 @@ export function LeaderboardDrawer({
               <>
                 {/* SECTION 1: TOP 3 MVP (Overlapping Circles - Full Width) */}
                 <section className="rounded-2xl w-full flex flex-col items-center">
+                  {/* Period & Filter Button placed at top-right of podium section */}
+                  <div className="w-full flex justify-end px-1 pt-1 pb-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsPeriodModalOpen(true)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
+                        isCustomPeriod
+                          ? "bg-[#C7F33C]/15 border-[#C7F33C] text-[#C7F33C] shadow-sm"
+                          : "bg-[#3A3B3C] border-[#4E4F50] text-slate-300 hover:text-white hover:border-slate-400"
+                      }`}
+                      title="Filter Month & Year: Click to view past performance"
+                    >
+                      <SlidersHorizontal className="w-3 h-3 text-[#C7F33C]" />
+                      <span>{MONTH_NAMES[activeMonth - 1]} {activeYear}</span>
+                      <ChevronDown className="w-3 h-3 text-slate-400" />
+                    </button>
+                  </div>
 
                   {/* 3-Circle Overlapping Podium matching Reference Image */}
-                  <div className="flex items-end justify-center w-full pt-6 pb-2">
+                  <div className="flex items-end justify-center w-full pt-4 pb-2">
                     {/* Rank #2 (Left - tucked behind Rank 1) */}
                     <div
                       onClick={() => rank2 && setBreakdownItem(rank2)}
@@ -383,6 +414,17 @@ export function LeaderboardDrawer({
                       onTabChange={setActiveCategoryTab}
                       onSelectUser={(item) => setBreakdownItem(item)}
                       onSelectHealthUser={(item) => setHealthDrawerItem(item)}
+                      onSelectLtcUser={(item) => {
+                        const ltcCat = data?.categories?.find((c) => c.id === "ltc");
+                        const fallbackSummary =
+                          ltcCat?.items?.find((i) => i.dailyLtcSummary)?.dailyLtcSummary;
+                        const itemWithSummary = item.dailyLtcSummary
+                          ? item
+                          : fallbackSummary
+                          ? { ...item, dailyLtcSummary: fallbackSummary }
+                          : item;
+                        setLtcDrawerItem(itemWithSummary);
+                      }}
                     />
                   ) : (
                     <div className="p-8 text-center text-xs text-slate-400 rounded-2xl bg-[#1C1C1D] border border-[#3A3B3C]">
@@ -404,8 +446,23 @@ export function LeaderboardDrawer({
 
       <DailyCardHealthDrawer
         item={healthDrawerItem}
-        period={{ month: currentMonth, year: currentYear }}
+        period={{ month: activeMonth, year: activeYear }}
         onClose={() => setHealthDrawerItem(null)}
+      />
+
+      <DailyLtcDrawer
+        item={ltcDrawerItem}
+        period={{ month: activeMonth, year: activeYear }}
+        onClose={() => setLtcDrawerItem(null)}
+      />
+
+      {/* Period & Filters Modal */}
+      <LeaderboardPeriodModal
+        isOpen={isPeriodModalOpen}
+        onClose={() => setIsPeriodModalOpen(false)}
+        month={activeMonth}
+        year={activeYear}
+        onApply={(m, y) => onChangePeriod?.(m, y)}
       />
     </>
   );

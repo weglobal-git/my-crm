@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Trophy, AlertCircle } from "lucide-react";
 import type { SalesOverviewSnapshot } from "@/lib/dashboard/sales-overview";
@@ -10,6 +10,12 @@ import {
   dashboardLeaderboardKey,
   type ScopeActorInfo,
 } from "@/lib/dashboard/dashboard-keys";
+import {
+  DASHBOARD_CHANNEL_EVENT,
+  isDashboardInvalidationEvent,
+  isDashboardEventRelevant,
+} from "@/lib/dashboard/dashboard-realtime";
+import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { getDashboardLeaderboardAction } from "@/lib/actions/dashboard";
 import { DepartmentSelector } from "./DepartmentSelector";
 import { DashboardPodium } from "./DashboardPodium";
@@ -17,6 +23,7 @@ import { DashboardCategoryColumns } from "./DashboardCategoryColumns";
 import { ScoringRulesModal } from "./ScoringRulesModal";
 import { ScoreBreakdownModal } from "./ScoreBreakdownModal";
 import { DailyCardHealthDrawer } from "./DailyCardHealthDrawer";
+import { DailyLtcDrawer } from "./DailyLtcDrawer";
 
 interface DashboardLeaderboardViewProps {
   month: number;
@@ -50,6 +57,7 @@ export function DashboardLeaderboardView({
   const [rulesCategory, setRulesCategory] = useState<string>("card_health");
   const [breakdownItem, setBreakdownItem] = useState<LeaderboardItem | null>(null);
   const [healthDrawerItem, setHealthDrawerItem] = useState<LeaderboardItem | null>(null);
+  const [ltcDrawerItem, setLtcDrawerItem] = useState<LeaderboardItem | null>(null);
 
   const leaderboardKey = useMemo(
     () =>
@@ -63,7 +71,7 @@ export function DashboardLeaderboardView({
     [scope, selectedDeptId, month, year, country, account]
   );
 
-  const { data, error, isLoading, isValidating } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR(
     leaderboardKey,
     async () => {
       return await getDashboardLeaderboardAction({
@@ -75,17 +83,58 @@ export function DashboardLeaderboardView({
       });
     },
     {
-      revalidateOnFocus: false,
+      revalidateOnFocus: true,
+      focusThrottleInterval: 10_000,
       keepPreviousData: true,
     }
   );
 
-  // Automatically sync selectedDeptId once initial data arrives
+  // Pusher Realtime Subscription (private-dashboard-{userId})
   useEffect(() => {
-    if (!selectedDeptId && data?.departmentId) {
-      setSelectedDeptId(data.departmentId);
+    if (!resolvedActor.id || resolvedActor.id === 'anon') return;
+    const channelName = `private-dashboard-${resolvedActor.id}`;
+
+    const release = acquireChannelWhenConnected(channelName, (channel) => {
+      const onInvalidated = (event: unknown) => {
+        if (!isDashboardInvalidationEvent(event)) return;
+        if (!isDashboardEventRelevant(event, { year, month, country, account })) return;
+
+        if (event.resources.includes('leaderboard')) {
+          void mutate();
+        }
+      };
+
+      channel.bind(DASHBOARD_CHANNEL_EVENT, onInvalidated);
+
+      return () => {
+        channel.unbind(DASHBOARD_CHANNEL_EVENT, onInvalidated);
+      };
+    });
+
+    // Offline / Visibility Recovery
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void mutate();
+      }
+    };
+
+    const handleOnline = () => {
+      void mutate();
+    };
+
+    if (typeof window !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('online', handleOnline);
     }
-  }, [data?.departmentId, selectedDeptId]);
+
+    return () => {
+      release();
+      if (typeof window !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('online', handleOnline);
+      }
+    };
+  }, [resolvedActor.id, mutate, year, month, country, account]);
 
   if (error) {
     return (
@@ -164,6 +213,17 @@ export function DashboardLeaderboardView({
             categories={data.categories} 
             onSelectUser={(item) => setBreakdownItem(item)}
             onSelectHealthUser={(item) => setHealthDrawerItem(item)}
+            onSelectLtcUser={(item) => {
+              const ltcCat = data?.categories?.find((c) => c.id === "ltc");
+              const fallbackSummary =
+                ltcCat?.items?.find((i) => i.dailyLtcSummary)?.dailyLtcSummary;
+              const itemWithSummary = item.dailyLtcSummary
+                ? item
+                : fallbackSummary
+                ? { ...item, dailyLtcSummary: fallbackSummary }
+                : item;
+              setLtcDrawerItem(itemWithSummary);
+            }}
             onOpenCategoryRules={(categoryId) => {
               setRulesCategory(categoryId);
               setIsRulesModalOpen(true);
@@ -203,6 +263,13 @@ export function DashboardLeaderboardView({
         item={healthDrawerItem}
         period={{ month, year }}
         onClose={() => setHealthDrawerItem(null)}
+      />
+
+      {/* Daily LTC Drawer */}
+      <DailyLtcDrawer
+        item={ltcDrawerItem}
+        period={{ month, year }}
+        onClose={() => setLtcDrawerItem(null)}
       />
     </div>
   );

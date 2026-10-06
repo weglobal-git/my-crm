@@ -29,6 +29,8 @@ interface CalendarDayCellProps {
   isCurrentUserOnLeave?: boolean;
   onToggleUserLeave?: (dateStr: string) => void;
   showDayoff?: boolean;
+  isHolidayPending?: boolean;
+  isUserLeavePending?: boolean;
 }
 
 export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function CalendarDayCell({
@@ -48,6 +50,8 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
   isCurrentUserOnLeave = false,
   onToggleUserLeave,
   showDayoff = true,
+  isHolidayPending = false,
+  isUserLeavePending = false,
 }: CalendarDayCellProps) {
   const dateKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
   const { setNodeRef, isOver } = useDroppable({ id: `calendar-day:${dateKey}`, data: { date: date.toISOString() }, disabled: compact });
@@ -325,6 +329,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
           {onToggleHoliday && (
             <button
               type="button"
+              disabled={isHolidayPending}
               onPointerDown={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
@@ -335,7 +340,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
                 onToggleHoliday(`${y}-${m}-${d}`);
                 setIsDropdownOpen(false);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg transition-colors cursor-pointer text-left ${
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg transition-colors text-left disabled:cursor-wait disabled:opacity-60 ${
                 isCompanyHoliday
                   ? 'bg-amber-500/15 text-amber-300 font-semibold'
                   : 'hover:bg-[#3A3B3C] text-slate-200'
@@ -343,7 +348,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
             >
               <div className="flex items-center gap-2">
                 <Coffee className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>Company's Day-Off</span>
+                <span>Company&apos;s Day-Off</span>
               </div>
               {isCompanyHoliday && <Check className="w-3.5 h-3.5 text-amber-400" />}
             </button>
@@ -353,6 +358,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
           {onToggleUserLeave && (
             <button
               type="button"
+              disabled={isUserLeavePending}
               onPointerDown={(e) => e.stopPropagation()}
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
@@ -363,7 +369,7 @@ export const CalendarDayCell: React.FC<CalendarDayCellProps> = memo(function Cal
                 onToggleUserLeave(`${y}-${m}-${d}`);
                 setIsDropdownOpen(false);
               }}
-              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg transition-colors cursor-pointer text-left mt-0.5 ${
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg transition-colors text-left mt-0.5 disabled:cursor-wait disabled:opacity-60 ${
                 isCurrentUserOnLeave
                   ? 'bg-[#C7F33C]/15 text-[#C7F33C] font-semibold'
                   : 'hover:bg-[#3A3B3C] text-slate-200'

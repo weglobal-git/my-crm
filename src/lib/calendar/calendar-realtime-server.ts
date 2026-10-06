@@ -100,3 +100,52 @@ export async function dispatchCalendarRealtimeEvent(
     console.error('[CALENDAR-REALTIME] Publish failed; Neon remains authoritative:', error);
   }
 }
+
+export async function resolveAllCalendarAudience(): Promise<string[]> {
+  const candidates = await prisma.user.findMany({
+    where: {
+      OR: [
+        { role: 'ADMIN' },
+        {
+          departments: {
+            some: {
+              permissions: {
+                some: {
+                  visible: true,
+                  menuItem: { key: 'calendar' },
+                },
+              },
+            },
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      role: true,
+      departments: {
+        select: { permissions: { where: { visible: true, menuItem: { key: 'calendar' } }, select: { id: true } } },
+      },
+    },
+  });
+
+  return filterCalendarAudienceCandidates(candidates);
+}
+
+export async function dispatchCalendarHolidaysUpdate(payload: {
+  action: 'HOLIDAYS_UPDATED' | 'LEAVES_UPDATED';
+}): Promise<void> {
+  try {
+    const recipientIds = await resolveAllCalendarAudience();
+    if (recipientIds.length === 0) return;
+
+    for (let index = 0; index < recipientIds.length; index += 90) {
+      const channels = recipientIds.slice(index, index + 90).map((userId) => `private-calendar-${userId}`);
+      if (channels.length > 0) {
+        await pusherServer.trigger(channels, 'holidays-updated', payload);
+      }
+    }
+  } catch (error) {
+    console.error('[CALENDAR-REALTIME] Holidays update publish failed:', error);
+  }
+}

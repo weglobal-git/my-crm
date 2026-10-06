@@ -23,7 +23,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  // Schema updated: ContactType on Company
+  // Schema updated: isPinned and hotNote on Opportunity
 };
 
 export default nextConfig;

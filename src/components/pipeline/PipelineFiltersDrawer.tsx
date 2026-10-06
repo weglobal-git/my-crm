@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { X, SlidersHorizontal, RotateCcw, Check } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { X, SlidersHorizontal, RotateCcw, Check, Clock, ChevronDown } from "lucide-react";
 import { PipelineStage } from "@prisma/client";
 import { CardTypeFilter, CardTypeFilterValue } from "@/components/pipeline/CardTypeFilter";
 import { PipelineQuickFilters } from "@/components/pipeline/PipelineQuickFilters";
 import { CreateDealButton } from "@/components/pipeline/CreateDealButton";
+import { LtcCountBadge } from "@/components/pipeline/ltc";
 import useSWR from "swr";
 import { getAllUsers } from "@/lib/actions/users";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
@@ -17,6 +18,12 @@ export interface UserItem {
   image: string | null;
   role: string | null;
   departments?: { name: string }[] | null;
+}
+
+export interface PipelineDepartmentOption {
+  id: string;
+  name: string;
+  hasSalesAccess?: boolean;
 }
 
 export interface PipelineFilterContentProps {
@@ -36,10 +43,15 @@ export interface PipelineFilterContentProps {
   userId: string;
   stages: PipelineStage[];
   companies?: { id: string; name: string; displayName?: string | null; contacts?: { id: string; name: string }[] }[];
+  // Column Labels (Department selector)
+  stageTitleDepartments?: PipelineDepartmentOption[];
+  activeStageTitleDepartmentId?: string;
+  onActiveStageTitleDepartmentChange?: (deptId: string) => void;
   // Active Filter Summary & Reset
   activeFilterCount: number;
   onResetFilters: () => void;
   onClose?: () => void;
+  onOpenLtc?: () => void;
 }
 
 export function PipelineFilterContent({
@@ -54,9 +66,13 @@ export function PipelineFilterContent({
   userId,
   stages,
   companies,
+  stageTitleDepartments,
+  activeStageTitleDepartmentId,
+  onActiveStageTitleDepartmentChange,
   activeFilterCount,
   onResetFilters,
   onClose,
+  onOpenLtc,
 }: PipelineFilterContentProps) {
   // Load all users for Card Owner selector (deduped across app)
   const { data: allUsers = [] } = useSWR<UserItem[]>(
@@ -65,18 +81,60 @@ export function PipelineFilterContent({
     { revalidateOnFocus: false, dedupingInterval: 120_000 }
   );
 
+  const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
+  const deptDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isDeptDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (deptDropdownRef.current && !deptDropdownRef.current.contains(e.target as Node)) {
+        setIsDeptDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsDeptDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isDeptDropdownOpen]);
+
   // Filter out ADMIN if they don't own operational deals, or keep all users with names
   const eligibleOwners = allUsers.filter(u => u.name && u.role !== "ADMIN");
 
+  const activeDept = stageTitleDepartments?.find((d) => d.id === activeStageTitleDepartmentId) || stageTitleDepartments?.[0];
+
   return (
     <div className="flex flex-col gap-6 select-none">
-      {/* Top Action: + New Card button */}
-      <div className="w-full">
+      {/* Top Actions: + New Card & LTC Contacts */}
+      <div className="flex flex-col gap-2.5">
         <CreateDealButton 
           stages={stages} 
           companies={companies} 
           disabled={tab === "completed"}
         />
+
+        {onOpenLtc && (
+          <button
+            type="button"
+            onClick={() => {
+              if (onClose) onClose();
+              onOpenLtc();
+            }}
+            className="w-full py-2.5 px-3.5 rounded-xl bg-[#C7F33C]/10 hover:bg-[#C7F33C]/15 border border-[#C7F33C]/30 text-[#C7F33C] font-semibold text-xs flex items-center justify-between transition-all cursor-pointer shadow-sm group"
+          >
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-[#C7F33C] group-hover:rotate-12 transition-transform" />
+              <span>Long-Time Contacts (LTC)</span>
+            </div>
+            <LtcCountBadge className="!py-0.5 !px-2 !text-[10px]" />
+          </button>
+        )}
       </div>
 
       {/* Section 1: View (Active / Archived) */}
@@ -109,6 +167,64 @@ export function PipelineFilterContent({
           </button>
         </div>
       </div>
+
+      {/* Column Labels (Department-specific Stage Titles) */}
+      {stageTitleDepartments && stageTitleDepartments.length > 1 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between pl-1">
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Column Labels
+            </label>
+            <span className="text-[11px] text-slate-500 font-normal">Department</span>
+          </div>
+          <div className="relative" ref={deptDropdownRef}>
+            <button
+              type="button"
+              onClick={() => setIsDeptDropdownOpen((prev) => !prev)}
+              className={`w-full h-10 px-3.5 rounded-xl bg-[#1C1C1D] border text-xs font-medium flex items-center justify-between transition-colors cursor-pointer ${
+                isDeptDropdownOpen
+                  ? "border-[#C7F33C] text-slate-100"
+                  : "border-[#3A3B3C] text-slate-200 hover:border-[#4E4F50]"
+              }`}
+              aria-expanded={isDeptDropdownOpen}
+              aria-label="Department for column labels"
+            >
+              <span className="truncate">{activeDept?.name || "Select department"}</span>
+              <ChevronDown
+                className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+                  isDeptDropdownOpen ? "rotate-180 text-[#C7F33C]" : ""
+                }`}
+              />
+            </button>
+
+            {isDeptDropdownOpen && (
+              <div className="absolute left-0 right-0 top-full mt-1.5 bg-[#252728] border border-[#3A3B3C] rounded-xl p-1.5 z-50 shadow-2xl max-h-56 overflow-y-auto custom-scrollbar flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                {stageTitleDepartments.map((dept) => {
+                  const isSelected = dept.id === activeStageTitleDepartmentId;
+                  return (
+                    <button
+                      key={dept.id}
+                      type="button"
+                      onClick={() => {
+                        onActiveStageTitleDepartmentChange?.(dept.id);
+                        setIsDeptDropdownOpen(false);
+                      }}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors cursor-pointer text-left ${
+                        isSelected
+                          ? "bg-[#3A3B3C] text-[#C7F33C] font-semibold"
+                          : "text-slate-300 hover:bg-[#3A3B3C]/60 hover:text-white"
+                      }`}
+                    >
+                      <span className="truncate">{dept.name}</span>
+                      {isSelected && <Check className="w-4 h-4 text-[#C7F33C] shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Section 2: Card Type */}
       <div className="space-y-2">
@@ -249,6 +365,8 @@ export function PipelineFiltersDrawer({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
 
   return (
     <>

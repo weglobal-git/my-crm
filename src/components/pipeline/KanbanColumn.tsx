@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState, useMemo, memo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Check, Loader2, Pencil, RotateCcw, X } from "lucide-react";
-import { KanbanCard, OpportunityWithRelations, checkIsRedCard } from "./KanbanCard";
-import { useCompanyHolidays, useUserLeaves } from "@/lib/useCompanyHolidays";
+import { KanbanCard, OpportunityWithRelations } from "./KanbanCard";
 import { updatePipelineStageDepartmentTitle } from "@/lib/actions/pipeline-stage-title";
 import { useDialog } from "@/providers/DialogProvider";
 
@@ -24,9 +23,10 @@ interface KanbanColumnProps {
   currentUserRole?: string;
   onDealIntent?: () => void;
   selectedCardId?: string | null;
+  redCardsCount?: number;
 }
 
-export function KanbanColumn({ 
+export const KanbanColumn = memo(function KanbanColumn({ 
   id, 
   title, 
   defaultTitle = title,
@@ -41,6 +41,7 @@ export function KanbanColumn({
   currentUserRole, 
   onDealIntent,
   selectedCardId,
+  redCardsCount = 0,
 }: KanbanColumnProps) {
   const { toast } = useDialog();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -94,12 +95,7 @@ export function KanbanColumn({
     }
   });
 
-  const { holidaysSet } = useCompanyHolidays();
-  const { leavesByUser } = useUserLeaves();
-  const redCardsCount = useMemo(
-    () => deals.filter((d) => checkIsRedCard(d, holidaysSet, leavesByUser)).length,
-    [deals, holidaysSet, leavesByUser]
-  );
+  const dealIds = useMemo(() => deals.map((d) => d.id), [deals]);
 
   return (
     <div
@@ -194,14 +190,14 @@ export function KanbanColumn({
         </div>
       )}
 
-      <div className={`flex flex-col gap-3 md:gap-4 flex-1 p-1 pb-16 md:p-2 hide-scrollbar ${isScrollable ? 'overflow-y-auto min-h-0' : 'min-h-[500px]'}`}>
-        <SortableContext items={deals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
+      <div className={`flex flex-col gap-6 flex-1 px-1 md:px-2 pt-5 pb-16 hide-scrollbar ${isScrollable ? 'overflow-y-auto min-h-0' : 'min-h-[500px]'}`}>
+        <SortableContext items={dealIds} strategy={verticalListSortingStrategy}>
           {deals.map((deal) => (
             <KanbanCard
               key={deal.id}
               deal={deal}
               isSelected={deal.id === selectedCardId}
-              onOpenPanel={(tab) => onDealClick?.(deal, tab)}
+              onDealClick={onDealClick}
               onPanelIntent={onDealIntent}
               currentUserId={currentUserId}
               currentUserRole={currentUserRole}
@@ -211,4 +207,4 @@ export function KanbanColumn({
       </div>
     </div>
   );
-}
+});

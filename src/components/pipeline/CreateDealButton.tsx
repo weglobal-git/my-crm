@@ -228,6 +228,7 @@ export function CreateDealButton({ stages, companies, disabled = false }: Create
         New
       </button>
 
+      {isOpen && <>
       <div 
         className={`fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 ${isOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`} 
         onClick={() => isSubmitting ? null : setIsOpen(false)}
@@ -432,6 +433,7 @@ export function CreateDealButton({ stages, companies, disabled = false }: Create
           setIsMemberDrawerOpen(false);
         }}
       />
+      </>}
     </>
   );
 }

@@ -8,7 +8,7 @@ export function useCompanyHolidays() {
   const { data: holidaysList, mutate } = useSWR(
     'company-holidays',
     getCompanyHolidaysAction,
-    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+    { revalidateOnFocus: true, dedupingInterval: 10_000 }
   );
 
   const holidaysSet = useMemo(() => new Set(holidaysList || []), [holidaysList]);
@@ -24,7 +24,7 @@ export function useUserLeaves(currentUserId?: string) {
   const { data: leavesList, mutate } = useSWR(
     'user-leaves',
     getUserLeavesAction,
-    { revalidateOnFocus: false, dedupingInterval: 60_000 }
+    { revalidateOnFocus: true, dedupingInterval: 10_000 }
   );
 
   const leavesByDate = useMemo(() => {

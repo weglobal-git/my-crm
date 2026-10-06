@@ -1,14 +1,39 @@
 "use client";
-import { createContext, useContext, useEffect, useState, useMemo } from "react";
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BellRing, Bot, FileText, Loader2 } from "lucide-react";
+import { BellRing, FileText, Loader2, Star, ListTodo, Flame } from "lucide-react";
 import { DealTypeIcon } from "./DealTypeBadge";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
-import { preload } from "swr";
-import { getOpportunityActivityLogs } from "@/lib/actions/opportunity";
+import { preload, useSWRConfig } from "swr";
+import { getOpportunityActivityLogs, togglePinOpportunity, updateOpportunityHotNote } from "@/lib/actions/opportunity";
 import { getDealAccelerators } from "@/lib/actions/ai-accelerator";
+import type { DealTodoItem } from "@/lib/actions/notes";
+
+function formatShortDueDate(dateVal: Date | string): string {
+  try {
+    const d = new Date(dateVal);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = d.toLocaleString('en-US', { month: 'short' });
+    return `${day}${month}`;
+  } catch {
+    return '';
+  }
+}
+
+function formatDealCurrency(val: number, curr?: string | null): string {
+  try {
+    return new Intl.NumberFormat('th-TH', {
+      style: 'currency',
+      currency: curr || 'THB',
+      maximumFractionDigits: 0,
+    }).format(val);
+  } catch {
+    return `฿${val.toLocaleString()}`;
+  }
+}
 
 
 import { parseLogContent, type ParsedLogAttachment } from "@/lib/pipeline-activity-cache";
@@ -28,6 +53,7 @@ export type { KanbanCardDTO, PipelineCardDTO };
 export type OpportunityWithRelations = KanbanCardDTO;
 
 export const PendingAcceleratorsContext = createContext<Record<string, PendingAcceleratorInfo | number>>({});
+export const PendingTodosContext = createContext<Record<string, DealTodoItem[]>>({});
 
 export interface OwnerFilterContextType {
   ownerFilter: string;
@@ -37,13 +63,14 @@ export interface OwnerFilterContextType {
 }
 
 export const OwnerFilterContext = createContext<OwnerFilterContextType>({ ownerFilter: 'ALL' });
-
-export const DealSummariesContext = createContext<Record<string, boolean>>({});
+export const CompanyHolidaysContext = createContext<Set<string>>(new Set());
+export const UserLeavesContext = createContext<Map<string, Set<string>>>(new Map());
 
 interface KanbanCardProps {
   deal: OpportunityWithRelations;
   isSelected?: boolean;
   onOpenPanel?: (tab: string) => void;
+  onDealClick?: (deal: OpportunityWithRelations, tab?: string) => void;
   onPanelIntent?: () => void;
   currentUserId?: string;
   currentUserRole?: string;
@@ -53,53 +80,6 @@ interface KanbanCardProps {
   onSearchChange?: (query: string) => void;
 }
 
-const KanbanClockContext = createContext(0);
-export const CompanyHolidaysContext = createContext<Set<string>>(new Set());
-export const UserLeavesContext = createContext<Map<string, Set<string>>>(new Map());
-
-export function KanbanClockProvider({ children }: { children: React.ReactNode }) {
-  const [currentMinute, setCurrentMinute] = useState(() => Math.floor(Date.now() / 60_000));
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentMinute(Math.floor(Date.now() / 60_000));
-    }, 60_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return <KanbanClockContext.Provider value={currentMinute}>{children}</KanbanClockContext.Provider>;
-}
-
-function RedTimer({ threshold, ownerId }: { threshold: Date; ownerId?: string }) {
-  const currentMinute = useContext(KanbanClockContext);
-  const companyHolidays = useContext(CompanyHolidaysContext);
-  const userLeavesByOwner = useContext(UserLeavesContext);
-  const now = new Date(currentMinute * 60_000);
-
-  const effectiveOffDates = useMemo(() => {
-    if (ownerId && userLeavesByOwner.has(ownerId)) {
-      return new Set([...companyHolidays, ...userLeavesByOwner.get(ownerId)!]);
-    }
-    return companyHolidays;
-  }, [companyHolidays, userLeavesByOwner, ownerId]);
-
-  const diffMs = calculateElapsedBusinessMs(threshold, now, effectiveOffDates);
-  const diffSec = Math.floor(diffMs / 1000);
-  const workingDaySec = WORK_HOURS_PER_DAY * 3600; // 32,400 seconds per 1 working day (08:00 - 17:00)
-  const workingDays = Math.floor(diffSec / workingDaySec);
-  const remSec = diffSec % workingDaySec;
-  const hours = Math.floor(remSec / 3600);
-  const minutes = Math.floor((remSec % 3600) / 60);
-
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  
-  if (workingDays > 0) {
-    return <span className="text-slate-700 tabular-nums font-medium text-xs tracking-wide">{workingDays}DAY | {pad(hours)}:{pad(minutes)}</span>;
-  }
-  return <span className="text-slate-700 tabular-nums font-medium text-xs tracking-wide">{pad(hours)}:{pad(minutes)}</span>;
-}
-
-import React from 'react';
 
 export const KanbanCardUI = React.memo(function KanbanCardUI({
   deal,
@@ -112,11 +92,141 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   searchQuery,
   onSearchChange,
 }: KanbanCardProps & { isDragging?: boolean }) {
-  const { visibleRightMenus } = usePermissions();
-  const rightMenus = visibleRightMenus('pipeline') || [];
+  const { canSee } = usePermissions();
   const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
-  const dealSummariesMap = useContext(DealSummariesContext);
-  const hasAiSummary = Boolean(dealSummariesMap[deal.id]);
+  const pendingTodosMap = useContext(PendingTodosContext);
+  const { mutate: globalMutate } = useSWRConfig();
+  const isPinned = Boolean(deal.isPinned);
+
+  const dealTodos = pendingTodosMap[deal.id] || [];
+  const hasPriorityTodo = dealTodos.some(t => t.isPinned);
+
+  const [isTodoPopoverOpen, setIsTodoPopoverOpen] = useState(false);
+  const [todoPopoverPos, setTodoPopoverPos] = useState({ left: 0, top: 0 });
+  const todoButtonRef = useRef<HTMLButtonElement>(null);
+  const todoLeaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const updateTodoPopoverPosition = useCallback(() => {
+    const rect = todoButtonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const popoverWidth = 270;
+    const estimatedHeight = 180;
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const top = spaceBelow >= estimatedHeight ? rect.bottom + 6 : Math.max(8, rect.top - estimatedHeight - 6);
+    const left = Math.min(Math.max(8, rect.right - popoverWidth), window.innerWidth - popoverWidth - 8);
+    setTodoPopoverPos({ left, top });
+  }, []);
+
+  const handleTodoMouseEnter = useCallback(() => {
+    if (todoLeaveTimerRef.current) {
+      clearTimeout(todoLeaveTimerRef.current);
+      todoLeaveTimerRef.current = null;
+    }
+    updateTodoPopoverPosition();
+    setIsTodoPopoverOpen(true);
+  }, [updateTodoPopoverPosition]);
+
+  const handleTodoMouseLeave = useCallback(() => {
+    todoLeaveTimerRef.current = setTimeout(() => {
+      setIsTodoPopoverOpen(false);
+    }, 150);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (todoLeaveTimerRef.current) {
+        clearTimeout(todoLeaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTodoPopoverOpen) return;
+    window.addEventListener('resize', updateTodoPopoverPosition);
+    window.addEventListener('scroll', updateTodoPopoverPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateTodoPopoverPosition);
+      window.removeEventListener('scroll', updateTodoPopoverPosition, true);
+    };
+  }, [isTodoPopoverOpen, updateTodoPopoverPosition]);
+
+  useEffect(() => {
+    if (isDragging) {
+      setIsTodoPopoverOpen(false);
+    }
+  }, [isDragging]);
+
+  const [hotNote, setHotNote] = useState(deal.hotNote || '');
+  const [isSavingHotNote, setIsSavingHotNote] = useState(false);
+  const hotNoteDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    setHotNote(deal.hotNote || '');
+  }, [deal.hotNote]);
+
+  const hasHotNote = Boolean((hotNote && hotNote.trim().length > 0) || (deal.hotNote && deal.hotNote.trim().length > 0));
+
+  const handleTogglePin = useCallback(async () => {
+    const nextPinned = !isPinned;
+    void globalMutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (current: OpportunityWithRelations[] | undefined) => {
+        if (!current) return current;
+        return current.map(item => item.id === deal.id ? { ...item, isPinned: nextPinned } : item);
+      },
+      false
+    );
+
+    try {
+      await togglePinOpportunity(deal.id, nextPinned);
+    } catch (error) {
+      console.error('Failed to toggle pin:', error);
+      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
+    }
+  }, [deal.id, isPinned, globalMutate]);
+
+  const saveHotNote = useCallback(async (textToSave: string) => {
+    const currentSaved = deal.hotNote || '';
+    const trimmed = textToSave.trim();
+    if (trimmed === currentSaved) return;
+
+    setIsSavingHotNote(true);
+    void globalMutate(
+      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+      (current: OpportunityWithRelations[] | undefined) => {
+        if (!current) return current;
+        return current.map(item => item.id === deal.id ? { ...item, hotNote: trimmed || null } : item);
+      },
+      false
+    );
+
+    try {
+      await updateOpportunityHotNote(deal.id, trimmed || null);
+    } catch (error) {
+      console.error('Failed to save quick note:', error);
+      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
+    } finally {
+      setIsSavingHotNote(false);
+    }
+  }, [deal.id, deal.hotNote, globalMutate]);
+
+  const handleChangeHotNote = (val: string) => {
+    setHotNote(val);
+    if (hotNoteDebounceRef.current) {
+      clearTimeout(hotNoteDebounceRef.current);
+    }
+    hotNoteDebounceRef.current = setTimeout(() => {
+      void saveHotNote(val);
+    }, 400);
+  };
+
+  const handleBlurHotNote = () => {
+    if (hotNoteDebounceRef.current) {
+      clearTimeout(hotNoteDebounceRef.current);
+    }
+    void saveHotNote(hotNote);
+  };
+
   const {
     ownerFilter: contextOwnerFilter,
     onOwnerFilterChange: contextOnOwnerFilterChange,
@@ -128,7 +238,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const activeSearchQuery = searchQuery ?? contextSearchQuery;
   const handleSearchChange = onSearchChange ?? contextOnSearchChange;
   
-  const canView = (tabKey: string) => rightMenus.some(menu => menu.key === `pipeline.${tabKey}`);
+  const canView = useCallback((tabKey: string) => canSee(`pipeline.${tabKey}`), [canSee]);
   const canViewInformation = canView('information');
 
   // Compute display values
@@ -152,9 +262,19 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const userLeavesByOwner = useContext(UserLeavesContext);
   const highlight = checkIsRedCard(deal, companyHolidays, userLeavesByOwner);
 
-  if (deal.topic?.includes("Light Test Deal") || deal.topic?.toLowerCase().includes("test")) {
-    console.log(`[CARD-RENDER] "${deal.topic}" (id=${deal.id}) -> pendingCount=${pendingCount}, isOrange=${isOrange}, highlight=${highlight}`);
-  }
+  const latestLog = useMemo(() => {
+    return deal.activityLogs?.find(
+      (log) =>
+        log.type === 'COMMENT' &&
+        !log.content.startsWith('[DUE DATE:') &&
+        !log.content.startsWith('[URGENT_')
+    );
+  }, [deal.activityLogs]);
+
+  const parsedLog = useMemo(() => {
+    if (!latestLog?.content) return null;
+    return parseLogContent(latestLog.content);
+  }, [latestLog?.content]);
   
   const handlePrefetch = () => {
     onPanelIntent?.();
@@ -196,7 +316,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
       data-deal-id={deal.id}
       style={{ outline: 'none' }}
       className={`
-        flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card h-[220px] transition-all duration-150 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none
+        flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card h-[220px] transition-all duration-150 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none hover:z-30
         ${isOrange ? "bg-[#F59E0B]" : highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
         ${isSelected ? "md:ring-2 md:ring-white md:ring-offset-2 md:ring-offset-[#1C1C1D] md:shadow-2xl md:shadow-black/80 md:scale-[1.015] md:z-20" : ""}
@@ -204,6 +324,47 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
       onClick={() => onOpenPanel?.('')}
       onMouseEnter={handlePrefetch}
     >
+      {/* Quick Note Capsule Input */}
+      <div 
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        className={`absolute -top-3.5 left-1/2 -translate-x-1/2 z-40 transition-all duration-200 ${
+          hasHotNote
+            ? 'opacity-100 pointer-events-auto'
+            : 'opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 pointer-events-none group-hover/card:pointer-events-auto focus-within:pointer-events-auto'
+        }`}
+      >
+        <div 
+          className="relative flex items-center shadow-md rounded-full"
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="text"
+            value={hotNote}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => handleChangeHotNote(e.target.value)}
+            onBlur={handleBlurHotNote}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') {
+                e.currentTarget.blur();
+              }
+            }}
+            placeholder="Quick Note"
+            className="w-32 sm:w-44 h-7 px-3 text-xs font-semibold text-slate-800 bg-slate-100 rounded-full border border-[#3A3B3C] outline-none placeholder:text-slate-400 text-center cursor-text truncate focus:w-48 transition-all"
+          />
+          {isSavingHotNote && (
+            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
+              <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
+            </span>
+          )}
+        </div>
+      </div>
 
 
       {/* Top row: Avatar, Name, Company, Arrow/Bell */}
@@ -239,6 +400,8 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
               <img 
                 src={deal.owner.image ? getOptimizedCloudinaryUrl(deal.owner.image, 100) : `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`} 
                 alt={contactName}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover" 
               />
             </div>
@@ -263,47 +426,21 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
             <div className="flex items-center gap-1.5 mb-1">
               <div className={`font-semibold text-[13px] leading-tight truncate ${isOrange ? 'text-slate-950 font-bold' : highlight ? 'text-slate-900' : 'text-slate-100'}`} title={deal.topic}>{deal.topic}</div>
             </div>
-            <div className={`flex items-center text-xs truncate ${isOrange ? 'text-slate-900 font-medium' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>
-              {contactName}
+            <div className={`flex items-center gap-1.5 text-xs truncate ${isOrange ? 'text-slate-900 font-medium' : highlight ? 'text-slate-700' : 'text-slate-400'}`}>
+              <span className="truncate">{contactName}</span>
+              {deal.type === 'SALES_DEAL' && deal.value != null && deal.value > 0 && (
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold shrink-0 tabular-nums ${
+                  isOrange 
+                    ? 'bg-black/20 text-slate-950 border border-black/10' 
+                    : highlight 
+                    ? 'bg-black/15 text-slate-900 border border-black/10' 
+                    : 'bg-[#252728] text-[#C7F33C] border border-[#C7F33C]'
+                }`}>
+                  {formatDealCurrency(deal.value, deal.currency)}
+                </span>
+              )}
             </div>
           </div>
-        </div>
-        
-        <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-          {deal.dueDate && (
-            <div 
-              className="flex-shrink-0" 
-              title={`Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`}
-            >
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isOrange ? 'bg-black/20 text-slate-950 hover:bg-black/30' : highlight ? 'bg-black/15 text-slate-900 hover:bg-black/25' : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'}`}>
-                <BellRing className="w-4 h-4" />
-              </div>
-            </div>
-          )}
-          {canView('summary') && canView('activity') && hasAiSummary && (
-            <div className="relative">
-              <button
-                type="button"
-                aria-label={`Open AI Summary for ${deal.topic}`}
-                title="Open AI Summary"
-                onPointerDown={event => event.stopPropagation()}
-                onKeyDown={event => event.stopPropagation()}
-                onClick={event => { 
-                  event.stopPropagation(); 
-                  onOpenPanel?.('summary'); 
-                }}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-100 ${
-                  isOrange 
-                    ? 'bg-slate-950 text-amber-400 hover:bg-slate-900' 
-                    : highlight 
-                    ? 'bg-black/15 text-slate-900 hover:bg-black/25' 
-                    : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'
-                }`}
-              >
-                <Bot className="w-4 h-4" aria-hidden="true" />
-              </button>
-            </div>
-          )}
         </div>
       </div>
 
@@ -316,7 +453,6 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
         className="flex flex-col gap-2 cursor-pointer hover:opacity-90 transition-opacity flex-1 overflow-hidden"
       >
         {(() => {
-          const latestLog = deal.activityLogs?.find(log => log.type === 'COMMENT' && !log.content.startsWith('[DUE DATE:') && !log.content.startsWith('[URGENT_'));
           if (!latestLog) {
             return (
               <div className="flex flex-col justify-center gap-1 mt-1">
@@ -325,7 +461,9 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
             );
           }
           
-          const { cleanText, images, otherFiles } = parseLogContent(latestLog.content);
+          const cleanText = parsedLog?.cleanText || '';
+          const images = parsedLog?.images || [];
+          const otherFiles = parsedLog?.otherFiles || [];
           
           return (
             <div className="flex flex-col gap-2 mt-1 flex-1 overflow-hidden">
@@ -333,7 +471,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
                 <div className="flex items-start gap-2 px-2">
                   <div className={`w-5 h-5 rounded-full overflow-hidden shrink-0 flex items-center justify-center ${isOrange ? 'bg-black/25' : highlight ? 'bg-white/40' : 'bg-[#4E4F50]'}`}>
                     {latestLog.user?.image ? (
-                      <img src={getOptimizedCloudinaryUrl(latestLog.user.image, 100)} alt={latestLog.user.name || ''} className="w-full h-full object-cover" />
+                      <img src={getOptimizedCloudinaryUrl(latestLog.user.image, 100)} alt={latestLog.user.name || ''} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                     ) : (
                       <span className={`text-[9px] font-medium ${isOrange ? 'text-slate-950 font-bold' : highlight ? 'text-slate-700' : 'text-slate-300'}`}>
                         {latestLog.user?.name?.charAt(0).toUpperCase() || 'U'}
@@ -366,6 +504,8 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
                                     : getOptimizedCloudinaryUrl(img.url, 150)
                                 }
                                 alt={img.filename}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full h-full object-cover"
                                 onError={(e) => {
                                   e.currentTarget.onerror = null;
@@ -397,65 +537,214 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
         })()}
       </div>
 
-      {/* Bottom row: Customer Name & Timer */}
-      {(customerName || isOrange || (highlight && getRedThreshold(deal, companyHolidays, userLeavesByOwner))) && (
-        <div className="flex justify-between items-end mt-auto">
-          {customerName ? (
-            <div 
-              onClick={(e) => { 
-                e.stopPropagation(); 
-                if (e.metaKey || e.ctrlKey) {
-                  if (rawCompanyName && handleSearchChange) {
-                    handleSearchChange(isCompanyFiltered ? '' : rawCompanyName);
-                    return;
-                  }
+      {/* Bottom row: Customer Name & Quick Go */}
+      <div className="flex justify-between items-end mt-auto gap-2">
+        {customerName ? (
+          <div 
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              if (e.metaKey || e.ctrlKey) {
+                if (rawCompanyName && handleSearchChange) {
+                  handleSearchChange(isCompanyFiltered ? '' : rawCompanyName);
+                  return;
                 }
-                if (canViewInformation && deal.type === 'SALES_DEAL') {
-                  onOpenPanel?.('information');
-                } else if (canView('notes')) {
-                  onOpenPanel?.('notes');
-                } else {
-                  onOpenPanel?.('activity');
-                }
-              }}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[150px]
-                ${isCompanyFiltered ? "ring-2 ring-white ring-offset-2 ring-offset-[#1C1C1D] border-white font-bold" : ""}
-                ${isOrange ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/30 text-slate-900 font-semibold" : highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
-              `}
-              title={
-                rawCompanyName
-                  ? isCompanyFiltered
-                    ? `${customerName} (⌘+Click to clear search)`
-                    : `${customerName} (⌘+Click to search account)`
-                  : customerName
               }
-            >
-              <span className="truncate">{customerName}</span>
-            </div>
-          ) : (
-            <div></div> /* Empty div to push timer to the right if customer name is hidden */
-          )}
+              if (canViewInformation && deal.type === 'SALES_DEAL') {
+                onOpenPanel?.('information');
+              } else if (canView('notes')) {
+                onOpenPanel?.('notes');
+              } else {
+                onOpenPanel?.('activity');
+              }
+            }}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium flex items-center justify-center cursor-pointer transition-colors max-w-[130px] shrink-0
+              ${isCompanyFiltered ? "ring-2 ring-white ring-offset-2 ring-offset-[#1C1C1D] border-white font-bold" : ""}
+              ${isOrange ? "border-transparent bg-black/20 font-medium tracking-wide hover:bg-black/30 text-slate-900 font-semibold" : highlight ? "border-transparent bg-black/20 font-mono tracking-wide hover:bg-black/40 text-slate-700" : "bg-[#4E4F50] text-slate-100 hover:bg-slate-500"}
+            `}
+            title={
+              rawCompanyName
+                ? isCompanyFiltered
+                  ? `${customerName} (⌘+Click to clear search)`
+                  : `${customerName} (⌘+Click to search account)`
+                : customerName
+            }
+          >
+            <span className="truncate">{customerName}</span>
+          </div>
+        ) : (
+          <div />
+        )}
 
-          {isOrange ? (
+        {/* Quick Go Shortcut Buttons */}
+        <div 
+          className="flex items-center gap-0.5 ml-auto shrink-0" 
+          onClick={(e) => e.stopPropagation()}
+        >
+          {isOrange && (
             <div 
               onClick={(e) => {
                 e.stopPropagation();
                 onOpenPanel?.('manager-call');
               }}
-              className="px-2.5 py-1 rounded-full bg-slate-950 text-amber-400 font-bold text-xs tracking-wide flex items-center gap-1 shadow-sm ml-auto cursor-pointer hover:bg-slate-900"
+              className="px-2.5 py-1 rounded-full bg-slate-950 text-amber-400 font-bold text-xs tracking-wide flex items-center gap-1 shadow-sm cursor-pointer hover:bg-slate-900 shrink-0"
               title="ดูและตอบ Manager Call"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
               <span>Urgent ({pendingCount})</span>
             </div>
-          ) : (
-            highlight && getRedThreshold(deal, companyHolidays, userLeavesByOwner) && (
-              <div className="px-3 py-1.5 rounded-full bg-black/20 flex items-center justify-center min-w-[90px] ml-auto">
-                <RedTimer threshold={getRedThreshold(deal, companyHolidays, userLeavesByOwner)!} ownerId={deal.ownerId} />
-              </div>
-            )
           )}
+
+          {/* Star Pin Button (visible on hover, or always when pinned) */}
+          <button
+            type="button"
+            aria-label={isPinned ? "Unpin deal" : "Pin deal to top"}
+            title={isPinned ? "Unpin deal (currently pinned to top)" : "Pin deal to top of column"}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleTogglePin();
+            }}
+            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+              isPinned
+                ? 'opacity-100'
+                : 'opacity-0 group-hover/card:opacity-100 pointer-events-none group-hover/card:pointer-events-auto'
+            } ${
+              isPinned
+                ? isOrange
+                  ? 'bg-slate-950 text-amber-400 shadow-sm'
+                  : highlight
+                  ? 'bg-black/25 text-amber-500 shadow-sm'
+                  : 'bg-amber-400/20 text-amber-400 border border-amber-400/50 shadow-sm'
+                : isOrange
+                ? 'bg-black/20 text-slate-800 hover:bg-black/30 hover:text-slate-950'
+                : highlight
+                ? 'bg-black/15 text-slate-700 hover:bg-black/25 hover:text-slate-900'
+                : 'bg-[#252728] text-slate-400 hover:bg-[#4E4F50] hover:text-amber-400'
+            }`}
+          >
+            <Star className={`w-3.5 h-3.5 ${isPinned ? 'fill-amber-400 text-amber-400' : ''}`} />
+          </button>
+
+          {/* To-Do Shortcut Button (only when there are incomplete todos) */}
+          {dealTodos.length > 0 ? (
+            <button
+              ref={todoButtonRef}
+              type="button"
+              aria-label={`View ${dealTodos.length} pending To-Do tasks`}
+              title={`To-Do: ${dealTodos.length} pending tasks (Click to open)`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (canView('notes')) onOpenPanel?.('notes');
+              }}
+              onMouseEnter={handleTodoMouseEnter}
+              onMouseLeave={handleTodoMouseLeave}
+              className={`h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
+                isOrange
+                  ? 'bg-black/20 text-slate-950 hover:bg-black/30'
+                  : highlight
+                  ? 'bg-black/15 text-slate-900 hover:bg-black/25'
+                  : hasPriorityTodo
+                  ? 'bg-amber-400/20 text-amber-400 border border-amber-400/40 hover:bg-amber-400/30'
+                  : 'bg-[#252728] text-sky-400 hover:bg-[#4E4F50]'
+              }`}
+            >
+              <ListTodo className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-mono">{dealTodos.length}</span>
+            </button>
+          ) : null}
+
+          {/* Bell Due Date Button (only when Due Date is set) */}
+          {deal.dueDate ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (canView('activity')) onOpenPanel?.('activity');
+              }}
+              title={`Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`}
+              className={`h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
+                isOrange
+                  ? 'bg-black/20 text-slate-950 hover:bg-black/30'
+                  : highlight
+                  ? 'bg-black/15 text-slate-900 hover:bg-black/25'
+                  : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'
+              }`}
+            >
+              <BellRing className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-mono">{formatShortDueDate(deal.dueDate)}</span>
+            </button>
+          ) : null}
+
+
         </div>
+      </div>
+
+      {/* Portaled To-Do Hover Popover Modal */}
+      {isTodoPopoverOpen && dealTodos.length > 0 && typeof document !== 'undefined' && createPortal(
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onMouseEnter={handleTodoMouseEnter}
+          onMouseLeave={handleTodoMouseLeave}
+          style={{
+            position: 'fixed',
+            left: todoPopoverPos.left,
+            top: todoPopoverPos.top,
+            zIndex: 450,
+            width: 270,
+          }}
+          className="rounded-xl border border-[#4E4F50] bg-[#252728] p-2 shadow-2xl text-xs text-slate-200 animate-in fade-in zoom-in-95 duration-100 select-none cursor-default"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-1.5 pb-1.5 border-b border-[#3A3B3C] text-[11px] font-semibold text-slate-300">
+            <div className="flex items-center gap-1.5">
+              <ListTodo className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+              <span>To-Do List</span>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400 bg-[#3A3B3C] px-1.5 py-0.5 rounded-full font-medium">
+              {dealTodos.length} pending
+            </span>
+          </div>
+
+          {/* Todo Items List */}
+          <div className="custom-scrollbar max-h-56 overflow-y-auto pt-1.5 flex flex-col gap-1 pr-0.5">
+            {dealTodos.map((todo) => (
+              <div
+                key={todo.id}
+                className={`flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-left transition-colors ${
+                  todo.isPinned
+                    ? 'bg-amber-500/15 border border-amber-500/30 text-amber-200'
+                    : 'bg-[#1E1F20]/60 hover:bg-[#3A3B3C]/50 text-slate-200'
+                }`}
+              >
+                {todo.isPinned ? (
+                  <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                ) : (
+                  <div className="w-3.5 h-3.5 flex items-center justify-center shrink-0 mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                  </div>
+                )}
+                <span className="text-xs break-words line-clamp-3 leading-snug flex-1">
+                  {todo.content}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Footer with Click Action Hint */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsTodoPopoverOpen(false);
+              if (canView('notes')) onOpenPanel?.('notes');
+            }}
+            className="w-full mt-1.5 pt-1.5 border-t border-[#3A3B3C] text-[10px] text-center text-slate-400 hover:text-sky-300 transition-colors cursor-pointer"
+          >
+            Click to open To-Do tab ↗
+          </button>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -465,6 +754,7 @@ export const KanbanCard = React.memo(function KanbanCard({
   deal, 
   isSelected,
   onOpenPanel, 
+  onDealClick,
   onPanelIntent, 
   currentUserId, 
   currentUserRole,
@@ -496,6 +786,14 @@ export const KanbanCard = React.memo(function KanbanCard({
     transform: CSS.Transform.toString(transform),
   };
 
+  const handleOpenPanel = useCallback((tab: string) => {
+    if (onOpenPanel) {
+      onOpenPanel(tab);
+    } else if (onDealClick) {
+      onDealClick(deal, tab);
+    }
+  }, [onOpenPanel, onDealClick, deal]);
+
   return (
     <div
       ref={setNodeRef}
@@ -506,13 +804,13 @@ export const KanbanCard = React.memo(function KanbanCard({
       onPointerEnter={onPanelIntent}
       onFocusCapture={onPanelIntent}
       data-deal-id={deal.id}
-      className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-pointer' : ''} outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0`}
+      className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-pointer' : ''} outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 relative hover:z-30 focus-within:z-30`}
     >
       <KanbanCardUI 
         deal={deal} 
         isDragging={isDragging} 
         isSelected={isSelected}
-        onOpenPanel={onOpenPanel} 
+        onOpenPanel={handleOpenPanel} 
         onPanelIntent={onPanelIntent} 
         currentOwnerFilter={currentOwnerFilter}
         onFilterByOwner={onFilterByOwner}

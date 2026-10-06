@@ -17,19 +17,65 @@ export const WORK_MS_PER_DAY = 9 * 3600 * 1000; // 32,400,000 ms
 export const RED_CARD_WORKING_HOURS_THRESHOLD = 27; // 3 working days = 27 working hours
 export const RED_CARD_WORKING_MS_THRESHOLD = 27 * 3600 * 1000; // 97,200,000 ms
 
+export const BANGKOK_OFFSET_MS = 7 * 3600 * 1000;
+
+export interface BangkokDateParts {
+  year: number;
+  month: number; // 0-11
+  date: number; // 1-31
+  day: number; // 0-6 (0 = Sunday)
+  hours: number;
+  minutes: number;
+  seconds: number;
+  milliseconds: number;
+}
+
+/**
+ * Extracts date and time components in Asia/Bangkok (UTC+7) regardless of the host system timezone.
+ */
+export function toBangkokDateParts(date: Date): BangkokDateParts {
+  const bkk = new Date(date.getTime() + BANGKOK_OFFSET_MS);
+  return {
+    year: bkk.getUTCFullYear(),
+    month: bkk.getUTCMonth(),
+    date: bkk.getUTCDate(),
+    day: bkk.getUTCDay(),
+    hours: bkk.getUTCHours(),
+    minutes: bkk.getUTCMinutes(),
+    seconds: bkk.getUTCSeconds(),
+    milliseconds: bkk.getUTCMilliseconds(),
+  };
+}
+
+/**
+ * Creates a Date representing an exact instant in Asia/Bangkok (UTC+7).
+ */
+export function createBangkokDate(
+  year: number,
+  monthIndex: number,
+  day: number,
+  hours = 0,
+  minutes = 0,
+  seconds = 0,
+  ms = 0
+): Date {
+  return new Date(Date.UTC(year, monthIndex, day, hours, minutes, seconds, ms) - BANGKOK_OFFSET_MS);
+}
+
 export function formatDateToDateKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
+  const parts = toBangkokDateParts(date);
+  const y = parts.year;
+  const m = String(parts.month + 1).padStart(2, '0');
+  const d = String(parts.date).padStart(2, '0');
   return `${y}-${m}-${d}`;
 }
 
 export function isSunday(date: Date): boolean {
-  return date.getDay() === 0;
+  return toBangkokDateParts(date).day === 0;
 }
 
 export function isWeekend(date: Date): boolean {
-  const day = date.getDay();
+  const day = toBangkokDateParts(date).day;
   return day === 0 || day === 6; // Sunday or Saturday
 }
 
@@ -42,29 +88,30 @@ export function countElapsedBusinessDays(
   to: Date = new Date(),
   companyHolidays: Set<string> = new Set()
 ): number {
-  const current = new Date(from);
-  current.setHours(0, 0, 0, 0);
+  const fromParts = toBangkokDateParts(from);
+  const toParts = toBangkokDateParts(to);
 
-  const target = new Date(to);
-  target.setHours(0, 0, 0, 0);
+  let current = createBangkokDate(fromParts.year, fromParts.month, fromParts.date, 0, 0, 0);
+  const target = createBangkokDate(toParts.year, toParts.month, toParts.date, 0, 0, 0);
 
   if (current >= target) {
     return 0;
   }
 
   let count = 0;
-  current.setDate(current.getDate() + 1);
+  current = new Date(current.getTime() + 24 * 3600 * 1000);
 
   while (current <= target) {
-    const dayOfWeek = current.getDay();
-    const dateKey = formatDateToDateKey(current);
+    const curParts = toBangkokDateParts(current);
+    const dayOfWeek = curParts.day;
+    const dateKey = `${curParts.year}-${String(curParts.month + 1).padStart(2, '0')}-${String(curParts.date).padStart(2, '0')}`;
 
     // Skip Sunday (0) and any holiday/leave in companyHolidays
     if (dayOfWeek !== 0 && !companyHolidays.has(dateKey)) {
       count++;
     }
 
-    current.setDate(current.getDate() + 1);
+    current = new Date(current.getTime() + 24 * 3600 * 1000);
   }
 
   return count;
@@ -72,7 +119,7 @@ export function countElapsedBusinessDays(
 
 /**
  * Calculates elapsed working time in milliseconds between from and to.
- * Working window: 08:00 - 17:00 (9 hours/day)
+ * Working window: 08:00 - 17:00 (9 hours/day) in Asia/Bangkok
  * Pauses:
  * - Nights (17:00 to 08:00 next day)
  * - Sundays (day 0)
@@ -86,26 +133,39 @@ export function calculateElapsedWorkingMs(
   if (from >= to) return 0;
 
   let totalMs = 0;
-  const cur = new Date(from);
-  cur.setHours(0, 0, 0, 0);
+  const fromParts = toBangkokDateParts(from);
+  const toParts = toBangkokDateParts(to);
 
-  const endLimit = new Date(to);
-  endLimit.setHours(0, 0, 0, 0);
+  let curMidnight = createBangkokDate(fromParts.year, fromParts.month, fromParts.date, 0, 0, 0);
+  const endMidnight = createBangkokDate(toParts.year, toParts.month, toParts.date, 0, 0, 0);
+  const fromMidnightTime = curMidnight.getTime();
 
-  while (cur <= endLimit) {
-    const dayOfWeek = cur.getDay();
-    const dateKey = formatDateToDateKey(cur);
+  let currentOffStreak = 0;
+  let holidayPenaltyMs = 0;
+
+  while (curMidnight <= endMidnight) {
+    const curParts = toBangkokDateParts(curMidnight);
+    const dayOfWeek = curParts.day;
+    const dateKey = `${curParts.year}-${String(curParts.month + 1).padStart(2, '0')}-${String(curParts.date).padStart(2, '0')}`;
 
     // Skip Sunday (0) and any holiday/leave
     const isOff = dayOfWeek === 0 || holidays.has(dateKey);
 
-    if (!isOff) {
-      const year = cur.getFullYear();
-      const month = cur.getMonth();
-      const day = cur.getDate();
+    if (isOff) {
+      // Off-days strictly after the update's calendar date accumulate into a consecutive off-day streak
+      if (curMidnight.getTime() > fromMidnightTime) {
+        currentOffStreak++;
+      }
+    } else {
+      const workStart = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
+      const workEnd = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0);
 
-      const workStart = new Date(year, month, day, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
-      const workEnd = new Date(year, month, day, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0, 0);
+      // If we just completed a consecutive off-day streak >= 2, apply +9h fixed once for that streak
+      // Only active once the working window of this working day begins (to >= workStart)
+      if (currentOffStreak >= 2 && to.getTime() >= workStart.getTime()) {
+        holidayPenaltyMs += WORK_MS_PER_DAY;
+      }
+      currentOffStreak = 0;
 
       const periodStart = Math.max(from.getTime(), workStart.getTime());
       const periodEnd = Math.min(to.getTime(), workEnd.getTime());
@@ -115,10 +175,10 @@ export function calculateElapsedWorkingMs(
       }
     }
 
-    cur.setDate(cur.getDate() + 1);
+    curMidnight = new Date(curMidnight.getTime() + 24 * 3600 * 1000);
   }
 
-  return totalMs;
+  return totalMs + holidayPenaltyMs;
 }
 
 /**
@@ -134,7 +194,8 @@ export function calculateElapsedBusinessMs(
 
 /**
  * Adds working milliseconds to a starting date, skipping non-working hours,
- * Sundays, company holidays, and user leaves.
+ * Sundays, company holidays, and user leaves in Asia/Bangkok time.
+ * If a consecutive off-day streak >= 2 is crossed, consumes +9h fixed once for that streak.
  */
 export function addWorkingMs(
   startDate: Date,
@@ -144,49 +205,64 @@ export function addWorkingMs(
   if (msToAdd <= 0) return new Date(startDate);
 
   let remainingMs = msToAdd;
-  const cur = new Date(startDate);
+  let cur = new Date(startDate);
+  const startParts = toBangkokDateParts(startDate);
+  const startMidnightTime = createBangkokDate(startParts.year, startParts.month, startParts.date, 0, 0, 0).getTime();
+
+  let currentOffStreak = 0;
 
   while (remainingMs > 0) {
-    const dayOfWeek = cur.getDay();
-    const dateKey = formatDateToDateKey(cur);
+    const curParts = toBangkokDateParts(cur);
+    const dayOfWeek = curParts.day;
+    const dateKey = `${curParts.year}-${String(curParts.month + 1).padStart(2, '0')}-${String(curParts.date).padStart(2, '0')}`;
     const isOff = dayOfWeek === 0 || holidays.has(dateKey);
 
+    const curMidnightTime = createBangkokDate(curParts.year, curParts.month, curParts.date, 0, 0, 0).getTime();
+    const nextDayStart = createBangkokDate(curParts.year, curParts.month, curParts.date + 1, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
+
     if (isOff) {
-      // Jump to 08:00 next day
-      cur.setDate(cur.getDate() + 1);
-      cur.setHours(WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
+      if (curMidnightTime > startMidnightTime) {
+        currentOffStreak++;
+      }
+      cur = nextDayStart;
       continue;
     }
 
-    const year = cur.getFullYear();
-    const month = cur.getMonth();
-    const day = cur.getDate();
-
-    const workStart = new Date(year, month, day, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
-    const workEnd = new Date(year, month, day, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0, 0);
-
-    // If cur is before 08:00 on a working day, advance to 08:00
-    if (cur < workStart) {
-      cur.setTime(workStart.getTime());
+    // It's a working day!
+    // Check if we just completed a streak of >= 2 off-days
+    if (currentOffStreak >= 2) {
+      currentOffStreak = 0;
+      if (remainingMs <= WORK_MS_PER_DAY) {
+        // The holiday penalty completed the remaining threshold right at the start of this working day!
+        const workStart = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
+        return workStart;
+      }
+      remainingMs -= WORK_MS_PER_DAY;
+    } else {
+      currentOffStreak = 0;
     }
 
-    // If cur is at or after 17:30 on a working day, advance to next day 08:00
+    const workStart = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
+    const workEnd = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0);
+
+    if (cur < workStart) {
+      cur = workStart;
+    }
+
     if (cur >= workEnd) {
-      cur.setDate(cur.getDate() + 1);
-      cur.setHours(WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
+      cur = nextDayStart;
       continue;
     }
 
     const availableMsToday = workEnd.getTime() - cur.getTime();
 
     if (remainingMs <= availableMsToday) {
-      cur.setTime(cur.getTime() + remainingMs);
+      cur = new Date(cur.getTime() + remainingMs);
       remainingMs = 0;
       break;
     } else {
       remainingMs -= availableMsToday;
-      cur.setDate(cur.getDate() + 1);
-      cur.setHours(WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
+      cur = nextDayStart;
     }
   }
 

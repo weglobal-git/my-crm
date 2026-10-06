@@ -76,6 +76,8 @@ export interface UserMonthlyCardHealthSummary {
   redPenaltyXp?: number;
 }
 
+import type { MonthlyLtcSummary } from '@/lib/ltc-utils';
+
 export interface LeaderboardItem {
   rank: number;
   userId: string;
@@ -88,6 +90,7 @@ export interface LeaderboardItem {
   healthTier?: CardHealthTier;
   breakdown?: LeaderboardScoreBreakdown;
   dailyHealthSummary?: UserMonthlyCardHealthSummary;
+  dailyLtcSummary?: MonthlyLtcSummary;
 }
 
 export interface LeaderboardCategoryData {

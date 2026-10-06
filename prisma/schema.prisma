@@ -287,6 +287,8 @@ model Opportunity {
   quotedAt         DateTime?
   reserveId        String?
   type             OpportunityType   @default(SALES_DEAL)
+  isPinned         Boolean           @default(false)
+  hotNote          String?
   activityLogs     ActivityLog[]
   attachments      Attachment[]
   notes            Note[]

@@ -117,3 +117,53 @@ export async function toggleCompleteNote(noteId: string, isCompleted: boolean) {
 }
 
 export const togglePriorityNote = togglePinNote;
+
+export interface DealTodoItem {
+  id: string;
+  content: string;
+  isPinned: boolean;
+  isCompleted?: boolean;
+}
+
+export async function getPendingTodosMap(
+  dealIds: string[]
+): Promise<Record<string, DealTodoItem[]>> {
+  if (!dealIds || dealIds.length === 0) return {};
+
+  try {
+    const notes = await prisma.note.findMany({
+      where: {
+        opportunityId: { in: dealIds },
+        isCompleted: false,
+      },
+      select: {
+        id: true,
+        content: true,
+        isPinned: true,
+        opportunityId: true,
+      },
+      orderBy: [
+        { isPinned: "desc" },
+        { createdAt: "desc" },
+      ],
+    });
+
+    const map: Record<string, DealTodoItem[]> = {};
+    for (const note of notes) {
+      if (!map[note.opportunityId]) {
+        map[note.opportunityId] = [];
+      }
+      map[note.opportunityId].push({
+        id: note.id,
+        content: note.content,
+        isPinned: note.isPinned,
+        isCompleted: false,
+      });
+    }
+
+    return map;
+  } catch (error) {
+    console.error("Failed to fetch pending todos map:", error);
+    return {};
+  }
+}

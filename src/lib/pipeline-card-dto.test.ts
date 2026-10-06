@@ -19,6 +19,8 @@ test('pipelineCardSelect: enforces minimal payload configuration', () => {
   assert.equal(pipelineCardSelect.dueDate, true);
   assert.equal(pipelineCardSelect.pipelineStageId, true);
   assert.equal(pipelineCardSelect.ownerId, true);
+  assert.equal(pipelineCardSelect.isPinned, true);
+  assert.equal(pipelineCardSelect.hotNote, true);
 
   // 2. Activity logs must strictly fetch only 1 latest non-system log
   const activityLogsSelect = pipelineCardSelect.activityLogs as {
@@ -59,6 +61,8 @@ test('KanbanCardDTO: Red Card threshold detection works with card DTO', () => {
     lossReason: null,
     reserveId: null,
     invoiceId: null,
+    isPinned: false,
+    hotNote: null,
     createdAt: now,
     updatedAt: now,
     company: { id: 'comp-1', name: 'Acme Corp', displayName: 'Acme' },
@@ -88,6 +92,7 @@ test('KanbanCardDTO: Red Card threshold detection works with card DTO', () => {
   };
   // Without leaves, it is red (elapsed > 2 business days)
   const isRedDefault = checkIsRedCard(overdueNoDueDate, new Set());
+  assert.equal(isRedDefault, true, 'Without leaves, deal should be a red card');
   
   // With owner leaves covering all intermediate days, it should NOT be red
   const dateStr1 = fourDaysAgo.toISOString().split('T')[0];
@@ -121,6 +126,8 @@ test('KanbanCardDTO: sortDeals correctly prioritizes Urgent, Red, and Normal DTO
     lossReason: null,
     reserveId: null,
     invoiceId: null,
+    isPinned: false,
+    hotNote: null,
     createdAt: new Date(now.getTime() - 1000),
     updatedAt: new Date(now.getTime() - 1000),
     company: null,
@@ -142,13 +149,21 @@ test('KanbanCardDTO: sortDeals correctly prioritizes Urgent, Red, and Normal DTO
     topic: 'Urgent Deal',
   };
 
+  const pinnedDeal: KanbanCardDTO = {
+    ...normalDeal,
+    id: 'deal-pinned',
+    topic: 'Pinned Deal',
+    isPinned: true,
+  };
+
   const pendingAcceleratorsMap = {
     'deal-urgent': { count: 2, earliestPendingAt: now.toISOString() },
   };
 
-  const sorted = sortDeals([normalDeal, redDeal, urgentDeal], pendingAcceleratorsMap);
+  const sorted = sortDeals([normalDeal, redDeal, urgentDeal, pinnedDeal], pendingAcceleratorsMap);
 
-  assert.equal(sorted[0].id, 'deal-urgent', 'Urgent/Manager call deal must be sorted first');
-  assert.equal(sorted[1].id, 'deal-red', 'Red card deal must be sorted second');
-  assert.equal(sorted[2].id, 'deal-normal', 'Normal card deal must be sorted third');
+  assert.equal(sorted[0].id, 'deal-pinned', 'Pinned deal must be sorted first above all cards (Rule 0)');
+  assert.equal(sorted[1].id, 'deal-urgent', 'Urgent/Manager call deal must be sorted second');
+  assert.equal(sorted[2].id, 'deal-red', 'Red card deal must be sorted third');
+  assert.equal(sorted[3].id, 'deal-normal', 'Normal card deal must be sorted fourth');
 });

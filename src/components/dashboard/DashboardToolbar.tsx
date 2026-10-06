@@ -5,8 +5,6 @@ import {
   SlidersHorizontal,
   RefreshCw,
   AlertCircle,
-  Trophy,
-  Briefcase,
   Globe,
   Building2,
   X,
@@ -53,9 +51,6 @@ interface DashboardToolbarProps {
   onRefresh: () => void;
   isStale?: boolean;
   onPrint?: (sections: PrintSections, targetMonth: number, targetYear: number) => void;
-  activeTab?: DashboardTab;
-  onTabChange?: (tab: DashboardTab) => void;
-  canSeeSales?: boolean;
   allowedSections: DashboardSectionAccess;
 }
 
@@ -74,9 +69,6 @@ export function DashboardToolbar({
   onRefresh,
   isStale = false,
   onPrint,
-  activeTab = "sale_deal",
-  onTabChange,
-  canSeeSales = true,
   allowedSections,
 }: DashboardToolbarProps) {
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);

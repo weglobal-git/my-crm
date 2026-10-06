@@ -295,30 +295,48 @@ export function ScoringRulesModal({ isOpen, initialCategory = "card_health", onC
                 <div className="rounded-xl border border-[#3A3B3C] bg-[#222426] p-3.5 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wider">
-                      <Clock className="w-4 h-4 text-sky-400" />
+                      <Clock className="w-4 h-4 text-[#C7F33C]" />
                       <span>LTC (Long-Time-Contact)</span>
                     </span>
-                    <span className="text-[10px] text-sky-400 font-mono font-medium bg-[#1C1C1D] px-2 py-0.5 rounded border border-[#3A3B3C]">
-                      Phase 2
+                    <span className="text-[10px] text-[#C7F33C] font-mono font-medium bg-[#1C1C1D] px-2 py-0.5 rounded border border-[#3A3B3C]">
+                      Team Metric
                     </span>
                   </div>
 
                   <p className="text-[11px] text-slate-300 leading-relaxed">
-                    Team metric encouraging reps to follow up and resolve stale contacts across the department.
+                    Shared team metric rewarding proactive follow-ups and resolving stale customer contacts across the department.
                   </p>
 
-                  <div className="p-3 rounded-lg bg-[#1C1C1D] border border-[#3A3B3C] space-y-1.5">
-                    <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Mechanism</span>
+                  <div className="space-y-1.5">
+                    <div className="p-2.5 rounded-lg bg-[#1C1C1D] border border-[#3A3B3C] flex items-start gap-2.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="text-[11px] space-y-0.5">
+                        <div className="text-slate-200 font-semibold">+1 XP per day for team</div>
+                        <div className="text-slate-400">
+                          100% cleared (0 LTC accounts) at 17:00 end of workday cutoff.
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Operates similarly to Red Card, measuring total pending Long-Time-Contacts remaining across the team.
-                    </p>
+
+                    <div className="p-2.5 rounded-lg bg-[#1C1C1D] border border-[#3A3B3C] flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="text-[11px] space-y-0.5">
+                        <div className="text-slate-200 font-semibold">0 XP on that day</div>
+                        <div className="text-slate-400">
+                          If even 1 LTC account remains pending at 17:00 cutoff.
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="p-2.5 rounded-lg bg-[#1C1C1D] border border-[#3A3B3C] text-[11px] text-slate-400">
-                    <span className="text-amber-400 font-semibold">Status:</span> LTC module is currently in development. Scored at 0 XP for Phase 1.
+                  <div className="p-2.5 rounded-lg bg-[#1C1C1D] border border-[#3A3B3C] flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">Sundays &amp; Company Holidays</span>
+                    <span className="font-mono text-amber-400">Auto-Pause</span>
+                  </div>
+
+                  <div className="p-2.5 rounded-lg bg-[#1C1C1D] border border-[#3A3B3C] flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400">Monthly Team Cap</span>
+                    <span className="font-mono font-bold text-[#C7F33C]">20 XP</span>
                   </div>
                 </div>
               </div>

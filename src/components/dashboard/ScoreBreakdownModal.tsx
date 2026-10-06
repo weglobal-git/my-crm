@@ -115,9 +115,7 @@ export function ScoreBreakdownModal({ item, onClose }: ScoreBreakdownModalProps)
                   <div className="font-sans text-[11px] text-slate-400">Long-Time-Contact (Team Score)</div>
                 </div>
               </div>
-              <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30">
-                Phase 2
-              </span>
+              <span className="font-bold text-sky-400">+{b.ltcXp ?? 0} XP</span>
             </div>
 
             {/* 4. Quotation (Max 10 XP) */}

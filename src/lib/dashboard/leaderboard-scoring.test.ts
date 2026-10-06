@@ -6,7 +6,6 @@ import {
   rankItems,
   buildPodium,
   getCardHealthScoreFromRedRate,
-  RED_RATE_LADDER,
 } from './leaderboard-scoring';
 
 test('getCardHealthScoreFromRedRate assigns fixed points according to 8-tier ladder', () => {

@@ -1,9 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DashboardSectionAccess, SalesOverviewSnapshot } from "@/lib/dashboard/sales-overview";
-import dynamic from "next/dynamic";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { DashboardToolbar, type DashboardTab } from "./DashboardToolbar";
 import { SalesSummarySection } from "./SalesSummarySection";
@@ -23,11 +21,8 @@ interface DashboardOverviewViewProps {
 export function DashboardOverviewView({
   snapshot,
   sections,
-  initialTab,
   actor,
 }: DashboardOverviewViewProps) {
-  const router = useRouter();
-
   const currentMonth = getBangkokMonth();
   const currentYear = getBangkokYear();
   const canSeeSales = Object.values(sections).some(Boolean);
@@ -71,10 +66,6 @@ export function DashboardOverviewView({
   const month = filters.month;
   const year = filters.year;
 
-  const [activeTab, setActiveTab] = useState<DashboardTab>(
-    initialTab || (canSeeSales ? "sale_deal" : "leaderboard")
-  );
-
   const [printSections, setPrintSections] = useState<PrintSections>({
     worldMap: canSeeSales,
     worldMapPeriod: "all_time",
@@ -86,18 +77,21 @@ export function DashboardOverviewView({
   const [isPrinting, setIsPrinting] = useState(false);
   const [isPrintReportReady, setIsPrintReportReady] = useState(false);
 
-  const sanitizePrintSections = (requested: PrintSections): PrintSections => ({
-    worldMap: Boolean(requested.worldMap) && canSeeSales,
-    worldMapPeriod: ["all_time", "year", "month"].includes(requested.worldMapPeriod)
-      ? requested.worldMapPeriod
-      : "all_time",
-    saleSummary: requested.saleSummary && sections.saleSummary,
-    saleSummaryPeriod: ["year", "month"].includes(requested.saleSummaryPeriod)
-      ? requested.saleSummaryPeriod
-      : "month",
-    saleTracking: requested.saleTracking && sections.saleTracking,
-    annualReport: requested.annualReport && sections.annualSaleReport,
-  });
+  const sanitizePrintSections = useCallback(
+    (requested: PrintSections): PrintSections => ({
+      worldMap: Boolean(requested.worldMap) && canSeeSales,
+      worldMapPeriod: ["all_time", "year", "month"].includes(requested.worldMapPeriod)
+        ? requested.worldMapPeriod
+        : "all_time",
+      saleSummary: requested.saleSummary && sections.saleSummary,
+      saleSummaryPeriod: ["year", "month"].includes(requested.saleSummaryPeriod)
+        ? requested.saleSummaryPeriod
+        : "month",
+      saleTracking: requested.saleTracking && sections.saleTracking,
+      annualReport: requested.annualReport && sections.annualSaleReport,
+    }),
+    [canSeeSales, sections.annualSaleReport, sections.saleSummary, sections.saleTracking]
+  );
 
   const currentCountry = filters.country;
   const currentAccount = filters.account;
@@ -148,7 +142,6 @@ export function DashboardOverviewView({
     params.set("year", String(normalizedNext.year));
     if (normalizedNext.country) params.set("country", normalizedNext.country);
     if (normalizedNext.account) params.set("account", normalizedNext.account);
-    if (activeTab === "leaderboard") params.set("tab", "leaderboard");
 
     const nextUrl = `/dashboard/overview?${params.toString()}`;
     if (typeof window !== "undefined" && window.location.search !== `?${params.toString()}`) {
@@ -222,14 +215,17 @@ export function DashboardOverviewView({
       if (pending) {
         sessionStorage.removeItem("crm_auto_print");
         const parsed = sanitizePrintSections(JSON.parse(pending) as PrintSections);
-        setPrintSections(parsed);
-        setIsPrintReportReady(false);
-        setIsPrinting(true);
+        const timer = setTimeout(() => {
+          setPrintSections(parsed);
+          setIsPrintReportReady(false);
+          setIsPrinting(true);
+        }, 0);
+        return () => clearTimeout(timer);
       }
     } catch {
       // Ignore storage errors in restricted contexts
     }
-  }, [snapshot, month, year]);
+  }, [snapshot, month, year, sanitizePrintSections]);
 
   const handlePrint = (sections: PrintSections, targetMonth: number, targetYear: number) => {
     const allowedPrintSections = sanitizePrintSections(sections);
@@ -267,9 +263,6 @@ export function DashboardOverviewView({
           onClearAccount={handleClearAccount}
           onRefresh={handleRefresh}
           onPrint={handlePrint}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          canSeeSales={canSeeSales}
           allowedSections={sections}
         />
 

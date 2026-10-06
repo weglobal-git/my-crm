@@ -1,12 +1,31 @@
 "use client";
 
 import { useState, useMemo, useCallback, forwardRef, useImperativeHandle, useEffect, useRef } from "react";
-import { useSWRConfig } from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { updateOpportunity } from "@/lib/actions/opportunity";
 import { useDialog } from "@/providers/DialogProvider";
-import { DollarSign, Package, Calendar, FileText, ChevronDown, Check } from "lucide-react";
+import {
+  DollarSign,
+  Package,
+  Calendar,
+  FileText,
+  ChevronDown,
+  Check,
+  Building2,
+  Users,
+  Phone,
+  Mail,
+  MapPin,
+  ExternalLink,
+  Globe,
+  Star,
+  User,
+  Loader2,
+} from "lucide-react";
 import { CalendarDatePicker } from "@/components/ui/CalendarDatePicker";
+import { getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
+import { getAccountOverview } from "@/lib/actions/contact";
 
 const CURRENCY_OPTIONS = [
   { value: "THB", label: "THB (฿)" },
@@ -35,6 +54,34 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
   const [isSaving, setIsSaving] = useState(false);
   const [showCurrencyMenu, setShowCurrencyMenu] = useState(false);
   const currencyMenuRef = useRef<HTMLDivElement>(null);
+
+  // Fetch full account information and contact persons on-demand
+  const companyId = deal.company?.id;
+  const overviewKey = companyId ? getAccountOverviewKey(companyId) : null;
+  const { data: accountOverview, isLoading: isLoadingAccount } = useSWR(
+    overviewKey,
+    () => getAccountOverview(companyId!, { includeAddresses: true, includeLogs: false }),
+    { revalidateOnFocus: false, dedupingInterval: 30000 }
+  );
+
+  const accountCompany = accountOverview?.company;
+  const accountAddresses = accountOverview?.addresses || [];
+  const primaryAddress = accountAddresses.find((a) => a.isDefault) || accountAddresses[0] || null;
+  const accountContacts = accountOverview?.contacts || [];
+
+  const accountPhones = useMemo(() => {
+    if (!accountCompany) return [];
+    if (accountCompany.phones && accountCompany.phones.length > 0) return accountCompany.phones;
+    if (accountCompany.phone) return [accountCompany.phone];
+    return [];
+  }, [accountCompany]);
+
+  const accountEmails = useMemo(() => {
+    if (!accountCompany) return [];
+    if (accountCompany.emails && accountCompany.emails.length > 0) return accountCompany.emails;
+    if (accountCompany.email) return [accountCompany.email];
+    return [];
+  }, [accountCompany]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -288,6 +335,300 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Account Information Section */}
+      <div className="bg-[#3A3B3C] border border-[#4E4F50] rounded-2xl p-5 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+            <Building2 className="w-4 h-4 text-slate-400" />
+            Account Information
+          </h4>
+          {accountCompany && (
+            <div className="flex items-center gap-1.5">
+              {accountCompany.type && (
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#252728] text-slate-300 border border-[#4E4F50]">
+                  {accountCompany.type}
+                </span>
+              )}
+              {accountCompany.status && (
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    accountCompany.status === "QUALIFIED"
+                      ? "bg-[#C7F33C]/10 text-[#C7F33C] border-[#C7F33C]/30"
+                      : "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                  }`}
+                >
+                  {accountCompany.status === "QUALIFIED" ? "Qualified" : accountCompany.status}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        {isLoadingAccount ? (
+          <div className="flex items-center justify-center p-6 text-slate-400 gap-2 text-xs">
+            <Loader2 className="w-4 h-4 animate-spin text-[#C7F33C]" />
+            <span>Loading account details...</span>
+          </div>
+        ) : !companyId ? (
+          <div className="text-xs text-slate-400 bg-[#252728] p-3.5 rounded-xl border border-[#4E4F50]/50 text-center">
+            No account linked to this deal
+          </div>
+        ) : accountCompany ? (
+          <div className="flex flex-col gap-3.5">
+            {/* Account Name & Legal Name */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-[#252728] p-3.5 rounded-xl border border-[#4E4F50]/60">
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Account Name</span>
+                <span className="text-xs font-bold text-slate-100">{accountCompany.displayName || accountCompany.name}</span>
+              </div>
+              {accountCompany.displayName && accountCompany.name && accountCompany.displayName !== accountCompany.name && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Legal Entity</span>
+                  <span className="text-xs text-slate-300 font-medium">{accountCompany.name}</span>
+                </div>
+              )}
+              {accountCompany.country && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Country</span>
+                  <span className="text-xs text-slate-200 flex items-center gap-1.5 font-medium">
+                    <Globe className="w-3.5 h-3.5 text-slate-400" />
+                    {accountCompany.country}
+                  </span>
+                </div>
+              )}
+              {accountCompany.starRating > 0 && (
+                <div className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Star Rating</span>
+                  <span className="text-xs text-amber-400 flex items-center gap-1 font-semibold">
+                    <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                    {accountCompany.starRating} / 5
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Contact Channels (Phone / Email) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1 bg-[#252728] p-3 rounded-xl border border-[#4E4F50]/60">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                  <Phone className="w-3 h-3 text-slate-400" />
+                  Phone
+                </span>
+                {accountPhones.length > 0 ? (
+                  <div className="flex flex-col gap-1">
+                    {accountPhones.map((ph, idx) => (
+                      <a
+                        key={idx}
+                        href={`tel:${ph}`}
+                        className="text-xs text-slate-200 hover:text-[#C7F33C] transition-colors font-medium"
+                      >
+                        {ph}
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-xs text-slate-500 italic">No phone number</span>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-1 bg-[#252728] p-3 rounded-xl border border-[#4E4F50]/60">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                  <Mail className="w-3 h-3 text-slate-400" />
+                  Email
+                </span>
+                {accountEmails.length > 0 ? (
+                  <div className="flex flex-col gap-1">
+                    {accountEmails.map((em, idx) => (
+                      <a
+                        key={idx}
+                        href={`mailto:${em}`}
+                        className="text-xs text-slate-200 hover:text-[#C7F33C] transition-colors font-medium truncate"
+                      >
+                        {em}
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-xs text-slate-500 italic">No email address</span>
+                )}
+              </div>
+            </div>
+
+            {/* Address */}
+            {primaryAddress && (
+              <div className="flex flex-col gap-1.5 bg-[#252728] p-3.5 rounded-xl border border-[#4E4F50]/60">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                    <MapPin className="w-3 h-3 text-slate-400" />
+                    {primaryAddress.title || (primaryAddress.type ? `${primaryAddress.type} Address` : "Address")}
+                  </span>
+                  {primaryAddress.googleMapsUrl && (
+                    <a
+                      href={primaryAddress.googleMapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-[#C7F33C] hover:underline flex items-center gap-1 font-semibold"
+                    >
+                      <span>Google Maps</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  )}
+                </div>
+                <p className="text-xs text-slate-200 leading-relaxed">
+                  {primaryAddress.formattedAddress || [
+                    primaryAddress.addressLine1,
+                    primaryAddress.addressLine2,
+                    primaryAddress.district,
+                    primaryAddress.province,
+                    primaryAddress.postalCode,
+                    primaryAddress.country,
+                  ].filter(Boolean).join(" ")}
+                </p>
+              </div>
+            )}
+
+            {/* Notes if present */}
+            {accountCompany.notes && (
+              <div className="flex flex-col gap-1 bg-[#252728] p-3 rounded-xl border border-[#4E4F50]/60">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Notes</span>
+                <p className="text-xs text-slate-300 whitespace-pre-wrap">{accountCompany.notes}</p>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Contact Persons Section */}
+      <div className="bg-[#3A3B3C] border border-[#4E4F50] rounded-2xl p-5 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xs font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+            <Users className="w-4 h-4 text-slate-400" />
+            Contact Persons
+            {accountContacts.length > 0 && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#252728] text-slate-300 border border-[#4E4F50]">
+                {accountContacts.length}
+              </span>
+            )}
+          </h4>
+        </div>
+
+        {isLoadingAccount ? (
+          <div className="flex items-center justify-center p-6 text-slate-400 gap-2 text-xs">
+            <Loader2 className="w-4 h-4 animate-spin text-[#C7F33C]" />
+            <span>Loading contacts...</span>
+          </div>
+        ) : accountContacts.length === 0 ? (
+          <div className="text-xs text-slate-400 bg-[#252728] p-3.5 rounded-xl border border-[#4E4F50]/50 text-center">
+            No contact persons registered for this account
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2.5">
+            {accountContacts.map((contact) => {
+              const contactPhones = (contact.phones && contact.phones.length > 0)
+                ? contact.phones
+                : contact.phone
+                ? [contact.phone]
+                : [];
+              const contactEmails = (contact.emails && contact.emails.length > 0)
+                ? contact.emails
+                : contact.email
+                ? [contact.email]
+                : [];
+
+              return (
+                <div
+                  key={contact.id}
+                  className="bg-[#252728] border border-[#4E4F50]/60 rounded-xl p-3.5 flex flex-col gap-2.5 transition-colors hover:border-[#4E4F50]"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-[#4E4F50] bg-[#3A3B3C] flex items-center justify-center">
+                      {contact.image ? (
+                        <img
+                          src={contact.image}
+                          alt={contact.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <User className="w-4 h-4 text-slate-400" />
+                      )}
+                    </div>
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-100 truncate">
+                          {contact.name}
+                        </span>
+                        {contact.isActive ? (
+                          <span className="text-[9px] font-semibold text-[#C7F33C] flex items-center gap-1 shrink-0">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#C7F33C]" />
+                            Active
+                          </span>
+                        ) : (
+                          <span className="text-[9px] text-slate-500 shrink-0">Inactive</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                        {contact.role && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#3A3B3C] text-slate-300 font-medium">
+                            {contact.role}
+                          </span>
+                        )}
+                        {contact.contactDepartment && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#3A3B3C] text-slate-300 font-medium">
+                            {contact.contactDepartment}
+                          </span>
+                        )}
+                        {contact.department?.name && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 font-medium">
+                            {contact.department.name}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {(contactEmails.length > 0 || contactPhones.length > 0) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-[#3A3B3C]/70">
+                      {contactPhones.length > 0 && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-300 min-w-0">
+                          <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                          <div className="flex flex-col min-w-0">
+                            {contactPhones.map((ph, idx) => (
+                              <a
+                                key={idx}
+                                href={`tel:${ph}`}
+                                className="truncate hover:text-[#C7F33C] transition-colors"
+                              >
+                                {ph}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {contactEmails.length > 0 && (
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-300 min-w-0">
+                          <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                          <div className="flex flex-col min-w-0">
+                            {contactEmails.map((em, idx) => (
+                              <a
+                                key={idx}
+                                href={`mailto:${em}`}
+                                className="truncate hover:text-[#C7F33C] transition-colors"
+                              >
+                                {em}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
