@@ -3,14 +3,13 @@
 import { MessageSquare, RefreshCw, Sparkles, Copy, Check, Bot, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, ListTodo } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 
-import { deleteActivityLog, addSystemLog, getOpportunityActivityLogs, updateOpportunity } from "@/lib/actions/opportunity";
+import { deleteActivityLog, getOpportunityActivityLogs, updateOpportunity } from "@/lib/actions/opportunity";
 import type { TeamMemberItem } from "./DealTeamMembersSection";
 import { useDealMembersMutation } from "@/hooks/useDealMembersMutation";
 import { getLatestDealSummary, generateDealSummary } from "@/lib/actions/deal-summary";
 import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, deleteDealAcceleratorQuestion, type DealAcceleratorsState, type AcceleratorQuestion } from "@/lib/actions/ai-accelerator";
-import { getAllUsers } from "@/lib/actions/users";
+import dynamic from "next/dynamic";
 import { requestDealTransfer } from "@/lib/actions/notification";
-import { MemberSelectDrawer } from "./MemberSelectDrawer";
 import { useEffect, useState, useRef, useCallback, useMemo, Fragment } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import useSWRInfinite from "swr/infinite";
@@ -19,19 +18,60 @@ import { OpportunityType, Role } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
 import { useDialog } from "@/providers/DialogProvider";
-import { CustomerTab, type CustomerTabRef } from "./CustomerTab";
-import { NotesTab } from "./NotesTab";
-import { SharedMediaTab } from "./SharedMediaTab";
+import type { CustomerTabRef } from "./CustomerTab";
 import { EditDealMainBar } from "./EditDealMainBar";
 import { EditDealSubBar, SubBarTab, SubBarActionItem } from "./EditDealSubBar";
-import { DealActionsDrawer } from "./DealActionsDrawer";
-import { RewriteCommentModal } from "./RewriteCommentModal";
 import { ActivityFeedTab } from "./ActivityFeedTab";
-import { DealSystemLogsTab } from "./DealSystemLogsTab";
-import { DealManagerCallTab } from "./DealManagerCallTab";
-import { DealSummaryTab } from "./DealSummaryTab";
-import { DealCollaborateTab } from "./DealCollaborateTab";
-import { DealImageLightbox } from "./DealImageLightbox";
+
+const TabLoadingFallback = () => (
+  <div className="flex-1 flex items-center justify-center p-12 text-slate-400">
+    <div className="flex items-center gap-2 text-xs">
+      <div className="w-3.5 h-3.5 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
+      <span>Loading...</span>
+    </div>
+  </div>
+);
+
+const CustomerTab = dynamic(() => import("./CustomerTab").then((m) => m.CustomerTab), {
+  loading: TabLoadingFallback,
+  ssr: false,
+});
+const NotesTab = dynamic(() => import("./NotesTab").then((m) => m.NotesTab), {
+  loading: TabLoadingFallback,
+  ssr: false,
+});
+const SharedMediaTab = dynamic(() => import("./SharedMediaTab").then((m) => m.SharedMediaTab), {
+  loading: TabLoadingFallback,
+  ssr: false,
+});
+const DealSummaryTab = dynamic(() => import("./DealSummaryTab").then((m) => m.DealSummaryTab), {
+  loading: TabLoadingFallback,
+  ssr: false,
+});
+const DealSystemLogsTab = dynamic(() => import("./DealSystemLogsTab").then((m) => m.DealSystemLogsTab), {
+  loading: TabLoadingFallback,
+  ssr: false,
+});
+const DealManagerCallTab = dynamic(() => import("./DealManagerCallTab").then((m) => m.DealManagerCallTab), {
+  loading: TabLoadingFallback,
+  ssr: false,
+});
+const DealCollaborateTab = dynamic(() => import("./DealCollaborateTab").then((m) => m.DealCollaborateTab), {
+  loading: TabLoadingFallback,
+  ssr: false,
+});
+const MemberSelectDrawer = dynamic(() => import("./MemberSelectDrawer").then((m) => m.MemberSelectDrawer), {
+  ssr: false,
+});
+const DealActionsDrawer = dynamic(() => import("./DealActionsDrawer").then((m) => m.DealActionsDrawer), {
+  ssr: false,
+});
+const RewriteCommentModal = dynamic(() => import("./RewriteCommentModal").then((m) => m.RewriteCommentModal), {
+  ssr: false,
+});
+const DealImageLightbox = dynamic(() => import("./DealImageLightbox").then((m) => m.DealImageLightbox), {
+  ssr: false,
+});
 import { clearAllDraftsForDeal } from "@/lib/deal-draft-store";
 import { applyOptimisticTopicPatch, rollbackTopicPatch, shouldAcceptRevision, normalizeRevision } from "@/lib/deal-topic-sync";
 import { rollbackDeletedPageItem } from "@/lib/pipeline-delete-rollback";
@@ -41,6 +81,7 @@ import {
   decrementPendingBadge,
   incrementPendingBadge,
   setPendingBadgeCount,
+  dealAcceleratorsKey,
 } from "@/lib/deal-accelerators-sync";
 import { renderCommentText } from "@/components/ui/HighlightText";
 export { renderCommentText };
@@ -162,11 +203,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
           lastTopicRevisionRef.current = serverRevision;
         }
 
-        // Record system log asynchronously without blocking user flow
-        void addSystemLog(deal.id, `Changed topic from "${previousTopic}" to "${trimmed}".`).catch((err) => {
-          console.warn('[EditDealPanel] Failed to log topic change:', err);
-        });
-
         toast({ title: 'Success', description: 'Topic updated successfully', type: 'success' });
       } catch (error) {
         // 3. Granular Rollback on definite failure
@@ -205,12 +241,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     return () => document.removeEventListener('mousedown', handleHamburgerClickOutside);
   }, [showHamburgerMenu]);
 
-  // Users state for ownership transfer & member invite (backed by SWR "all-users" cache)
-  const { data: allCachedUsers } = useSWR<Awaited<ReturnType<typeof getAllUsers>>>("all-users", getAllUsers, {
-    revalidateOnFocus: false,
-    dedupingInterval: 120_000,
-  });
-  const users = allCachedUsers || [];
   const [isTransferring, setIsTransferring] = useState(false);
   const [prevDealId, setPrevDealId] = useState(deal.id);
   const [dealType, setDealType] = useState(deal.type);
@@ -338,12 +368,12 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [isCopiedSummary, setIsCopiedSummary] = useState(false);
 
-  // AI Deal Accelerators State
+  // AI Deal Accelerators State (strictly on-demand when Manager Call tab is active)
   const {
     data: acceleratorsResponse,
     mutate: mutateAccelerators,
   } = useSWR(
-    isOpen ? ['deal-accelerators', deal.id] : null,
+    dealAcceleratorsKey(deal.id, activeTab, isOpen),
     ([, id]) => getDealAccelerators(id),
     { revalidateOnFocus: false, dedupingInterval: 5000 }
   );
@@ -1005,13 +1035,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     try {
       await requestDealTransfer(deal.id, newOwnerId);
 
-      const allKnownUsers = (allCachedUsers && allCachedUsers.length > 0) ? allCachedUsers : users;
-      const newOwner = allKnownUsers.find((u: { id: string; name?: string | null }) => u.id === newOwnerId);
-      if (session?.user?.id && newOwner) {
-        void addSystemLog(deal.id, `Transferred ownership to ${newOwner.name}`).catch((err) => {
-          console.warn('[EditDealPanel] Failed to log deal transfer:', err);
-        });
-      }
       toast({ title: "Success", description: "Transfer request sent successfully", type: "success" });
     } catch (e) {
       console.error(e);
@@ -1541,7 +1564,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
               <DealCollaborateTab
                 deal={deal}
                 teamMembers={localTeamMembers}
-                allUsers={users as unknown as TeamMemberItem[]}
                 isOwner={isOwner}
                 isAdmin={isAdmin}
                 currentUserId={session?.user?.id}
@@ -1669,8 +1691,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         dealId={deal.id}
         currentOwnerId={deal.ownerId}
         excludeUserIds={[deal.ownerId, ...(localTeamMembers?.map(tm => tm.id) || [])]}
-        onConfirmMultiple={async (selectedIds) => {
-          await handleAddMembers(selectedIds, users as unknown as TeamMemberItem[]);
+        onConfirmMultiple={async (selectedIds, drawerUsers) => {
+          await handleAddMembers(selectedIds, (drawerUsers || []) as unknown as TeamMemberItem[]);
           setShowInviteDrawer(false);
         }}
         isSubmitting={isAddingMembers}

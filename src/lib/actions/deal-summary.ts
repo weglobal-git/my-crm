@@ -296,7 +296,7 @@ export async function resetDealSummaryPromptConfig() {
  */
 export async function getLatestDealSummary(dealId: string): Promise<DealSummaryResponse> {
   try {
-    await requireOpportunityAccess(dealId);
+    await requireOpportunityAccess(dealId, { capability: 'deal:view' });
 
     const summaryRow = await prisma.systemConfig.findUnique({
       where: { id: `deal_summary_${dealId}` },
@@ -365,7 +365,7 @@ export async function getLatestDealSummary(dealId: string): Promise<DealSummaryR
  */
 export async function generateDealSummary(dealId: string): Promise<DealSummaryResponse> {
   try {
-    await requireOpportunityAccess(dealId);
+    await requireOpportunityAccess(dealId, { capability: 'deal:interact' });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Unauthorized";
     return { success: false, error: "UNAUTHORIZED", message: msg };

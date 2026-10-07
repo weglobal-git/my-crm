@@ -5,7 +5,7 @@ import { requireOpportunityAccess } from "@/lib/pipeline-security";
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id: opportunityId } = await params;
-    await requireOpportunityAccess(opportunityId);
+    await requireOpportunityAccess(opportunityId, { capability: 'deal:view' });
 
     const attachments = await prisma.attachment.findMany({
       where: { opportunityId },

@@ -115,7 +115,6 @@ export function LeaderboardDrawer({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [isDeptDropdownOpen]);
 
-  const monthName = MONTH_NAMES[currentMonth - 1] || "";
   const podium = data?.overallPodium;
   const rank1 = podium?.rank1 || data?.overallXpItems?.[0] || null;
   const rank2 = podium?.rank2 || data?.overallXpItems?.[1] || null;

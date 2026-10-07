@@ -11,6 +11,7 @@ import {
   invalidatePipelineRecipientCache 
 } from "@/lib/pipeline-security";
 import { dispatchNotification } from "@/lib/notification-dispatcher";
+import { withSerializableRetry } from "@/lib/serializable-transaction";
 
 export interface NotificationItem {
   id: string;
@@ -138,7 +139,7 @@ export async function dismissNotification(notificationId: string) {
 export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("Unauthorized");
-  await requireOpportunityAccess(dealId, { ownerOrAdmin: true });
+  await requireOpportunityAccess(dealId, { capability: 'deal:transfer_owner' });
 
   const deal = await prisma.opportunity.findUnique({
     where: { id: dealId }
@@ -147,40 +148,72 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
   if (!deal) throw new Error("Deal not found");
   if (deal.ownerId === newOwnerId) throw new Error("Already the owner");
 
-  // Idempotency check: avoid duplicate pending request
-  const existingPending = await prisma.notification.findFirst({
-    where: {
-      recipientId: newOwnerId,
-      referenceId: dealId,
-      type: 'DEAL_TRANSFER_REQUEST',
-      status: 'PENDING',
-    },
-    include: {
-      sender: {
-        select: { id: true, name: true, image: true, role: true }
-      }
-    }
+  const newOwner = await prisma.user.findUnique({
+    where: { id: newOwnerId },
+    select: { name: true },
   });
 
-  if (existingPending) {
-    return { success: true, notification: existingPending, alreadyExists: true };
+  const { notification, transferLog, alreadyExists } = await withSerializableRetry(() =>
+    prisma.$transaction(async (tx) => {
+      const existingPending = await tx.notification.findFirst({
+        where: {
+          recipientId: newOwnerId,
+          referenceId: dealId,
+          type: 'DEAL_TRANSFER_REQUEST',
+          status: 'PENDING',
+        },
+        include: {
+          sender: {
+            select: { id: true, name: true, image: true, role: true },
+          },
+        },
+      });
+
+      if (existingPending) {
+        return { notification: existingPending, transferLog: null, alreadyExists: true };
+      }
+
+      const notification = await tx.notification.create({
+        data: {
+          recipientId: newOwnerId,
+          senderId: session.user.id,
+          type: 'DEAL_TRANSFER_REQUEST',
+          title: 'Deal Transfer Request',
+          message: `requests to transfer deal "${deal.topic}" to you.`,
+          referenceId: dealId,
+        },
+        include: {
+          sender: {
+            select: { id: true, name: true, image: true, role: true },
+          },
+        },
+      });
+
+      const transferLog = await tx.activityLog.create({
+        data: {
+          content: `Requested ownership transfer to ${newOwner?.name || 'user'}`,
+          opportunity: { connect: { id: dealId } },
+          user: { connect: { id: session.user.id } },
+          type: 'SYSTEM_UPDATE',
+        },
+        include: {
+          user: true,
+        },
+      });
+
+      return { notification, transferLog, alreadyExists: false };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
+  );
+
+  if (alreadyExists || !transferLog) {
+    return { success: true, notification, alreadyExists: true };
   }
 
-  const notification = await prisma.notification.create({
-    data: {
-      recipientId: newOwnerId,
-      senderId: session.user.id,
-      type: 'DEAL_TRANSFER_REQUEST',
-      title: 'Deal Transfer Request',
-      message: `requests to transfer deal "${deal.topic}" to you.`,
-      referenceId: dealId
-    },
-    include: {
-      sender: {
-        select: { id: true, name: true, image: true, role: true }
-      }
-    }
-  });
+  void notifyPrivatePipelineUpdate(dealId, {
+    action: 'ACTIVITY_ADDED',
+    dealId,
+    activityLog: transferLog,
+  }).catch(() => {});
 
   await dispatchNotification(newOwnerId, notification);
   return { success: true, notification };
@@ -190,7 +223,7 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
 export async function requestTeamInvite(dealId: string, userId: string) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw new Error("Unauthorized");
-  await requireOpportunityAccess(dealId);
+  await requireOpportunityAccess(dealId, { capability: 'deal:manage_members' });
 
   const deal = await prisma.opportunity.findUnique({
     where: { id: dealId },

@@ -88,7 +88,7 @@ export async function getDealAccelerators(
 ): Promise<{ success: boolean; data?: DealAcceleratorsState; error?: string }> {
   try {
     if (!options?.bypassAuth) {
-      await requireOpportunityAccess(dealId);
+      await requireOpportunityAccess(dealId, { capability: 'deal:view' });
     }
 
     const configRow = await prisma.systemConfig.findUnique({
@@ -176,7 +176,7 @@ export async function generateDealAccelerators(
   try {
     let actorId: string | undefined;
     if (!options?.bypassAuth) {
-      const access = await requireOpportunityAccess(dealId);
+      const access = await requireOpportunityAccess(dealId, { capability: 'deal:interact' });
       actorId = access.actor.id;
     }
     if (!actorId) {
@@ -527,7 +527,7 @@ export async function answerDealAccelerator(
     let currentActorId = "";
     if (!options?.bypassAuth) {
       // ตรวจสอบสิทธิ์: อนุญาตให้ทุกคนที่มีสิทธิ์เข้าถึงดีลนี้ (เช่น อยู่ในกลุ่ม/ทีม, เจ้าของดีล, ผู้จัดการ, Admin) ตอบได้
-      const { actor } = await requireOpportunityAccess(dealId);
+      const { actor } = await requireOpportunityAccess(dealId, { capability: 'deal:interact' });
       currentActorId = actor.id;
       const session = await getServerSession(authOptions);
       userName = session?.user?.name || options?.userName || "ผู้ใช้งาน";
@@ -696,7 +696,7 @@ export async function createManagerCallQuestion(
   clientGeneratedId?: string
 ): Promise<{ success: boolean; data?: DealAcceleratorsState; error?: string }> {
   try {
-    const { actor } = await requireOpportunityAccess(dealId);
+    const { actor } = await requireOpportunityAccess(dealId, { capability: 'deal:interact' });
     if (actor.role !== "ADMIN" && actor.role !== "MANAGEMENT") {
       return { success: false, error: "Only Admin or Management can send Manager Calls" };
     }
@@ -861,7 +861,7 @@ export async function deleteDealAcceleratorQuestion(
   questionId: string
 ): Promise<{ success: boolean; data?: DealAcceleratorsState; error?: string }> {
   try {
-    const { actor } = await requireOpportunityAccess(dealId);
+    const { actor } = await requireOpportunityAccess(dealId, { capability: 'deal:interact' });
     if (actor.role !== "ADMIN" && actor.role !== "MANAGEMENT") {
       return { success: false, error: "Only Admin or Management can delete questions" };
     }
@@ -935,7 +935,7 @@ export async function updateDealTargetGoal(
 ): Promise<{ success: boolean; data?: DealAcceleratorsState; error?: string }> {
   try {
     if (!options?.bypassAuth) {
-      await requireOpportunityAccess(dealId);
+      await requireOpportunityAccess(dealId, { capability: 'deal:interact' });
     }
 
     const configRow = await prisma.systemConfig.findUnique({

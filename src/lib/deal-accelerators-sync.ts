@@ -121,3 +121,18 @@ export function mergePendingAccelerators(
   }
   return result;
 }
+
+/**
+ * On-demand SWR key factory for Deal Accelerators.
+ * Ensures accelerators are ONLY fetched when the deal panel is open AND the user is viewing the Manager Call tab.
+ */
+export function dealAcceleratorsKey(
+  dealId?: string,
+  activeTab?: string,
+  isOpen?: boolean
+): ['deal-accelerators', string] | null {
+  if (!isOpen || activeTab !== 'manager-call' || !dealId) {
+    return null;
+  }
+  return ['deal-accelerators', dealId];
+}

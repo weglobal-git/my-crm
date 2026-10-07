@@ -5,12 +5,18 @@ import type { Prisma, Role } from '@prisma/client';
 import { authOptions } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { pusherServer } from '@/lib/pusher-server';
+import { buildOpportunityAccessWhere } from '@/lib/access/pipeline-policy';
+import { resolveAccessContext, toPipelineActor, type AccessContext } from '@/lib/access/access-context';
+import { can, requireCapability, type PipelineCapability } from '@/lib/access/pipeline-capabilities';
+
+export { can, requireCapability, type PipelineCapability };
 
 export type PipelineActor = {
   id: string;
   name?: string | null;
   role: Role;
   departments: string[];
+  departmentIds?: string[];
 };
 
 async function getPipelineActorFromSession(): Promise<PipelineActor> {
@@ -23,6 +29,9 @@ async function getPipelineActorFromSession(): Promise<PipelineActor> {
   let departments = Array.isArray(session.user.departments)
     ? session.user.departments.filter((name): name is string => typeof name === 'string')
     : [];
+  let departmentIds = Array.isArray(session.user.departmentIds)
+    ? session.user.departmentIds.filter((id): id is string => typeof id === 'string')
+    : [];
 
   if (!userId && session.user.email) {
     const dbUser = await prisma.user.findUnique({
@@ -34,13 +43,14 @@ async function getPipelineActorFromSession(): Promise<PipelineActor> {
       name = dbUser.name;
       role = dbUser.role;
       departments = dbUser.departments.map((d: { name: string }) => d.name);
+      departmentIds = dbUser.departments.map((d: { id: string }) => d.id);
     }
   }
 
   if (!userId) throw new Error('Unauthorized');
   if (!['ADMIN', 'MANAGEMENT', 'GENERAL'].includes(role)) throw new Error('Forbidden');
 
-  return { id: userId, name, role, departments };
+  return { id: userId, name, role, departments, departmentIds };
 }
 
 // In-memory TTL caches to optimize latency and eliminate duplicate queries
@@ -69,52 +79,61 @@ async function hasPipelinePermission(actor: PipelineActor) {
   return allowed;
 }
 
-export async function requirePipelineActor(actorOverride?: PipelineActor): Promise<PipelineActor> {
-  const actor = actorOverride ?? await getPipelineActorFromSession();
-  if (!await hasPipelinePermission(actor)) throw new Error('Forbidden');
-  return actor;
+export async function requirePipelineActor(): Promise<PipelineActor> {
+  const context = await resolveAccessContext();
+  if (!context.hasPipelineAccess) throw new Error('Forbidden');
+  return toPipelineActor(context);
 }
 
 export function getOpportunityAccessWhere(actor: PipelineActor): Prisma.OpportunityWhereInput {
-  if (actor.role === 'ADMIN') return {};
-
-  if (actor.role === 'MANAGEMENT' && actor.departments.length > 0) {
-    return {
-      OR: [
-        { owner: { departments: { some: { name: { in: actor.departments } } } } },
-        { teamMembers: { some: { departments: { some: { name: { in: actor.departments } } } } } },
-      ],
-    };
-  }
-
-  return {
-    OR: [
-      { ownerId: actor.id },
-      { teamMembers: { some: { id: actor.id } } },
-    ],
-  };
+  return buildOpportunityAccessWhere(actor);
 }
 
 export async function requireOpportunityAccess(
   opportunityId: string,
-  options: { ownerOrAdmin?: boolean; adminOnly?: boolean; actor?: PipelineActor } = {},
+  options: {
+    capability?: PipelineCapability;
+    ownerOrAdmin?: boolean;
+    adminOnly?: boolean;
+    actor?: PipelineActor;
+    context?: AccessContext;
+  } = {},
 ) {
-  const actor = options.actor ?? await getPipelineActorFromSession();
-  const [pipelineAllowed, opportunity] = await Promise.all([
-    hasPipelinePermission(actor),
-    prisma.opportunity.findFirst({
-      where: { id: opportunityId, ...getOpportunityAccessWhere(actor) },
-      select: { id: true, ownerId: true },
-    }),
-  ]);
+  const context = options.context ?? (options.actor ? undefined : await resolveAccessContext());
+  const actor: PipelineActor = options.actor ?? (context
+    ? toPipelineActor(context)
+    : await getPipelineActorFromSession());
 
-  if (!pipelineAllowed || !opportunity) throw new Error('Forbidden');
-  if (options.adminOnly && actor.role !== 'ADMIN') throw new Error('Forbidden');
-  if (options.ownerOrAdmin && !['ADMIN', 'MANAGEMENT'].includes(actor.role) && opportunity.ownerId !== actor.id) {
-    throw new Error('Forbidden');
+  const pipelineAllowed = context ? context.hasPipelineAccess : await hasPipelinePermission(actor);
+  if (!pipelineAllowed) throw new Error('Forbidden');
+
+  const opportunity = await prisma.opportunity.findFirst({
+    where: { id: opportunityId, ...buildOpportunityAccessWhere(actor) },
+    select: {
+      id: true,
+      ownerId: true,
+      type: true,
+      status: true,
+      updatedAt: true,
+      owner: { select: { id: true, departments: { select: { id: true, name: true } } } },
+      teamMembers: { select: { id: true, departments: { select: { id: true, name: true } } } },
+    },
+  });
+
+  if (!opportunity) throw new Error('Forbidden');
+
+  // Capability vocabulary as primary authority
+  if (options.capability) {
+    requireCapability(actor, options.capability, opportunity);
+  } else if (options.adminOnly) {
+    if (actor.role !== 'ADMIN') throw new Error('Forbidden');
+  } else if (options.ownerOrAdmin) {
+    requireCapability(actor, 'deal:manage_members', opportunity);
+  } else {
+    requireCapability(actor, 'deal:view', opportunity);
   }
 
-  return { actor, opportunity };
+  return { actor, opportunity, context };
 }
 
 export type OpportunityDateField = 'goodsReadyDate' | 'goodsLoadingDate' | 'dueDate';
@@ -126,14 +145,11 @@ export async function requireOpportunityDateEdit(
   actorOverride?: PipelineActor,
 ) {
   const access = await requireOpportunityAccess(opportunityId, {
-    ownerOrAdmin: true,
     actor: actorOverride,
+    capability: 'deal:edit_dates',
   });
-  const opportunity = await prisma.opportunity.findUnique({
-    where: { id: opportunityId },
-    select: { id: true, type: true, status: true, updatedAt: true },
-  });
-  if (!opportunity) throw new Error('Forbidden');
+  const opportunity = access.opportunity;
+
   if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(opportunity.status)) {
     throw new Error('ARCHIVED_DEAL');
   }

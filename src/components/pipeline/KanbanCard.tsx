@@ -46,7 +46,6 @@ import {
   type KanbanCardDTO,
   type PipelineCardDTO,
 } from "@/lib/pipeline-card-dto";
-import { calculateElapsedBusinessMs, WORK_HOURS_PER_DAY } from "@/lib/business-days";
 
 export { checkIsRedCard, getRedThreshold };
 export type { KanbanCardDTO, PipelineCardDTO };
@@ -96,7 +95,16 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
   const pendingTodosMap = useContext(PendingTodosContext);
   const { mutate: globalMutate } = useSWRConfig();
-  const isPinned = Boolean(deal.isPinned);
+  const [isPinned, setIsPinned] = useState(Boolean(deal.isPinned));
+  const pinMutationIdRef = useRef(0);
+  const activePinMutationsRef = useRef(0);
+
+  useEffect(() => {
+    // Only synchronize incoming deal.isPinned when no local pin mutations are in flight
+    if (activePinMutationsRef.current === 0) {
+      setIsPinned(Boolean(deal.isPinned));
+    }
+  }, [deal.isPinned]);
 
   const dealTodos = pendingTodosMap[deal.id] || [];
   const hasPriorityTodo = dealTodos.some(t => t.isPinned);
@@ -159,6 +167,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const [hotNote, setHotNote] = useState(deal.hotNote || '');
   const [isSavingHotNote, setIsSavingHotNote] = useState(false);
   const hotNoteDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const hotNoteMutationIdRef = useRef(0);
 
   useEffect(() => {
     setHotNote(deal.hotNote || '');
@@ -168,6 +177,13 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
 
   const handleTogglePin = useCallback(async () => {
     const nextPinned = !isPinned;
+    const mutationId = ++pinMutationIdRef.current;
+    activePinMutationsRef.current++;
+
+    // 1. Instant local visual update (< 5ms)
+    setIsPinned(nextPinned);
+
+    // 2. Optimistic update to SWR cache
     void globalMutate(
       (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
       (current: OpportunityWithRelations[] | undefined) => {
@@ -181,7 +197,21 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
       await togglePinOpportunity(deal.id, nextPinned);
     } catch (error) {
       console.error('Failed to toggle pin:', error);
-      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
+      // Only rollback if no subsequent click was initiated
+      if (mutationId === pinMutationIdRef.current) {
+        setIsPinned(!nextPinned);
+        void globalMutate(
+          (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+          (current: OpportunityWithRelations[] | undefined) => {
+            if (!current) return current;
+            return current.map(item => item.id === deal.id ? { ...item, isPinned: !nextPinned } : item);
+          },
+          false
+        );
+        void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
+      }
+    } finally {
+      activePinMutationsRef.current = Math.max(0, activePinMutationsRef.current - 1);
     }
   }, [deal.id, isPinned, globalMutate]);
 
@@ -190,6 +220,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
     const trimmed = textToSave.trim();
     if (trimmed === currentSaved) return;
 
+    const mutationId = ++hotNoteMutationIdRef.current;
     setIsSavingHotNote(true);
     void globalMutate(
       (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
@@ -204,9 +235,13 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
       await updateOpportunityHotNote(deal.id, trimmed || null);
     } catch (error) {
       console.error('Failed to save quick note:', error);
-      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
+      if (mutationId === hotNoteMutationIdRef.current) {
+        void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
+      }
     } finally {
-      setIsSavingHotNote(false);
+      if (mutationId === hotNoteMutationIdRef.current) {
+        setIsSavingHotNote(false);
+      }
     }
   }, [deal.id, deal.hotNote, globalMutate]);
 

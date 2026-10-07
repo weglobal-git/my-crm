@@ -51,10 +51,58 @@ export const pipelineCardSelect = Prisma.validator<Prisma.OpportunitySelect>()({
 });
 
 /**
+ * Lean select for Pin/Star mutation to minimize DB response payload.
+ */
+export const leanOpportunityPinSelect = {
+  id: true,
+  isPinned: true,
+  pipelineStageId: true,
+  status: true,
+  updatedAt: true,
+} as const;
+
+/**
+ * Lean select for Hot Note mutation to minimize DB response payload.
+ */
+export const leanOpportunityHotNoteSelect = {
+  id: true,
+  hotNote: true,
+  pipelineStageId: true,
+  status: true,
+  updatedAt: true,
+} as const;
+
+/**
  * Strongly-typed Card DTO derived directly from Prisma's type system.
  */
 export type KanbanCardDTO = Prisma.OpportunityGetPayload<{ select: typeof pipelineCardSelect }>;
 export type PipelineCardDTO = KanbanCardDTO;
+
+/**
+ * Shared client search predicate matching the product search contract.
+ * Covers deal topic, legal company name, trade displayName, sales owner name, invoiceId, and reserveId.
+ */
+export function matchesPipelineCardSearch(
+  deal: {
+    topic?: string | null;
+    company?: { name?: string | null; displayName?: string | null } | null;
+    owner?: { name?: string | null } | null;
+    invoiceId?: string | null;
+    reserveId?: string | null;
+  },
+  searchQuery: string
+): boolean {
+  const q = searchQuery.toLowerCase().trim();
+  if (!q) return true;
+  return Boolean(
+    (deal.topic && deal.topic.toLowerCase().includes(q)) ||
+    (deal.company?.name && deal.company.name.toLowerCase().includes(q)) ||
+    (deal.company?.displayName && deal.company.displayName.toLowerCase().includes(q)) ||
+    (deal.owner?.name && deal.owner.name.toLowerCase().includes(q)) ||
+    (deal.invoiceId && deal.invoiceId.toLowerCase().includes(q)) ||
+    (deal.reserveId && deal.reserveId.toLowerCase().includes(q))
+  );
+}
 
 import {
   calculateElapsedWorkingMs,

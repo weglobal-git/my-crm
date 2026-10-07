@@ -6,6 +6,7 @@ import {
   incrementPendingBadge,
   setPendingBadgeCount,
   mergePendingAccelerators,
+  dealAcceleratorsKey,
   type PendingAcceleratorsMap,
 } from './deal-accelerators-sync';
 import { parseLogContent } from './pipeline-activity-cache';
@@ -123,5 +124,17 @@ test('parseLogContent: categorizes non-image files into otherFiles', () => {
   assert.equal(images.length, 0);
   assert.equal(otherFiles.length, 1);
   assert.equal(otherFiles[0].filename, 'proposal.pdf');
+});
+
+test('dealAcceleratorsKey: only fetches on-demand when actively viewing manager-call tab', () => {
+  assert.equal(dealAcceleratorsKey('deal-1', 'activity', true), null);
+  assert.equal(dealAcceleratorsKey('deal-1', 'information', true), null);
+  assert.equal(dealAcceleratorsKey('deal-1', 'notes', true), null);
+  assert.equal(dealAcceleratorsKey('deal-1', 'summary', true), null);
+  assert.equal(dealAcceleratorsKey('deal-1', 'collaborate', true), null);
+  assert.equal(dealAcceleratorsKey('deal-1', 'quotes', true), null);
+  assert.equal(dealAcceleratorsKey('deal-1', 'manager-call', false), null);
+  assert.equal(dealAcceleratorsKey(undefined, 'manager-call', true), null);
+  assert.deepEqual(dealAcceleratorsKey('deal-1', 'manager-call', true), ['deal-accelerators', 'deal-1']);
 });
 

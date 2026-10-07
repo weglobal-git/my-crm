@@ -174,3 +174,39 @@ export async function getDashboardLeaderboardAction(input: {
   });
 }
 
+export interface LeaderboardWinnerSummary {
+  rank1: {
+    userId: string;
+    name: string;
+    image: string | null;
+    score: number;
+  } | null;
+}
+
+export async function getLeaderboardWinnerSummaryAction(input?: {
+  departmentId?: string | null;
+  month?: number;
+  year?: number;
+}): Promise<LeaderboardWinnerSummary> {
+  const { getContactActor } = await import('@/lib/actions/contact');
+  const contactActor = await getContactActor();
+  const actor = {
+    id: contactActor.id,
+    name: contactActor.name,
+    role: contactActor.role,
+    departments: contactActor.departments,
+  };
+
+  const { getBangkokMonth, getBangkokYear } = await import('@/lib/dashboard/sales-overview');
+  const month = input?.month ?? getBangkokMonth();
+  const year = input?.year ?? getBangkokYear();
+
+  const { getDepartmentLeaderboardWinnerSummary } = await import('@/lib/dashboard/leaderboard-data');
+  return await getDepartmentLeaderboardWinnerSummary({
+    actor,
+    departmentId: input?.departmentId,
+    month,
+    year,
+  });
+}
+

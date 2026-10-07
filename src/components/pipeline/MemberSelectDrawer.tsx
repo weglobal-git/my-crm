@@ -25,7 +25,7 @@ export interface MemberSelectDrawerProps {
   excludeUserIds?: string[];
   initialSelectedUserIds?: string[];
   confirmButtonLabel?: string;
-  onConfirmMultiple?: (selectedUserIds: string[]) => Promise<void> | void;
+  onConfirmMultiple?: (selectedUserIds: string[], allUsers?: UserItem[]) => Promise<void> | void;
   onConfirmSingle?: (selectedUserId: string) => Promise<void> | void;
   isSubmitting?: boolean;
 }
@@ -186,7 +186,7 @@ export function MemberSelectDrawer({
 
     if (mode === "multiple" && onConfirmMultiple) {
       if (selectedUserIds.length === 0 && !confirmButtonLabel) return;
-      await onConfirmMultiple(selectedUserIds);
+      await onConfirmMultiple(selectedUserIds, allUsers);
       onClose();
     } else if (mode === "single" && onConfirmSingle) {
       if (selectedUserIds.length === 0) return;

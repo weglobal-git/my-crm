@@ -317,7 +317,7 @@ export async function rewriteRawComment(dealId: string, rawText: string): Promis
   const boundedText = trimmed.length > 8000 ? trimmed.substring(0, 8000) : trimmed;
 
   try {
-    await requireOpportunityAccess(dealId);
+    await requireOpportunityAccess(dealId, { capability: 'deal:interact' });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Unauthorized";
     return { success: false, error: "UNAUTHORIZED", message: msg };

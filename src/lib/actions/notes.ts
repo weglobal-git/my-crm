@@ -5,7 +5,7 @@ import { notifyPrivatePipelineUpdate, requireOpportunityAccess } from "@/lib/pip
 
 export async function getNotes(opportunityId: string) {
   try {
-    await requireOpportunityAccess(opportunityId);
+    await requireOpportunityAccess(opportunityId, { capability: 'deal:view' });
 
     const notes = await prisma.note.findMany({
       where: { opportunityId },
@@ -29,7 +29,7 @@ export async function getNotes(opportunityId: string) {
 
 export async function createNote(opportunityId: string, content: string, color?: string) {
   try {
-    const { actor } = await requireOpportunityAccess(opportunityId);
+    const { actor } = await requireOpportunityAccess(opportunityId, { capability: 'deal:interact' });
 
     const note = await prisma.note.create({
       data: {
@@ -58,7 +58,7 @@ export async function deleteNote(noteId: string) {
   try {
     const note = await prisma.note.findUnique({ where: { id: noteId } });
     if (!note) throw new Error("Note not found");
-    const { actor } = await requireOpportunityAccess(note.opportunityId);
+    const { actor } = await requireOpportunityAccess(note.opportunityId, { capability: 'deal:interact' });
 
     if (note.authorId !== actor.id && actor.role !== "ADMIN") {
       throw new Error("Unauthorized to delete this note");
@@ -78,7 +78,7 @@ export async function togglePinNote(noteId: string, isPinned: boolean) {
   try {
     const existingNote = await prisma.note.findUnique({ where: { id: noteId } });
     if (!existingNote) throw new Error("Note not found");
-    await requireOpportunityAccess(existingNote.opportunityId);
+    await requireOpportunityAccess(existingNote.opportunityId, { capability: 'deal:interact' });
 
     const note = await prisma.note.update({
       where: { id: noteId },
@@ -99,7 +99,7 @@ export async function toggleCompleteNote(noteId: string, isCompleted: boolean) {
   try {
     const existingNote = await prisma.note.findUnique({ where: { id: noteId } });
     if (!existingNote) throw new Error("Note not found");
-    await requireOpportunityAccess(existingNote.opportunityId);
+    await requireOpportunityAccess(existingNote.opportunityId, { capability: 'deal:interact' });
 
     const note = await prisma.note.update({
       where: { id: noteId },
@@ -116,7 +116,9 @@ export async function toggleCompleteNote(noteId: string, isCompleted: boolean) {
   }
 }
 
-export const togglePriorityNote = togglePinNote;
+export async function togglePriorityNote(noteId: string, isPinned: boolean) {
+  return togglePinNote(noteId, isPinned);
+}
 
 export interface DealTodoItem {
   id: string;

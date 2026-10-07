@@ -30,15 +30,104 @@ import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
 import { useSidebar, type ColumnNavConfig } from "@/components/layout/SidebarContext";
 import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportunity";
-import { getMoreCompletedOpportunities } from "@/lib/actions/completed-deals";
+import { getCompletedOpportunitiesCursor } from "@/lib/actions/completed-deals";
 import { getPusherClient } from "@/lib/pusher";
 import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
-import useSWR, { mutate as globalMutate, preload } from "swr";
-import { getAllUsers } from "@/lib/actions/users";
+import useSWR, { mutate as globalMutate } from "swr";
+
+function EditDealPanelSkeleton() {
+  return (
+    <>
+      {/* Matching Backdrop blur */}
+      <div
+        className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 animate-in fade-in"
+        aria-hidden="true"
+      />
+
+      {/* Matching Drawer Frame */}
+      <div
+        role="dialog"
+        aria-label="Loading deal details"
+        aria-modal="true"
+        className="fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[600px] md:max-w-[calc(100vw-32px)] z-[101] flex animate-in slide-in-from-right-4 duration-200"
+      >
+        <div className="flex flex-col w-full h-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C] shadow-2xl bg-[#252728]">
+          <div className="flex flex-col md:flex-row w-full flex-1 min-h-0 overflow-hidden">
+            {/* Matching Tab Sidebar (desktop only) */}
+            <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-3 gap-3 z-10 shrink-0">
+              <div className="h-10 w-10 rounded-full bg-[#C7F33C]/20 flex items-center justify-center animate-pulse" />
+              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
+              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
+              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
+              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
+            </div>
+
+            {/* Matching Main Panel Area */}
+            <div className="w-full flex-1 bg-[#252728] flex flex-col min-w-0 h-full">
+              {/* Main Bar Skeleton (min-h-[56px]) */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1C1C1D] shrink-0 min-h-[56px] bg-[#252728]">
+                <div className="flex flex-col flex-1 pr-3 min-w-0 gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded bg-[#3A3B3C] animate-pulse shrink-0" />
+                    <div className="h-4 w-40 rounded bg-[#3A3B3C] animate-pulse" />
+                  </div>
+                  <div className="flex items-center gap-1.5 pl-6">
+                    <div className="h-3 w-28 rounded bg-[#3A3B3C]/60 animate-pulse" />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="w-8 h-8 rounded-lg bg-[#3A3B3C] animate-pulse" />
+                  <div className="w-8 h-8 rounded-lg bg-[#3A3B3C] animate-pulse" />
+                </div>
+              </div>
+
+              {/* Sub Bar Skeleton (min-h-[44px]) */}
+              <div className="flex items-center justify-between px-4 py-2 border-b border-[#1C1C1D] shrink-0 min-h-[44px] bg-[#252728]">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-20 rounded-md bg-[#C7F33C]/20 animate-pulse" />
+                  <div className="h-7 w-16 rounded-md bg-[#1C1C1D] animate-pulse" />
+                  <div className="h-7 w-20 rounded-md bg-[#1C1C1D] animate-pulse" />
+                </div>
+                <div className="w-7 h-7 rounded bg-[#1C1C1D] animate-pulse" />
+              </div>
+
+              {/* Body Content Skeleton (Activity Feed) */}
+              <div className="flex-1 p-4 space-y-4 overflow-y-auto bg-[#1C1C1D]">
+                {/* Input box skeleton */}
+                <div className="h-20 rounded-xl bg-[#252728] border border-[#3A3B3C]/50 animate-pulse" />
+
+                {/* Activity items */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-full bg-[#252728] animate-pulse shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3.5 w-32 rounded bg-[#252728] animate-pulse" />
+                      <div className="h-14 rounded-lg bg-[#252728] animate-pulse" />
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-full bg-[#252728] animate-pulse shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3.5 w-24 rounded bg-[#252728] animate-pulse" />
+                      <div className="h-10 rounded-lg bg-[#252728] animate-pulse" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 const loadEditDealPanel = () => import("./EditDealPanel");
-const EditDealPanel = dynamic(() => loadEditDealPanel().then(mod => mod.EditDealPanel), { ssr: false });
+const EditDealPanel = dynamic(() => loadEditDealPanel().then(mod => mod.EditDealPanel), {
+  ssr: false,
+  loading: () => <EditDealPanelSkeleton />,
+});
 
 const activeClass = "border-[#C7F33C] bg-[#252728] text-[#C7F33C]";
 
@@ -72,7 +161,7 @@ export function DroppablePlaceholder({ id, label }: { id: string, label: string 
   );
 }
 
-import { sortDeals, type KanbanCardDTO } from "@/lib/pipeline-card-dto";
+import { sortDeals, matchesPipelineCardSearch, type KanbanCardDTO } from "@/lib/pipeline-card-dto";
 export { sortDeals, type KanbanCardDTO };
 import { shouldAcceptRevision, normalizeRevision } from "@/lib/deal-topic-sync";
 import type { PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
@@ -252,12 +341,7 @@ export function KanbanBoard({
       stageDeals = stageDeals.filter(o => o.value != null && Number(o.value) > 0);
     }
     if (!isCompletedTab && searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      stageDeals = stageDeals.filter(o =>
-        (o.topic && o.topic.toLowerCase().includes(q)) ||
-        (o.company?.name && o.company.name.toLowerCase().includes(q)) ||
-        (o.company?.displayName && o.company.displayName.toLowerCase().includes(q))
-      );
+      stageDeals = stageDeals.filter(o => matchesPipelineCardSearch(o, searchQuery));
     }
     acc[stage.id] = sortDeals(stageDeals, pendingAcceleratorsMap, holidaysSet, leavesByUser);
     return acc;
@@ -342,7 +426,6 @@ export function KanbanBoard({
 
   const preloadEditDealPanel = useCallback(() => {
     void loadEditDealPanel();
-    void preload("all-users", getAllUsers);
   }, []);
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
@@ -356,12 +439,11 @@ export function KanbanBoard({
   }, [selectedCardId]);
   const isKeyboardNavRef = useRef(false);
 
-  const handleOpenPanel = useCallback(async (deal: OpportunityWithRelations, tab: TabType) => {
+  const handleOpenPanel = useCallback((deal: OpportunityWithRelations, tab: TabType) => {
     if (typeof window !== 'undefined' && window.innerWidth >= 768) {
       setSelectedCardId(deal.id);
     }
     if (closingTimeout) clearTimeout(closingTimeout);
-    await loadEditDealPanel();
     setActivePanelDeal({ deal, tab });
     setPanelOpen(true);
   }, [closingTimeout]);
@@ -643,15 +725,17 @@ export function KanbanBoard({
           setDeals(prev => {
             const next = { ...prev };
             let found = false;
-            const targetStageId = updatedDeal.pipelineStageId;
             for (const colId in next) {
               const list = next[colId];
               const idx = list.findIndex(opp => opp.id === updatedDeal.id);
               if (idx !== -1) {
                 found = true;
+                const existing = list[idx];
+                const mergedDeal = { ...existing, ...updatedDeal };
+                const targetStageId = updatedDeal.pipelineStageId || existing.pipelineStageId;
                 if (targetStageId === colId) {
                   const updatedList = [...list];
-                  updatedList[idx] = updatedDeal;
+                  updatedList[idx] = mergedDeal;
                   next[colId] = sortDeals(
                     updatedList,
                     pendingAcceleratorsMapRef.current,
@@ -661,7 +745,7 @@ export function KanbanBoard({
                 } else if (targetStageId && next[targetStageId]) {
                   // Deal moved to another stage
                   next[colId] = list.filter(opp => opp.id !== updatedDeal.id);
-                  const targetList = [...next[targetStageId], updatedDeal];
+                  const targetList = [...next[targetStageId], mergedDeal];
                   next[targetStageId] = sortDeals(
                     targetList,
                     pendingAcceleratorsMapRef.current,
@@ -672,9 +756,9 @@ export function KanbanBoard({
                 break;
               }
             }
-            if (!found && updatedDeal.status === 'OPEN' && targetStageId && next[targetStageId]) {
-              const targetList = [...next[targetStageId], updatedDeal];
-              next[targetStageId] = sortDeals(
+            if (!found && updatedDeal.status === 'OPEN' && updatedDeal.pipelineStageId && next[updatedDeal.pipelineStageId]) {
+              const targetList = [...next[updatedDeal.pipelineStageId], updatedDeal as OpportunityWithRelations];
+              next[updatedDeal.pipelineStageId] = sortDeals(
                 targetList,
                 pendingAcceleratorsMapRef.current,
                 holidaysSetRef.current,
@@ -687,12 +771,12 @@ export function KanbanBoard({
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             const source = currentData || (tabRef.current === initialTabRef.current ? (initialOpportunitiesRef.current || []) : []);
-            if (!isCompletedTab && updatedDeal.status !== 'OPEN') {
+            if (!isCompletedTab && updatedDeal.status && updatedDeal.status !== 'OPEN') {
               return source.filter(opp => opp.id !== updatedDeal.id);
             }
             return source.map(opp => {
               if (opp.id === updatedDeal.id) {
-                return updatedDeal;
+                return { ...opp, ...updatedDeal };
               }
               return opp;
             });
@@ -809,56 +893,76 @@ export function KanbanBoard({
   }, [groupedDeals, activeDeal, panelOpen, rawOpportunities, tab, initialTab, initialOpportunities]);
 
 
+  const searchVersionRef = useRef(0);
+  useEffect(() => {
+    searchVersionRef.current++;
+  }, [searchQuery]);
+
+  const completedDealsRef = useRef(completedDeals);
+  useEffect(() => {
+    completedDealsRef.current = completedDeals;
+  }, [completedDeals]);
+
   useEffect(() => {
     if (isCompletedTab) {
-      const t = setTimeout(() => {
-        if (rawOpportunities) {
-          setCompletedDeals(prev => {
-            if (prev.length === rawOpportunities.length && prev.every((d, i) => d === rawOpportunities[i])) return prev;
-            return rawOpportunities;
-          });
-          setHasMoreCompleted(rawOpportunities.length === 20);
-        } else if (tab === initialTab) {
-          const fallback = initialOpportunities || [];
-          setCompletedDeals(prev => {
-            if (prev.length === fallback.length && prev.every((d, i) => d === fallback[i])) return prev;
-            return fallback;
-          });
-          setHasMoreCompleted(fallback.length === 20);
-        } else {
-          setCompletedDeals(prev => (prev.length === 0 ? prev : []));
-          setHasMoreCompleted(false);
-        }
-      }, 0);
-      return () => clearTimeout(t);
+      if (rawOpportunities) {
+        setCompletedDeals(prev => {
+          if (prev.length === rawOpportunities.length && prev.every((d, i) => d === rawOpportunities[i])) return prev;
+          return rawOpportunities;
+        });
+        setHasMoreCompleted(rawOpportunities.length === 20);
+      } else if (tab === initialTab) {
+        const fallback = initialOpportunities || [];
+        setCompletedDeals(prev => {
+          if (prev.length === fallback.length && prev.every((d, i) => d === fallback[i])) return prev;
+          return fallback;
+        });
+        setHasMoreCompleted(fallback.length === 20);
+      } else {
+        setCompletedDeals(prev => (prev.length === 0 ? prev : []));
+        setHasMoreCompleted(false);
+      }
     }
   }, [rawOpportunities, initialOpportunities, isCompletedTab, tab, initialTab]);
 
-
+  const completedCursorRef = useRef<string | null>(null);
+  useEffect(() => {
+    completedCursorRef.current = null;
+  }, [searchQuery, tab]);
 
   const loadMoreCompleted = useCallback(async () => {
     if (isLoadingMore || !hasMoreCompleted) return;
+    const currentList = completedDealsRef.current;
+    if (currentList.length === 0) return;
+    const lastDeal = currentList[currentList.length - 1];
+    const cursor = completedCursorRef.current || lastDeal?.id;
+    if (!cursor) return;
+
     setIsLoadingMore(true);
+    const version = searchVersionRef.current;
     try {
-      // We pass the current length to skip
-      const nextBatch = await getMoreCompletedOpportunities(completedDeals.length, searchQuery || undefined);
-      if (nextBatch.length === 0) {
+      const result = await getCompletedOpportunitiesCursor(cursor, searchQuery || undefined);
+      if (version !== searchVersionRef.current) return;
+
+      completedCursorRef.current = result.nextCursor;
+
+      if (!result.items || result.items.length === 0) {
         setHasMoreCompleted(false);
       } else {
         setCompletedDeals(prev => {
-          // avoid duplicates
+          if (version !== searchVersionRef.current) return prev;
           const existingIds = new Set(prev.map((d: OpportunityWithRelations) => d.id));
-          const newUnique = nextBatch.filter((d: OpportunityWithRelations) => !existingIds.has(d.id));
+          const newUnique = result.items.filter((d: OpportunityWithRelations) => !existingIds.has(d.id));
           return [...prev, ...newUnique] as OpportunityWithRelations[];
         });
-        if (nextBatch.length < 20) setHasMoreCompleted(false);
+        setHasMoreCompleted(result.hasMore);
       }
     } catch (e) {
-      console.error(e);
+      console.error('[KanbanBoard] Failed to load more completed deals:', e);
     } finally {
       setIsLoadingMore(false);
     }
-  }, [isLoadingMore, hasMoreCompleted, completedDeals.length, searchQuery]);
+  }, [isLoadingMore, hasMoreCompleted, searchQuery]);
 
   // Intersection observer for infinite scrolling
   useEffect(() => {
@@ -1281,6 +1385,13 @@ export function KanbanBoard({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [panelOpen, isCompletedTab, initialStages, deals, selectedCardId, handleOpenPanel, scrollToColumn]);
 
+  const ownerFilterContextValue = useMemo(() => ({
+    ownerFilter,
+    onOwnerFilterChange,
+    searchQuery,
+    onSearchChange,
+  }), [ownerFilter, onOwnerFilterChange, searchQuery, onSearchChange]);
+
   if (isLoading && !rawOpportunities && (!initialOpportunities || initialOpportunities.length === 0)) {
     return (
       <div className="flex w-full h-full items-center justify-center">
@@ -1291,13 +1402,6 @@ export function KanbanBoard({
       </div>
     );
   }
-
-  const ownerFilterContextValue = useMemo(() => ({
-    ownerFilter,
-    onOwnerFilterChange,
-    searchQuery,
-    onSearchChange,
-  }), [ownerFilter, onOwnerFilterChange, searchQuery, onSearchChange]);
 
   return (
     <OwnerFilterContext.Provider value={ownerFilterContextValue}>
@@ -1322,7 +1426,7 @@ export function KanbanBoard({
               if (hasValueFilter) {
                 dealsToDisplay = dealsToDisplay.filter(d => d.value != null && Number(d.value) > 0);
               }
-              if (hasRedFilter) {
+              if (hasRedFilter && !isCompletedTab) {
                 dealsToDisplay = dealsToDisplay.filter(d => checkIsRedCard(d, holidaysSet, leavesByUser));
               }
               const grouped = dealsToDisplay.reduce((acc, deal) => {

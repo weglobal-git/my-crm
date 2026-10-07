@@ -17,7 +17,7 @@ import {
   ListTodo
 } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
-import { updateOpportunity, moveOpportunity, deleteOpportunity, addSystemLog } from "@/lib/actions/opportunity";
+import { updateOpportunity, moveOpportunity, deleteOpportunity } from "@/lib/actions/opportunity";
 import { getNotes } from "@/lib/actions/notes";
 import { getIncompleteTodosCount, canCloseDealAsWon, type DealTodoNote } from "@/lib/deal-todo-sync";
 import { useDialog } from "@/providers/DialogProvider";
@@ -232,10 +232,8 @@ export function DealActionsDrawer({
       type: "success",
     });
 
-    // 3. Background server execution (parallel fire-and-forget system log)
     try {
       await updateOpportunity(deal.id, { type: "SALES_DEAL" });
-      void addSystemLog(deal.id, "Converted opportunity type from Internal Task to Sales Deal.").catch(() => {});
       void mutate(["opportunity", deal.id]);
     } catch (e) {
       setIsConverting(false);
@@ -269,10 +267,8 @@ export function DealActionsDrawer({
       type: "success",
     });
 
-    // 3. Background server execution (parallel fire-and-forget system log)
     try {
       await updateOpportunity(deal.id, { type: "INTERNAL_TASK" });
-      void addSystemLog(deal.id, "Converted opportunity type from Sales Deal to Internal Task by System Admin.").catch(() => {});
       void mutate(["opportunity", deal.id]);
     } catch (e) {
       setIsConverting(false);

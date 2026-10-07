@@ -26,7 +26,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { actor } = await requireOpportunityAccess(opportunityId);
+    const { actor } = await requireOpportunityAccess(opportunityId, { capability: 'deal:interact' });
 
     // Use auto to let Cloudinary determine the best resource type (treats PDF as image)
     const resourceType = "auto";

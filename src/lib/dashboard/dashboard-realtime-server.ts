@@ -59,6 +59,11 @@ export async function dispatchDashboardInvalidation(
   input: DispatchDashboardInvalidationInput
 ): Promise<void> {
   try {
+    if (input.resources.includes('leaderboard')) {
+      const { invalidateLeaderboardCache } = await import('@/lib/dashboard/leaderboard-data');
+      invalidateLeaderboardCache();
+    }
+
     const recipientIds = await resolveDashboardAudience();
     if (recipientIds.length === 0) return;
 

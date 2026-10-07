@@ -1,13 +1,15 @@
 'use client';
 
 import React from 'react';
+import useSWR from 'swr';
+import { getAllUsers } from '@/lib/actions/users';
 import type { OpportunityWithRelations } from './KanbanCard';
 import { DealTeamMembersSection, type TeamMemberItem } from './DealTeamMembersSection';
 
 export interface DealCollaborateTabProps {
   deal: OpportunityWithRelations;
   teamMembers: TeamMemberItem[];
-  allUsers: TeamMemberItem[];
+  allUsers?: TeamMemberItem[];
   isOwner: boolean;
   isAdmin: boolean;
   currentUserId?: string;
@@ -19,7 +21,7 @@ export interface DealCollaborateTabProps {
 export function DealCollaborateTab({
   deal,
   teamMembers,
-  allUsers,
+  allUsers: propAllUsers,
   isOwner,
   isAdmin,
   currentUserId,
@@ -27,6 +29,14 @@ export function DealCollaborateTab({
   isRemovingId,
   onRemoveMember,
 }: DealCollaborateTabProps) {
+  // Fetch users on-demand with 2-minute deduplication ONLY when CollaborateTab is mounted
+  const { data: cachedUsers } = useSWR<Awaited<ReturnType<typeof getAllUsers>>>(
+    propAllUsers && propAllUsers.length > 0 ? null : 'all-users',
+    getAllUsers,
+    { revalidateOnFocus: false, dedupingInterval: 120_000 }
+  );
+  const resolvedUsers = ((propAllUsers && propAllUsers.length > 0 ? propAllUsers : cachedUsers) || []) as unknown as TeamMemberItem[];
+
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-4">
@@ -35,7 +45,7 @@ export function DealCollaborateTab({
           owner={deal.owner}
           ownerId={deal.ownerId}
           teamMembers={teamMembers}
-          allUsers={allUsers}
+          allUsers={resolvedUsers}
           isOwner={isOwner}
           isAdmin={isAdmin}
           currentUserId={currentUserId}

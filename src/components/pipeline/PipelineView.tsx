@@ -13,6 +13,8 @@ import { PipelineStage } from "@prisma/client";
 import { OpportunityWithRelations } from "./KanbanCard";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
+import { getAllUsers } from "@/lib/actions/users";
+import { preload } from "swr";
 import { usePermissions } from "@/providers/PermissionProvider";
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import type { PipelineDepartmentOption, PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
@@ -80,7 +82,7 @@ export function PipelineView({
     () => stageTitleDepartments[0]?.id || ''
   );
   const [stageTitlesByDepartment, setStageTitlesByDepartment] = useState(initialStageTitlesByDepartment);
-  const { setPageManageContent, setHasActiveFilters, setPageSearchConfig } = useSidebar();
+  const { setPageManageContent, setHasActiveFilters, setPageSearchConfig, isManageModalOpen } = useSidebar();
 
   const handleStageTitleChanged = useCallback((stageId: string, title: string | null) => {
     if (!activeStageTitleDepartmentId) return;
@@ -189,8 +191,13 @@ export function PipelineView({
     return () => setPageSearchConfig(null);
   }, [handleSearchChange, searchQuery, setPageSearchConfig]);
 
-  // Register mobile Manage modal content (100% shared component with Desktop)
+  // Register mobile Manage modal content (only mounts subtree when modal is open to avoid premature fetches)
   useEffect(() => {
+    if (!isManageModalOpen) {
+      setPageManageContent(<span className="hidden" aria-hidden="true" />);
+      return;
+    }
+
     setPageManageContent(
       <PipelineFilterContent
         tab={tab}
@@ -214,6 +221,7 @@ export function PipelineView({
     );
     return () => setPageManageContent(null);
   }, [
+    isManageModalOpen,
     tab, 
     searchQuery, 
     cardType, 
@@ -313,6 +321,7 @@ export function PipelineView({
           <button
             type="button"
             onClick={() => setIsFiltersOpen(true)}
+            onMouseEnter={() => void preload("all-users", getAllUsers)}
             className={`px-3.5 py-1.5 rounded-full text-xs font-semibold flex items-center gap-2 border transition-all cursor-pointer ${
               activeFilterCount > 0
                 ? "bg-[#C7F33C]/10 border-[#C7F33C] text-[#C7F33C]"

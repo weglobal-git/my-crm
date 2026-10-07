@@ -22,10 +22,8 @@ import {
 /**
  * Fetch all Qualified Customer accounts that meet LTC threshold criteria
  */
-export async function getLtcAccountsAction(
-  actorOverride?: PipelineActor
-): Promise<LtcSummaryResult> {
-  await requirePipelineActor(actorOverride);
+export async function getLtcAccountsAction(): Promise<LtcSummaryResult> {
+  await requirePipelineActor();
 
   const now = new Date();
 
@@ -198,10 +196,8 @@ export async function getLtcAccountsAction(
 /**
  * Lightweight action to get just the LTC count for badges
  */
-export async function getLtcCountAction(
-  actorOverride?: PipelineActor
-): Promise<number> {
-  const result = await getLtcAccountsAction(actorOverride);
+export async function getLtcCountAction(): Promise<number> {
+  const result = await getLtcAccountsAction();
   return result.totalCount;
 }
 
@@ -209,10 +205,9 @@ export async function getLtcCountAction(
  * Unqualify an account so it exits the LTC loop
  */
 export async function unqualifyAccountAction(
-  companyId: string,
-  actorOverride?: PipelineActor
+  companyId: string
 ): Promise<{ success: boolean }> {
-  const actor = await requirePipelineActor(actorOverride);
+  const actor = await requirePipelineActor();
 
   await prisma.company.update({
     where: { id: companyId },
@@ -255,10 +250,9 @@ export async function unqualifyAccountAction(
  */
 export async function createLtcDealAction(
   companyId: string,
-  preferredStageId?: string,
-  actorOverride?: PipelineActor
+  preferredStageId?: string
 ): Promise<{ success: boolean; deal: unknown }> {
-  const actor = await requirePipelineActor(actorOverride);
+  const actor = await requirePipelineActor();
 
   // Find leftmost stage if not specified
   let targetStageId = preferredStageId;

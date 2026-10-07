@@ -13,7 +13,7 @@ cloudinary.config({
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string, attachmentId: string }> }) {
   try {
     const { id: opportunityId, attachmentId } = await params;
-    await requireOpportunityAccess(opportunityId);
+    await requireOpportunityAccess(opportunityId, { capability: 'deal:interact' });
 
     const attachment = await prisma.attachment.findUnique({
       where: { id: attachmentId, opportunityId }

@@ -9,7 +9,6 @@ import {
   Palmtree,
   Info,
   CheckCircle2,
-  AlertCircle,
   Users,
 } from "lucide-react";
 import type { LeaderboardItem } from "@/lib/dashboard/leaderboard-types";

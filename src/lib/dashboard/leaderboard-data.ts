@@ -22,6 +22,148 @@ import {
   buildPodium,
 } from './leaderboard-scoring';
 
+interface LeaderboardCacheEntry {
+  data: DepartmentLeaderboardData;
+  expiresAt: number;
+}
+
+export interface LeaderboardWinnerSummaryResult {
+  rank1: {
+    userId: string;
+    name: string;
+    image: string | null;
+    score: number;
+  } | null;
+}
+
+interface WinnerCacheEntry {
+  data: LeaderboardWinnerSummaryResult;
+  expiresAt: number;
+}
+
+const leaderboardMemoryCache = new Map<string, LeaderboardCacheEntry>();
+const winnerMemoryCache = new Map<string, WinnerCacheEntry>();
+const LEADERBOARD_CACHE_TTL_MS = 60_000; // 60 seconds
+const WINNER_CACHE_TTL_MS = 120_000; // 120 seconds
+
+export function invalidateLeaderboardCache(scope?: string): void {
+  if (scope) {
+    for (const key of leaderboardMemoryCache.keys()) {
+      if (key.startsWith(scope)) {
+        leaderboardMemoryCache.delete(key);
+      }
+    }
+    for (const key of winnerMemoryCache.keys()) {
+      if (key.startsWith(scope)) {
+        winnerMemoryCache.delete(key);
+      }
+    }
+  } else {
+    leaderboardMemoryCache.clear();
+    winnerMemoryCache.clear();
+  }
+}
+
+/**
+ * Lightweight Winner Summary resolver for the navbar trophy indicator.
+ * Employs a dedicated 2-minute memory cache shared across department members
+ * and reuses existing full leaderboard cache entries to avoid redundant DB/CPU calculations.
+ */
+export async function getDepartmentLeaderboardWinnerSummary(params: {
+  actor: PipelineActor;
+  departmentId?: string | null;
+  month: number;
+  year: number;
+}): Promise<LeaderboardWinnerSummaryResult> {
+  const { actor, departmentId, month, year } = params;
+
+  // 1. Authorize actor and resolve target department strictly within accessible boundaries
+  const departmentQuery =
+    actor.role === 'ADMIN'
+      ? {}
+      : {
+          users: {
+            some: { id: actor.id },
+          },
+        };
+
+  const accessibleDepts = await prisma.department.findMany({
+    where: departmentQuery,
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+  });
+
+  if (accessibleDepts.length === 0) {
+    return { rank1: null };
+  }
+
+  // If specific department is requested, actor MUST be a member (or ADMIN)
+  if (departmentId && !accessibleDepts.some((d) => d.id === departmentId)) {
+    throw new Error('Forbidden');
+  }
+
+  // Resolve target department deterministically per actor (avoiding shared unauthenticated 'default' token)
+  const targetDeptId = departmentId || accessibleDepts[0].id;
+  const winnerCacheKey = `deptWinner:${targetDeptId}:${month}:${year}`;
+
+  // 2. Fast Path: Check dedicated winner memory cache (safe: targetDeptId access is already proven)
+  const cachedWinner = winnerMemoryCache.get(winnerCacheKey);
+  if (cachedWinner && cachedWinner.expiresAt > Date.now()) {
+    return cachedWinner.data;
+  }
+
+  // 3. Fast Path: Check if full department leaderboard was already computed in memory
+  for (const [key, entry] of leaderboardMemoryCache.entries()) {
+    if (entry.expiresAt > Date.now() && key.includes(`:${targetDeptId}:${month}:${year}:`)) {
+      const podium = entry.data.overallPodium;
+      const rank1 = podium?.rank1 || entry.data.overallXpItems?.[0] || null;
+      const result: LeaderboardWinnerSummaryResult = {
+        rank1: rank1
+          ? {
+              userId: rank1.userId,
+              name: rank1.name,
+              image: rank1.image || null,
+              score: rank1.score || 0,
+            }
+          : null,
+      };
+      winnerMemoryCache.set(winnerCacheKey, {
+        data: result,
+        expiresAt: Date.now() + WINNER_CACHE_TTL_MS,
+      });
+      return result;
+    }
+  }
+
+  // 4. Compute department leaderboard once and populate both caches
+  const data = await getDepartmentLeaderboardData({
+    actor,
+    departmentId: targetDeptId,
+    month,
+    year,
+  });
+
+  const podium = data?.overallPodium;
+  const rank1 = podium?.rank1 || data?.overallXpItems?.[0] || null;
+  const result: LeaderboardWinnerSummaryResult = {
+    rank1: rank1
+      ? {
+          userId: rank1.userId,
+          name: rank1.name,
+          image: rank1.image || null,
+          score: rank1.score || 0,
+        }
+      : null,
+  };
+
+  winnerMemoryCache.set(winnerCacheKey, {
+    data: result,
+    expiresAt: Date.now() + WINNER_CACHE_TTL_MS,
+  });
+
+  return result;
+}
+
 export async function getDepartmentLeaderboardData(params: {
   actor: PipelineActor;
   departmentId?: string | null;
@@ -31,6 +173,24 @@ export async function getDepartmentLeaderboardData(params: {
   account?: string | null;
 }): Promise<DepartmentLeaderboardData> {
   const { actor, month, year, country, account } = params;
+
+  const normCountry = country?.trim().toLowerCase() || '';
+  const normAccount = account?.trim().toLowerCase() || '';
+  const scopeToken = actor.role === 'ADMIN' ? 'ADMIN' : actor.id;
+  const cacheKey = `${scopeToken}:${params.departmentId || 'default'}:${month}:${year}:${normCountry}:${normAccount}`;
+
+  const cached = leaderboardMemoryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  const cacheAndReturn = (result: DepartmentLeaderboardData): DepartmentLeaderboardData => {
+    leaderboardMemoryCache.set(cacheKey, {
+      data: result,
+      expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
+    });
+    return result;
+  };
 
   // 1. Fetch accessible departments
   const departmentQuery =
@@ -79,7 +239,7 @@ export async function getDepartmentLeaderboardData(params: {
   }));
 
   if (availableDepartments.length === 0) {
-    return {
+    return cacheAndReturn({
       departmentId: '',
       departmentName: 'No department found',
       hasSalesAccess: false,
@@ -94,7 +254,7 @@ export async function getDepartmentLeaderboardData(params: {
       },
       overallXpItems: [],
       categories: [],
-    };
+    });
   }
 
   // 2. Select target department
@@ -115,9 +275,6 @@ export async function getDepartmentLeaderboardData(params: {
   const nowParts = toBangkokDateParts(now);
   const isCurrentMonth = year === nowParts.year && month === (nowParts.month + 1);
   const asOfDate = isCurrentMonth ? now : new Date(endDate.getTime() - 1000);
-
-  const normCountry = country?.trim().toLowerCase() || null;
-  const normAccount = account?.trim().toLowerCase() || null;
 
   if (hasSalesAccess) {
     // --- Mode A: Sales Department ---
@@ -536,7 +693,7 @@ export async function getDepartmentLeaderboardData(params: {
       },
     ];
 
-    return {
+    return cacheAndReturn({
       departmentId: targetDept.id,
       departmentName: targetDept.name,
       hasSalesAccess: true,
@@ -545,7 +702,7 @@ export async function getDepartmentLeaderboardData(params: {
       overallPodium: buildPodium(rankedXp, 'xp', 'Overall MVP'),
       overallXpItems: rankedXp,
       categories,
-    };
+    });
   } else {
     // --- Mode B: Non-Sales / Operations & Support Department ---
     const [tasks, activityLogs, assistedDeals, calendarEvents] = await Promise.all([
@@ -756,7 +913,7 @@ export async function getDepartmentLeaderboardData(params: {
       },
     ];
 
-    return {
+    return cacheAndReturn({
       departmentId: targetDept.id,
       departmentName: targetDept.name,
       hasSalesAccess: false,
@@ -765,6 +922,6 @@ export async function getDepartmentLeaderboardData(params: {
       overallPodium: buildPodium(rankedXp, 'xp', 'Overall MVP'),
       overallXpItems: rankedXp,
       categories,
-    };
+    });
   }
 }

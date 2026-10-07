@@ -86,6 +86,7 @@ export const authOptions: NextAuthOptions = {
         token.name = dbUser.name;
         token.role = dbUser.role;
         token.departments = dbUser.departments.map((d: { name: string }) => d.name);
+        token.departmentIds = dbUser.departments.map((d: { id: string }) => d.id);
         token.picture = dbUser.image;
       }
 
@@ -111,6 +112,7 @@ export const authOptions: NextAuthOptions = {
         session.user.name = token.name as string;
         session.user.role = token.role as string;
         session.user.departments = (token.departments as string[]) || [];
+        session.user.departmentIds = (token.departmentIds as string[]) || [];
         session.user.image = token.picture as string | null | undefined;
       }
       return session;
