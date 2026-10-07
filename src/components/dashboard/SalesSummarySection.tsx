@@ -2,30 +2,12 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import { ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
-import dynamic from "next/dynamic";
 import type { DashboardSectionAccess, SalesOverviewSnapshot } from "@/lib/dashboard/sales-overview";
 import { MonthlySalesReport } from "./MonthlySalesReport";
 import { SaleTrackingGrid, type SortOption } from "./SaleTrackingGrid";
 import { AnnualSalesReportTable } from "./AnnualSalesReportTable";
 
-const WorldMapSection = dynamic(
-  () => import("./WorldMapSection").then((mod) => mod.WorldMapSection),
-  {
-    loading: () => (
-      <div className="space-y-4 p-2">
-        <div className="space-y-1">
-          <div className="h-3 w-20 rounded bg-[#3A3B3C] animate-pulse" />
-          <div className="h-6 w-48 rounded bg-[#3A3B3C] animate-pulse" />
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <div className="lg:col-span-7 xl:col-span-8 flex flex-col justify-center min-h-[440px] rounded-[2rem] border border-[#4E4F50] bg-[#3A3B3C]/40 animate-pulse" />
-          <div className="lg:col-span-5 xl:col-span-4 min-h-[630px] rounded-[2rem] border border-[#4E4F50] bg-[#3A3B3C]/40 animate-pulse" />
-        </div>
-      </div>
-    ),
-    ssr: false,
-  }
-);
+import { WorldMapSection } from "./WorldMapSection";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",

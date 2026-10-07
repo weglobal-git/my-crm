@@ -53,12 +53,25 @@ import { getCachedAccountAnalysis, getCachedWebIntelligence } from "@/lib/action
 import { getCompanySaleTargets } from "@/lib/actions/sales-target";
 import { useDialog } from "@/providers/DialogProvider";
 import { usePermissions } from "@/providers/PermissionProvider";
-import { ProjectsTab } from "./ProjectsTab";
-import { EmailTab } from "./EmailTab";
-import { AccountAITab } from "./AccountAITab";
-import { SharedMediaTab } from "@/components/pipeline/SharedMediaTab";
-import { SaleTargetTab } from "./SaleTargetTab";
+import dynamic from "next/dynamic";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+
+// Lazy-loaded secondary tabs (Pillar 1: Tab-level isolation & on-demand code splitting)
+const ProjectsTab = dynamic(() => import("./ProjectsTab").then((m) => m.ProjectsTab), {
+  ssr: false,
+});
+const EmailTab = dynamic(() => import("./EmailTab").then((m) => m.EmailTab), {
+  ssr: false,
+});
+const AccountAITab = dynamic(() => import("./AccountAITab").then((m) => m.AccountAITab), {
+  ssr: false,
+});
+const SharedMediaTab = dynamic(() => import("@/components/pipeline/SharedMediaTab").then((m) => m.SharedMediaTab), {
+  ssr: false,
+});
+const SaleTargetTab = dynamic(() => import("./SaleTargetTab").then((m) => m.SaleTargetTab), {
+  ssr: false,
+});
 
 interface EditAccountPanelProps {
   companyId: string | null;
@@ -411,6 +424,13 @@ export function EditAccountPanel({
 
     const primeSecondaryData = () => {
       if (cancelled) return;
+      // 0. Pre-download JS chunks for secondary tabs into module cache
+      void import("./ProjectsTab").catch(() => {});
+      void import("./EmailTab").catch(() => {});
+      void import("./SaleTargetTab").catch(() => {});
+      void import("./AccountAITab").catch(() => {});
+      void import("@/components/pipeline/SharedMediaTab").catch(() => {});
+
       // 1. Preload Sale Targets
       void preload(["company-sale-targets", companyId], () => getCompanySaleTargets(companyId)).catch(() => {});
       // 2. Preload Account AI
