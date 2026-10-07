@@ -543,7 +543,7 @@ function invalidateInitialCompaniesCache() {
   lastStatusStatsFetch = 0;
 }
 
-export async function getCachedInitialCompanies(): Promise<GetCompaniesResult> {
+export async function getCachedInitialCompanies(actor?: ContactActor): Promise<GetCompaniesResult> {
   const now = Date.now();
   if (cachedInitialCompanies && now - lastInitialCompaniesFetch < INITIAL_COMPANIES_CACHE_TTL) {
     return cachedInitialCompanies;
@@ -555,6 +555,7 @@ export async function getCachedInitialCompanies(): Promise<GetCompaniesResult> {
     search: "",
     page: 1,
     pageSize: 20,
+    actor,
   });
 
   cachedInitialCompanies = result;

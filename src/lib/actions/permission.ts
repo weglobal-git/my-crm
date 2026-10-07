@@ -183,10 +183,45 @@ export async function updatePermission(departmentId: string, menuItemId: string,
     }
   }
 
+  await invalidatePermissionCache();
   return { success: true };
 }
 
+type DbMenuItem = {
+  id: string;
+  key: string;
+  label: string;
+  level: number;
+  parentKey: string | null;
+  icon: string | null;
+  href: string | null;
+  description: string | null;
+  sortOrder: number;
+  isLocked: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+let cachedDbMenus: DbMenuItem[] | null = null;
+let lastDbMenusFetch = 0;
+const DB_MENUS_CACHE_TTL = 5 * 60 * 1000; // 5-minute memory cache
+
+const userVisibleKeysCache = new Map<string, { keys: string[]; expires: number }>();
+const USER_VISIBLE_KEYS_TTL = 60 * 1000; // 60-second memory cache
+
+export async function invalidatePermissionCache() {
+  cachedDbMenus = null;
+  lastDbMenusFetch = 0;
+  userVisibleKeysCache.clear();
+}
+
 export async function getUserVisibleMenuKeys(userId: string): Promise<string[]> {
+  const now = Date.now();
+  const cached = userVisibleKeysCache.get(userId);
+  if (cached && cached.expires > now) {
+    return cached.keys;
+  }
+
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -202,10 +237,13 @@ export async function getUserVisibleMenuKeys(userId: string): Promise<string[]> 
 
   // If Admin, they see everything
   if (user.role === "ADMIN") {
-    return MENU_REGISTRY.map(m => m.key);
+    const adminKeys = MENU_REGISTRY.map(m => m.key);
+    userVisibleKeysCache.set(userId, { keys: adminKeys, expires: now + USER_VISIBLE_KEYS_TTL });
+    return adminKeys;
   }
 
   if (user.departments.length === 0) {
+    userVisibleKeysCache.set(userId, { keys: [], expires: now + USER_VISIBLE_KEYS_TTL });
     return []; // No department assigned
   }
 
@@ -242,10 +280,13 @@ export async function getUserVisibleMenuKeys(userId: string): Promise<string[]> 
     }
   });
 
-  return Array.from(visibleKeys);
+  const result = Array.from(visibleKeys);
+  userVisibleKeysCache.set(userId, { keys: result, expires: now + USER_VISIBLE_KEYS_TTL });
+  return result;
 }
 
 export async function updateMenuStructure(menuId: string, newParentKey: string, newSortOrder: number) {
+  await invalidatePermissionCache();
   await prisma.menuItem.update({
     where: { id: menuId },
     data: {
@@ -257,13 +298,21 @@ export async function updateMenuStructure(menuId: string, newParentKey: string, 
 }
 
 export async function getDbMenus() {
+  const now = Date.now();
+  if (cachedDbMenus && now - lastDbMenusFetch < DB_MENUS_CACHE_TTL) {
+    return cachedDbMenus;
+  }
+
   try {
-    return await prisma.menuItem.findMany({
+    const menus = await prisma.menuItem.findMany({
       orderBy: [{ level: 'asc' }, { sortOrder: 'asc' }]
     });
+    cachedDbMenus = menus;
+    lastDbMenusFetch = now;
+    return menus;
   } catch (err) {
     console.error("[getDbMenus] Error:", err);
-    return [];
+    return cachedDbMenus || [];
   }
 }
 

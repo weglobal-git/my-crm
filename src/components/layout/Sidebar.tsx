@@ -223,10 +223,7 @@ export function Sidebar() {
 
   const handleIntentPrefetch = useCallback((href: string) => {
     if (!href || href === "#" || href === pathname) return;
-    if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current);
-    prefetchTimerRef.current = setTimeout(() => {
-      router.prefetch(href);
-    }, 120);
+    router.prefetch(href);
   }, [pathname, router]);
 
   const handleCancelPrefetch = useCallback(() => {
@@ -401,7 +398,6 @@ export function Sidebar() {
                 <Link
                   key={item.key}
                   href={item.href}
-                  prefetch={false}
                   onMouseEnter={() => handleIntentPrefetch(item.href)}
                   onMouseLeave={handleCancelPrefetch}
                   onFocus={() => handleIntentPrefetch(item.href)}
@@ -441,7 +437,6 @@ export function Sidebar() {
                       <Link
                         key={sub.key}
                         href={sub.href}
-                        prefetch={false}
                         onMouseEnter={() => handleIntentPrefetch(sub.href)}
                         onMouseLeave={handleCancelPrefetch}
                         onFocus={() => handleIntentPrefetch(sub.href)}
@@ -717,7 +712,6 @@ export function Sidebar() {
                 <Link
                   key={item.key}
                   href={item.href}
-                  prefetch={false}
                   onMouseEnter={() => handleIntentPrefetch(item.href)}
                   onMouseLeave={handleCancelPrefetch}
                   onFocus={() => handleIntentPrefetch(item.href)}

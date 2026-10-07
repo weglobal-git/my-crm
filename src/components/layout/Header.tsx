@@ -515,7 +515,6 @@ export function Header() {
                   </div>
                   <Link
                     href="/profile"
-                    prefetch={false}
                     onClick={() => setShowProfileDropdown(false)}
                     className="block px-4 py-2 text-xs text-slate-200 hover:bg-[#4E4F50] transition-colors"
                   >

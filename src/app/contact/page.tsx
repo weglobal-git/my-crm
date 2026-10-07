@@ -19,10 +19,12 @@ export default async function ContactPage() {
     redirect("/");
   }
 
-  // Preload actor, companies, types, and countries concurrently with 100% parallelism
-  const [actor, companiesResult, initialTypes, initialCountries] = await Promise.all([
-    getContactActor(session),
-    getCachedInitialCompanies(),
+  // Preload actor first to avoid duplicate user lookup in companies query
+  const actor = await getContactActor(session);
+
+  // Preload companies, types, and countries concurrently with preloaded actor
+  const [companiesResult, initialTypes, initialCountries] = await Promise.all([
+    getCachedInitialCompanies(actor),
     getCompanyTypes(),
     getCompanyCountries(),
   ]);
