@@ -5,9 +5,9 @@ import { notifyPrivatePipelineUpdate, requireOpportunityAccess } from "@/lib/pip
 
 export async function getNotes(opportunityId: string) {
   try {
-    await requireOpportunityAccess(opportunityId, { capability: 'deal:view' });
-
-    const notes = await prisma.note.findMany({
+    const [, notes] = await Promise.all([
+      requireOpportunityAccess(opportunityId, { capability: 'deal:view' }),
+      prisma.note.findMany({
       where: { opportunityId },
       include: {
         author: {
@@ -18,7 +18,8 @@ export async function getNotes(opportunityId: string) {
         { isPinned: "desc" },
         { createdAt: "desc" },
       ],
-    });
+    }),
+  ]);
 
     return notes;
   } catch (error) {

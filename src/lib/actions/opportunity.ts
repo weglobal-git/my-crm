@@ -455,9 +455,8 @@ export interface OpportunitySharedMediaResult {
 }
 
 export async function getOpportunitySharedMedia(dealId: string): Promise<OpportunitySharedMediaResult> {
-  await requireOpportunityAccess(dealId, { capability: 'deal:view' });
-
-  const [rawAttachments, rawLogs] = await Promise.all([
+  const [, rawAttachments, rawLogs] = await Promise.all([
+    requireOpportunityAccess(dealId, { capability: 'deal:view' }),
     prisma.attachment.findMany({
       where: { opportunityId: dealId },
       select: {
@@ -583,24 +582,26 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
 }
 
 export async function getOpportunityActivityLogs(opportunityId: string, limit = 10, cursor?: string, type?: 'COMMENT' | 'SYSTEM_UPDATE') {
-  await requireOpportunityAccess(opportunityId, { capability: 'deal:view' });
-  const data = await prisma.activityLog.findMany({
-    where: { 
-      opportunityId,
-      parentId: null,
-      ...(type ? { type } : {})
-    },
-    take: limit + 1, // Fetch one extra to check if there are more
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // Skip the cursor itself
-    include: {
-      user: { select: { id: true, name: true, email: true, image: true, role: true } },
-      replies: {
-        include: { user: { select: { id: true, name: true, email: true, image: true, role: true } } },
-        orderBy: { createdAt: 'asc' }
-      }
-    },
-    orderBy: { createdAt: 'desc' }
-  });
+  const [, data] = await Promise.all([
+    requireOpportunityAccess(opportunityId, { capability: 'deal:view' }),
+    prisma.activityLog.findMany({
+      where: { 
+        opportunityId,
+        parentId: null,
+        ...(type ? { type } : {})
+      },
+      take: limit + 1, // Fetch one extra to check if there are more
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}), // Skip the cursor itself
+      include: {
+        user: { select: { id: true, name: true, email: true, image: true, role: true } },
+        replies: {
+          include: { user: { select: { id: true, name: true, email: true, image: true, role: true } } },
+          orderBy: { createdAt: 'asc' }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    }),
+  ]);
 
   let nextCursor: string | undefined = undefined;
   if (data.length > limit) {
