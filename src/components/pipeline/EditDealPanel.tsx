@@ -327,6 +327,35 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     return activityFeedKey(deal.id, activeTab, isOpen, previousPageData);
   };
 
+  // Optimistic initial fallback from card's latest activity logs so the tab renders in 0ms without skeleton delay
+  const initialActivityFallback = useMemo(() => {
+    if (!deal.activityLogs) return undefined;
+    const items: ActivityLogWithRelations[] = deal.activityLogs.map((l) => ({
+      id: l.id,
+      content: l.content,
+      type: l.type,
+      createdAt: l.createdAt,
+      user: {
+        id: '',
+        name: l.user?.name ?? null,
+        email: null,
+        emailVerified: null,
+        image: l.user?.image ?? null,
+        role: 'GENERAL' as Role,
+        createdAt: l.createdAt,
+        updatedAt: l.createdAt,
+        lastActive: l.createdAt,
+      },
+      replies: [],
+      isEdited: false,
+      parentId: null,
+      opportunityId: deal.id,
+      userId: '',
+      updatedAt: l.createdAt,
+    }));
+    return [{ data: items, nextCursor: undefined }];
+  }, [deal.id, deal.activityLogs]);
+
   const {
     data: rawLocalActivityPages,
     mutate: loadActivityLogs,
@@ -350,6 +379,11 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         }
         throw err;
       }
+    },
+    {
+      fallbackData: initialActivityFallback,
+      revalidateOnFocus: false,
+      dedupingInterval: 5000,
     }
   );
 

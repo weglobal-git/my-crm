@@ -424,6 +424,24 @@ export function KanbanBoard({
     pendingAcceleratorsMapRef.current = pendingAcceleratorsMap;
   }, [pendingAcceleratorsMap]);
 
+  // Warm EditDealPanel chunk during browser idle so the first card click mounts in 0ms without skeleton
+  useEffect(() => {
+    const warmPanel = () => { void loadEditDealPanel(); };
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const idleId = (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(
+        warmPanel,
+        { timeout: 1500 }
+      );
+      return () => {
+        if ('cancelIdleCallback' in window) {
+          (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
+        }
+      };
+    }
+    const timer = setTimeout(warmPanel, 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const preloadEditDealPanel = useCallback(() => {
     void loadEditDealPanel();
   }, []);
@@ -1518,6 +1536,7 @@ export function KanbanBoard({
 
       {activePanelDeal && (
         <EditDealPanel
+          key={activePanelDeal.deal.id}
           deal={activePanelDeal.deal}
           initialTab={activePanelDeal.tab}
           isOpen={panelOpen}

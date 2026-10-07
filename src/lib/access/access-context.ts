@@ -16,6 +16,14 @@ export interface AccessContext {
   hasPipelineAccess: boolean;
 }
 
+// In-memory TTL cache for user menu permissions to avoid redundant Neon Postgres queries across server actions
+const userPipelineAccessCache = new Map<string, { expiresAt: number; hasAccess: boolean }>();
+
+export function clearUserPipelineAccessCache(userId?: string) {
+  if (userId) userPipelineAccessCache.delete(userId);
+  else userPipelineAccessCache.clear();
+}
+
 /**
  * Request-scoped Access Context resolver.
  * Wrapped in React.cache() to deduplicate session reads across multiple callers in a single request.
@@ -54,15 +62,22 @@ export const resolveAccessContext = cache(async (): Promise<AccessContext> => {
 
   let hasPipelineAccess = role === 'ADMIN';
   if (!hasPipelineAccess) {
-    const perm = await prisma.departmentMenuPermission.findFirst({
-      where: {
-        visible: true,
-        menuItem: { key: 'pipeline' },
-        department: { users: { some: { id: userId } } },
-      },
-      select: { id: true },
-    });
-    hasPipelineAccess = Boolean(perm);
+    const now = Date.now();
+    const cached = userPipelineAccessCache.get(userId);
+    if (cached && cached.expiresAt > now) {
+      hasPipelineAccess = cached.hasAccess;
+    } else {
+      const perm = await prisma.departmentMenuPermission.findFirst({
+        where: {
+          visible: true,
+          menuItem: { key: 'pipeline' },
+          department: { users: { some: { id: userId } } },
+        },
+        select: { id: true },
+      });
+      hasPipelineAccess = Boolean(perm);
+      userPipelineAccessCache.set(userId, { expiresAt: now + 30_000, hasAccess: hasPipelineAccess });
+    }
   }
 
   return {

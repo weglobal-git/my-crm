@@ -19,6 +19,7 @@ import {
   requireOpportunityDateEdit,
   requirePipelineActor,
   requireCapability,
+  invalidateOpportunityReadAccess,
 } from "@/lib/pipeline-security";
 import {
   getPipelineOpportunitiesForActor,
@@ -390,6 +391,8 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
 
     return { updated: updatedRecord, createdLogs: createdRecords };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+
+  invalidateOpportunityReadAccess(id);
 
   if (createdLogs.length > 0) {
     for (const logRecord of createdLogs) {
@@ -858,6 +861,7 @@ export async function removeTeamMember(opportunityId: string, userId: string, mu
 export async function deleteOpportunity(id: string) {
   await requireOpportunityAccess(id, { capability: 'deal:delete' });
 
+  invalidateOpportunityReadAccess(id);
   const recipientIds = await getPipelineRecipientUserIds(id);
   const result = await prisma.opportunity.delete({
     where: { id }

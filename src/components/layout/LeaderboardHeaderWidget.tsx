@@ -93,7 +93,7 @@ export function LeaderboardHeaderWidget() {
     }
   );
 
-  // Drawer Key (only fetched when drawer is open or prewarmed on hover)
+  // Drawer Key (only fetched when drawer is open or prewarmed on hover/idle)
   const drawerKey = useMemo(
     () =>
       dashboardLeaderboardKey(scope, {
@@ -103,6 +103,35 @@ export function LeaderboardHeaderWidget() {
       }),
     [scope, selectedDeptId, drawerMonth, drawerYear]
   );
+
+  // Proactively prefetch current month leaderboard during idle periods once winner summary is ready
+  useEffect(() => {
+    if (!session?.user?.id || !winnerSummary) return;
+    const prefetchDrawer = () => {
+      void preload(drawerKey, () =>
+        getDashboardLeaderboardAction({
+          departmentId: selectedDeptId,
+          month: drawerMonth,
+          year: drawerYear,
+        })
+      );
+    };
+
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      const handle = (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(
+        prefetchDrawer,
+        { timeout: 3000 }
+      );
+      return () => {
+        if ("cancelIdleCallback" in window) {
+          (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(handle);
+        }
+      };
+    } else {
+      const timer = setTimeout(prefetchDrawer, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [session?.user?.id, winnerSummary, drawerKey, selectedDeptId, drawerMonth, drawerYear]);
 
   const { data: drawerData, error, isLoading } = useSWR(
     session?.user?.id && isDrawerOpen ? drawerKey : null,

@@ -107,7 +107,7 @@ export function ActivityFeedTab({
   const { data: dealNotes = [] } = useSWR<DealTodoNote[]>(
     ['deal-notes', deal.id],
     () => getNotes(deal.id),
-    { revalidateOnFocus: true, revalidateOnReconnect: true, dedupingInterval: 5_000 }
+    { revalidateOnFocus: false, revalidateOnReconnect: false, dedupingInterval: 30_000 }
   );
   const pendingTodosCount = getIncompleteTodosCount(dealNotes);
 

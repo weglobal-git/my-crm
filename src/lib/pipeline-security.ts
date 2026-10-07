@@ -56,6 +56,19 @@ async function getPipelineActorFromSession(): Promise<PipelineActor> {
 // In-memory TTL caches to optimize latency and eliminate duplicate queries
 const pipelinePermissionCache = new Map<string, { expiresAt: number; allowed: boolean }>();
 const pipelineRecipientCache = new Map<string, { expiresAt: number; userIds: string[] }>();
+const opportunityReadAccessCache = new Map<string, { expiresAt: number; opportunity: any }>();
+
+export function invalidateOpportunityReadAccess(opportunityId?: string) {
+  if (opportunityId) {
+    for (const key of opportunityReadAccessCache.keys()) {
+      if (key.endsWith(`:${opportunityId}`)) {
+        opportunityReadAccessCache.delete(key);
+      }
+    }
+  } else {
+    opportunityReadAccessCache.clear();
+  }
+}
 
 async function hasPipelinePermission(actor: PipelineActor) {
   if (actor.role === 'ADMIN') return true;
@@ -107,20 +120,43 @@ export async function requireOpportunityAccess(
   const pipelineAllowed = context ? context.hasPipelineAccess : await hasPipelinePermission(actor);
   if (!pipelineAllowed) throw new Error('Forbidden');
 
-  const opportunity = await prisma.opportunity.findFirst({
-    where: { id: opportunityId, ...buildOpportunityAccessWhere(actor) },
-    select: {
-      id: true,
-      ownerId: true,
-      type: true,
-      status: true,
-      updatedAt: true,
-      owner: { select: { id: true, departments: { select: { id: true, name: true } } } },
-      teamMembers: { select: { id: true, departments: { select: { id: true, name: true } } } },
-    },
-  });
+  const isReadOnlyView = !options.adminOnly && !options.ownerOrAdmin && (options.capability === 'deal:view' || !options.capability);
+  const cacheKey = `${actor.id}:${opportunityId}`;
+  const now = Date.now();
 
-  if (!opportunity) throw new Error('Forbidden');
+  let opportunity: any;
+  if (isReadOnlyView) {
+    const cached = opportunityReadAccessCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      opportunity = cached.opportunity;
+    }
+  }
+
+  if (!opportunity) {
+    const isManagement = actor.role === 'MANAGEMENT';
+    opportunity = await prisma.opportunity.findFirst({
+      where: { id: opportunityId, ...buildOpportunityAccessWhere(actor) },
+      select: {
+        id: true,
+        ownerId: true,
+        type: true,
+        status: true,
+        updatedAt: true,
+        owner: isManagement
+          ? { select: { id: true, departments: { select: { id: true, name: true } } } }
+          : { select: { id: true } },
+        teamMembers: isManagement
+          ? { select: { id: true, departments: { select: { id: true, name: true } } } }
+          : { select: { id: true } },
+      },
+    });
+
+    if (!opportunity) throw new Error('Forbidden');
+
+    if (isReadOnlyView) {
+      opportunityReadAccessCache.set(cacheKey, { expiresAt: now + 15_000, opportunity });
+    }
+  }
 
   // Capability vocabulary as primary authority
   if (options.capability) {
