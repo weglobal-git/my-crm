@@ -44,18 +44,18 @@ export function LtcDrawer({
     return [...stages].sort((a, b) => a.order - b.order)[0];
   }, [stages]);
 
-  // Load LTC accounts on-demand with SWR
+  // Load LTC accounts with shared SWR cache (hydrated by toolbar badge for 0ms drawer open)
   const {
     data: ltcData,
-    isLoading,
+    isLoading: isSwrLoading,
     error,
     mutate: mutateLtc,
   } = useSWR<LtcSummaryResult>(
-    isOpen ? "ltc-accounts-data" : null,
+    "ltc-accounts-data",
     getLtcAccountsAction,
     {
-      revalidateOnFocus: true,
-      dedupingInterval: 10_000,
+      revalidateOnFocus: false,
+      dedupingInterval: 30_000,
       onSuccess: (data) => {
         if (onCountUpdate) {
           onCountUpdate(data.totalCount);
@@ -63,6 +63,8 @@ export function LtcDrawer({
       },
     }
   );
+
+  const isLoading = isSwrLoading && !ltcData;
 
   // Click outside and Escape key listeners
   useEffect(() => {

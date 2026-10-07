@@ -518,17 +518,21 @@ export function ActivityComment({
             <div className="bg-[#3A3B3C] rounded-2xl p-3 inline-block self-start relative w-full max-w-[85%] sm:max-w-md">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-bold text-slate-100">{log.user?.name || 'Unknown User'}</span>
-                {dueDateMatch && (
-                  <span
-                    className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
-                      dueDateMatch[1] === 'Removed'
-                        ? 'text-slate-300 bg-slate-600 border-slate-500'
-                        : 'bg-[#C7F33C] text-black'
-                    }`}
-                  >
-                    {dueDateMatch[1] === 'Removed' ? 'Due Date Removed' : `Due: ${dueDateMatch[1]}`}
-                  </span>
-                )}
+                {dueDateMatch && (() => {
+                  const rawDueDate = dueDateMatch[1];
+                  const cleanDueDate = rawDueDate.replace(/,?\s*\d{1,2}[:.]\d{2}(?::\d{2})?/, '').trim();
+                  return (
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                        cleanDueDate === 'Removed'
+                          ? 'text-slate-300 bg-slate-600 border-slate-500'
+                          : 'bg-[#C7F33C] text-black'
+                      }`}
+                    >
+                      {cleanDueDate === 'Removed' ? 'Due Date Removed' : `Due: ${cleanDueDate}`}
+                    </span>
+                  );
+                })()}
               </div>
 
               {isEditing ? (

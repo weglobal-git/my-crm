@@ -1,7 +1,8 @@
 "use client";
 
-import useSWR from "swr";
-import { getLtcCountAction } from "@/lib/actions/ltc";
+import useSWR, { preload } from "swr";
+import { getLtcAccountsAction } from "@/lib/actions/ltc";
+import { LtcSummaryResult } from "./ltc-types";
 import { Clock } from "lucide-react";
 
 interface LtcPillButtonProps {
@@ -17,16 +18,16 @@ export function LtcCountBadge({
   countOverride?: number;
   className?: string;
 }) {
-  const { data: count = 0 } = useSWR<number>(
-    countOverride !== undefined ? null : "ltc-count",
-    getLtcCountAction,
+  const { data: ltcData } = useSWR<LtcSummaryResult>(
+    countOverride !== undefined ? null : "ltc-accounts-data",
+    getLtcAccountsAction,
     {
-      revalidateOnFocus: true,
-      dedupingInterval: 10_000,
+      revalidateOnFocus: false,
+      dedupingInterval: 30_000,
     }
   );
 
-  const displayCount = countOverride !== undefined ? countOverride : count;
+  const displayCount = countOverride !== undefined ? countOverride : (ltcData?.totalCount ?? 0);
 
   return (
     <span
@@ -46,21 +47,27 @@ export function LtcPillButton({
   countOverride,
   className = "",
 }: LtcPillButtonProps) {
-  const { data: count = 0 } = useSWR<number>(
-    countOverride !== undefined ? null : "ltc-count",
-    getLtcCountAction,
+  const { data: ltcData } = useSWR<LtcSummaryResult>(
+    countOverride !== undefined ? null : "ltc-accounts-data",
+    getLtcAccountsAction,
     {
-      revalidateOnFocus: true,
-      dedupingInterval: 10_000,
+      revalidateOnFocus: false,
+      dedupingInterval: 30_000,
     }
   );
 
-  const displayCount = countOverride !== undefined ? countOverride : count;
+  const displayCount = countOverride !== undefined ? countOverride : (ltcData?.totalCount ?? 0);
+
+  const handlePrefetch = () => {
+    void preload("ltc-accounts-data", getLtcAccountsAction);
+  };
 
   return (
     <button
       type="button"
       onClick={onClick}
+      onMouseEnter={handlePrefetch}
+      onFocus={handlePrefetch}
       className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 border transition-all cursor-pointer select-none tabular-nums ${
         displayCount > 0
           ? "bg-[#C7F33C]/10 border-[#C7F33C]/40 text-[#C7F33C] hover:bg-[#C7F33C]/20 hover:border-[#C7F33C] shadow-sm"

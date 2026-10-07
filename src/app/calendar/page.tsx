@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { requireCalendarActor } from '@/lib/calendar/calendar-access';
 import { getCalendarMonthSnapshot } from '@/lib/calendar/calendar-queries';
+import { getCompanyHolidaysAction, getUserLeavesAction } from '@/lib/actions/holiday';
 import { CalendarView } from '@/components/calendar/CalendarView';
 
 export const dynamic = 'force-dynamic';
@@ -40,14 +41,20 @@ export default async function CalendarPage({
     }
   }
 
-  // Fetch initial snapshot on the server
-  const initialSnapshot = await getCalendarMonthSnapshot(year, month, actor);
+  // Fetch initial snapshot, holidays, and user leaves in parallel on the server
+  const [initialSnapshot, initialHolidays, initialLeaves] = await Promise.all([
+    getCalendarMonthSnapshot(year, month, actor),
+    getCompanyHolidaysAction(),
+    getUserLeavesAction(),
+  ]);
 
   return (
     <CalendarView
       userId={actor.id}
       role={actor.role}
       initialSnapshot={initialSnapshot}
+      initialHolidays={initialHolidays}
+      initialLeaves={initialLeaves}
       initialYear={year}
       initialMonth={month}
       initialEventId={eventParam}

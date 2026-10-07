@@ -48,6 +48,8 @@ interface CalendarViewProps {
   userId: string;
   role: string;
   initialSnapshot: CalendarMonthSnapshotDTO;
+  initialHolidays?: string[];
+  initialLeaves?: UserLeaveDTO[];
   initialYear: number;
   initialMonth: number;
   initialEventId?: string | null;
@@ -57,6 +59,8 @@ interface CalendarViewProps {
 export const CalendarView: React.FC<CalendarViewProps> = ({
   userId,
   initialSnapshot,
+  initialHolidays,
+  initialLeaves,
   initialYear,
   initialMonth,
   initialEventId,
@@ -147,26 +151,28 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   const { mutate, cache } = useSWRConfig();
   const currentKey = useMemo(() => calendarMonthKey(userId, year, month), [userId, year, month]);
-  const [pendingHolidayDates, setPendingHolidayDates] = useState<Set<string>>(() => new Set());
-  const [pendingUserLeaveDates, setPendingUserLeaveDates] = useState<Set<string>>(() => new Set());
-  const pendingHolidayDatesRef = useRef(new Set<string>());
-  const pendingUserLeaveDatesRef = useRef(new Set<string>());
-
-  // Company holidays hook
+  // Company holidays hook with SSR fallback
   const { data: holidaysList, mutate: mutateHolidays } = useSWR(
     'company-holidays',
     getCompanyHolidaysAction,
-    { revalidateOnFocus: true, focusThrottleInterval: 10_000 }
+    {
+      fallbackData: initialHolidays,
+      revalidateOnMount: !initialHolidays,
+      revalidateOnFocus: true,
+      focusThrottleInterval: 10_000,
+    }
   );
 
   const companyHolidaysSet = useMemo(() => new Set(holidaysList || []), [holidaysList]);
-  const { leavesByDate, currentUserLeavesSet, mutate: mutateUserLeaves } = useUserLeaves(userId);
+  const { leavesByDate, currentUserLeavesSet, mutate: mutateUserLeaves } = useUserLeaves(userId, initialLeaves);
+
+  // Per-date execution queues to guarantee strict order without blocking UI
+  const holidayQueueRef = useRef<Map<string, Promise<void>>>(new Map());
+  const leaveQueueRef = useRef<Map<string, Promise<void>>>(new Map());
 
   const handleToggleHoliday = useCallback(
-    async (dateStr: string) => {
-      if (pendingHolidayDatesRef.current.has(dateStr)) return;
-      pendingHolidayDatesRef.current.add(dateStr);
-      setPendingHolidayDates(new Set(pendingHolidayDatesRef.current));
+    (dateStr: string) => {
+      // 1. Immediate 0ms Optimistic UI update
       mutateHolidays((prev) => {
         const set = new Set(prev || []);
         if (set.has(dateStr)) set.delete(dateStr);
@@ -174,36 +180,41 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         return Array.from(set);
       }, false);
 
-      try {
-        const res = await toggleCompanyHolidayAction(dateStr);
-        if (!res.success) throw new Error('Failed to update company day-off');
-        if (res.success) {
+      // 2. Chained async execution per date to avoid concurrent race conditions
+      const prevPromise = holidayQueueRef.current.get(dateStr) || Promise.resolve();
+      const nextPromise = prevPromise
+        .then(async () => {
+          const res = await toggleCompanyHolidayAction(dateStr);
+          if (!res.success) throw new Error('Failed to update company day-off');
+          // Authoritative sync directly from server response without extra network roundtrip
+          mutateHolidays(res.holidays, false);
           toast({
             title: res.holidays.includes(dateStr) ? 'Set as Company Day-Off' : 'Day-Off Removed',
             description: `Company day-off on ${dateStr} has been updated.`,
           });
-        }
-      } catch {
-        mutateHolidays((prev) => toggleDateInList(prev || [], dateStr), false);
-        toast({
-          title: 'Error',
-          description: 'Failed to update company day-off.',
-          type: 'error',
+        })
+        .catch(() => {
+          mutateHolidays((prev) => toggleDateInList(prev || [], dateStr), false);
+          toast({
+            title: 'Error',
+            description: 'Failed to update company day-off.',
+            type: 'error',
+          });
+        })
+        .finally(() => {
+          if (holidayQueueRef.current.get(dateStr) === nextPromise) {
+            holidayQueueRef.current.delete(dateStr);
+          }
         });
-      } finally {
-        pendingHolidayDatesRef.current.delete(dateStr);
-        setPendingHolidayDates(new Set(pendingHolidayDatesRef.current));
-        void mutateHolidays();
-      }
+
+      holidayQueueRef.current.set(dateStr, nextPromise);
     },
     [mutateHolidays, toast]
   );
 
   const handleToggleUserLeave = useCallback(
-    async (dateStr: string) => {
-      if (pendingUserLeaveDatesRef.current.has(dateStr)) return;
-      pendingUserLeaveDatesRef.current.add(dateStr);
-      setPendingUserLeaveDates(new Set(pendingUserLeaveDatesRef.current));
+    (dateStr: string) => {
+      // 1. Immediate 0ms Optimistic UI update
       mutateUserLeaves((prev) => {
         const list = prev || [];
         const idx = list.findIndex((l) => l.userId === userId && l.dateStr === dateStr);
@@ -221,28 +232,34 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         ];
       }, false);
 
-      try {
-        const res = await toggleUserLeaveAction(dateStr);
-        if (!res.success) throw new Error('Failed to update leave');
-        if (res.success) {
+      // 2. Chained async execution per date
+      const prevPromise = leaveQueueRef.current.get(dateStr) || Promise.resolve();
+      const nextPromise = prevPromise
+        .then(async () => {
+          const res = await toggleUserLeaveAction(dateStr);
+          if (!res.success) throw new Error('Failed to update leave');
+          mutateUserLeaves(res.leaves, false);
           const isNowOnLeave = res.leaves.some((l) => l.userId === userId && l.dateStr === dateStr);
           toast({
             title: isNowOnLeave ? 'Leave Marked (บันทึกวันลา)' : 'Leave Cancelled (ยกเลิกวันลา)',
             description: `Your leave on ${dateStr} has been updated.`,
           });
-        }
-      } catch {
-        mutateUserLeaves((prev) => toggleCurrentUserLeave(prev || [], userId, dateStr), false);
-        toast({
-          title: 'Error',
-          description: 'Failed to update leave.',
-          type: 'error',
+        })
+        .catch(() => {
+          mutateUserLeaves((prev) => toggleCurrentUserLeave(prev || [], userId, dateStr), false);
+          toast({
+            title: 'Error',
+            description: 'Failed to update leave.',
+            type: 'error',
+          });
+        })
+        .finally(() => {
+          if (leaveQueueRef.current.get(dateStr) === nextPromise) {
+            leaveQueueRef.current.delete(dateStr);
+          }
         });
-      } finally {
-        pendingUserLeaveDatesRef.current.delete(dateStr);
-        setPendingUserLeaveDates(new Set(pendingUserLeaveDatesRef.current));
-        void mutateUserLeaves();
-      }
+
+      leaveQueueRef.current.set(dateStr, nextPromise);
     },
     [mutateUserLeaves, toast, userId]
   );
@@ -580,7 +597,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   const prefetchAdjacentMonth = useCallback((offset: -1 | 1) => {
     const target = getAdjacentCalendarMonth(viewMonth.current.year, viewMonth.current.month, offset);
     const key = calendarMonthKey(userId, target.year, target.month);
-    if (cache.get(unstable_serialize(key)) !== undefined) return;
+    const serialized = unstable_serialize(key);
+    const cached = cache.get(serialized) as { data?: CalendarMonthSnapshotDTO } | undefined;
+    if (cached?.data !== undefined) return;
     void mutate(key, async () => {
       const res = await getMonthSnapshotAction(target.year, target.month);
       if (!res.success || !res.data) throw new Error(res.error || 'Failed to load month');
@@ -595,7 +614,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     const timer = window.setTimeout(() => {
       prefetchAdjacentMonth(1);
       prefetchAdjacentMonth(-1);
-    }, 400);
+    }, 200);
 
     return () => window.clearTimeout(timer);
   }, [isCurrentSnapshot, isLoading, month, prefetchAdjacentMonth, year]);
@@ -919,8 +938,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             currentUserLeavesSet={currentUserLeavesSet}
             onToggleUserLeave={handleToggleUserLeave}
             showDayoff={filters.showDayoff !== false}
-            pendingHolidayDates={pendingHolidayDates}
-            pendingUserLeaveDates={pendingUserLeaveDates}
           />
         </div>}
         {isMobileViewport === true && <div className="flex min-h-0 flex-1 flex-col gap-3 md:hidden">
@@ -940,8 +957,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
             currentUserLeavesSet={currentUserLeavesSet}
             onToggleUserLeave={handleToggleUserLeave}
             showDayoff={filters.showDayoff !== false}
-            pendingHolidayDates={pendingHolidayDates}
-            pendingUserLeaveDates={pendingUserLeaveDates}
           />
           <CalendarMobileAgenda date={selectedMobileDate} items={selectedMobileItems} onEventClick={handleItemClick} />
         </div>}

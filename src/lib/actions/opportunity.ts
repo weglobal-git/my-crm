@@ -526,12 +526,12 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     }
     let formattedDate = 'Removed';
     if (dueDate) {
-      const isMidnight = dueDate.getHours() === 0 && dueDate.getMinutes() === 0;
-      if (isMidnight) {
-        formattedDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(dueDate);
-      } else {
-        formattedDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(dueDate);
-      }
+      formattedDate = new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'Asia/Bangkok',
+      }).format(dueDate);
     }
     
     // 1. Log to Activity (with special format for pill badge)
@@ -898,14 +898,16 @@ export async function togglePinOpportunity(id: string, isPinned: boolean) {
   const dbDurationMs = performance.now() - dbStart;
 
   const revision = updated.updatedAt ? new Date(updated.updatedAt).getTime() : Date.now();
-  void notifyPrivatePipelineUpdate(id, {
-    action: 'OPPORTUNITY_UPDATED',
-    deal: updated,
-    dealId: id,
-    revision,
-  }).catch((err: unknown) => {
+  try {
+    await notifyPrivatePipelineUpdate(id, {
+      action: 'OPPORTUNITY_UPDATED',
+      deal: updated,
+      dealId: id,
+      revision,
+    });
+  } catch (err: unknown) {
     console.error('[PUSHER-PIN-TRIGGER] Failed to dispatch pin update:', err);
-  });
+  }
 
   const totalDurationMs = performance.now() - startedAt;
   recordPipelineActionMetric({
@@ -934,14 +936,28 @@ export async function updateOpportunityHotNote(id: string, hotNote: string | nul
   const dbDurationMs = performance.now() - dbStart;
 
   const revision = updated.updatedAt ? new Date(updated.updatedAt).getTime() : Date.now();
-  void notifyPrivatePipelineUpdate(id, {
-    action: 'OPPORTUNITY_UPDATED',
-    deal: updated,
-    dealId: id,
-    revision,
-  }).catch((err: unknown) => {
+
+  const additionalRecipients = actor.departmentIds && actor.departmentIds.length > 0
+    ? (await prisma.user.findMany({
+        where: { departments: { some: { id: { in: actor.departmentIds } } } },
+        select: { id: true },
+      })).map(u => u.id)
+    : [];
+
+  try {
+    await notifyPrivatePipelineUpdate(
+      id,
+      {
+        action: 'OPPORTUNITY_UPDATED',
+        deal: updated,
+        dealId: id,
+        revision,
+      },
+      additionalRecipients,
+    );
+  } catch (err: unknown) {
     console.error('[PUSHER-HOTNOTE-TRIGGER] Failed to dispatch hot note update:', err);
-  });
+  }
 
   const totalDurationMs = performance.now() - startedAt;
   recordPipelineActionMetric({

@@ -4,11 +4,16 @@ import useSWR from 'swr';
 import { useMemo } from 'react';
 import { getCompanyHolidaysAction, getUserLeavesAction, type UserLeaveDTO } from '@/lib/actions/holiday';
 
-export function useCompanyHolidays() {
+export function useCompanyHolidays(initialHolidays?: string[]) {
   const { data: holidaysList, mutate } = useSWR(
     'company-holidays',
     getCompanyHolidaysAction,
-    { revalidateOnFocus: true, dedupingInterval: 10_000 }
+    {
+      fallbackData: initialHolidays,
+      revalidateOnMount: !initialHolidays,
+      revalidateOnFocus: true,
+      dedupingInterval: 10_000,
+    }
   );
 
   const holidaysSet = useMemo(() => new Set(holidaysList || []), [holidaysList]);
@@ -20,11 +25,16 @@ export function useCompanyHolidays() {
   };
 }
 
-export function useUserLeaves(currentUserId?: string) {
+export function useUserLeaves(currentUserId?: string, initialLeaves?: UserLeaveDTO[]) {
   const { data: leavesList, mutate } = useSWR(
     'user-leaves',
     getUserLeavesAction,
-    { revalidateOnFocus: true, dedupingInterval: 10_000 }
+    {
+      fallbackData: initialLeaves,
+      revalidateOnMount: !initialLeaves,
+      revalidateOnFocus: true,
+      dedupingInterval: 10_000,
+    }
   );
 
   const leavesByDate = useMemo(() => {

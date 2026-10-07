@@ -168,11 +168,14 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
 
   const [hotNote, setHotNote] = useState(deal.hotNote || '');
   const [isSavingHotNote, setIsSavingHotNote] = useState(false);
-  const hotNoteDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const isHotNoteFocusedRef = useRef(false);
   const hotNoteMutationIdRef = useRef(0);
 
   useEffect(() => {
-    setHotNote(deal.hotNote || '');
+    // Only synchronize from deal.hotNote if the input is not currently focused by the user
+    if (!isHotNoteFocusedRef.current) {
+      setHotNote(deal.hotNote || '');
+    }
   }, [deal.hotNote]);
 
   const hasHotNote = Boolean((hotNote && hotNote.trim().length > 0) || (deal.hotNote && deal.hotNote.trim().length > 0));
@@ -211,21 +214,13 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
     }
   }, [deal.id, deal.hotNote, globalMutate]);
 
-  const handleChangeHotNote = (val: string) => {
-    setHotNote(val);
-    if (hotNoteDebounceRef.current) {
-      clearTimeout(hotNoteDebounceRef.current);
-    }
-    hotNoteDebounceRef.current = setTimeout(() => {
-      void saveHotNote(val);
-    }, 400);
+  const handleBlurHotNote = () => {
+    isHotNoteFocusedRef.current = false;
+    void saveHotNote(hotNote);
   };
 
-  const handleBlurHotNote = () => {
-    if (hotNoteDebounceRef.current) {
-      clearTimeout(hotNoteDebounceRef.current);
-    }
-    void saveHotNote(hotNote);
+  const handleFocusHotNote = () => {
+    isHotNoteFocusedRef.current = true;
   };
 
   const {
@@ -348,15 +343,18 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            onChange={(e) => handleChangeHotNote(e.target.value)}
+            onFocus={handleFocusHotNote}
+            onChange={(e) => setHotNote(e.target.value)}
             onBlur={handleBlurHotNote}
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === 'Enter') {
+                void saveHotNote(hotNote);
                 e.currentTarget.blur();
               }
             }}
             placeholder="Quick Note"
+            title="Press Enter to save"
             className="w-32 sm:w-44 h-7 px-3 text-xs font-semibold text-slate-800 bg-slate-100 rounded-full border border-[#3A3B3C] outline-none placeholder:text-slate-400 text-center cursor-text truncate focus:w-48 transition-all"
           />
           {isSavingHotNote && (

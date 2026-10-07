@@ -7,8 +7,9 @@ import { CardTypeFilter, CardTypeFilterValue } from "@/components/pipeline/CardT
 import { PipelineQuickFilters } from "@/components/pipeline/PipelineQuickFilters";
 import { CreateDealButton } from "@/components/pipeline/CreateDealButton";
 import { LtcCountBadge } from "@/components/pipeline/ltc";
-import useSWR from "swr";
+import useSWR, { preload } from "swr";
 import { getAllUsers } from "@/lib/actions/users";
+import { getLtcAccountsAction } from "@/lib/actions/ltc";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 
 export interface UserItem {
@@ -126,6 +127,8 @@ export function PipelineFilterContent({
               if (onClose) onClose();
               onOpenLtc();
             }}
+            onMouseEnter={() => void preload("ltc-accounts-data", getLtcAccountsAction)}
+            onFocus={() => void preload("ltc-accounts-data", getLtcAccountsAction)}
             className="w-full py-2.5 px-3.5 rounded-xl bg-[#C7F33C]/10 hover:bg-[#C7F33C]/15 border border-[#C7F33C]/30 text-[#C7F33C] font-semibold text-xs flex items-center justify-between transition-all cursor-pointer shadow-sm group"
           >
             <div className="flex items-center gap-2">

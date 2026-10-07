@@ -19,6 +19,13 @@ import {
   calculateDaysSinceContact
 } from "@/lib/ltc-utils";
 
+let cachedLtcResult: { data: LtcSummaryResult; expires: number } | null = null;
+const LTC_CACHE_TTL = 60 * 1000; // 60 seconds
+
+export async function invalidateLtcCache(): Promise<void> {
+  cachedLtcResult = null;
+}
+
 /**
  * Fetch all Qualified Customer accounts that meet LTC threshold criteria
  */
@@ -26,6 +33,9 @@ export async function getLtcAccountsAction(): Promise<LtcSummaryResult> {
   await requirePipelineActor();
 
   const now = new Date();
+  if (cachedLtcResult && cachedLtcResult.expires > now.getTime()) {
+    return cachedLtcResult.data;
+  }
 
   // Query Qualified Customer accounts that DO NOT have an open opportunity in pipeline
   const companies = await prisma.company.findMany({
@@ -49,6 +59,7 @@ export async function getLtcAccountsAction(): Promise<LtcSummaryResult> {
       starRating: true,
       createdAt: true,
       contacts: {
+        take: 3,
         select: {
           id: true,
           name: true,
@@ -69,7 +80,6 @@ export async function getLtcAccountsAction(): Promise<LtcSummaryResult> {
           closedAt: true,
           goodsLoadingDate: true,
           createdAt: true,
-          updatedAt: true,
           activityLogs: {
             select: { createdAt: true },
             orderBy: { createdAt: 'desc' },
@@ -187,10 +197,17 @@ export async function getLtcAccountsAction(): Promise<LtcSummaryResult> {
     return b.daysSinceLastContact - a.daysSinceLastContact;
   });
 
-  return {
+  const result: LtcSummaryResult = {
     totalCount: qualifiedLtcAccounts.length,
     accounts: qualifiedLtcAccounts,
   };
+
+  cachedLtcResult = {
+    data: result,
+    expires: Date.now() + LTC_CACHE_TTL,
+  };
+
+  return result;
 }
 
 /**
@@ -208,6 +225,7 @@ export async function unqualifyAccountAction(
   companyId: string
 ): Promise<{ success: boolean }> {
   const actor = await requirePipelineActor();
+  cachedLtcResult = null;
 
   await prisma.company.update({
     where: { id: companyId },
@@ -253,6 +271,7 @@ export async function createLtcDealAction(
   preferredStageId?: string
 ): Promise<{ success: boolean; deal: unknown }> {
   const actor = await requirePipelineActor();
+  cachedLtcResult = null;
 
   // Find leftmost stage if not specified
   let targetStageId = preferredStageId;

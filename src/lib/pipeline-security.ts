@@ -252,21 +252,26 @@ export async function getPipelineRecipientUserIds(opportunityId: string): Promis
     ...(opportunity.teamMembers || []).map((m: { id: string }) => m.id),
   ];
 
-  // Include ADMINs, direct deal owners/members, and all colleagues in the deal's departments
-  const users = await prisma.user.findMany({
-    where: {
-      OR: [
-        { role: 'ADMIN' },
-        ...(directUserIds.length > 0 ? [{ id: { in: directUserIds } }] : []),
-        ...(departmentIds.size > 0
-          ? [{ departments: { some: { id: { in: [...departmentIds] } } } }]
-          : []),
-      ],
-    },
-    select: { id: true },
-  });
+  let userIds: string[];
+  if (departmentIds.size === 0) {
+    // If the deal has no department attached to owner or team members (e.g. Admin-owned deal),
+    // broadcast to all users authorized to view the Pipeline workspace.
+    userIds = await resolvePipelineAudience();
+  } else {
+    // Include ADMINs, direct deal owners/members, and all colleagues in the deal's departments
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { role: 'ADMIN' },
+          ...(directUserIds.length > 0 ? [{ id: { in: directUserIds } }] : []),
+          { departments: { some: { id: { in: [...departmentIds] } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    userIds = users.map((user: { id: string }) => user.id);
+  }
 
-  const userIds = users.map((user: { id: string }) => user.id);
   pipelineRecipientCache.set(opportunityId, { expiresAt: now + 10_000, userIds });
   return userIds;
 }

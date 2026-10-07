@@ -803,6 +803,16 @@ export function KanbanBoard({
             return next;
           });
         }
+        if (rawOpportunitiesRef.current) {
+          rawOpportunitiesRef.current = rawOpportunitiesRef.current.map(opp =>
+            opp.id === dealId ? { ...opp, ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } : opp
+          );
+        }
+        if (initialOpportunitiesRef.current) {
+          initialOpportunitiesRef.current = initialOpportunitiesRef.current.map(opp =>
+            opp.id === dealId ? { ...opp, ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } : opp
+          );
+        }
         mutate(
           (currentData: OpportunityWithRelations[] | undefined) => {
             const source = currentData || (tabRef.current === initialTabRef.current ? (initialOpportunitiesRef.current || []) : []);

@@ -12,11 +12,19 @@ import { dispatchDashboardInvalidation } from '@/lib/dashboard/dashboard-realtim
 export type { UserLeaveDTO } from '@/lib/holiday-config';
 
 const CONFIG_ID = 'company_day_offs';
+const LEAVES_CONFIG_ID = 'user_leaves';
+
+let cachedHolidays: { data: string[]; timestamp: number } | null = null;
+let cachedLeaves: { data: UserLeaveDTO[]; timestamp: number } | null = null;
+const CACHE_TTL_MS = 60_000;
 
 /**
  * Returns list of company holiday dates formatted as "YYYY-MM-DD"
  */
 export async function getCompanyHolidaysAction(): Promise<string[]> {
+  if (cachedHolidays && Date.now() - cachedHolidays.timestamp < CACHE_TTL_MS) {
+    return cachedHolidays.data;
+  }
   try {
     const row = await prisma.systemConfig.findUnique({
       where: { id: CONFIG_ID },
@@ -24,13 +32,16 @@ export async function getCompanyHolidaysAction(): Promise<string[]> {
     });
 
     if (!row?.googleRefreshToken) {
+      cachedHolidays = { data: [], timestamp: Date.now() };
       return [];
     }
 
-    return parseHolidayDates(row.googleRefreshToken);
+    const holidays = parseHolidayDates(row.googleRefreshToken);
+    cachedHolidays = { data: holidays, timestamp: Date.now() };
+    return holidays;
   } catch (err) {
     console.error('Failed to get company holidays:', err);
-    return [];
+    return cachedHolidays?.data ?? [];
   }
 }
 
@@ -54,6 +65,9 @@ export async function toggleCompanyHolidayAction(
     toggleHolidayDate(parseHolidayDates(value), dateStr)
   );
 
+  // Update in-memory cache immediately
+  cachedHolidays = { data: updatedHolidays, timestamp: Date.now() };
+
   // Broadcast realtime updates across Calendar, Pipeline, and Leaderboard
   void dispatchCalendarHolidaysUpdate({ action: 'HOLIDAYS_UPDATED' });
   void notifyPipelineAudience({ action: 'HOLIDAYS_UPDATED' });
@@ -65,12 +79,13 @@ export async function toggleCompanyHolidayAction(
   };
 }
 
-const LEAVES_CONFIG_ID = 'user_leaves';
-
 /**
  * Returns list of all user leaves across the system
  */
 export async function getUserLeavesAction(): Promise<UserLeaveDTO[]> {
+  if (cachedLeaves && Date.now() - cachedLeaves.timestamp < CACHE_TTL_MS) {
+    return cachedLeaves.data;
+  }
   try {
     const row = await prisma.systemConfig.findUnique({
       where: { id: LEAVES_CONFIG_ID },
@@ -78,13 +93,16 @@ export async function getUserLeavesAction(): Promise<UserLeaveDTO[]> {
     });
 
     if (!row?.googleRefreshToken) {
+      cachedLeaves = { data: [], timestamp: Date.now() };
       return [];
     }
 
-    return parseUserLeaves(row.googleRefreshToken);
+    const leaves = parseUserLeaves(row.googleRefreshToken);
+    cachedLeaves = { data: leaves, timestamp: Date.now() };
+    return leaves;
   } catch (err) {
     console.error('Failed to get user leaves:', err);
-    return [];
+    return cachedLeaves?.data ?? [];
   }
 }
 
@@ -115,6 +133,9 @@ export async function toggleUserLeaveAction(
         dateStr,
       })
   );
+
+  // Update in-memory cache immediately
+  cachedLeaves = { data: updatedLeaves, timestamp: Date.now() };
 
   // Broadcast realtime updates across Calendar, Pipeline, and Leaderboard
   void dispatchCalendarHolidaysUpdate({ action: 'LEAVES_UPDATED' });
