@@ -165,6 +165,17 @@ export function calculateDailySamplingForMonth(params: {
       for (const card of activeDeals) {
         const isRed = checkIsRedCard(card, companyHolidays, leavesByUser, evalDate);
         if (isRed) {
+          // If sampling for the current day in progress, verify that the card is actually red
+          // at asOfDate so we don't prematurely penalize a deal before its deadline today.
+          const isRedCurrent =
+            isCurrentMonth && day === asOfParts.date
+              ? checkIsRedCard(card, companyHolidays, leavesByUser, asOfDate)
+              : true;
+
+          if (!isRedCurrent) {
+            continue;
+          }
+
           const effectiveOff = new Set([
             ...companyHolidays,
             ...(userLeaves || []),
@@ -207,17 +218,23 @@ export function calculateDailySamplingForMonth(params: {
           const totalOverdueMs = calculateElapsedWorkingMs(redStartTime, evalDate, effectiveOff);
           const totalOverdueHours = Math.round((totalOverdueMs / (3600 * 1000)) * 10) / 10;
 
-          redCardDetails.push({
-            dealId: card.id,
-            topic: card.topic,
-            companyName: card.company?.displayName || card.company?.name,
-            overdueWorkingHours: totalOverdueHours,
-            redHoursToday,
-          });
+          // A card is only an overdue red card for this day if it actually accumulated overdue working hours
+          // (either during today's working hours or carried over from prior days).
+          // If a card reached the 27h limit at exactly workEnd (17:00), it had 0 red hours during
+          // today's work hours and 0 overdue hours at cutoff; overdue penalty only begins the next workday.
+          if (redHoursToday > 0 || totalOverdueHours > 0) {
+            redCardDetails.push({
+              dealId: card.id,
+              topic: card.topic,
+              companyName: card.company?.displayName || card.company?.name,
+              overdueWorkingHours: totalOverdueHours,
+              redHoursToday,
+            });
 
-          totalRedCardHoursToday += redHoursToday;
-          if (redHoursToday > maxRedHoursToday) {
-            maxRedHoursToday = redHoursToday;
+            totalRedCardHoursToday += redHoursToday;
+            if (redHoursToday > maxRedHoursToday) {
+              maxRedHoursToday = redHoursToday;
+            }
           }
         }
       }

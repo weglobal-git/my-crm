@@ -26,12 +26,23 @@ interface StoredPermissionData {
 }
 
 function getStoredPermissions(userId?: string | null): StoredPermissionData | null {
-  if (typeof window === "undefined" || !userId) return null;
+  if (typeof window === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(`${PERMISSION_STORAGE_PREFIX}${userId}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed?.menus) && Array.isArray(parsed?.keys)) {
+    // 1. Try userId-specific persistent cache
+    if (userId) {
+      const raw = localStorage.getItem(`${PERMISSION_STORAGE_PREFIX}${userId}`) || sessionStorage.getItem(`${PERMISSION_STORAGE_PREFIX}${userId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.menus) && Array.isArray(parsed?.keys) && parsed.menus.length > 0) {
+          return parsed;
+        }
+      }
+    }
+    // 2. Instant Fallback: use last known permissions across tabs/reloads (0ms Sidebar Paint before session resolves)
+    const lastRaw = localStorage.getItem(`${PERMISSION_STORAGE_PREFIX}last`) || sessionStorage.getItem(`${PERMISSION_STORAGE_PREFIX}last`);
+    if (lastRaw) {
+      const parsed = JSON.parse(lastRaw);
+      if (Array.isArray(parsed?.menus) && Array.isArray(parsed?.keys) && parsed.menus.length > 0) {
         return parsed;
       }
     }
@@ -44,36 +55,38 @@ function getStoredPermissions(userId?: string | null): StoredPermissionData | nu
 function saveStoredPermissions(userId: string, menus: MenuDefinition[], keys: string[]) {
   if (typeof window === "undefined" || !userId) return;
   try {
-    sessionStorage.setItem(
-      `${PERMISSION_STORAGE_PREFIX}${userId}`,
-      JSON.stringify({ menus, keys })
-    );
+    const payload = JSON.stringify({ menus, keys });
+    localStorage.setItem(`${PERMISSION_STORAGE_PREFIX}${userId}`, payload);
+    localStorage.setItem(`${PERMISSION_STORAGE_PREFIX}last`, payload);
   } catch {
     // Ignore storage quota errors
   }
 }
 
-export function PermissionProvider({ children }: { children: React.ReactNode }) {
+export function PermissionProvider({ 
+  children,
+  initialVisibleKeys = [],
+  initialDbMenus = MENU_REGISTRY,
+}: { 
+  children: React.ReactNode;
+  initialVisibleKeys?: string[];
+  initialDbMenus?: MenuDefinition[];
+}) {
   const { data: session, status } = useSession();
   const userId = session?.user?.id;
   const isAdmin = session?.user?.role === "ADMIN";
 
-  // 1. Instant Cache Hydration: initialize immediately from sessionStorage (0ms Sidebar Paint)
-  const initialCache = useMemo(() => getStoredPermissions(userId), [userId]);
+  const [dbMenus, setDbMenus] = useState<MenuDefinition[]>(initialDbMenus);
 
-  const [dbMenus, setDbMenus] = useState<MenuDefinition[]>(() => {
-    if (initialCache?.menus?.length) return initialCache.menus;
-    return MENU_REGISTRY;
-  });
-
+  // Initialize from server-passed keys to guarantee 100% hydration match between SSR and client
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(() => {
-    if (initialCache?.keys) return new Set(initialCache.keys);
+    if (initialVisibleKeys.length > 0) return new Set(initialVisibleKeys);
     if (isAdmin) return new Set(MENU_REGISTRY.map((m) => m.key));
     return new Set<string>();
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(() => {
-    if (initialCache?.menus?.length && initialCache?.keys?.length) return false;
+    if (initialVisibleKeys.length > 0) return false;
     return status === "loading";
   });
 

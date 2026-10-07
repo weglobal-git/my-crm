@@ -28,7 +28,7 @@ export const pipelineCardSelect = Prisma.validator<Prisma.OpportunitySelect>()({
   updatedAt: true,
   company: { select: { id: true, name: true, displayName: true } },
   owner: { select: { id: true, name: true, email: true, image: true, departments: { select: { id: true, name: true } } } },
-  teamMembers: { select: { id: true, name: true, email: true, image: true, departments: { select: { id: true, name: true } } } },
+  teamMembers: { select: { id: true, name: true, email: true, image: true } },
   activityLogs: {
     where: {
       parentId: null,

@@ -282,3 +282,109 @@ test('leaderboard-daily-sampling: OPEN deal with expired due date is counted as 
   assert.ok(oct6Record.redCardDetails[0].overdueWorkingHours > 0);
 });
 
+test('leaderboard-daily-sampling: deal hitting 27h threshold at workEnd (17:00) is clean during active workday and at 0h overdue', () => {
+  const users = [{ id: 'user-mild', name: 'Mild' }];
+  // Deal updated Saturday Oct 3 at 17:07 Bangkok time.
+  // Working hours: Mon 08:00-17:00 (9h), Tue 08:00-17:00 (9h), Wed 08:00-17:00 (9h = 27h reached at 17:00:00).
+  const deals: KanbanCardDTO[] = [
+    {
+      id: 'deal-mild',
+      topic: '#OEM Body Lotio&Cream',
+      type: 'SALES_DEAL',
+      status: 'OPEN',
+      value: 100000,
+      currency: 'THB',
+      dueDate: null,
+      goodsReadyDate: null,
+      goodsLoadingDate: null,
+      pipelineStageId: 'stage-1',
+      ownerId: 'user-mild',
+      closedAt: null,
+      oemProgress: null,
+      lossReason: null,
+      reserveId: null,
+      invoiceId: null,
+      isPinned: false,
+      hotNote: null,
+      createdAt: createBangkokDate(2026, 8, 15),
+      updatedAt: createBangkokDate(2026, 9, 3, 17, 7),
+      company: { id: 'comp-mild', name: 'Ahmed Maasher', displayName: 'Ahmed Maasher' },
+      owner: { id: 'user-mild', name: 'Mild', email: null, image: null, departments: [] },
+      teamMembers: [],
+      activityLogs: [
+        {
+          id: 'log-1',
+          content: 'อัพเดทหลังจากการประชุม...',
+          type: 'COMMENT',
+          createdAt: createBangkokDate(2026, 9, 3, 17, 7),
+          user: { name: 'Mild', image: null },
+        },
+      ],
+    },
+  ];
+
+  // 1. When sampled on Wednesday midday (Oct 7, 13:51 Bangkok time)
+  const middaySampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals,
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 7, 13, 51),
+  });
+
+  const mildMidday = middaySampling.get('user-mild')!;
+  assert.ok(mildMidday);
+  const wedMiddayRecord = mildMidday.dailyRecords.find((r) => r.dateKey === '2026-10-07');
+  assert.ok(wedMiddayRecord);
+  assert.equal(wedMiddayRecord.redCardsCount, 0, 'Should not be marked red on Wednesday midday');
+  assert.equal(wedMiddayRecord.cleanCardsCount, 1);
+  assert.equal(wedMiddayRecord.redCardDetails.length, 0);
+  assert.equal(mildMidday.currentRedCards, 0);
+
+  // 2. When sampled on Wednesday night (Oct 7, 23:00 Bangkok time)
+  // Deal hit exactly 27h at 17:00 (workEnd). Overdue hours today = 0h, total overdue = 0h.
+  const nightSampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals,
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 7, 23, 0),
+  });
+
+  const mildNight = nightSampling.get('user-mild')!;
+  assert.ok(mildNight);
+  const wedNightRecord = mildNight.dailyRecords.find((r) => r.dateKey === '2026-10-07');
+  assert.ok(wedNightRecord);
+  assert.equal(wedNightRecord.redCardsCount, 0, 'Should not be marked red on Wednesday night with 0h overdue');
+  assert.equal(wedNightRecord.cleanCardsCount, 1);
+  assert.equal(wedNightRecord.redCardDetails.length, 0);
+  assert.equal(mildNight.currentRedCards, 0);
+
+  // 3. When sampled on Thursday (Oct 8, 23:00 Bangkok time) if still un-updated
+  // It properly becomes red on Thursday and accumulates 9 red hours.
+  const thuSampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals,
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 8, 23, 0),
+  });
+
+  const mildThu = thuSampling.get('user-mild')!;
+  assert.ok(mildThu);
+  const thuRecord = mildThu.dailyRecords.find((r) => r.dateKey === '2026-10-08');
+  assert.ok(thuRecord);
+  assert.equal(thuRecord.redCardsCount, 1, 'Should become overdue on Thursday');
+  assert.equal(thuRecord.redCardDetails.length, 1);
+  assert.equal(thuRecord.redCardDetails[0].redHoursToday, 9);
+  assert.equal(thuRecord.redCardDetails[0].overdueWorkingHours, 9);
+  assert.equal(mildThu.currentRedCards, 1);
+});
+
+

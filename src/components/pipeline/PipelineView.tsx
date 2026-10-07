@@ -26,6 +26,7 @@ interface PipelineViewProps {
   companies?: { id: string; name: string; displayName?: string | null; contacts?: { id: string; name: string }[] }[];
   initialOpportunities?: OpportunityWithRelations[];
   initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
+  initialPinnedDealIds?: string[];
   stageTitleDepartments?: PipelineDepartmentOption[];
   initialStageTitlesByDepartment?: PipelineStageTitlesByDepartment;
   canEditStageTitles?: boolean;
@@ -51,6 +52,7 @@ export function PipelineView({
   companies, 
   initialOpportunities, 
   initialPendingAccelerators,
+  initialPinnedDealIds,
   stageTitleDepartments = [],
   initialStageTitlesByDepartment = {},
   canEditStageTitles = false,
@@ -383,6 +385,7 @@ export function PipelineView({
         initialStages={stages} 
         initialOpportunities={initialOpportunities}
         initialPendingAccelerators={initialPendingAccelerators}
+        initialPinnedDealIds={initialPinnedDealIds}
         activeStageTitleDepartmentId={activeStageTitleDepartmentId}
         stageTitlesByDepartment={stageTitlesByDepartment}
         canEditStageTitles={canEditStageTitles}

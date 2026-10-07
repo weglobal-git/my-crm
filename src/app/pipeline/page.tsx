@@ -3,6 +3,7 @@ import { PipelineView } from "@/components/pipeline/PipelineView";
 import { requirePipelineActor } from '@/lib/pipeline-security';
 import { getPipelineOpportunitiesForActor } from '@/lib/pipeline-opportunities';
 import { getPipelineStageTitleContext, getCachedPipelineStages } from '@/lib/pipeline-stage-titles';
+import { getStoredPinnedDealIdsServer } from "@/lib/user-pinned-deals";
 
 export const dynamic = 'force-dynamic';
 
@@ -25,12 +26,17 @@ export default async function PipelinePage({
   // for hydration before starting its most important query.
   // Secondary accelerator badges and deal summary indicators are fetched
   // on-demand client-side via SWR to eliminate the blocking SSR waterfall.
-  const [stages, serializedOpportunities, stageTitleContext] = await Promise.all([
+  const [stages, serializedOpportunities, stageTitleContext, userPinnedSet] = await Promise.all([
     getCachedPipelineStages(),
     getPipelineOpportunitiesForActor(actor, tab, search || undefined),
     getPipelineStageTitleContext(actor),
+    getStoredPinnedDealIdsServer(actor.id),
   ]);
-  const initialOpportunities = JSON.parse(serializedOpportunities);
+  const rawOpportunities = JSON.parse(serializedOpportunities);
+  const initialOpportunities = rawOpportunities.map((opp: any) => ({
+    ...opp,
+    isPinned: userPinnedSet.has(opp.id),
+  }));
 
   return (
     <PipelineView 
@@ -38,6 +44,7 @@ export default async function PipelinePage({
       role={actor.role}
       stages={stages}
       initialOpportunities={initialOpportunities}
+      initialPinnedDealIds={Array.from(userPinnedSet)}
       stageTitleDepartments={stageTitleContext.departments}
       initialStageTitlesByDepartment={stageTitleContext.titlesByDepartment}
       canEditStageTitles={stageTitleContext.canEdit}
@@ -45,3 +52,4 @@ export default async function PipelinePage({
     />
   );
 }
+

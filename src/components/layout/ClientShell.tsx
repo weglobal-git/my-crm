@@ -9,7 +9,17 @@ import { SidebarProvider } from "./SidebarContext";
 
 import { initPusherConnectionHygiene, teardownPusherConnectionHygiene } from "@/lib/pusher-connection-manager";
 
-export function ClientShell({ children }: { children: ReactNode }) {
+import { MenuDefinition } from "@/lib/menu-registry";
+
+export function ClientShell({ 
+  children,
+  initialVisibleKeys,
+  initialDbMenus,
+}: { 
+  children: ReactNode;
+  initialVisibleKeys?: string[];
+  initialDbMenus?: MenuDefinition[];
+}) {
   const { data: session, status } = useSession();
 
   useEffect(() => {
@@ -44,7 +54,10 @@ export function ClientShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <PermissionProvider>
+    <PermissionProvider 
+      initialVisibleKeys={initialVisibleKeys}
+      initialDbMenus={initialDbMenus}
+    >
       <SidebarProvider>
         {session && session.user && <Sidebar />}
         <div className="flex flex-1 flex-col overflow-hidden min-w-0">

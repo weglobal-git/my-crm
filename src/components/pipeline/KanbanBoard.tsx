@@ -16,10 +16,15 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, CompanyHolidaysContext, UserLeavesContext, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, PendingTodosContext, OwnerFilterContext } from "./KanbanCard";
+import { KanbanCardUI, CompanyHolidaysContext, UserLeavesContext, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, PendingTodosContext, OwnerFilterContext, PinnedDealsContext } from "./KanbanCard";
 import { useCompanyHolidays, useUserLeaves } from "@/lib/useCompanyHolidays";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import { getPendingTodosMap, type DealTodoItem } from "@/lib/actions/notes";
+import {
+  getStoredPinnedDealIdsClient,
+  saveStoredPinnedDealIdsClient,
+  getPinnedDealsStorageKey,
+} from "@/lib/user-pinned-deals-client";
 import {
   isPendingAcceleratorsKey,
   setPendingBadgeCount,
@@ -86,6 +91,7 @@ interface KanbanBoardProps {
   initialStages: PipelineStage[];
   initialOpportunities?: OpportunityWithRelations[];
   initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
+  initialPinnedDealIds?: string[];
   activeStageTitleDepartmentId?: string;
   stageTitlesByDepartment?: PipelineStageTitlesByDepartment;
   canEditStageTitles?: boolean;
@@ -110,6 +116,7 @@ export function KanbanBoard({
   initialStages, 
   initialOpportunities, 
   initialPendingAccelerators, 
+  initialPinnedDealIds,
   activeStageTitleDepartmentId,
   stageTitlesByDepartment = {},
   canEditStageTitles = false,
@@ -235,6 +242,104 @@ export function KanbanBoard({
     }
   }, [allDealIds, mutatePendingTodos]);
 
+  // Per-user pinned deals preference state
+  const [pinnedDealIds, setPinnedDealIds] = useState<Set<string>>(() => {
+    if (initialPinnedDealIds && initialPinnedDealIds.length > 0) {
+      return new Set(initialPinnedDealIds);
+    }
+    return getStoredPinnedDealIdsClient(currentUserId);
+  });
+
+  const pinnedDealIdsRef = useRef(pinnedDealIds);
+  useEffect(() => {
+    pinnedDealIdsRef.current = pinnedDealIds;
+  }, [pinnedDealIds]);
+
+  // Hydrate client-side stored pinned deals on boot if initialPinnedDealIds was empty
+  useEffect(() => {
+    const stored = getStoredPinnedDealIdsClient(currentUserId);
+    if (stored.size > 0) {
+      setPinnedDealIds(prev => {
+        if (prev.size === stored.size && Array.from(prev).every(id => stored.has(id))) {
+          return prev;
+        }
+        return stored;
+      });
+    }
+  }, [currentUserId]);
+
+  // Synchronize pinned deals across multiple tabs in real-time
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === getPinnedDealsStorageKey(currentUserId)) {
+        try {
+          const parsed = e.newValue ? JSON.parse(e.newValue) : [];
+          if (Array.isArray(parsed)) {
+            setPinnedDealIds(new Set(parsed));
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [currentUserId]);
+
+  // Instant optimistic toggle for deal pin (< 2ms)
+  const togglePinDeal = useCallback((dealId: string) => {
+    const currentPinned = pinnedDealIdsRef.current;
+    const isNowPinned = !currentPinned.has(dealId);
+    const nextSet = new Set(currentPinned);
+    if (isNowPinned) {
+      nextSet.add(dealId);
+    } else {
+      nextSet.delete(dealId);
+    }
+    const nextArray = Array.from(nextSet);
+
+    // 1. Immediately update ref and state
+    pinnedDealIdsRef.current = nextSet;
+    setPinnedDealIds(nextSet);
+
+    // 2. Persist in localStorage and document.cookie for instant SSR & multi-tab sync
+    saveStoredPinnedDealIdsClient(currentUserId, nextArray);
+
+    // 3. Instant optimistic column re-sort in KanbanBoard state (< 2ms)
+    setDeals(currentDeals => {
+      const updated = { ...currentDeals };
+      for (const stageId in updated) {
+        const list = updated[stageId];
+        const hasCard = list.some(d => d.id === dealId);
+        if (hasCard) {
+          const mappedList = list.map(d =>
+            d.id === dealId ? { ...d, isPinned: isNowPinned } : d
+          );
+          updated[stageId] = sortDeals(
+            mappedList,
+            pendingAcceleratorsMapRef.current,
+            holidaysSetRef.current,
+            leavesByUserRef.current
+          );
+        }
+      }
+      return updated;
+    });
+
+    // 4. Update SWR cache so any background reads have the new pin state
+    void mutate(
+      (currentData: OpportunityWithRelations[] | undefined) => {
+        if (!currentData) return currentData;
+        return currentData.map(item =>
+          item.id === dealId ? { ...item, isPinned: isNowPinned } : item
+        );
+      },
+      { revalidate: false }
+    );
+  }, [currentUserId, mutate]);
+
+  const pinnedDealsContextValue = useMemo(() => ({
+    pinnedDealIds,
+    togglePinDeal,
+  }), [pinnedDealIds, togglePinDeal]);
 
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
@@ -252,9 +357,13 @@ export function KanbanBoard({
     if (!isCompletedTab && searchQuery.trim()) {
       stageDeals = stageDeals.filter(o => matchesPipelineCardSearch(o, searchQuery));
     }
-    acc[stage.id] = sortDeals(stageDeals, pendingAcceleratorsMap, holidaysSet, leavesByUser);
+    const stageDealsWithPins = stageDeals.map(o => ({
+      ...o,
+      isPinned: pinnedDealIds.has(o.id),
+    }));
+    acc[stage.id] = sortDeals(stageDealsWithPins, pendingAcceleratorsMap, holidaysSet, leavesByUser);
     return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, hasValueFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery, holidaysSet, leavesByUser]);
+  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, hasValueFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery, holidaysSet, leavesByUser, pinnedDealIds]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
 
@@ -653,7 +762,11 @@ export function KanbanBoard({
               if (idx !== -1) {
                 found = true;
                 const existing = list[idx];
-                const mergedDeal = { ...existing, ...updatedDeal };
+                const mergedDeal = { 
+                  ...existing, 
+                  ...updatedDeal, 
+                  isPinned: pinnedDealIdsRef.current.has(updatedDeal.id),
+                };
                 const targetStageId = updatedDeal.pipelineStageId || existing.pipelineStageId;
                 if (targetStageId === colId) {
                   const updatedList = [...list];
@@ -679,7 +792,7 @@ export function KanbanBoard({
               }
             }
             if (!found && updatedDeal.status === 'OPEN' && updatedDeal.pipelineStageId && next[updatedDeal.pipelineStageId]) {
-              const targetList = [...next[updatedDeal.pipelineStageId], updatedDeal as OpportunityWithRelations];
+              const targetList = [...next[updatedDeal.pipelineStageId], { ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } as OpportunityWithRelations];
               next[updatedDeal.pipelineStageId] = sortDeals(
                 targetList,
                 pendingAcceleratorsMapRef.current,
@@ -698,7 +811,11 @@ export function KanbanBoard({
             }
             return source.map(opp => {
               if (opp.id === updatedDeal.id) {
-                return { ...opp, ...updatedDeal };
+                return {
+                  ...opp,
+                  ...updatedDeal,
+                  isPinned: pinnedDealIdsRef.current.has(updatedDeal.id),
+                };
               }
               return opp;
             });
@@ -1331,6 +1448,7 @@ export function KanbanBoard({
         <PendingTodosContext.Provider value={pendingTodosMap}>
           <CompanyHolidaysContext.Provider value={holidaysSet}>
             <UserLeavesContext.Provider value={leavesByUser}>
+              <PinnedDealsContext.Provider value={pinnedDealsContextValue}>
         <div 
           ref={boardContainerRef}
           className={`relative flex gap-0 md:gap-1 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-auto xl:overflow-x-auto touch-pan-x xl:touch-auto snap-x snap-mandatory md:snap-none'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
@@ -1462,6 +1580,7 @@ export function KanbanBoard({
           }}
         />
       )}
+              </PinnedDealsContext.Provider>
             </UserLeavesContext.Provider>
           </CompanyHolidaysContext.Provider>
         </PendingTodosContext.Provider>

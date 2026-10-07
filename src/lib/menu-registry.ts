@@ -29,10 +29,10 @@ export const MENU_REGISTRY: MenuDefinition[] = [
   // === SUB-MENU (Level 2) ===
   { key: "crm_overview", label: "Dashboard", level: 2, parentKey: "dashboard", iconName: "LayoutDashboard", href: "/dashboard/overview", sortOrder: 1 },
   { key: "pipeline",    label: "Pipeline",     level: 2, parentKey: "sales_ops", iconName: "MousePointer2",   href: "/pipeline",   sortOrder: 1 },
-  { key: "quotation",   label: "Quotation",    level: 2, parentKey: "sales_ops", iconName: "FileText",        href: "/quotations", sortOrder: 2 },
-  { key: "contact",     label: "Account", level: 2, parentKey: "sales_ops", iconName: "Users",           href: "/contact",    sortOrder: 3 },
-  { key: "calendar",    label: "Calendar",     level: 2, parentKey: "sales_ops", iconName: "Calendar",       href: "/calendar",   sortOrder: 4 },
+  { key: "contact",     label: "Account",      level: 2, parentKey: "sales_ops", iconName: "Users",           href: "/contact",    sortOrder: 2 },
+  { key: "quotation",   label: "Quotation",    level: 2, parentKey: "sales_ops", iconName: "FileText",        href: "/quotations", sortOrder: 3 },
   { key: "product",     label: "Product",      level: 2, parentKey: "marketing", iconName: "Package",         href: "/product",    sortOrder: 4 },
+  { key: "calendar",    label: "Calendar",     level: 2, parentKey: "sales_ops", iconName: "Calendar",       href: "/calendar",   sortOrder: 5 },
 
   // User Setting Sub-Menus
   { key: "setting.profile", label: "User Profile", level: 2, parentKey: "setting", iconName: "UserCircle", href: "/profile", sortOrder: 1 },

@@ -8,7 +8,7 @@ import { DealTypeIcon } from "./DealTypeBadge";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 import { preload, useSWRConfig } from "swr";
-import { getOpportunityActivityLogs, togglePinOpportunity, updateOpportunityHotNote } from "@/lib/actions/opportunity";
+import { getOpportunityActivityLogs, updateOpportunityHotNote } from "@/lib/actions/opportunity";
 import { getDealAccelerators } from "@/lib/actions/ai-accelerator";
 import type { DealTodoItem } from "@/lib/actions/notes";
 
@@ -65,6 +65,16 @@ export const OwnerFilterContext = createContext<OwnerFilterContextType>({ ownerF
 export const CompanyHolidaysContext = createContext<Set<string>>(new Set());
 export const UserLeavesContext = createContext<Map<string, Set<string>>>(new Map());
 
+export interface PinnedDealsContextType {
+  pinnedDealIds: Set<string>;
+  togglePinDeal: (dealId: string) => void;
+}
+
+export const PinnedDealsContext = createContext<PinnedDealsContextType>({
+  pinnedDealIds: new Set(),
+  togglePinDeal: () => {},
+});
+
 interface KanbanCardProps {
   deal: OpportunityWithRelations;
   isSelected?: boolean;
@@ -94,17 +104,9 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const { canSee } = usePermissions();
   const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
   const pendingTodosMap = useContext(PendingTodosContext);
+  const { pinnedDealIds, togglePinDeal } = useContext(PinnedDealsContext);
   const { mutate: globalMutate } = useSWRConfig();
-  const [isPinned, setIsPinned] = useState(Boolean(deal.isPinned));
-  const pinMutationIdRef = useRef(0);
-  const activePinMutationsRef = useRef(0);
-
-  useEffect(() => {
-    // Only synchronize incoming deal.isPinned when no local pin mutations are in flight
-    if (activePinMutationsRef.current === 0) {
-      setIsPinned(Boolean(deal.isPinned));
-    }
-  }, [deal.isPinned]);
+  const isPinned = pinnedDealIds.has(deal.id) || (pinnedDealIds.size === 0 && Boolean(deal.isPinned));
 
   const dealTodos = pendingTodosMap[deal.id] || [];
   const hasPriorityTodo = dealTodos.some(t => t.isPinned);
@@ -175,45 +177,9 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
 
   const hasHotNote = Boolean((hotNote && hotNote.trim().length > 0) || (deal.hotNote && deal.hotNote.trim().length > 0));
 
-  const handleTogglePin = useCallback(async () => {
-    const nextPinned = !isPinned;
-    const mutationId = ++pinMutationIdRef.current;
-    activePinMutationsRef.current++;
-
-    // 1. Instant local visual update (< 5ms)
-    setIsPinned(nextPinned);
-
-    // 2. Optimistic update to SWR cache
-    void globalMutate(
-      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
-      (current: OpportunityWithRelations[] | undefined) => {
-        if (!current) return current;
-        return current.map(item => item.id === deal.id ? { ...item, isPinned: nextPinned } : item);
-      },
-      false
-    );
-
-    try {
-      await togglePinOpportunity(deal.id, nextPinned);
-    } catch (error) {
-      console.error('Failed to toggle pin:', error);
-      // Only rollback if no subsequent click was initiated
-      if (mutationId === pinMutationIdRef.current) {
-        setIsPinned(!nextPinned);
-        void globalMutate(
-          (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
-          (current: OpportunityWithRelations[] | undefined) => {
-            if (!current) return current;
-            return current.map(item => item.id === deal.id ? { ...item, isPinned: !nextPinned } : item);
-          },
-          false
-        );
-        void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
-      }
-    } finally {
-      activePinMutationsRef.current = Math.max(0, activePinMutationsRef.current - 1);
-    }
-  }, [deal.id, isPinned, globalMutate]);
+  const handleTogglePin = useCallback(() => {
+    togglePinDeal(deal.id);
+  }, [deal.id, togglePinDeal]);
 
   const saveHotNote = useCallback(async (textToSave: string) => {
     const currentSaved = deal.hotNote || '';
