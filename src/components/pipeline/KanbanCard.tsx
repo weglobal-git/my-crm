@@ -170,11 +170,15 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const [isSavingHotNote, setIsSavingHotNote] = useState(false);
   const isHotNoteFocusedRef = useRef(false);
   const hotNoteMutationIdRef = useRef(0);
+  const lastSavedHotNoteRef = useRef(deal.hotNote || '');
+  const inFlightHotNoteRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Only synchronize from deal.hotNote if the input is not currently focused by the user
-    if (!isHotNoteFocusedRef.current) {
+    // and no mutation is in-flight for this card
+    if (!isHotNoteFocusedRef.current && inFlightHotNoteRef.current === null) {
       setHotNote(deal.hotNote || '');
+      lastSavedHotNoteRef.current = deal.hotNote || '';
     }
   }, [deal.hotNote]);
 
@@ -185,10 +189,13 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   }, [deal.id, togglePinDeal]);
 
   const saveHotNote = useCallback(async (textToSave: string) => {
-    const currentSaved = deal.hotNote || '';
     const trimmed = textToSave.trim();
-    if (trimmed === currentSaved) return;
+    const currentSaved = lastSavedHotNoteRef.current;
+    if (trimmed === currentSaved || inFlightHotNoteRef.current === trimmed) return;
 
+    const previousSaved = currentSaved;
+    lastSavedHotNoteRef.current = trimmed;
+    inFlightHotNoteRef.current = trimmed;
     const mutationId = ++hotNoteMutationIdRef.current;
     setIsSavingHotNote(true);
     void globalMutate(
@@ -197,7 +204,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
         if (!current) return current;
         return current.map(item => item.id === deal.id ? { ...item, hotNote: trimmed || null } : item);
       },
-      false
+      { revalidate: false }
     );
 
     try {
@@ -205,14 +212,19 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
     } catch (error) {
       console.error('Failed to save quick note:', error);
       if (mutationId === hotNoteMutationIdRef.current) {
+        lastSavedHotNoteRef.current = previousSaved;
+        setHotNote(previousSaved);
         void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
       }
     } finally {
+      if (inFlightHotNoteRef.current === trimmed) {
+        inFlightHotNoteRef.current = null;
+      }
       if (mutationId === hotNoteMutationIdRef.current) {
         setIsSavingHotNote(false);
       }
     }
-  }, [deal.id, deal.hotNote, globalMutate]);
+  }, [deal.id, globalMutate]);
 
   const handleBlurHotNote = () => {
     isHotNoteFocusedRef.current = false;
@@ -349,6 +361,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === 'Enter') {
+                e.preventDefault();
                 void saveHotNote(hotNote);
                 e.currentTarget.blur();
               }
@@ -368,7 +381,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
 
       {/* Top row: Avatar, Name, Company, Arrow/Bell */}
       <div className="flex justify-between items-start gap-2">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="flex items-center pt-2gap-2 flex-1 min-w-0">
           <div className="relative flex-shrink-0">
             <div 
               onClick={(e) => { 

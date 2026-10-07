@@ -27,6 +27,7 @@ import {
   maintainFulfilledDueDates,
 } from '@/lib/pipeline-opportunities';
 import { leanOpportunityPinSelect, leanOpportunityHotNoteSelect } from '@/lib/pipeline-card-dto';
+import { after } from "next/server";
 import { dispatchDashboardInvalidation } from '@/lib/dashboard/dashboard-realtime-server';
 import { recordPipelineActionMetric } from '@/lib/pipeline-action-telemetry';
 import { resolveAccessContext } from '@/lib/access/access-context';
@@ -36,6 +37,16 @@ import {
   deleteActivityLogForActor,
 } from '@/lib/pipeline-activity-service';
 import { withSerializableRetry } from '@/lib/serializable-transaction';
+
+function runBackgroundJob(task: () => Promise<void> | void) {
+  try {
+    after(task);
+  } catch {
+    void Promise.resolve().then(task).catch((err) => {
+      console.error('[BACKGROUND-JOB-ERROR]', err);
+    });
+  }
+}
 
 export async function getPipelineOpportunities(tab: string, searchQuery?: string) {
   const actor = await requirePipelineActor();
@@ -898,16 +909,18 @@ export async function togglePinOpportunity(id: string, isPinned: boolean) {
   const dbDurationMs = performance.now() - dbStart;
 
   const revision = updated.updatedAt ? new Date(updated.updatedAt).getTime() : Date.now();
-  try {
-    await notifyPrivatePipelineUpdate(id, {
-      action: 'OPPORTUNITY_UPDATED',
-      deal: updated,
-      dealId: id,
-      revision,
-    });
-  } catch (err: unknown) {
-    console.error('[PUSHER-PIN-TRIGGER] Failed to dispatch pin update:', err);
-  }
+  runBackgroundJob(async () => {
+    try {
+      await notifyPrivatePipelineUpdate(id, {
+        action: 'OPPORTUNITY_UPDATED',
+        deal: updated,
+        dealId: id,
+        revision,
+      });
+    } catch (err: unknown) {
+      console.error('[PUSHER-PIN-TRIGGER] Failed to dispatch pin update:', err);
+    }
+  });
 
   const totalDurationMs = performance.now() - startedAt;
   recordPipelineActionMetric({
@@ -937,27 +950,29 @@ export async function updateOpportunityHotNote(id: string, hotNote: string | nul
 
   const revision = updated.updatedAt ? new Date(updated.updatedAt).getTime() : Date.now();
 
-  const additionalRecipients = actor.departmentIds && actor.departmentIds.length > 0
-    ? (await prisma.user.findMany({
-        where: { departments: { some: { id: { in: actor.departmentIds } } } },
-        select: { id: true },
-      })).map(u => u.id)
-    : [];
+  runBackgroundJob(async () => {
+    try {
+      const additionalRecipients = actor.departmentIds && actor.departmentIds.length > 0
+        ? (await prisma.user.findMany({
+            where: { departments: { some: { id: { in: actor.departmentIds } } } },
+            select: { id: true },
+          })).map(u => u.id)
+        : [];
 
-  try {
-    await notifyPrivatePipelineUpdate(
-      id,
-      {
-        action: 'OPPORTUNITY_UPDATED',
-        deal: updated,
-        dealId: id,
-        revision,
-      },
-      additionalRecipients,
-    );
-  } catch (err: unknown) {
-    console.error('[PUSHER-HOTNOTE-TRIGGER] Failed to dispatch hot note update:', err);
-  }
+      await notifyPrivatePipelineUpdate(
+        id,
+        {
+          action: 'OPPORTUNITY_UPDATED',
+          deal: updated,
+          dealId: id,
+          revision,
+        },
+        additionalRecipients,
+      );
+    } catch (err: unknown) {
+      console.error('[PUSHER-HOTNOTE-TRIGGER] Failed to dispatch hot note update:', err);
+    }
+  });
 
   const totalDurationMs = performance.now() - startedAt;
   recordPipelineActionMetric({
