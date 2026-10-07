@@ -1,9 +1,8 @@
-import prisma from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { PipelineView } from "@/components/pipeline/PipelineView";
 import { requirePipelineActor } from '@/lib/pipeline-security';
 import { getPipelineOpportunitiesForActor } from '@/lib/pipeline-opportunities';
-import { getPipelineStageTitleContext } from '@/lib/pipeline-stage-titles';
+import { getPipelineStageTitleContext, getCachedPipelineStages } from '@/lib/pipeline-stage-titles';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,7 +26,7 @@ export default async function PipelinePage({
   // Secondary accelerator badges and deal summary indicators are fetched
   // on-demand client-side via SWR to eliminate the blocking SSR waterfall.
   const [stages, serializedOpportunities, stageTitleContext] = await Promise.all([
-    prisma.pipelineStage.findMany({ orderBy: { order: 'asc' } }),
+    getCachedPipelineStages(),
     getPipelineOpportunitiesForActor(actor, tab, search || undefined),
     getPipelineStageTitleContext(actor),
   ]);

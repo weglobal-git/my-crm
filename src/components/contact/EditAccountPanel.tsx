@@ -50,39 +50,15 @@ import {
   toggleCompanyStatus
 } from "@/lib/actions/contact";
 import { getCachedAccountAnalysis, getCachedWebIntelligence } from "@/lib/actions/account-ai";
+import { getCompanySaleTargets } from "@/lib/actions/sales-target";
 import { useDialog } from "@/providers/DialogProvider";
 import { usePermissions } from "@/providers/PermissionProvider";
-import dynamic from "next/dynamic";
 import { ProjectsTab } from "./ProjectsTab";
 import { EmailTab } from "./EmailTab";
+import { AccountAITab } from "./AccountAITab";
+import { SharedMediaTab } from "@/components/pipeline/SharedMediaTab";
+import { SaleTargetTab } from "./SaleTargetTab";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
-
-const AccountAITab = dynamic(() => import("./AccountAITab").then((m) => m.AccountAITab), {
-  loading: () => (
-    <div className="flex items-center justify-center h-64">
-      <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
-    </div>
-  ),
-  ssr: false,
-});
-
-const SharedMediaTab = dynamic(() => import("@/components/pipeline/SharedMediaTab").then((m) => m.SharedMediaTab), {
-  loading: () => (
-    <div className="flex items-center justify-center h-64">
-      <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
-    </div>
-  ),
-  ssr: false,
-});
-
-const SaleTargetTab = dynamic(() => import("./SaleTargetTab").then((m) => m.SaleTargetTab), {
-  loading: () => (
-    <div className="flex items-center justify-center h-64">
-      <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
-    </div>
-  ),
-  ssr: false,
-});
 
 interface EditAccountPanelProps {
   companyId: string | null;
@@ -425,23 +401,40 @@ export function EditAccountPanel({
     return () => clearTimeout(timer);
   }, [isOpen, selectedContactId]);
 
-  // Idle Background Preloading: warms JS chunks & SWR cache for Account AI & Shared Media (0ms tab switch)
+  // Idle Background Preloading: warms SWR cache for secondary tabs (0ms instant tab switch)
   useEffect(() => {
-    if (!isOpen || !companyId || isLoading) return;
+    if (!isOpen || !companyId) return;
 
-    const timer = setTimeout(() => {
-      // 1. Preload dynamic component JS bundles
-      void import("./AccountAITab");
-      void import("@/components/pipeline/SharedMediaTab");
+    let timer: NodeJS.Timeout | null = null;
+    let idleId: number | null = null;
+    let cancelled = false;
 
-      // 2. Preload SWR caches in background (catch any rejection silently)
+    const primeSecondaryData = () => {
+      if (cancelled) return;
+      // 1. Preload Sale Targets
+      void preload(["company-sale-targets", companyId], () => getCompanySaleTargets(companyId)).catch(() => {});
+      // 2. Preload Account AI
       void preload(["account-ai-cached", companyId], () => getCachedAccountAnalysis(companyId)).catch(() => {});
       void preload(["account-web-intel", companyId], () => getCachedWebIntelligence(companyId)).catch(() => {});
+      // 3. Preload Shared Media
       void preload(["account-shared-media", companyId], () => getAccountSharedMedia(companyId)).catch(() => {});
-    }, 800);
+    };
 
-    return () => clearTimeout(timer);
-  }, [isOpen, companyId, isLoading]);
+    const hasIdle = typeof window !== "undefined" && "requestIdleCallback" in window;
+    if (hasIdle) {
+      idleId = (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(primeSecondaryData, { timeout: 1200 });
+    } else {
+      timer = setTimeout(primeSecondaryData, 250);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId !== null && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
+      }
+      if (timer) clearTimeout(timer);
+    };
+  }, [isOpen, companyId]);
 
   // Address expand/collapse
   const toggleAddressExpand = (id: string) => {

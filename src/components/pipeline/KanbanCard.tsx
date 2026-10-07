@@ -612,7 +612,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
 
         {/* Quick Go Shortcut Buttons */}
         <div 
-          className="flex items-center gap-0.5 ml-auto shrink-0" 
+          className="flex items-center gap-0.5 ml-auto shrink-0 min-h-[28px]" 
           onClick={(e) => e.stopPropagation()}
         >
           {isOrange && (
@@ -621,7 +621,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
                 e.stopPropagation();
                 onOpenPanel?.('manager-call');
               }}
-              className="px-2.5 py-1 rounded-full bg-slate-950 text-amber-400 font-bold text-xs tracking-wide flex items-center gap-1 shadow-sm cursor-pointer hover:bg-slate-900 shrink-0"
+              className="px-2.5 py-1 rounded-full bg-slate-950 text-amber-400 font-bold text-xs tracking-wide flex items-center gap-1 shadow-sm cursor-pointer hover:bg-slate-900 shrink-0 transition-all duration-150 animate-in fade-in"
               title="ดูและตอบ Manager Call"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
@@ -672,7 +672,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
               }}
               onMouseEnter={handleTodoMouseEnter}
               onMouseLeave={handleTodoMouseLeave}
-              className={`h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
+              className={`h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-medium tracking-wide transition-all duration-150 animate-in fade-in ${
                 isOrange
                   ? 'bg-black/20 text-slate-950 hover:bg-black/30'
                   : highlight

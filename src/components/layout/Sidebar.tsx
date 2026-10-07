@@ -274,13 +274,42 @@ export function Sidebar() {
 
   if (isLoading) {
     return (
-      <aside className="hidden lg:flex h-screen w-48 flex-col bg-[#252728] p-4 shrink-0 z-30 border-r border-[#1C1C1D] animate-pulse">
-        <div className="h-9 w-full rounded-lg bg-[#3A3B3C] mb-4" />
-        <div className="h-8 w-full rounded-lg bg-[#3A3B3C] mb-6" />
-        <div className="space-y-2">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-7 w-full rounded-lg bg-[#3A3B3C]/50" />
-          ))}
+      <aside className="hidden lg:flex h-screen w-54 flex-col bg-[#252728] shrink-0 z-30 border-r border-[#1C1C1D] animate-pulse select-none justify-between">
+        {/* Top Section */}
+        <div className="flex flex-col">
+          {/* Workspace Switcher Header Skeleton */}
+          <div className="p-3 border-b border-[#1C1C1D]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-6 h-6 rounded-md bg-[#3A3B3C]" />
+                <div className="h-4 w-20 rounded bg-[#3A3B3C]" />
+              </div>
+              <div className="w-4 h-4 rounded bg-[#3A3B3C]" />
+            </div>
+          </div>
+
+          {/* Quick Find Input Skeleton */}
+          <div className="px-3 pt-3 pb-2">
+            <div className="h-8 w-full bg-[#3A3B3C]/70 rounded-lg" />
+          </div>
+
+          {/* Navigation Links Skeleton */}
+          <div className="px-2 py-1 space-y-1">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="h-7 w-full rounded-lg bg-[#3A3B3C]/50 flex items-center px-2.5 gap-2.5">
+                <div className="w-4 h-4 rounded bg-[#4E4F50]/60 shrink-0" />
+                <div className="h-3 w-20 rounded bg-[#4E4F50]/40" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Bottom Section Skeleton */}
+        <div className="p-2 border-t border-[#1C1C1D]">
+          <div className="h-7 w-full rounded-lg bg-[#3A3B3C]/50 flex items-center px-2.5 gap-2.5">
+            <div className="w-4 h-4 rounded bg-[#4E4F50]/60 shrink-0" />
+            <div className="h-3 w-16 rounded bg-[#4E4F50]/40" />
+          </div>
         </div>
       </aside>
     );

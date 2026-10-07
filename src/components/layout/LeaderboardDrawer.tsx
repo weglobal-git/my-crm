@@ -146,7 +146,12 @@ export function LeaderboardDrawer({
           className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden shadow-2xl"
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#1C1C1D] shrink-0 bg-[#252728] relative">
+            {isLoading && data && (
+              <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#1C1C1D] overflow-hidden z-20">
+                <div className="w-full h-full bg-[#C7F33C] animate-pulse" />
+              </div>
+            )}
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 flex items-center justify-center shrink-0">
                 <Trophy className="w-7 h-7 text-[#C7F33C]" />
@@ -216,7 +221,7 @@ export function LeaderboardDrawer({
           </div>
 
           {/* Scrollable Body */}
-          <div className="flex-1 overflow-y-auto hide-scrollbar p-4 space-y-6">
+          <div className={`flex-1 overflow-y-auto hide-scrollbar p-4 space-y-6 transition-opacity duration-200 ${isLoading && data ? 'opacity-60' : 'opacity-100'}`}>
             {error ? (
               <div className="p-6 text-center space-y-2 rounded-2xl bg-[#1C1C1D] border border-[#3A3B3C]">
                 <AlertCircle className="w-6 h-6 text-rose-400 mx-auto" />
@@ -226,10 +231,11 @@ export function LeaderboardDrawer({
                 <p className="text-[11px] text-slate-500">{error.message}</p>
               </div>
             ) : isLoading && !data ? (
-              <div className="space-y-4">
-                <div className="h-44 rounded-2xl bg-[#3A3B3C] border border-[#4E4F50] animate-pulse" />
-                <div className="h-60 rounded-2xl bg-[#3A3B3C] border border-[#4E4F50] animate-pulse" />
-                <div className="h-60 rounded-2xl bg-[#3A3B3C] border border-[#4E4F50] animate-pulse" />
+              <div className="flex-1 flex flex-col items-center justify-center py-20 text-slate-400">
+                <div className="flex items-center gap-2 text-xs">
+                  <div className="w-4 h-4 border-2 border-[#C7F33C] border-t-transparent rounded-full animate-spin" />
+                  <span>Loading standings...</span>
+                </div>
               </div>
             ) : (
               <>

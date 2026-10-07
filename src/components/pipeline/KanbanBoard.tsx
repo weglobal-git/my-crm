@@ -36,98 +36,7 @@ import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
 import useSWR, { mutate as globalMutate } from "swr";
 
-function EditDealPanelSkeleton() {
-  return (
-    <>
-      {/* Matching Backdrop blur */}
-      <div
-        className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] transition-opacity duration-300 animate-in fade-in"
-        aria-hidden="true"
-      />
-
-      {/* Matching Drawer Frame */}
-      <div
-        role="dialog"
-        aria-label="Loading deal details"
-        aria-modal="true"
-        className="fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[600px] md:max-w-[calc(100vw-32px)] z-[101] flex animate-in slide-in-from-right-4 duration-200"
-      >
-        <div className="flex flex-col w-full h-full rounded-none md:rounded-2xl overflow-hidden border-0 md:border border-[#3A3B3C] shadow-2xl bg-[#252728]">
-          <div className="flex flex-col md:flex-row w-full flex-1 min-h-0 overflow-hidden">
-            {/* Matching Tab Sidebar (desktop only) */}
-            <div className="hidden md:flex w-16 bg-[#252728] border-r border-[#1C1C1D] flex-col items-center py-3 gap-3 z-10 shrink-0">
-              <div className="h-10 w-10 rounded-full bg-[#C7F33C]/20 flex items-center justify-center animate-pulse" />
-              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
-              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
-              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
-              <div className="h-10 w-10 rounded-full bg-[#1C1C1D] animate-pulse" />
-            </div>
-
-            {/* Matching Main Panel Area */}
-            <div className="w-full flex-1 bg-[#252728] flex flex-col min-w-0 h-full">
-              {/* Main Bar Skeleton (min-h-[56px]) */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-[#1C1C1D] shrink-0 min-h-[56px] bg-[#252728]">
-                <div className="flex flex-col flex-1 pr-3 min-w-0 gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 rounded bg-[#3A3B3C] animate-pulse shrink-0" />
-                    <div className="h-4 w-40 rounded bg-[#3A3B3C] animate-pulse" />
-                  </div>
-                  <div className="flex items-center gap-1.5 pl-6">
-                    <div className="h-3 w-28 rounded bg-[#3A3B3C]/60 animate-pulse" />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="w-8 h-8 rounded-lg bg-[#3A3B3C] animate-pulse" />
-                  <div className="w-8 h-8 rounded-lg bg-[#3A3B3C] animate-pulse" />
-                </div>
-              </div>
-
-              {/* Sub Bar Skeleton (min-h-[44px]) */}
-              <div className="flex items-center justify-between px-4 py-2 border-b border-[#1C1C1D] shrink-0 min-h-[44px] bg-[#252728]">
-                <div className="flex items-center gap-2">
-                  <div className="h-7 w-20 rounded-md bg-[#C7F33C]/20 animate-pulse" />
-                  <div className="h-7 w-16 rounded-md bg-[#1C1C1D] animate-pulse" />
-                  <div className="h-7 w-20 rounded-md bg-[#1C1C1D] animate-pulse" />
-                </div>
-                <div className="w-7 h-7 rounded bg-[#1C1C1D] animate-pulse" />
-              </div>
-
-              {/* Body Content Skeleton (Activity Feed) */}
-              <div className="flex-1 p-4 space-y-4 overflow-y-auto bg-[#1C1C1D]">
-                {/* Input box skeleton */}
-                <div className="h-20 rounded-xl bg-[#252728] border border-[#3A3B3C]/50 animate-pulse" />
-
-                {/* Activity items */}
-                <div className="space-y-3 pt-2">
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-full bg-[#252728] animate-pulse shrink-0" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-3.5 w-32 rounded bg-[#252728] animate-pulse" />
-                      <div className="h-14 rounded-lg bg-[#252728] animate-pulse" />
-                    </div>
-                  </div>
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-full bg-[#252728] animate-pulse shrink-0" />
-                    <div className="flex-1 space-y-2">
-                      <div className="h-3.5 w-24 rounded bg-[#252728] animate-pulse" />
-                      <div className="h-10 rounded-lg bg-[#252728] animate-pulse" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-const loadEditDealPanel = () => import("./EditDealPanel");
-const EditDealPanel = dynamic(() => loadEditDealPanel().then(mod => mod.EditDealPanel), {
-  ssr: false,
-  loading: () => <EditDealPanelSkeleton />,
-});
+import { EditDealPanel } from "./EditDealPanel";
 
 const activeClass = "border-[#C7F33C] bg-[#252728] text-[#C7F33C]";
 
@@ -424,27 +333,7 @@ export function KanbanBoard({
     pendingAcceleratorsMapRef.current = pendingAcceleratorsMap;
   }, [pendingAcceleratorsMap]);
 
-  // Warm EditDealPanel chunk during browser idle so the first card click mounts in 0ms without skeleton
-  useEffect(() => {
-    const warmPanel = () => { void loadEditDealPanel(); };
-    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      const idleId = (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(
-        warmPanel,
-        { timeout: 1500 }
-      );
-      return () => {
-        if ('cancelIdleCallback' in window) {
-          (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
-        }
-      };
-    }
-    const timer = setTimeout(warmPanel, 1000);
-    return () => clearTimeout(timer);
-  }, []);
 
-  const preloadEditDealPanel = useCallback(() => {
-    void loadEditDealPanel();
-  }, []);
 
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const dealsRef = useRef(deals);
@@ -530,7 +419,14 @@ export function KanbanBoard({
               if (opp.id === data.dealId) {
                 const isExisting = (opp.teamMembers || []).some(u => u.id === addedUser.id);
                 if (!isExisting) {
-                  return { ...opp, teamMembers: [...(opp.teamMembers || []), addedUser] };
+                  const normalizedMember = {
+                    id: addedUser.id,
+                    name: addedUser.name || null,
+                    email: addedUser.email || null,
+                    image: addedUser.image || null,
+                    departments: (addedUser as unknown as { departments?: { id: string; name: string }[] }).departments || [],
+                  };
+                  return { ...opp, teamMembers: [...(opp.teamMembers || []), normalizedMember] };
                 }
               }
               return opp;
@@ -552,7 +448,15 @@ export function KanbanBoard({
             return currentData.map(opp => {
               if (opp.id === data.dealId) {
                 const currentMembers = opp.teamMembers || [];
-                const newMembers = addedUsers.filter(u => !currentMembers.some(existing => existing.id === u.id));
+                const newMembers = addedUsers
+                  .filter(u => !currentMembers.some(existing => existing.id === u.id))
+                  .map(u => ({
+                    id: u.id,
+                    name: u.name || null,
+                    email: u.email || null,
+                    image: u.image || null,
+                    departments: (u as unknown as { departments?: { id: string; name: string }[] }).departments || [],
+                  }));
                 if (newMembers.length > 0) {
                   return { ...opp, teamMembers: [...currentMembers, ...newMembers] };
                 }
@@ -1467,7 +1371,6 @@ export function KanbanBoard({
                         <KanbanCardUI 
                           deal={deal} 
                           onOpenPanel={(tab) => handleOpenPanel(deal, (tab || 'activity') as TabType)} 
-                          onPanelIntent={preloadEditDealPanel}
                         />
                       </div>
                     ))}
@@ -1518,7 +1421,6 @@ export function KanbanBoard({
                   isScrollable={true}
                   currentUserId={currentUserId}
                   currentUserRole={currentUserRole}
-                  onDealIntent={preloadEditDealPanel}
                 />
               </div>
             ))}

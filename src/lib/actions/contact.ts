@@ -532,6 +532,36 @@ export async function getCompaniesWithContacts({
 export type GetCompaniesResult = Awaited<ReturnType<typeof getCompaniesWithContacts>>;
 export type CompanyMasterItem = GetCompaniesResult["companies"][number];
 
+let cachedInitialCompanies: GetCompaniesResult | null = null;
+let lastInitialCompaniesFetch = 0;
+const INITIAL_COMPANIES_CACHE_TTL = 45 * 1000; // 45-second memory cache for instant SSR
+
+function invalidateInitialCompaniesCache() {
+  cachedInitialCompanies = null;
+  lastInitialCompaniesFetch = 0;
+  cachedStatusStats = null;
+  lastStatusStatsFetch = 0;
+}
+
+export async function getCachedInitialCompanies(): Promise<GetCompaniesResult> {
+  const now = Date.now();
+  if (cachedInitialCompanies && now - lastInitialCompaniesFetch < INITIAL_COMPANIES_CACHE_TTL) {
+    return cachedInitialCompanies;
+  }
+
+  const result = await getCompaniesWithContacts({
+    status: "QUALIFIED",
+    type: "ALL",
+    search: "",
+    page: 1,
+    pageSize: 20,
+  });
+
+  cachedInitialCompanies = result;
+  lastInitialCompaniesFetch = now;
+  return result;
+}
+
 export type GetContactsResult = Awaited<ReturnType<typeof getContacts>>;
 export type ContactWithRelations = GetContactsResult["contacts"][number];
 
@@ -1118,7 +1148,7 @@ export async function toggleCompanyStatus(companyId: string, status: ContactStat
   ]);
 
   revalidatePath("/contact");
-  lastStatusStatsFetch = 0; // Invalidate cached counts for real-time update
+  invalidateInitialCompaniesCache();
   void pusherServer.trigger("private-contacts", "account-updated", {
     action: "STATUS_CHANGE",
     companyId,
@@ -1174,6 +1204,7 @@ export async function updateCompanyStarRating(
   ]);
 
   const revision = updated.updatedAt.toISOString();
+  invalidateInitialCompaniesCache();
 
   void pusherServer.trigger("private-contacts", "account-updated", {
     action: "RATING_CHANGE",
@@ -1284,6 +1315,7 @@ export async function updateCompanyDetails(
   ]);
 
   const revision = updated.updatedAt.toISOString();
+  invalidateInitialCompaniesCache();
 
   void pusherServer.trigger("private-contacts", "account-updated", {
     action: "DETAILS_CHANGE",
@@ -1416,6 +1448,7 @@ export async function createCompany(input: CreateCompanyInput) {
   });
 
   revalidatePath("/contact");
+  invalidateInitialCompaniesCache();
   void pusherServer.trigger("private-contacts", "account-updated", {
     action: "COMPANY_CREATED",
     companyId: result.id,

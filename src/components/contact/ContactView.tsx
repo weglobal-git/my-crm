@@ -123,6 +123,35 @@ export function ContactView({
     }
   }, [initialCompanies]);
 
+  // Idle Background Preload: Pre-warm EditAccountPanel code chunk and first company overview
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    let idleId: number | null = null;
+
+    const primePanels = () => {
+      void loadEditAccountPanel();
+      if (initialCompanies[0]?.id) {
+        const key = getAccountOverviewKey(initialCompanies[0].id);
+        if (key) {
+          void preload(key, fetchAccountOverview);
+        }
+      }
+    };
+
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(primePanels, { timeout: 1200 });
+    } else {
+      timer = setTimeout(primePanels, 300);
+    }
+
+    return () => {
+      if (idleId !== null && typeof window !== "undefined" && "cancelIdleCallback" in window) {
+        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
+      }
+      if (timer) clearTimeout(timer);
+    };
+  }, [initialCompanies]);
+
   // Stable filter callbacks for 0ms interaction
   const handleTypeChange = useCallback((type: ContactType | "ALL") => {
     setActiveType(type);

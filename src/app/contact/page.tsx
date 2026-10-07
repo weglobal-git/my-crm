@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
-  getCompaniesWithContacts,
+  getCachedInitialCompanies,
   getContactActor,
   getCompanyTypes,
   getCompanyCountries,
@@ -19,24 +19,12 @@ export default async function ContactPage() {
     redirect("/");
   }
 
-  // Preload actor, types, and countries concurrently with maximum parallelism
-  const actorPromise = getContactActor(session);
-  const typesPromise = getCompanyTypes();
-  const countriesPromise = getCompanyCountries();
-
-  const actor = await actorPromise;
-
-  const [companiesResult, initialTypes, initialCountries] = await Promise.all([
-    getCompaniesWithContacts({
-      status: "QUALIFIED",
-      type: "ALL",
-      search: "",
-      page: 1,
-      pageSize: 20,
-      actor,
-    }),
-    typesPromise,
-    countriesPromise,
+  // Preload actor, companies, types, and countries concurrently with 100% parallelism
+  const [actor, companiesResult, initialTypes, initialCountries] = await Promise.all([
+    getContactActor(session),
+    getCachedInitialCompanies(),
+    getCompanyTypes(),
+    getCompanyCountries(),
   ]);
 
   const { companies, stats, total } = companiesResult;

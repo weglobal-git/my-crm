@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import useSWR from "swr";
 import { Loader2, Plus, Pencil, Trash2, Check, X, Target } from "lucide-react";
 import {
   getCompanySaleTargets,
@@ -28,9 +29,38 @@ function formatAmount(value: string | number, currency = "THB") {
 
 export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
   const { toast, confirm } = useDialog();
-  const [targets, setTargets] = useState<CompanySaleTargetDTO[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+
+  const {
+    data: swrTargets,
+    isLoading: isSwrLoading,
+    error: swrError,
+    mutate: mutateTargets,
+  } = useSWR(
+    companyId ? ["company-sale-targets", companyId] : null,
+    () => getCompanySaleTargets(companyId),
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 30000,
+    }
+  );
+
+  const [targets, setTargets] = useState<CompanySaleTargetDTO[]>(() => swrTargets || []);
+  const [isLoading, setIsLoading] = useState(() => !swrTargets);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (swrTargets) {
+      setTargets(swrTargets);
+      setIsLoading(false);
+    }
+  }, [swrTargets]);
+
+  useEffect(() => {
+    if (swrError) {
+      setError(swrError instanceof Error ? swrError.message : "Failed to load sale targets");
+      setIsLoading(false);
+    }
+  }, [swrError]);
 
   // Add target form state
   const [isAdding, setIsAdding] = useState(false);
@@ -47,30 +77,6 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
 
   // Past 10 years down to 2000
   const availableYears = Array.from({ length: 11 }, (_, i) => currentYear - i);
-
-  useEffect(() => {
-    let isMounted = true;
-    setIsLoading(true);
-    setError(null);
-
-    getCompanySaleTargets(companyId)
-      .then((data) => {
-        if (isMounted) {
-          setTargets(data);
-          setIsLoading(false);
-        }
-      })
-      .catch((err) => {
-        if (isMounted) {
-          setError(err instanceof Error ? err.message : "Failed to load sale targets");
-          setIsLoading(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [companyId]);
 
   const handleStartAdd = () => {
     setIsAdding(true);
@@ -102,7 +108,9 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
 
       setTargets((prev) => {
         const filtered = prev.filter((t) => !(t.year === saved.year && t.currency === saved.currency));
-        return [saved, ...filtered].sort((a, b) => b.year - a.year || a.currency.localeCompare(b.currency));
+        const next = [saved, ...filtered].sort((a, b) => b.year - a.year || a.currency.localeCompare(b.currency));
+        void mutateTargets(next, false);
+        return next;
       });
       setIsAdding(false);
       setNewAmount("");
@@ -151,15 +159,19 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
         amount: cleanAmount,
         currency: target.currency,
       });
-      setTargets((prev) =>
-        prev.map((t) => (t.year === target.year && t.currency === target.currency ? saved : t))
-      );
+      setTargets((prev) => {
+        const next = prev.map((t) => (t.year === target.year && t.currency === target.currency ? saved : t));
+        void mutateTargets(next, false);
+        return next;
+      });
       toast({ title: "Sale Target updated", type: "success" });
     } catch (err) {
       // Rollback
-      setTargets((prev) =>
-        prev.map((t) => (t.year === target.year && t.currency === target.currency ? { ...t, amount: previousAmount } : t))
-      );
+      setTargets((prev) => {
+        const next = prev.map((t) => (t.year === target.year && t.currency === target.currency ? { ...t, amount: previousAmount } : t));
+        void mutateTargets(next, false);
+        return next;
+      });
       toast({
         title: "Failed to update sale target",
         description: err instanceof Error ? err.message : "Error updating target",
@@ -187,7 +199,11 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
     const key = `${target.year}-${target.currency}`;
     const previousTargets = [...targets];
     // Optimistic delete
-    setTargets((prev) => prev.filter((t) => !(t.year === target.year && t.currency === target.currency)));
+    setTargets((prev) => {
+      const next = prev.filter((t) => !(t.year === target.year && t.currency === target.currency));
+      void mutateTargets(next, false);
+      return next;
+    });
     setPendingKeys((prev) => new Set(prev).add(key));
 
     try {
@@ -200,6 +216,7 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
     } catch (err) {
       // Rollback
       setTargets(previousTargets);
+      void mutateTargets(previousTargets, false);
       toast({
         title: "Failed to delete sale target",
         description: err instanceof Error ? err.message : "Error deleting target",

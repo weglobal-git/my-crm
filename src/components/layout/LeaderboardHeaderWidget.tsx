@@ -50,37 +50,21 @@ export function LeaderboardHeaderWidget() {
 
   const scope = useMemo(() => createScopeToken(actor), [actor]);
 
-  // Lightweight Widget Key for navbar trophy winner display
-  const winnerKey = useMemo(
+  // Widget Key (always current month for the navbar leader rank1)
+  const widgetKey = useMemo(
     () =>
-      `leaderboard:winner:${scope}:${selectedDeptId || "default"}:${currentMonth}:${currentYear}`,
+      dashboardLeaderboardKey(scope, {
+        departmentId: selectedDeptId,
+        month: currentMonth,
+        year: currentYear,
+      }),
     [scope, selectedDeptId, currentMonth, currentYear]
   );
 
-  const [isReady, setIsReady] = useState(false);
-  useEffect(() => {
-    // Schedule fetch during true browser idle periods so it never competes with
-    // initial paint, hydration, or Kanban card loading.
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      const handle = (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(
-        () => setIsReady(true),
-        { timeout: 3500 }
-      );
-      return () => {
-        if ("cancelIdleCallback" in window) {
-          (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(handle);
-        }
-      };
-    } else {
-      const timer = setTimeout(() => setIsReady(true), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, []);
-
-  const { data: winnerSummary, isLoading: isWinnerLoading } = useSWR(
-    session?.user?.id && isReady ? winnerKey : null,
+  const { data: widgetData, isLoading: isWidgetLoading } = useSWR(
+    session?.user?.id ? widgetKey : null,
     async () => {
-      return await getLeaderboardWinnerSummaryAction({
+      return await getDashboardLeaderboardAction({
         departmentId: selectedDeptId,
         month: currentMonth,
         year: currentYear,
@@ -89,11 +73,12 @@ export function LeaderboardHeaderWidget() {
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
-      dedupingInterval: 30000,
+      dedupingInterval: 60000,
     }
   );
 
-  // Drawer Key (only fetched when drawer is open or prewarmed on hover/idle)
+  // Drawer Key (fetches for selected month & year)
+  const isCurrentPeriod = drawerMonth === currentMonth && drawerYear === currentYear;
   const drawerKey = useMemo(
     () =>
       dashboardLeaderboardKey(scope, {
@@ -103,35 +88,6 @@ export function LeaderboardHeaderWidget() {
       }),
     [scope, selectedDeptId, drawerMonth, drawerYear]
   );
-
-  // Proactively prefetch current month leaderboard during idle periods once winner summary is ready
-  useEffect(() => {
-    if (!session?.user?.id || !winnerSummary) return;
-    const prefetchDrawer = () => {
-      void preload(drawerKey, () =>
-        getDashboardLeaderboardAction({
-          departmentId: selectedDeptId,
-          month: drawerMonth,
-          year: drawerYear,
-        })
-      );
-    };
-
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      const handle = (window as Window & { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(
-        prefetchDrawer,
-        { timeout: 3000 }
-      );
-      return () => {
-        if ("cancelIdleCallback" in window) {
-          (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(handle);
-        }
-      };
-    } else {
-      const timer = setTimeout(prefetchDrawer, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [session?.user?.id, winnerSummary, drawerKey, selectedDeptId, drawerMonth, drawerYear]);
 
   const { data: drawerData, error, isLoading } = useSWR(
     session?.user?.id && isDrawerOpen ? drawerKey : null,
@@ -143,37 +99,31 @@ export function LeaderboardHeaderWidget() {
       });
     },
     {
+      fallbackData: isCurrentPeriod ? widgetData : undefined,
       revalidateOnFocus: false,
       keepPreviousData: true,
-      dedupingInterval: 10000,
+      dedupingInterval: 60000,
     }
   );
 
-  const activeDrawerData = drawerData || null;
+  const activeDrawerData = drawerData || (isCurrentPeriod ? widgetData : null);
 
   if (!session?.user) return null;
 
-  const rank1 = winnerSummary?.rank1 || null;
+  // Winner (Rank 1) from overall ranking (for header widget)
+  const podium = widgetData?.overallPodium;
+  const rank1 = podium?.rank1 || widgetData?.overallXpItems?.[0] || null;
 
   return (
     <>
       <button
         type="button"
         onClick={() => setIsDrawerOpen(true)}
-        onMouseEnter={() => {
-          void preload(drawerKey, () =>
-            getDashboardLeaderboardAction({
-              departmentId: selectedDeptId,
-              month: drawerMonth,
-              year: drawerYear,
-            })
-          );
-        }}
         className="group flex items-center p-1 rounded-full hover:bg-[#3A3B3C]/50 transition-colors cursor-pointer select-none text-left"
         title="Leaderboard: Click to view full standings"
         aria-label="Open leaderboard"
       >
-        {!rank1 && isWinnerLoading ? (
+        {!rank1 && isWidgetLoading ? (
           <div className="w-9 h-9 rounded-full bg-[#3A3B3C]/50 border border-[#4E4F50]/40 flex items-center justify-center animate-pulse">
             <Trophy className="w-4 h-4 text-[#C7F33C]" />
           </div>

@@ -155,7 +155,7 @@ export function CreateDealButton({ stages, companies, disabled = false }: Create
       owner: session?.user ? { id: currentUserId || "", name: session.user.name || null, email: session.user.email || null, image: session.user.image || null, departments: [] } : null,
       teamMembers: (currentMemberIds || []).map(id => {
         const u = allUsersMap.get(id);
-        return u ? { id: u.id, name: u.name || "Member", email: u.email || "", image: u.image || null } : { id, name: "Member", email: "", image: null };
+        return u ? { id: u.id, name: u.name || "Member", email: u.email || "", image: u.image || null, departments: (u.departments as { id: string; name: string }[]) || [] } : { id, name: "Member", email: "", image: null, departments: [] };
       }),
       activityLogs: [],
     };

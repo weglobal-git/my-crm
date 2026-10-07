@@ -48,7 +48,10 @@ export function DealTeamMembersSection({
   // Combine owner and team members, ensuring owner is first and not duplicated
   const allMembers = [
     ...(owner ? [userMap.get(owner.id) || (owner as unknown as TeamMemberItem)] : []),
-    ...(teamMembers || []).filter(tm => tm.id !== ownerId).map(tm => userMap.get(tm.id) || tm),
+    ...(teamMembers || []).filter(tm => tm.id !== ownerId).map(tm => {
+      const enriched = userMap.get(tm.id);
+      return enriched ? { ...tm, ...enriched } : tm;
+    }),
   ];
 
   // Group by department name
@@ -56,6 +59,7 @@ export function DealTeamMembersSection({
     const deptName =
       member.department?.name ||
       (Array.isArray(member.departments) && member.departments.length > 0 ? member.departments[0]?.name : null) ||
+      (owner?.departments && owner.departments.length > 0 ? owner.departments[0]?.name : null) ||
       'Unassigned';
     if (!acc[deptName]) acc[deptName] = [];
     acc[deptName].push(member);

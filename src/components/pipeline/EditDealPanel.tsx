@@ -3,7 +3,10 @@
 import { MessageSquare, RefreshCw, Sparkles, Copy, Check, Bot, UserPlus, Save, Image as ImageIcon, Link2, FileText, ArrowRightLeft, ListTodo } from "lucide-react";
 import { OpportunityWithRelations } from "./KanbanCard";
 
-import { deleteActivityLog, getOpportunityActivityLogs, updateOpportunity } from "@/lib/actions/opportunity";
+import { deleteActivityLog, getOpportunityActivityLogs, updateOpportunity, getOpportunitySharedMedia } from "@/lib/actions/opportunity";
+import { getNotes } from "@/lib/actions/notes";
+import { getAccountOverview } from "@/lib/actions/contact";
+import { getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
 import type { TeamMemberItem } from "./DealTeamMembersSection";
 import { useDealMembersMutation } from "@/hooks/useDealMembersMutation";
 import { getLatestDealSummary, generateDealSummary } from "@/lib/actions/deal-summary";
@@ -11,9 +14,10 @@ import { getDealAccelerators, generateDealAccelerators, answerDealAccelerator, d
 import dynamic from "next/dynamic";
 import { requestDealTransfer } from "@/lib/actions/notification";
 import { useEffect, useState, useRef, useCallback, useMemo, Fragment } from "react";
-import useSWR, { useSWRConfig } from "swr";
+import useSWR, { useSWRConfig, preload } from "swr";
 import useSWRInfinite from "swr/infinite";
 import { useSession } from "next-auth/react";
+import { getAllUsers } from "@/lib/actions/users";
 import { OpportunityType, Role } from "@prisma/client";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { IconMap } from "@/lib/menu-registry";
@@ -23,43 +27,14 @@ import { EditDealMainBar } from "./EditDealMainBar";
 import { EditDealSubBar, SubBarTab, SubBarActionItem } from "./EditDealSubBar";
 import { ActivityFeedTab } from "./ActivityFeedTab";
 
-const TabLoadingFallback = () => (
-  <div className="flex-1 flex items-center justify-center p-12 text-slate-400">
-    <div className="flex items-center gap-2 text-xs">
-      <div className="w-3.5 h-3.5 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />
-      <span>Loading...</span>
-    </div>
-  </div>
-);
+import { CustomerTab } from "./CustomerTab";
+import { NotesTab } from "./NotesTab";
+import { SharedMediaTab } from "./SharedMediaTab";
+import { DealSummaryTab } from "./DealSummaryTab";
+import { DealSystemLogsTab } from "./DealSystemLogsTab";
+import { DealManagerCallTab } from "./DealManagerCallTab";
+import { DealCollaborateTab } from "./DealCollaborateTab";
 
-const CustomerTab = dynamic(() => import("./CustomerTab").then((m) => m.CustomerTab), {
-  loading: TabLoadingFallback,
-  ssr: false,
-});
-const NotesTab = dynamic(() => import("./NotesTab").then((m) => m.NotesTab), {
-  loading: TabLoadingFallback,
-  ssr: false,
-});
-const SharedMediaTab = dynamic(() => import("./SharedMediaTab").then((m) => m.SharedMediaTab), {
-  loading: TabLoadingFallback,
-  ssr: false,
-});
-const DealSummaryTab = dynamic(() => import("./DealSummaryTab").then((m) => m.DealSummaryTab), {
-  loading: TabLoadingFallback,
-  ssr: false,
-});
-const DealSystemLogsTab = dynamic(() => import("./DealSystemLogsTab").then((m) => m.DealSystemLogsTab), {
-  loading: TabLoadingFallback,
-  ssr: false,
-});
-const DealManagerCallTab = dynamic(() => import("./DealManagerCallTab").then((m) => m.DealManagerCallTab), {
-  loading: TabLoadingFallback,
-  ssr: false,
-});
-const DealCollaborateTab = dynamic(() => import("./DealCollaborateTab").then((m) => m.DealCollaborateTab), {
-  loading: TabLoadingFallback,
-  ssr: false,
-});
 const MemberSelectDrawer = dynamic(() => import("./MemberSelectDrawer").then((m) => m.MemberSelectDrawer), {
   ssr: false,
 });
@@ -304,6 +279,49 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
       clearAllDraftsForDeal(deal.id);
     }
   }, [isOpen, deal.id]);
+
+
+  // Post-Activity Background Cache Priming:
+  // Once the drawer is open and the initial activity tab is painted,
+  // lazily preload both the UI component chunks AND the active deal's data
+  // for Notes, Customer, Media, and Summary during idle time so tab clicks are instant 0ms.
+  useEffect(() => {
+    if (!isOpen || !deal?.id) return;
+    let timer: NodeJS.Timeout | null = null;
+    let cancelled = false;
+
+    const primeActiveDealData = () => {
+      if (cancelled) return;
+      // Active Deal Data (Cache Priming in Background)
+      void preload(['deal-notes', deal.id], () => getNotes(deal.id)).catch(() => {});
+      if (deal.company?.id) {
+        const companyId = deal.company.id;
+        void preload(getAccountOverviewKey(companyId), () =>
+          getAccountOverview(companyId, { includeAddresses: true, includeLogs: false })
+        ).catch(() => {});
+      }
+      void preload(['opportunity-shared-media', deal.id], () => getOpportunitySharedMedia(deal.id)).catch(() => {});
+      void preload(['deal-summary-on-demand', deal.id], () => getLatestDealSummary(deal.id)).catch(() => {});
+      void preload('all-users', () => getAllUsers()).catch(() => {});
+    };
+
+    const hasIdle = typeof window !== 'undefined' && 'requestIdleCallback' in window;
+    const idleId = hasIdle
+      ? (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(primeActiveDealData, { timeout: 1200 })
+      : null;
+
+    if (!hasIdle) {
+      timer = setTimeout(primeActiveDealData, 250);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId !== null && typeof window !== 'undefined' && 'cancelIdleCallback' in window) {
+        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
+      }
+      if (timer) clearTimeout(timer);
+    };
+  }, [isOpen, deal?.id, deal?.company?.id]);
 
   // Team Members State & Mutation Hook
   const {

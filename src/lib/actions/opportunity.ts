@@ -705,7 +705,7 @@ export async function addTeamMember(opportunityId: string, userId: string) {
     void dispatchNotification(userId, notification);
   }
 
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, image: true, email: true, role: true } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, image: true, email: true, role: true, departments: { select: { id: true, name: true } } } });
   await notifyPrivatePipelineUpdate(opportunityId, { action: 'MEMBER_ADDED', dealId: opportunityId, user });
   return result;
 }
