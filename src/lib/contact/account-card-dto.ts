@@ -32,17 +32,43 @@ export function accountMatchesFilters(
   filters: {
     status?: ContactStatus | "ALL";
     type?: ContactType | "ALL";
+    types?: (ContactType | string)[];
     country?: string;
+    countries?: string[];
     search?: string;
   }
 ): boolean {
   if (filters.status && filters.status !== "ALL" && account.status !== filters.status) {
     return false;
   }
-  if (filters.type && filters.type !== "ALL" && account.type !== filters.type) {
+
+  // Multi-type selection handling
+  if (filters.types && filters.types.length > 0) {
+    if (filters.types.length === 1 && filters.types[0] === "__NONE__") {
+      return false;
+    }
+    const match = filters.types.some(
+      (t) => t.toLowerCase() === account.type.toLowerCase()
+    );
+    if (!match) return false;
+  } else if (filters.type && filters.type !== "ALL" && account.type !== filters.type) {
     return false;
   }
-  if (filters.country && filters.country !== "ALL" && filters.country.trim()) {
+
+  // Multi-country selection handling
+  if (filters.countries && filters.countries.length > 0) {
+    if (filters.countries.length === 1 && filters.countries[0] === "__NONE__") {
+      return false;
+    }
+    const accCountry = (account.country || "").trim().toLowerCase();
+    const accNorm = normalizeCountryName(account.country).toLowerCase();
+    const match = filters.countries.some((c) => {
+      const fc = c.trim().toLowerCase();
+      const fn = normalizeCountryName(c).toLowerCase();
+      return accCountry === fc || accNorm === fn;
+    });
+    if (!match) return false;
+  } else if (filters.country && filters.country !== "ALL" && filters.country.trim()) {
     const accCountry = (account.country || "").trim().toLowerCase();
     const filterCountry = filters.country.trim().toLowerCase();
     const accNorm = normalizeCountryName(account.country).toLowerCase();
@@ -51,6 +77,7 @@ export function accountMatchesFilters(
       return false;
     }
   }
+
   if (filters.search && filters.search.trim()) {
     const q = filters.search.trim().toLowerCase();
     const nameMatch = (account.name || "").toLowerCase().includes(q);

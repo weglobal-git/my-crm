@@ -23,7 +23,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  // Schema updated: isPinned and hotNote on Opportunity
+  // Schema updated: product variant order 20261008-1726
 };
 
 export default nextConfig;

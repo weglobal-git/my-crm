@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { PipelineView } from "@/components/pipeline/PipelineView";
+import type { OpportunityWithRelations } from "@/components/pipeline/KanbanCard";
 import { requirePipelineActor } from '@/lib/pipeline-security';
 import { getPipelineOpportunitiesForActor } from '@/lib/pipeline-opportunities';
 import { getPipelineStageTitleContext, getCachedPipelineStages } from '@/lib/pipeline-stage-titles';
@@ -32,8 +33,8 @@ export default async function PipelinePage({
     getPipelineStageTitleContext(actor),
     getStoredPinnedDealIdsServer(actor.id),
   ]);
-  const rawOpportunities = JSON.parse(serializedOpportunities);
-  const initialOpportunities = rawOpportunities.map((opp: any) => ({
+  const rawOpportunities = JSON.parse(serializedOpportunities) as OpportunityWithRelations[];
+  const initialOpportunities = rawOpportunities.map((opp) => ({
     ...opp,
     isPinned: userPinnedSet.has(opp.id),
   }));

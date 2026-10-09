@@ -147,7 +147,6 @@ export function AccountCardList({
             <AccountCardRow
               key={account.id}
               account={account}
-              isSelected={selectedAccountId === account.id}
               onSelect={onSelectAccount}
               onRatingChange={onRatingChange}
               onIntent={onRowIntent}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Search, ChevronDown, Check, X } from "lucide-react";
+import { Search, ChevronDown, Check, X, Plus } from "lucide-react";
 
 export interface Option {
   label: string;
@@ -15,7 +15,9 @@ interface SearchableSelectProps {
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  buttonClassName?: string;
   isClearable?: boolean;
+  allowCustom?: boolean;
 }
 
 export function SearchableSelect({
@@ -24,7 +26,9 @@ export function SearchableSelect({
   onChange,
   placeholder = "Select an option...",
   className = "",
+  buttonClassName = "",
   isClearable = false,
+  allowCustom = false,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -50,6 +54,9 @@ export function SearchableSelect({
 
   const selectedOption = options.find((opt) => opt.value === value);
 
+  const defaultButtonClass =
+    "w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-4 text-left text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors text-xs flex items-center justify-between";
+
   return (
     <div className={`relative ${className}`} ref={dropdownRef}>
       <button
@@ -58,7 +65,7 @@ export function SearchableSelect({
           setIsOpen(!isOpen);
           setSearch("");
         }}
-        className="w-full bg-[#1E1F20] border border-[#3A3B3C] rounded-lg py-2.5 px-4 text-left text-slate-100 focus:outline-none focus:border-[#C7F33C] transition-colors text-xs flex items-center justify-between"
+        className={buttonClassName || defaultButtonClass}
       >
         <span className={selectedOption ? "text-slate-100 truncate" : "text-slate-500 truncate"}>
           {selectedOption ? selectedOption.label : placeholder}
@@ -98,8 +105,24 @@ export function SearchableSelect({
             </div>
           </div>
           <div className="overflow-y-auto custom-scrollbar flex-1 p-1">
+            {allowCustom && search.trim() && !options.some(o => o.value.toLowerCase() === search.trim().toLowerCase()) && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange(search.trim());
+                  setIsOpen(false);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[#C7F33C] hover:bg-[#3A3B3C] rounded-lg font-semibold border-b border-[#3A3B3C]/50 transition-colors cursor-pointer text-left"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Use &ldquo;{search.trim()}&rdquo;</span>
+              </button>
+            )}
+
             {filteredOptions.length === 0 ? (
-              <div className="p-4 text-center text-xs text-slate-500">No results found.</div>
+              <div className="p-4 text-center text-xs text-slate-500">
+                {allowCustom && search.trim() ? "Press above to use this custom value" : "No results found."}
+              </div>
             ) : (
               filteredOptions.map(opt => (
                 <button

@@ -177,7 +177,9 @@ export async function getContacts({
 export interface GetCompaniesParams {
   status?: "ALL" | "QUALIFIED" | "UNQUALIFIED";
   type?: "ALL" | ContactType;
+  types?: (ContactType | string)[];
   country?: string;
+  countries?: string[];
   search?: string;
   page?: number;
   pageSize?: number;
@@ -284,7 +286,9 @@ const STATUS_STATS_TTL = 60 * 1000;
 export async function getCompaniesWithContacts({
   status = "ALL",
   type = "ALL",
+  types,
   country = "",
+  countries,
   search = "",
   page = 1,
   pageSize = 20,
@@ -297,10 +301,61 @@ export async function getCompaniesWithContacts({
   if (status && status !== "ALL") {
     where.status = status as ContactStatus;
   }
-  if (type && type !== "ALL") {
+
+  // Multi-type selection support
+  if (types && types.length > 0) {
+    if (types.length === 1 && types[0] === "__NONE__") {
+      where.type = { in: [] };
+    } else {
+      where.type = { in: types as ContactType[] };
+    }
+  } else if (type && type !== "ALL") {
     where.type = type as ContactType;
   }
-  if (country && country.trim() && country !== "ALL") {
+
+  // Multi-country selection support
+  if (countries && countries.length > 0) {
+    if (countries.length === 1 && countries[0] === "__NONE__") {
+      where.country = { in: [] };
+    } else {
+      const allVariants = new Set<string>();
+      for (const rawCountry of countries) {
+        if (!rawCountry || rawCountry === "ALL") continue;
+        const trimmed = rawCountry.trim();
+        const canonical = normalizeCountryName(trimmed);
+        allVariants.add(trimmed);
+        allVariants.add(canonical);
+
+        const dbVariants =
+          cachedCountryDbVariants.get(canonical.toUpperCase()) ||
+          cachedCountryDbVariants.get(trimmed.toUpperCase());
+        if (dbVariants) {
+          for (const v of dbVariants) {
+            allVariants.add(v);
+          }
+        }
+
+        const canonLower = canonical.toLowerCase();
+        if (canonLower === "vietnam") {
+          allVariants.add("Viet Nam");
+          allVariants.add("viet nam");
+          allVariants.add("Vietnam");
+        } else if (canonLower === "laos") {
+          allVariants.add("Lao People's Democratic Republic");
+          allVariants.add("Lao Peoples Democratic Republic");
+          allVariants.add("Lao PDR");
+          allVariants.add("Lao");
+          allVariants.add("Laos");
+        } else if (canonLower === "united states" || canonLower === "usa") {
+          allVariants.add("United States");
+          allVariants.add("USA");
+          allVariants.add("U.S.A.");
+          allVariants.add("United States of America");
+        }
+      }
+      where.country = { in: Array.from(allVariants) };
+    }
+  } else if (country && country.trim() && country !== "ALL") {
     const trimmed = country.trim();
     const canonical = normalizeCountryName(trimmed);
     const variants = new Set([trimmed, canonical]);

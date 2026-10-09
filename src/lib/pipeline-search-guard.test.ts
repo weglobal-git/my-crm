@@ -5,7 +5,7 @@ test('Pipeline Search and URL Sync Guard', async (t) => {
   await t.test('Prevents external initialSearch from wiping active focused input', () => {
     // Simulates the exact state machine in PipelineSearch
     let term = 'ฝน';
-    let isFocused = true;
+    const isFocused = true;
     let lastEmitted = 'ฝน';
 
     const syncExternal = (incomingInitialSearch: string) => {
@@ -25,8 +25,8 @@ test('Pipeline Search and URL Sync Guard', async (t) => {
 
   await t.test('Safe URL popstate synchronizer avoids feedback loop', () => {
     // Simulates window.location.search vs state
-    let stateTab = 'workspace';
-    let stateSearch = 'ฝน';
+    const stateTab = 'workspace';
+    const stateSearch = 'ฝน';
 
     // updateUrl creates search params safely
     const createUrl = (tab: string, search: string) => {
@@ -69,7 +69,7 @@ test('Pipeline Search and URL Sync Guard', async (t) => {
     assert.strictEqual(emittedTerm, 'ฝน', 'Emits clean Thai word after composition');
   });
 
-  await t.test('matchesPipelineCardSearch: matches all fields in the product search contract', async (st) => {
+  await t.test('matchesPipelineCardSearch: matches all fields in the product search contract', async () => {
     const { matchesPipelineCardSearch } = await import('./pipeline-card-dto');
 
     const sampleDeal = {
@@ -98,7 +98,7 @@ test('Pipeline Search and URL Sync Guard', async (t) => {
     assert.strictEqual(matchesPipelineCardSearch(sampleDeal, '  '), true);
   });
 
-  await t.test('buildPipelineSearchWhere: builds Prisma SQL where clause for all product fields', async (st) => {
+  await t.test('buildPipelineSearchWhere: builds Prisma SQL where clause for all product fields', async () => {
     const { buildPipelineSearchWhere } = await import('./pipeline-opportunities');
 
     // Empty query returns empty where
@@ -122,6 +122,7 @@ test('Pipeline Search and URL Sync Guard', async (t) => {
     let committedResults: string[] = [];
 
     const handleSearch = (query: string) => {
+      void query;
       activeVersion++;
       const currentVersion = activeVersion;
 
@@ -220,6 +221,7 @@ test('Pipeline Search and URL Sync Guard', async (t) => {
 
     // User initiates new search
     const onNewSearch = (newQuery: string) => {
+      void newQuery;
       queryVersion++;
       // Atomic reset
       items = [];

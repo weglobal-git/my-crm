@@ -20,14 +20,14 @@ const prismaClientSingleton = () => {
   })
 }
 
-const SCHEMA_VERSION = 'v10_opportunity_pinned_hotnote_20261006';
+const SCHEMA_VERSION = 'v14_product_variant_order_20261008';
 
 declare global {
   var prismaGlobal: undefined | ReturnType<typeof prismaClientSingleton>;
   var prismaSchemaVersion: undefined | string;
 }
 
-const prisma = (globalThis.prismaGlobal && globalThis.prismaSchemaVersion === SCHEMA_VERSION && 'companySaleTarget' in globalThis.prismaGlobal)
+const prisma = (globalThis.prismaGlobal && globalThis.prismaSchemaVersion === SCHEMA_VERSION)
   ? globalThis.prismaGlobal
   : (() => {
       const client = prismaClientSingleton();
@@ -38,4 +38,5 @@ const prisma = (globalThis.prismaGlobal && globalThis.prismaSchemaVersion === SC
       return client;
     })();
 
+export { prisma }
 export default prisma

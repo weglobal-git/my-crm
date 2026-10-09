@@ -137,6 +137,7 @@ test('P4 Mutation Guard: failure on Request 1 does not roll back active Request 
 
   // Click 2
   const mutation2 = ++activeMutationId;
+  assert.equal(mutation2, 2);
   localState = false;
 
   // Request 1 fails!

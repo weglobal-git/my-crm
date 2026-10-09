@@ -148,21 +148,21 @@ test('pipeline-due-date Finding 3 (Service Test): addActivityLog executes atomic
   const originalUserFindUnique = prisma.user.findUnique;
   const originalUserFindMany = prisma.user.findMany;
 
-  let updateManyCalledWith: any = null;
+  let updateManyCalledWith: Record<string, unknown> | null = null;
   const initialDueDate = new Date('2026-08-15T00:00:00.000Z');
 
   try {
     // Mock user & access checks
-    (prisma.user as any).findUnique = async () => ({
+    (prisma as unknown as { user: { findUnique: unknown; findMany: unknown } }).user.findUnique = async () => ({
       id: 'admin-1',
       name: 'Admin',
       role: 'ADMIN',
       departments: [],
     });
 
-    (prisma.user as any).findMany = async () => [];
+    (prisma as unknown as { user: { findMany: unknown } }).user.findMany = async () => [];
 
-    (prisma.opportunity as any).findFirst = async () => ({
+    (prisma as unknown as { opportunity: { findFirst: unknown; findUnique: unknown } }).opportunity.findFirst = async () => ({
       id: 'deal-1',
       ownerId: 'admin-1',
       type: 'SALES_DEAL',
@@ -172,20 +172,22 @@ test('pipeline-due-date Finding 3 (Service Test): addActivityLog executes atomic
       teamMembers: [],
     });
 
-    (prisma.opportunity as any).findUnique = async () => ({
+    (prisma as unknown as { opportunity: { findUnique: unknown } }).opportunity.findUnique = async () => ({
       id: 'deal-1',
       ownerId: 'admin-1',
       dueDate: initialDueDate,
       teamMembers: [],
     });
 
-    (prisma.activityLog as any).findMany = async () => [];
+    (prisma as unknown as { activityLog: { findMany: unknown } }).activityLog.findMany = async () => [];
 
     // Mock Prisma transaction to verify atomic execution and conditional updateMany
-    (prisma as any).$transaction = async (callback: any) => {
+    (prisma as unknown as { $transaction: unknown }).$transaction = async (
+      callback: (tx: unknown) => Promise<unknown>
+    ) => {
       const mockTx = {
         activityLog: {
-          create: async (args: any) => ({
+          create: async (args: { data: { content: string; type?: string } }) => ({
             id: 'log-created-1',
             content: args.data.content,
             type: args.data.type || 'COMMENT',
@@ -198,7 +200,7 @@ test('pipeline-due-date Finding 3 (Service Test): addActivityLog executes atomic
           findUnique: async () => ({
             dueDate: initialDueDate,
           }),
-          updateMany: async (args: any) => {
+          updateMany: async (args: Record<string, unknown>) => {
             updateManyCalledWith = args;
             return { count: 1 };
           },
@@ -223,10 +225,14 @@ test('pipeline-due-date Finding 3 (Service Test): addActivityLog executes atomic
     );
 
     // Assert that the transaction executed conditional updateMany protecting against lost updates
-    assert.ok(updateManyCalledWith, 'tx.opportunity.updateMany was called inside transaction');
-    assert.equal(updateManyCalledWith.where.id, 'deal-1');
-    assert.deepEqual(updateManyCalledWith.where.dueDate, initialDueDate, 'where.dueDate must match currentOpp.dueDate to prevent lost update');
-    assert.equal(updateManyCalledWith.data.dueDate, null, 'data.dueDate must be cleared to null upon fulfillment');
+    const updateManyPayload = updateManyCalledWith as {
+      where: { id: string; dueDate: unknown };
+      data: { dueDate: unknown };
+    } | null;
+    assert.ok(updateManyPayload, 'tx.opportunity.updateMany was called inside transaction');
+    assert.equal(updateManyPayload.where.id, 'deal-1');
+    assert.deepEqual(updateManyPayload.where.dueDate, initialDueDate, 'where.dueDate must match currentOpp.dueDate to prevent lost update');
+    assert.equal(updateManyPayload.data.dueDate, null, 'data.dueDate must be cleared to null upon fulfillment');
   } finally {
     prisma.opportunity.findUnique = originalFindUnique;
     prisma.opportunity.findFirst = originalFindFirst;
@@ -308,14 +314,14 @@ test('updateOpportunity Finding 3: audit before-value read inside transaction an
         readInsideTx = true;
         return { topic: 'Initial Topic', type: 'SALES_DEAL' };
       },
-      update: async (args: any) => ({
+      update: async (args: { data: { topic: string } }) => ({
         id: 'deal-1',
         topic: args.data.topic,
         type: 'SALES_DEAL',
       }),
     },
     activityLog: {
-      create: async (args: any) => {
+      create: async (args: { data: { content: string; type: string; opportunityId?: string; userId?: string } }) => {
         auditCreatedWithTopic = args.data.content;
         return {
           id: 'log-persisted-123',

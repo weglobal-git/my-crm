@@ -9,8 +9,10 @@ import {
   Building2,
   Globe,
   Plus,
+  Check,
 } from "lucide-react";
 import { ContactType } from "@prisma/client";
+import { normalizeCountryName } from "@/lib/data/countries";
 
 export interface AccountFiltersState {
   status?: "QUALIFIED" | "UNQUALIFIED" | "ALL";
@@ -19,15 +21,29 @@ export interface AccountFiltersState {
   minRating: number;
 }
 
-interface AccountFilterContentProps {
+export interface AccountFilterContentProps {
   activeTab: "QUALIFIED" | "UNQUALIFIED";
   onTabChange: (tab: "QUALIFIED" | "UNQUALIFIED") => void;
-  activeType: ContactType | "ALL";
-  onTypeChange: (type: ContactType | "ALL") => void;
+
+  // Multi-select props (Primary)
+  selectedTypes?: string[];
+  onToggleType?: (type: string) => void;
+  onClearTypes?: () => void;
+  onSelectTypes?: (types: string[]) => void;
   availableTypes: { type: ContactType; count: number }[];
-  activeCountry: string;
-  onCountryChange: (country: string) => void;
+
+  selectedCountries?: string[];
+  onToggleCountry?: (country: string) => void;
+  onClearCountries?: () => void;
+  onSelectCountries?: (countries: string[]) => void;
   availableCountries: { country: string; count: number }[];
+
+  // Backward compatibility / Single-select fallbacks
+  activeType?: ContactType | "ALL";
+  onTypeChange?: (type: ContactType | "ALL") => void;
+  activeCountry?: string;
+  onCountryChange?: (country: string) => void;
+
   stats: { qualifiedCount: number; unqualifiedCount: number; totalCount: number };
   activeFilterCount: number;
   onResetFilters: () => void;
@@ -63,12 +79,25 @@ const DEFAULT_COUNTRIES = [
 export function AccountFilterContent({
   activeTab,
   onTabChange,
-  activeType,
+
+  selectedTypes = [],
+  onToggleType,
+  onClearTypes,
+  onSelectTypes,
+  availableTypes = [],
+
+  selectedCountries = [],
+  onToggleCountry,
+  onClearCountries,
+  onSelectCountries,
+  availableCountries = [],
+
+  // Legacy fallback props
+  activeType = "ALL",
   onTypeChange,
-  availableTypes,
-  activeCountry,
+  activeCountry = "ALL",
   onCountryChange,
-  availableCountries,
+
   stats,
   activeFilterCount,
   onResetFilters,
@@ -76,7 +105,7 @@ export function AccountFilterContent({
   onClose,
 }: AccountFilterContentProps) {
   const [countrySearch, setCountrySearch] = useState("");
-  const q = countrySearch.trim().toLowerCase();
+  const countryQ = countrySearch.trim().toLowerCase();
 
   // Total count across all types
   const totalTypeCount = useMemo(() => {
@@ -124,12 +153,218 @@ export function AccountFilterContent({
   }, [availableCountries]);
 
   const filteredCountries = useMemo(() => {
-    if (!q) return countryList;
-    return countryList.filter((c) => c.toLowerCase().includes(q));
-  }, [countryList, q]);
+    if (!countryQ) return countryList;
+    return countryList.filter((c) => c.toLowerCase().includes(countryQ));
+  }, [countryList, countryQ]);
 
-  const isAllCountryActive =
-    !activeCountry || activeCountry.trim().toUpperCase() === "ALL";
+  // ==========================================
+  // TYPE SELECTION STATE & ACTIONS (Select All / Deselect)
+  // ==========================================
+  const allTypeNames = useMemo(
+    () => availableTypes.map((t) => t.type),
+    [availableTypes]
+  );
+
+  const isNoneTypesActive =
+    selectedTypes.length === 1 && selectedTypes[0] === "__NONE__";
+  const isAllTypesActive =
+    !isNoneTypesActive &&
+    (selectedTypes.length === 0 ||
+      (availableTypes.length > 0 && selectedTypes.length >= availableTypes.length));
+
+  const typeSelectedCount = isNoneTypesActive
+    ? 0
+    : isAllTypesActive
+    ? availableTypes.length
+    : selectedTypes.length;
+
+  const isTypeChecked = (typeName: string) => {
+    if (isNoneTypesActive) return false;
+    if (isAllTypesActive) return true;
+    return selectedTypes.some((st) => st.toLowerCase() === typeName.toLowerCase());
+  };
+
+  const handleToggleSingleType = (typeName: string) => {
+    if (isAllTypesActive) {
+      // User is deselecting this type from the full set
+      const remaining = allTypeNames.filter(
+        (name) => name.toLowerCase() !== typeName.toLowerCase()
+      );
+      if (onSelectTypes) {
+        onSelectTypes(remaining);
+      } else if (onToggleType) {
+        onToggleType(typeName);
+      } else {
+        onTypeChange?.(typeName as ContactType);
+      }
+    } else if (isNoneTypesActive) {
+      // Starting from empty, select only this type
+      if (onSelectTypes) {
+        onSelectTypes([typeName]);
+      } else if (onToggleType) {
+        onToggleType(typeName);
+      } else {
+        onTypeChange?.(typeName as ContactType);
+      }
+    } else {
+      const isCurrentlyChecked = selectedTypes.some(
+        (st) => st.toLowerCase() === typeName.toLowerCase()
+      );
+      if (isCurrentlyChecked) {
+        const next = selectedTypes.filter(
+          (st) => st.toLowerCase() !== typeName.toLowerCase()
+        );
+        const resolvedNext = next.length === 0 ? ["__NONE__"] : next;
+        if (onSelectTypes) {
+          onSelectTypes(resolvedNext);
+        } else if (onToggleType) {
+          onToggleType(typeName);
+        } else {
+          onTypeChange?.("ALL");
+        }
+      } else {
+        const next = [...selectedTypes, typeName];
+        const resolvedNext =
+          next.length >= availableTypes.length ? [] : next;
+        if (onSelectTypes) {
+          onSelectTypes(resolvedNext);
+        } else if (onToggleType) {
+          onToggleType(typeName);
+        } else {
+          onTypeChange?.(typeName as ContactType);
+        }
+      }
+    }
+  };
+
+  const handleToggleAllTypes = () => {
+    if (isAllTypesActive) {
+      // Deselect all
+      if (onSelectTypes) {
+        onSelectTypes(["__NONE__"]);
+      } else if (onClearTypes) {
+        onClearTypes();
+      } else {
+        onTypeChange?.("ALL");
+      }
+    } else {
+      // Select all
+      if (onSelectTypes) {
+        onSelectTypes([]);
+      } else if (onClearTypes) {
+        onClearTypes();
+      } else {
+        onTypeChange?.("ALL");
+      }
+    }
+  };
+
+  // ==========================================
+  // COUNTRY SELECTION STATE & ACTIONS (Select All / Deselect)
+  // ==========================================
+  const allCountryNames = countryList;
+
+  const isNoneCountriesActive =
+    selectedCountries.length === 1 && selectedCountries[0] === "__NONE__";
+  const isAllCountriesActive =
+    !isNoneCountriesActive &&
+    (selectedCountries.length === 0 ||
+      (allCountryNames.length > 0 && selectedCountries.length >= allCountryNames.length));
+
+  const countrySelectedCount = isNoneCountriesActive
+    ? 0
+    : isAllCountriesActive
+    ? allCountryNames.length
+    : selectedCountries.length;
+
+  const isCountryChecked = (countryName: string) => {
+    if (isNoneCountriesActive) return false;
+    if (isAllCountriesActive) return true;
+    const norm = normalizeCountryName(countryName).toLowerCase();
+    const cLower = countryName.toLowerCase();
+    return selectedCountries.some((sc) => {
+      const scLower = sc.toLowerCase();
+      const scNorm = normalizeCountryName(sc).toLowerCase();
+      return scLower === cLower || scNorm === norm;
+    });
+  };
+
+  const handleToggleSingleCountry = (countryName: string) => {
+    if (isAllCountriesActive) {
+      // User is deselecting this country from the full set
+      const remaining = allCountryNames.filter(
+        (name) => name.toLowerCase() !== countryName.toLowerCase()
+      );
+      if (onSelectCountries) {
+        onSelectCountries(remaining);
+      } else if (onToggleCountry) {
+        onToggleCountry(countryName);
+      } else {
+        onCountryChange?.(countryName);
+      }
+    } else if (isNoneCountriesActive) {
+      // Starting from empty, select only this country
+      if (onSelectCountries) {
+        onSelectCountries([countryName]);
+      } else if (onToggleCountry) {
+        onToggleCountry(countryName);
+      } else {
+        onCountryChange?.(countryName);
+      }
+    } else {
+      const isCurrentlyChecked = isCountryChecked(countryName);
+      if (isCurrentlyChecked) {
+        const norm = normalizeCountryName(countryName).toLowerCase();
+        const cLower = countryName.toLowerCase();
+        const next = selectedCountries.filter((sc) => {
+          const scLower = sc.toLowerCase();
+          const scNorm = normalizeCountryName(sc).toLowerCase();
+          return scLower !== cLower && scNorm !== norm;
+        });
+        const resolvedNext = next.length === 0 ? ["__NONE__"] : next;
+        if (onSelectCountries) {
+          onSelectCountries(resolvedNext);
+        } else if (onToggleCountry) {
+          onToggleCountry(countryName);
+        } else {
+          onCountryChange?.("ALL");
+        }
+      } else {
+        const next = [...selectedCountries, countryName];
+        const resolvedNext =
+          next.length >= allCountryNames.length ? [] : next;
+        if (onSelectCountries) {
+          onSelectCountries(resolvedNext);
+        } else if (onToggleCountry) {
+          onToggleCountry(countryName);
+        } else {
+          onCountryChange?.(countryName);
+        }
+      }
+    }
+  };
+
+  const handleToggleAllCountries = () => {
+    if (isAllCountriesActive) {
+      // Deselect all
+      if (onSelectCountries) {
+        onSelectCountries(["__NONE__"]);
+      } else if (onClearCountries) {
+        onClearCountries();
+      } else {
+        onCountryChange?.("ALL");
+      }
+    } else {
+      // Select all
+      if (onSelectCountries) {
+        onSelectCountries([]);
+      } else if (onClearCountries) {
+        onClearCountries();
+      } else {
+        onCountryChange?.("ALL");
+      }
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6 select-none">
@@ -185,56 +420,97 @@ export function AccountFilterContent({
 
       {/* Section 2: Account Type */}
       <div className="space-y-2">
-        <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider pl-1">
-          Account Type
-        </label>
+        <div className="flex items-center justify-between pl-1">
+          <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Account Type
+          </label>
+          {!isAllTypesActive && (
+            <button
+              type="button"
+              onClick={() => onSelectTypes ? onSelectTypes([]) : onTypeChange?.("ALL")}
+              className="text-[10px] text-slate-400 hover:text-[#C7F33C] underline cursor-pointer"
+            >
+              Reset ({typeSelectedCount})
+            </button>
+          )}
+        </div>
+
         <div className="flex flex-col gap-1">
+          {/* Header Row: ALL TYPES */}
           <button
             type="button"
-            onClick={() => onTypeChange("ALL")}
-            className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer ${
-              activeType === "ALL"
-                ? "bg-[#C7F33C] text-black"
-                : "bg-[#1C1C1D] hover:bg-[#3A3B3C] text-slate-300"
+            onClick={handleToggleAllTypes}
+            className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer border ${
+              isAllTypesActive
+                ? "bg-[#2D2E30] border-[#4E5052] text-slate-100 hover:bg-[#343638]"
+                : typeSelectedCount > 0
+                ? "bg-[#252728] border-[#3E4042] text-slate-200 hover:bg-[#2C2D2F]"
+                : "bg-[#1C1C1D] border-transparent hover:bg-[#252728] text-slate-400"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <Building2 className="w-4 h-4" />
-              <span className="font-bold text-xs">ALL TYPE</span>
+              <div
+                className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
+                  isAllTypesActive
+                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    : typeSelectedCount > 0
+                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    : "border-slate-600 bg-[#1E2021] hover:border-slate-400"
+                }`}
+              >
+                {isAllTypesActive && <Check className="w-3 h-3 stroke-[2.5]" />}
+                {!isAllTypesActive && typeSelectedCount > 0 && (
+                  <div className="w-2 h-0.5 bg-[#C7F33C] rounded-full" />
+                )}
+              </div>
+              <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+              <span className="text-xs font-black uppercase tracking-wider">
+                {isAllTypesActive ? "ALL TYPES" : "SELECT ALL"}
+              </span>
+              {typeSelectedCount > 0 && (
+                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums">
+                  {typeSelectedCount} selected
+                </span>
+              )}
             </div>
-            <span
-              className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                activeType === "ALL"
-                  ? "bg-black/15 text-black"
-                  : "bg-[#252728] text-slate-400"
-              }`}
-            >
+            <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-[#1E2021] text-slate-400">
               {totalTypeCount}
             </span>
           </button>
 
+          {/* Individual Types */}
           {availableTypes.map((t) => {
-            const isActive = activeType === t.type;
+            const isChecked = isTypeChecked(t.type);
             return (
               <button
                 key={t.type}
                 type="button"
-                onClick={() => onTypeChange(t.type)}
+                onClick={() => handleToggleSingleType(t.type)}
                 className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer ${
-                  isActive
-                    ? "bg-[#C7F33C] text-black"
-                    : "bg-[#1C1C1D] hover:bg-[#3A3B3C] text-slate-300"
+                  isChecked
+                    ? "bg-transparent hover:bg-[#2D2E30] text-slate-200"
+                    : "bg-transparent hover:bg-[#252627] text-slate-500 hover:text-slate-300"
                 }`}
               >
                 <div className="flex items-center gap-2.5">
-                  <Building2 className="w-4 h-4" />
-                  <span className="font-bold text-xs">{formatTypeLabel(t.type)}</span>
+                  <div
+                    className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
+                      isChecked
+                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
+                        : "border-slate-600/70 bg-[#1E2021]"
+                    }`}
+                  >
+                    {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
+                  </div>
+                  <span className={`text-xs ${isChecked ? "font-normal text-slate-200" : "font-normal text-slate-500"}`}>
+                    {formatTypeLabel(t.type)}
+                  </span>
                 </div>
                 <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                    isActive
-                      ? "bg-black/15 text-black"
-                      : "bg-[#252728] text-slate-400"
+                  className={`text-[11px] font-normal px-2 py-0.5 rounded-full ${
+                    isChecked
+                      ? "bg-[#1E2021] text-slate-400"
+                      : "bg-transparent text-slate-600"
                   }`}
                 >
                   {t.count}
@@ -247,9 +523,20 @@ export function AccountFilterContent({
 
       {/* Section 3: Country */}
       <div className="space-y-2">
-        <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider pl-1">
-          Country
-        </label>
+        <div className="flex items-center justify-between pl-1">
+          <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Country
+          </label>
+          {!isAllCountriesActive && (
+            <button
+              type="button"
+              onClick={() => onSelectCountries ? onSelectCountries([]) : onCountryChange?.("ALL")}
+              className="text-[10px] text-slate-400 hover:text-[#C7F33C] underline cursor-pointer"
+            >
+              Reset ({countrySelectedCount})
+            </button>
+          )}
+        </div>
 
         {/* Country Search */}
         <div className="relative">
@@ -274,56 +561,83 @@ export function AccountFilterContent({
 
         {/* Country List */}
         <div className="flex flex-col gap-1 max-h-48 overflow-y-auto hide-scrollbar">
+          {/* Header Row: ALL COUNTRIES */}
           <button
             type="button"
-            onClick={() => onCountryChange("ALL")}
-            className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer ${
-              isAllCountryActive
-                ? "bg-[#C7F33C] text-black"
-                : "bg-[#1C1C1D] hover:bg-[#3A3B3C] text-slate-300"
+            onClick={handleToggleAllCountries}
+            className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer border ${
+              isAllCountriesActive
+                ? "bg-[#2D2E30] border-[#4E5052] text-slate-100 hover:bg-[#343638]"
+                : countrySelectedCount > 0
+                ? "bg-[#252728] border-[#3E4042] text-slate-200 hover:bg-[#2C2D2F]"
+                : "bg-[#1C1C1D] border-transparent hover:bg-[#252728] text-slate-400"
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <Globe className="w-4 h-4" />
-              <span className="font-bold text-xs">ALL COUNTRY</span>
+              <div
+                className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
+                  isAllCountriesActive
+                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    : countrySelectedCount > 0
+                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    : "border-slate-600 bg-[#1E2021] hover:border-slate-400"
+                }`}
+              >
+                {isAllCountriesActive && <Check className="w-3 h-3 stroke-[2.5]" />}
+                {!isAllCountriesActive && countrySelectedCount > 0 && (
+                  <div className="w-2 h-0.5 bg-[#C7F33C] rounded-full" />
+                )}
+              </div>
+              <Globe className="w-4 h-4 text-slate-400 shrink-0" />
+              <span className="text-xs font-black uppercase tracking-wider">
+                {isAllCountriesActive ? "ALL COUNTRIES" : "SELECT ALL"}
+              </span>
+              {countrySelectedCount > 0 && (
+                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums">
+                  {countrySelectedCount} selected
+                </span>
+              )}
             </div>
-            <span
-              className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                isAllCountryActive
-                  ? "bg-black/15 text-black"
-                  : "bg-[#252728] text-slate-400"
-              }`}
-            >
+            <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-[#1E2021] text-slate-400">
               {totalCountryCount}
             </span>
           </button>
 
+          {/* Individual Countries */}
           {filteredCountries.map((countryName) => {
-            const isActive =
-              !isAllCountryActive &&
-              activeCountry.trim().toUpperCase() === countryName.trim().toUpperCase();
+            const isChecked = isCountryChecked(countryName);
             const count = countryCountMap.get(countryName.trim().toUpperCase()) ?? 0;
 
             return (
               <button
                 key={countryName}
                 type="button"
-                onClick={() => onCountryChange(countryName)}
+                onClick={() => handleToggleSingleCountry(countryName)}
                 className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer ${
-                  isActive
-                    ? "bg-[#C7F33C] text-black"
-                    : "bg-[#1C1C1D] hover:bg-[#3A3B3C] text-slate-300"
+                  isChecked
+                    ? "bg-transparent hover:bg-[#2D2E30] text-slate-200"
+                    : "bg-transparent hover:bg-[#252627] text-slate-500 hover:text-slate-300"
                 }`}
               >
                 <div className="flex items-center gap-2.5">
-                  <Globe className="w-4 h-4" />
-                  <span className="font-bold text-xs">{countryName.toUpperCase()}</span>
+                  <div
+                    className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
+                      isChecked
+                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
+                        : "border-slate-600/70 bg-[#1E2021]"
+                    }`}
+                  >
+                    {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
+                  </div>
+                  <span className={`text-xs ${isChecked ? "font-normal text-slate-200" : "font-normal text-slate-500"}`}>
+                    {countryName.toUpperCase()}
+                  </span>
                 </div>
                 <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                    isActive
-                      ? "bg-black/15 text-black"
-                      : "bg-[#252728] text-slate-400"
+                  className={`text-[11px] font-normal px-2 py-0.5 rounded-full ${
+                    isChecked
+                      ? "bg-[#1E2021] text-slate-400"
+                      : "bg-transparent text-slate-600"
                   }`}
                 >
                   {count}
@@ -417,7 +731,7 @@ export function AccountFiltersDrawer({
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-slate-100">Manage & Filters</h2>
                 {contentProps.activeFilterCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full bg-[#C7F33C] text-black text-[11px] font-bold">
+                  <span className="px-2 py-0.5 rounded-full bg-[#262F16] text-[#B8E62C] border border-[#4D631B] text-[11px] font-bold">
                     {contentProps.activeFilterCount} Active
                   </span>
                 )}

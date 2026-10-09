@@ -63,6 +63,8 @@ export function ContactView({
   const [activeTab, setActiveTab] = useState<"QUALIFIED" | "UNQUALIFIED">("QUALIFIED");
   const [activeType, setActiveType] = useState<ContactType | "ALL">("ALL");
   const [activeCountry, setActiveCountry] = useState<string>("ALL");
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
+  const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -96,16 +98,20 @@ export function ContactView({
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (activeTab === "UNQUALIFIED") count++;
-    if (activeType !== "ALL") count++;
-    if (activeCountry !== "ALL") count++;
+    if (selectedTypes.length > 0) count++;
+    else if (activeType !== "ALL") count++;
+    if (selectedCountries.length > 0) count++;
+    else if (activeCountry !== "ALL") count++;
     return count;
-  }, [activeTab, activeType, activeCountry]);
+  }, [activeTab, activeType, activeCountry, selectedTypes, selectedCountries]);
 
   // Reset all filters to default
   const handleResetFilters = useCallback(() => {
     setActiveTab("QUALIFIED");
     setActiveType("ALL");
     setActiveCountry("ALL");
+    setSelectedTypes([]);
+    setSelectedCountries([]);
   }, []);
 
   // Sequence & Mutation tracking for instant race-safe ratings
@@ -114,14 +120,33 @@ export function ContactView({
 
   // Persistent registry of all known accounts across filters & pages for 0ms optimistic filtering
   const knownAccountsMapRef = useRef<Map<string, AccountCardDTO>>(new Map());
+  const [knownAccounts, setKnownAccounts] = useState<Map<string, AccountCardDTO>>(() => {
+    const map = new Map<string, AccountCardDTO>();
+    for (const c of initialCompanies) {
+      map.set(c.id, c as AccountCardDTO);
+    }
+    return map;
+  });
 
   useEffect(() => {
-    for (const c of initialCompanies) {
-      if (!knownAccountsMapRef.current.has(c.id)) {
-        knownAccountsMapRef.current.set(c.id, c as AccountCardDTO);
+    knownAccountsMapRef.current = knownAccounts;
+  }, [knownAccounts]);
+
+  const [prevInitialCompanies, setPrevInitialCompanies] = useState(initialCompanies);
+  if (prevInitialCompanies !== initialCompanies) {
+    setPrevInitialCompanies(initialCompanies);
+    setKnownAccounts((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const c of initialCompanies) {
+        if (!next.has(c.id)) {
+          next.set(c.id, c as AccountCardDTO);
+          changed = true;
+        }
       }
-    }
-  }, [initialCompanies]);
+      return changed ? next : prev;
+    });
+  }
 
   // Idle Background Preload: Pre-warm EditAccountPanel code chunk and first company overview
   useEffect(() => {
@@ -161,6 +186,14 @@ export function ContactView({
     setActiveCountry(country);
   }, []);
 
+  const handleSelectTypes = useCallback((types: string[]) => {
+    setSelectedTypes(types);
+  }, []);
+
+  const handleSelectCountries = useCallback((countries: string[]) => {
+    setSelectedCountries(countries);
+  }, []);
+
   const handleSearchChange = useCallback((query: string) => {
     setSearchQuery(query);
   }, []);
@@ -172,6 +205,8 @@ export function ContactView({
   const activeTabRef = useRef(activeTab);
   const activeTypeRef = useRef(activeType);
   const activeCountryRef = useRef(activeCountry);
+  const selectedTypesRef = useRef(selectedTypes);
+  const selectedCountriesRef = useRef(selectedCountries);
   const debouncedSearchRef = useRef(debouncedSearch);
 
   useEffect(() => { hasMoreRef.current = hasMore; }, [hasMore]);
@@ -180,6 +215,8 @@ export function ContactView({
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
   useEffect(() => { activeTypeRef.current = activeType; }, [activeType]);
   useEffect(() => { activeCountryRef.current = activeCountry; }, [activeCountry]);
+  useEffect(() => { selectedTypesRef.current = selectedTypes; }, [selectedTypes]);
+  useEffect(() => { selectedCountriesRef.current = selectedCountries; }, [selectedCountries]);
   useEffect(() => { debouncedSearchRef.current = debouncedSearch; }, [debouncedSearch]);
 
   // Fetch available types & countries from DB if not passed
@@ -215,9 +252,11 @@ export function ContactView({
         status: activeTab,
         type: activeType,
         country: activeCountry,
+        types: selectedTypes,
+        countries: selectedCountries,
         search: debouncedSearch,
       }),
-    [actorId, activeTab, activeType, activeCountry, debouncedSearch]
+    [actorId, activeTab, activeType, activeCountry, selectedTypes, selectedCountries, debouncedSearch]
   );
 
   const fetcher = useCallback(async () => {
@@ -225,17 +264,21 @@ export function ContactView({
       status: activeTab,
       type: activeType,
       country: activeCountry === "ALL" ? "" : activeCountry,
+      types: selectedTypes,
+      countries: selectedCountries,
       search: debouncedSearch,
       page: 1,
       pageSize: 20,
     });
     return res;
-  }, [activeTab, activeType, activeCountry, debouncedSearch]);
+  }, [activeTab, activeType, activeCountry, selectedTypes, selectedCountries, debouncedSearch]);
 
   const isInitialState =
     activeTab === "QUALIFIED" &&
     activeType === "ALL" &&
     activeCountry === "ALL" &&
+    selectedTypes.length === 0 &&
+    selectedCountries.length === 0 &&
     !debouncedSearch;
 
   const fallbackData = useMemo(
@@ -264,24 +307,24 @@ export function ContactView({
   );
 
   // Sync SWR filter data to local accounts list
-  const currentKeyString = `${activeTab}|${activeType}|${activeCountry}|${debouncedSearch}`;
-  const [lastAppliedKey, setLastAppliedKey] = useState("QUALIFIED|ALL|ALL|");
+  const currentKeyString = `${activeTab}|${activeType}|${activeCountry}|${selectedTypes.join(",")}|${selectedCountries.join(",")}|${debouncedSearch}`;
+  const [lastAppliedKey, setLastAppliedKey] = useState("QUALIFIED|ALL|ALL|||");
 
   if (lastAppliedKey !== currentKeyString && serverFilterData) {
     setLastAppliedKey(currentKeyString);
     const items = serverFilterData.companies as AccountCardDTO[];
-    for (const item of items) {
-      knownAccountsMapRef.current.set(item.id, item);
-    }
     setAccounts(items);
     setPage(1);
     setHasMore(serverFilterData.hasMore);
     setStats(serverFilterData.stats);
     setTotalAccounts(serverFilterData.total);
-    // Keep first item selected or maintain selection
-    if (items.length > 0 && !items.some((c) => c.id === selectedAccountId)) {
-      setSelectedAccountId(items[0].id);
-    }
+    setKnownAccounts((prev) => {
+      const next = new Map(prev);
+      for (const item of items) {
+        next.set(item.id, item);
+      }
+      return next;
+    });
   }
 
   // 0ms Optimistic Filtered Accounts:
@@ -291,29 +334,36 @@ export function ContactView({
   const displayAccounts = useMemo(() => {
     const candidateList = isCurrentFilterDataReady
       ? accounts
-      : Array.from(knownAccountsMapRef.current.values());
+      : Array.from(knownAccounts.values());
 
     return candidateList.filter((acc) =>
       accountMatchesFilters(acc, {
         status: activeTab,
         type: activeType,
         country: activeCountry,
+        types: selectedTypes,
+        countries: selectedCountries,
         search: searchQuery,
       })
     );
   }, [
     isCurrentFilterDataReady,
     accounts,
+    knownAccounts,
     activeTab,
     activeType,
     activeCountry,
+    selectedTypes,
+    selectedCountries,
     searchQuery,
   ]);
 
-  useEffect(() => {
-    if (displayAccounts.length > 0 && !displayAccounts.some((c) => c.id === selectedAccountId)) {
-      setSelectedAccountId(displayAccounts[0].id);
+  // Derived effective selection: 0ms pure selection fallback without cascading effect renders
+  const effectiveSelectedAccountId = useMemo(() => {
+    if (selectedAccountId && displayAccounts.some((c) => c.id === selectedAccountId)) {
+      return selectedAccountId;
     }
+    return displayAccounts[0]?.id || null;
   }, [displayAccounts, selectedAccountId]);
 
   // Infinite Scroll: Load more accounts
@@ -328,6 +378,8 @@ export function ContactView({
         status: activeTabRef.current,
         type: activeTypeRef.current,
         country: activeCountryRef.current === "ALL" ? "" : activeCountryRef.current,
+        types: selectedTypesRef.current,
+        countries: selectedCountriesRef.current,
         search: debouncedSearchRef.current,
         page: nextPage,
         pageSize: 20,
@@ -387,9 +439,9 @@ export function ContactView({
 
   // Selected account for instant slide-over preview (0ms direct object passing)
   const selectedAccount = useMemo(() => {
-    if (!selectedAccountId) return null;
-    return accounts.find((c) => c.id === selectedAccountId) || null;
-  }, [accounts, selectedAccountId]);
+    if (!effectiveSelectedAccountId) return null;
+    return accounts.find((c) => c.id === effectiveSelectedAccountId) || null;
+  }, [accounts, effectiveSelectedAccountId]);
 
   const initialOverviewForSelected = useMemo<AccountOverviewResult | null>(() => {
     if (!selectedAccount) return null;
@@ -529,11 +581,11 @@ export function ContactView({
 
   // Edit Account Save: Optimistically update card
   const handleAccountUpdated = useCallback((updatedCompany?: Partial<CompanyMasterItem>) => {
-    if (!updatedCompany || !selectedAccountId) return;
+    if (!updatedCompany || !effectiveSelectedAccountId) return;
 
     setAccounts((prev) =>
       prev.map((c) => {
-        if (c.id !== selectedAccountId) return c;
+        if (c.id !== effectiveSelectedAccountId) return c;
         return {
           ...c,
           ...updatedCompany,
@@ -546,9 +598,9 @@ export function ContactView({
         };
       })
     );
-    const existing = knownAccountsMapRef.current.get(selectedAccountId);
+    const existing = knownAccountsMapRef.current.get(effectiveSelectedAccountId);
     if (existing) {
-      knownAccountsMapRef.current.set(selectedAccountId, {
+      knownAccountsMapRef.current.set(effectiveSelectedAccountId, {
         ...existing,
         ...updatedCompany,
         displayName: updatedCompany.displayName !== undefined ? updatedCompany.displayName : existing.displayName,
@@ -559,7 +611,7 @@ export function ContactView({
         starRating: updatedCompany.starRating !== undefined ? updatedCompany.starRating : existing.starRating,
       });
     }
-  }, [selectedAccountId]);
+  }, [effectiveSelectedAccountId]);
 
   // Escape key handler
   useEffect(() => {
@@ -699,7 +751,9 @@ export function ContactView({
   // Sidebar mobile integration
   const hasActiveFilters = Boolean(
     searchQuery.trim() ||
+    selectedTypes.length > 0 ||
     activeType !== "ALL" ||
+    selectedCountries.length > 0 ||
     activeCountry !== "ALL"
   );
 
@@ -721,12 +775,16 @@ export function ContactView({
       <AccountFilterContent
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        selectedTypes={selectedTypes}
+        onSelectTypes={handleSelectTypes}
+        availableTypes={availableTypes}
+        selectedCountries={selectedCountries}
+        onSelectCountries={handleSelectCountries}
+        availableCountries={availableCountries}
         activeType={activeType}
         onTypeChange={handleTypeChange}
-        availableTypes={availableTypes}
         activeCountry={activeCountry}
         onCountryChange={handleCountryChange}
-        availableCountries={availableCountries}
         stats={stats}
         activeFilterCount={activeFilterCount}
         onResetFilters={handleResetFilters}
@@ -739,9 +797,13 @@ export function ContactView({
     return () => setPageManageContent(null);
   }, [
     activeTab,
+    selectedTypes,
+    handleSelectTypes,
     activeType,
     handleTypeChange,
     availableTypes,
+    selectedCountries,
+    handleSelectCountries,
     activeCountry,
     handleCountryChange,
     availableCountries,
@@ -757,12 +819,16 @@ export function ContactView({
         <div className="max-w-[1400px] mx-auto w-full h-full flex flex-col md:flex-row gap-8 items-stretch overflow-hidden">
           {/* LEFT: 2 Groups Filter Sidebar (Type & Country - Desktop Only) */}
           <AccountFilterSidebar
+            selectedTypes={selectedTypes}
+            onSelectTypes={handleSelectTypes}
+            availableTypes={availableTypes}
+            selectedCountries={selectedCountries}
+            onSelectCountries={handleSelectCountries}
+            availableCountries={availableCountries}
             activeType={activeType}
             onTypeChange={handleTypeChange}
-            availableTypes={availableTypes}
             activeCountry={activeCountry}
             onCountryChange={handleCountryChange}
-            availableCountries={availableCountries}
           />
 
           {/* RIGHT: Main Account List Area */}
@@ -773,7 +839,7 @@ export function ContactView({
               isLoadingMore={isLoadingMore}
               hasMore={hasMore}
               totalAccounts={searchQuery.trim() ? displayAccounts.length : totalAccounts}
-              selectedAccountId={selectedAccountId}
+              selectedAccountId={effectiveSelectedAccountId}
               onSelectAccount={handleSelectAccount}
               onOpenAISummary={handleOpenAISummary}
               onRatingChange={handleRatingChange}
@@ -866,12 +932,16 @@ export function ContactView({
         onClose={() => setIsFiltersOpen(false)}
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        selectedTypes={selectedTypes}
+        onSelectTypes={handleSelectTypes}
+        availableTypes={availableTypes}
+        selectedCountries={selectedCountries}
+        onSelectCountries={handleSelectCountries}
+        availableCountries={availableCountries}
         activeType={activeType}
         onTypeChange={handleTypeChange}
-        availableTypes={availableTypes}
         activeCountry={activeCountry}
         onCountryChange={handleCountryChange}
-        availableCountries={availableCountries}
         stats={stats}
         activeFilterCount={activeFilterCount}
         onResetFilters={handleResetFilters}
@@ -917,11 +987,11 @@ export function ContactView({
       )}
 
       {/* Edit Account Slide-over Panel */}
-      {isEditAccountOpen && selectedAccountId && (
+      {isEditAccountOpen && effectiveSelectedAccountId && (
         <EditAccountPanel
-          key={`${selectedAccountId}-${editAccountInitialTab}`}
+          key={`${effectiveSelectedAccountId}-${editAccountInitialTab}`}
           isOpen={isEditAccountOpen}
-          companyId={selectedAccountId}
+          companyId={effectiveSelectedAccountId}
           initialOverview={initialOverviewForSelected}
           onClose={() => {
             setIsEditAccountOpen(false);
@@ -930,7 +1000,7 @@ export function ContactView({
           onBusinessSummaryUpdated={(summary) => {
             setAccounts((prev) =>
               prev.map((c) =>
-                c.id === selectedAccountId
+                c.id === effectiveSelectedAccountId
                   ? { ...c, hasAiSummary: Boolean(summary?.trim()) }
                   : c
               )

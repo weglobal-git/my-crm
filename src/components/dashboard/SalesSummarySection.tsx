@@ -75,11 +75,13 @@ export function SalesSummarySection({
   const maxAvailableYear = allAvailableAnnualYears[0] || year;
   const minAvailableYear = allAvailableAnnualYears[allAvailableAnnualYears.length - 1] || year - 4;
 
+  const [prevYear, setPrevYear] = useState<number>(year);
   const [windowEndYear, setWindowEndYear] = useState<number>(year);
 
-  useEffect(() => {
+  if (prevYear !== year) {
+    setPrevYear(year);
     setWindowEndYear(year);
-  }, [year]);
+  }
 
   const visibleYears = useMemo(() => {
     return Array.from({ length: 5 }, (_, i) => windowEndYear - i);

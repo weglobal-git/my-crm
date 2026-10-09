@@ -8,12 +8,13 @@ import {
 import { dispatchNotification } from "@/lib/notification-dispatcher";
 import { isDueDateFulfilled, pipelineOpportunitySelect } from "@/lib/pipeline-opportunities";
 import { requireCapability } from "@/lib/access/pipeline-capabilities";
+import type { OpportunityAccessCheckSubject } from "@/lib/access/pipeline-policy";
 import { v2 as cloudinary } from "cloudinary";
 
 export interface ActivityServiceDeps {
-  notifyPrivatePipelineUpdate?: (dealId: string, event: any) => Promise<any>;
+  notifyPrivatePipelineUpdate?: (dealId: string, event: Record<string, unknown>) => Promise<unknown>;
   dispatchDashboardInvalidation?: (input: DispatchDashboardInvalidationInput) => Promise<void>;
-  dispatchNotification?: (userId: string, notification: any) => Promise<any>;
+  dispatchNotification?: (userId: string, notification: unknown) => Promise<unknown>;
 }
 
 export interface AddActivityLogInput {
@@ -36,7 +37,7 @@ export interface DeleteActivityLogInput {
     type: string;
     content: string;
   };
-  opportunity: any;
+  opportunity: OpportunityAccessCheckSubject;
 }
 
 /**

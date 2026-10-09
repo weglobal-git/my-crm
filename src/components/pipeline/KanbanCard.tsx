@@ -368,7 +368,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
             }}
             placeholder="Quick Note"
             title="Press Enter to save"
-            className="w-32 sm:w-44 h-7 px-3 text-xs font-semibold text-slate-800 bg-slate-100 rounded-full border border-[#3A3B3C] outline-none placeholder:text-slate-400 text-center cursor-text truncate focus:w-48 transition-all"
+            className="w-32 sm:w-44 h-7 px-3 text-xs font-semibold text-slate-800 bg-slate-200 rounded-full border border-[#3A3B3C] outline-none placeholder:text-slate-400 text-center cursor-text truncate focus:w-48 transition-all"
           />
           {isSavingHotNote && (
             <span className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
@@ -381,7 +381,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
 
       {/* Top row: Avatar, Name, Company, Arrow/Bell */}
       <div className="flex justify-between items-start gap-2">
-        <div className="flex items-center pt-2gap-2 flex-1 min-w-0">
+        <div className="flex items-center pt-2 gap-2 flex-1 min-w-0">
           <div className="relative flex-shrink-0">
             <div 
               onClick={(e) => { 

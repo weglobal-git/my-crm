@@ -194,17 +194,20 @@ test('pipeline-cursor Finding 2 (Service Test): getCompletedOpportunitiesCursor 
   const originalFindMany = prisma.opportunity.findMany;
 
   let findUniqueCalled = false;
-  let findManyWhereClause: any = null;
-  let findManyOrderBy: any = null;
+  let findManyWhereClause: { AND?: unknown[] } | null = null;
+  let findManyOrderBy: unknown = null;
 
   try {
-    (prisma.opportunity as any).findUnique = async () => {
+    (prisma as unknown as { opportunity: { findUnique: unknown } }).opportunity.findUnique = async () => {
       findUniqueCalled = true;
       return null; // Simulate record was DELETED!
     };
 
-    (prisma.opportunity as any).findMany = async (args: any) => {
-      findManyWhereClause = args.where;
+    (prisma as unknown as { opportunity: { findMany: unknown } }).opportunity.findMany = async (args: {
+      where?: { AND?: unknown[] };
+      orderBy?: unknown;
+    }) => {
+      findManyWhereClause = args.where ?? null;
       findManyOrderBy = args.orderBy;
       return [
         {
@@ -234,11 +237,20 @@ test('pipeline-cursor Finding 2 (Service Test): getCompletedOpportunitiesCursor 
     assert.equal(findUniqueCalled, false, 'Versioned cursor must not make a findUnique database roundtrip');
 
     // 2. Assert that findMany received the exact keyset condition isolating null boundary
-    assert.ok(findManyWhereClause, 'findMany was called with whereClause');
-    const andClauses = findManyWhereClause.AND;
+    const whereClause = findManyWhereClause as { AND?: unknown[] } | null;
+    assert.ok(whereClause, 'findMany was called with whereClause');
+    const andClauses = whereClause.AND;
     assert.ok(Array.isArray(andClauses), 'where.AND must be an array');
 
-    const keysetClause = andClauses.find((c: any) => c.closedAt === null && c.id && c.id.lt);
+    type KeysetCandidate = { closedAt?: unknown; id?: { lt?: string } };
+    const keysetClause = andClauses.find(
+      (c): c is KeysetCandidate =>
+        typeof c === 'object' &&
+        c !== null &&
+        'closedAt' in c &&
+        (c as KeysetCandidate).closedAt === null &&
+        Boolean((c as KeysetCandidate).id?.lt)
+    );
     assert.ok(keysetClause, 'Keyset clause must enforce closedAt: null and id.lt');
     assert.equal(keysetClause.closedAt, null);
     assert.deepEqual(keysetClause.id, { lt: 'deal-deleted-null' });

@@ -1,40 +1,55 @@
-import { PackageOpen } from "lucide-react";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getUserVisibleMenuKeys } from "@/lib/actions/permission";
+import {
+  getCachedInitialProducts,
+  getProductCategories,
+  getProductBrands,
+} from "@/lib/actions/product";
+import { ProductView } from "@/components/product/ProductView";
+
+export const dynamic = "force-dynamic";
 
 export default async function ProductPage() {
   const session = await getServerSession(authOptions);
-  
+
   if (!session?.user) {
     redirect("/");
   }
 
   const { id: userId, role } = session.user as { id: string; role: string };
 
-  if (role !== 'ADMIN') {
+  if (role !== "ADMIN") {
     const visibleKeys = await getUserVisibleMenuKeys(userId);
-    if (!visibleKeys.includes('product')) {
+    if (!visibleKeys.includes("product")) {
       redirect("/");
     }
   }
 
+  // Preload taxonomy to check for configured default Category or Brand
+  const [categories, brands] = await Promise.all([
+    getProductCategories(),
+    getProductBrands(),
+  ]);
+
+  const defaultCategories = categories.filter((c) => c.isDefault).map((c) => c.category);
+  const defaultBrands = brands.filter((b) => b.isDefault).map((b) => b.brand);
+
+  const productsResult = await getCachedInitialProducts({
+    categories: defaultCategories.length > 0 ? defaultCategories : undefined,
+    brands: defaultBrands.length > 0 ? defaultBrands : undefined,
+  });
+
+  const { products, stats, total } = productsResult;
+
   return (
-    <div className="flex flex-col w-full h-full bg-black">
-      <main className="flex-1 overflow-y-auto hide-scrollbar p-2 flex flex-col items-center justify-center">
-        <div className="bg-[#3A3B3C] border border-[#4E4F50] rounded-[2rem] p-12 flex flex-col items-center max-w-md text-center">
-          <div className="w-20 h-20 bg-black border border-[#4E4F50] rounded-full flex items-center justify-center mb-6">
-            <PackageOpen className="w-10 h-10 text-slate-300" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-100 mb-3">
-            Under Construction
-          </h1>
-          <p className="text-slate-400 leading-relaxed">
-            We are currently building this feature. Please check back later!
-          </p>
-        </div>
-      </main>
-    </div>
+    <ProductView
+      initialProducts={products}
+      initialStats={stats}
+      initialTotal={total}
+      initialCategories={categories}
+      initialBrands={brands}
+    />
   );
 }

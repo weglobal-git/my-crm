@@ -398,29 +398,113 @@ model OpportunityTag {
   @@id([opportunityId, tagId])
 }
 
+enum ProductStatus {
+  AVAILABLE
+  UNAVAILABLE
+  DISCONTINUED
+}
+
 model Product {
-  id             String          @id @default(cuid())
-  sku            String          @unique
-  name           String
-  description    String?
-  basePrice      Float
-  weight         Float?
-  cbm            Float?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  customPrices   CompanyPrice[]
-  quotationItems QuotationItem[]
+  id               String           @id @default(cuid())
+  name             String
+  brand            String?
+  category         String?
+  description      String?          @db.Text
+  websiteUrl       String?          @db.Text
+  status           ProductStatus    @default(AVAILABLE)
+  starRating       Int              @default(0)
+
+  // Logistics & Packaging (Shared across formulas)
+  hsCode           String?
+  cartonDimension  String?
+  cartonWidth      Float?
+  cartonLength     Float?
+  cartonHeight     Float?
+  cbm              Float?
+  cartonQuantity   Int?
+
+  remark           String?          @db.Text // Service Remark
+
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  variants         ProductVariant[]
+
+  @@index([status])
+  @@index([starRating])
+  @@index([brand])
+  @@index([category])
+  @@index([status, starRating(sort: Desc), createdAt(sort: Desc)])
+  @@index([status, brand, category])
+  @@index([name])
+}
+
+model ProductCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  order     Int      @default(0)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+model ProductBrand {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  order     Int      @default(0)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([order])
+}
+
+model ProductVariant {
+  id                String          @id @default(cuid())
+  productId         String
+  product           Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  sku               String?
+  fullName          String
+  thaiName          String?
+  formula           String?
+  imageUrl          String?         @db.Text
+
+  price             Float           @default(0) // ราคาขายมาตรฐาน (Export-Price)
+  productCost       Float?          // ต้นทุนสินค้า (Cost)
+  priceCondition    String?         @db.Text // เงื่อนไขส่วนลด เช่น สั่งกี่ลัง ลดกี่ % (รองรับหลาย step)
+
+  netWeight         Float?
+  cartonGrossWeight Float?
+
+  status            ProductStatus   @default(AVAILABLE)
+  isDefault         Boolean         @default(false)
+  order             Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  customPrices      CompanyPrice[]
+  quotationItems    QuotationItem[]
+
+  @@index([productId])
+  @@index([order])
+  @@index([status])
+  @@index([sku])
+  @@index([formula])
 }
 
 model CompanyPrice {
-  id        String  @id @default(cuid())
+  id        String         @id @default(cuid())
   price     Float
-  productId String
+  variantId String
   companyId String
-  company   Company @relation(fields: [companyId], references: [id])
-  product   Product @relation(fields: [productId], references: [id])
+  company   Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
-  @@unique([productId, companyId])
+  @@unique([variantId, companyId])
+  @@index([companyId])
 }
 
 model Quotation {
@@ -443,17 +527,20 @@ model Quotation {
 }
 
 model QuotationItem {
-  id          String    @id @default(cuid())
+  id          String         @id @default(cuid())
   quantity    Int
   unitPrice   Float
-  discount    Float     @default(0)
+  discount    Float          @default(0)
   totalPrice  Float
   totalWeight Float?
   totalCBM    Float?
   quotationId String
-  productId   String
-  product     Product   @relation(fields: [productId], references: [id])
-  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  variantId   String
+  variant     ProductVariant @relation(fields: [variantId], references: [id])
+  quotation   Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([quotationId])
+  @@index([variantId])
 }
 
 enum Role {

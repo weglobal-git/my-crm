@@ -73,10 +73,13 @@ export function SlideOverPanel({
   const widthClassesMap: Record<string, string> = {
     "w-[600px]": "md:w-[600px]",
     "w-[650px]": "md:w-[650px]",
+    "w-[700px]": "md:w-[700px]",
+    "w-[720px]": "md:w-[720px]",
     "w-[740px]": "md:w-[740px]",
     "w-[750px]": "md:w-[750px]",
+    "w-[800px]": "md:w-[800px]",
   };
-  const responsiveWidth = widthClassesMap[widthClass] || (widthClass.startsWith("md:") ? widthClass : `md:${widthClass}`);
+  const responsiveWidth = widthClassesMap[widthClass] || (widthClass.startsWith("md:") ? widthClass : "md:w-[600px]");
 
   if (!isOpen && !mounted) return null;
 
@@ -169,10 +172,10 @@ export function SlideOverPanel({
           {/* Main Panel Content */}
           <div className="w-full flex-1 bg-[#252728] flex flex-col h-full min-w-0">
             {/* Header */}
-            <div className="flex items-center justify-between px-4 md:px-6 py-3 md:py-4 border-b border-[#1C1C1D] shrink-0">
+            <div className="flex items-center justify-between px-2 py-3 md:py-4 border-b border-[#1C1C1D] shrink-0">
               <div className="flex flex-col flex-1 pr-4 min-w-0">
                 {title && (
-                  <div className="text-base md:text-lg font-bold text-slate-100 truncate">
+                  <div className="text-md font-bold text-slate-100 truncate">
                     {title}
                   </div>
                 )}

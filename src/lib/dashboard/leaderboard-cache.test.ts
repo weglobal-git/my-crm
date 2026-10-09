@@ -128,7 +128,9 @@ test('Finding 1 (Service Test): getDepartmentLeaderboardWinnerSummary enforces a
 
   // Mock prisma.department.findMany to return only 'dept-export' for user-1
   const originalFindMany = prisma.department.findMany;
-  (prisma.department as any).findMany = async (args: any) => {
+  (prisma as unknown as { department: { findMany: unknown } }).department.findMany = async (
+    args?: { where?: { users?: { some?: { id?: string } } } }
+  ) => {
     if (args?.where?.users?.some?.id === 'user-1') {
       return [{ id: 'dept-export', name: 'Export Department' }];
     }

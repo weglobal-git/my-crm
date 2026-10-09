@@ -48,15 +48,20 @@ async function migrateProducts() {
   const data = JSON.parse(fs.readFileSync(path.join(cleanedPath, 'Products.json'), 'utf8'));
 
   for (const row of data) {
-    const sku = row.name || `SKU-${Math.random().toString(36).substr(2, 9)}`;
-
     const existing = await prisma.product.findFirst({ where: { name: row.name } });
     if (!existing) {
        await prisma.product.create({
          data: {
-           sku: sku,
            name: row.name,
-           basePrice: row.price || 0,
+           brand: row.brand,
+           category: row.category,
+           variants: {
+             create: {
+               fullName: row.formula ? `${row.name} - ${row.formula}` : row.name,
+               formula: row.formula || 'Standard',
+               price: row.price || 0,
+             },
+           },
          }
        });
     }

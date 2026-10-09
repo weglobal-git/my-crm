@@ -12,11 +12,117 @@ import {
   createBangkokDate,
 } from '@/lib/business-days';
 import { checkIsRedCard, type KanbanCardDTO } from '@/lib/pipeline-card-dto';
+import { isDueDateFulfilled } from '@/lib/pipeline-opportunities';
 import type {
   RedCardMiniDetail,
   UserMonthlyCardHealthSummary,
 } from './leaderboard-types';
 import { getCardHealthScoreFromRedRate } from './leaderboard-scoring';
+
+const MONTH_NAME_MAP: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/**
+ * Parses a due date string from a `[DUE DATE: ...]` activity log into Bangkok calendar Date.
+ */
+export function parseDueDateString(raw: string): Date | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/,?\s*\d{1,2}[:.]\d{2}(?::\d{2})?/, '').trim();
+  const lower = cleaned.toLowerCase();
+  if (lower === 'removed' || lower === 'none' || lower === 'null') {
+    return null;
+  }
+
+  // 1. Try DD Month YYYY (e.g. "07 Oct 2026", "7 October 2026")
+  const enMatch = cleaned.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})$/);
+  if (enMatch) {
+    const day = parseInt(enMatch[1], 10);
+    const mStr = enMatch[2].toLowerCase().slice(0, 3);
+    const month = MONTH_NAME_MAP[mStr];
+    const year = parseInt(enMatch[3], 10);
+    if (month !== undefined) {
+      return createBangkokDate(year, month, day, 0, 0, 0);
+    }
+  }
+
+  // 2. Try DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    return createBangkokDate(year, month, day, 0, 0, 0);
+  }
+
+  // 3. Try ISO YYYY-MM-DD
+  const isoMatch = cleaned.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10) - 1;
+    const day = parseInt(isoMatch[3], 10);
+    return createBangkokDate(year, month, day, 0, 0, 0);
+  }
+
+  // 4. Fallback Date.parse
+  const parsedTimestamp = Date.parse(cleaned);
+  if (!isNaN(parsedTimestamp)) {
+    const p = toBangkokDateParts(new Date(parsedTimestamp));
+    return createBangkokDate(p.year, p.month, p.date, 0, 0, 0);
+  }
+
+  return null;
+}
+
+/**
+ * Reconstructs the effective Due Date of a deal as it stood at a historical evaluation date (Asia/Bangkok).
+ * Accounts for timeline of [DUE DATE: ...] logs and subsequent fulfilling comments.
+ */
+export function resolveEffectiveDueDateAt(card: KanbanCardDTO, evalDate: Date): Date | null {
+  // If card has no activity logs, fall back to card.dueDate if deal existed on/before evalDate
+  if (!card.activityLogs || card.activityLogs.length === 0) {
+    if (card.dueDate && (!card.createdAt || new Date(card.createdAt) <= evalDate)) {
+      return new Date(card.dueDate);
+    }
+    return null;
+  }
+
+  const hasEverHadDueDateLogs = card.activityLogs.some((l) => l.content.startsWith('[DUE DATE:'));
+
+  let activeDueDate: Date | null = null;
+  // If deal currently has card.dueDate set in DB and never had any [DUE DATE: logs (e.g. legacy migrated),
+  // initialize with card.dueDate
+  if (!hasEverHadDueDateLogs && card.dueDate && (!card.createdAt || new Date(card.createdAt) <= evalDate)) {
+    activeDueDate = new Date(card.dueDate);
+  }
+
+  // Evaluate all logs up to evalDate in chronological order (oldest to newest)
+  const relevantLogs = card.activityLogs
+    .filter((log) => new Date(log.createdAt).getTime() <= evalDate.getTime())
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  for (const log of relevantLogs) {
+    if (log.content.startsWith('[DUE DATE:')) {
+      const match = log.content.match(/\[DUE DATE:\s*([^\]\n]+)\]/i);
+      if (match) {
+        activeDueDate = parseDueDateString(match[1]);
+      }
+    } else if (
+      log.type === 'COMMENT' &&
+      !log.content.startsWith('[URGENT_') &&
+      activeDueDate
+    ) {
+      // If a regular comment was posted on or after the active due date's calendar day,
+      // it fulfilled and cleared the active due date at that point in time.
+      if (isDueDateFulfilled(activeDueDate, log.createdAt)) {
+        activeDueDate = null;
+      }
+    }
+  }
+
+  return activeDueDate;
+}
 
 export function calculateDailySamplingForMonth(params: {
   departmentUsers: Array<{ id: string; name?: string | null; image?: string | null }>;
@@ -163,13 +269,24 @@ export function calculateDailySamplingForMonth(params: {
       let maxRedHoursToday = 0;
 
       for (const card of activeDeals) {
-        const isRed = checkIsRedCard(card, companyHolidays, leavesByUser, evalDate);
+        const effectiveDueDate = resolveEffectiveDueDateAt(card, evalDate);
+        const effectiveCard: KanbanCardDTO = {
+          ...card,
+          dueDate: effectiveDueDate,
+        };
+
+        const isRed = checkIsRedCard(effectiveCard, companyHolidays, leavesByUser, evalDate);
         if (isRed) {
           // If sampling for the current day in progress, verify that the card is actually red
           // at asOfDate so we don't prematurely penalize a deal before its deadline today.
+          const effectiveCurrentDueDate = resolveEffectiveDueDateAt(card, asOfDate);
+          const effectiveCurrentCard: KanbanCardDTO = {
+            ...card,
+            dueDate: effectiveCurrentDueDate,
+          };
           const isRedCurrent =
             isCurrentMonth && day === asOfParts.date
-              ? checkIsRedCard(card, companyHolidays, leavesByUser, asOfDate)
+              ? checkIsRedCard(effectiveCurrentCard, companyHolidays, leavesByUser, asOfDate)
               : true;
 
           if (!isRedCurrent) {
@@ -182,8 +299,8 @@ export function calculateDailySamplingForMonth(params: {
           ]);
 
           let redStartTime: Date;
-          if (card.dueDate) {
-            const dueParts = toBangkokDateParts(new Date(card.dueDate));
+          if (effectiveDueDate) {
+            const dueParts = toBangkokDateParts(new Date(effectiveDueDate));
             redStartTime = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
           } else {
             let newestDate: Date | null = null;

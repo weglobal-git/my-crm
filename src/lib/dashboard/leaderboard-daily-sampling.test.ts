@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateDailySamplingForMonth } from './leaderboard-daily-sampling';
+import {
+  calculateDailySamplingForMonth,
+  parseDueDateString,
+  resolveEffectiveDueDateAt,
+} from './leaderboard-daily-sampling';
 import type { KanbanCardDTO } from '@/lib/pipeline-card-dto';
 import { createBangkokDate } from '@/lib/business-days';
 
@@ -386,5 +390,118 @@ test('leaderboard-daily-sampling: deal hitting 27h threshold at workEnd (17:00) 
   assert.equal(thuRecord.redCardDetails[0].overdueWorkingHours, 9);
   assert.equal(mildThu.currentRedCards, 1);
 });
+
+test('leaderboard-daily-sampling: parseDueDateString parses diverse date strings correctly', () => {
+  const d1 = parseDueDateString('07 Oct 2026');
+  assert.ok(d1);
+  assert.equal(d1.getFullYear(), 2026);
+  assert.equal(d1.getMonth(), 9); // Oct is 9
+  assert.equal(d1.getDate(), 7);
+
+  const d2 = parseDueDateString('07/10/2026');
+  assert.ok(d2);
+  assert.equal(d2.getFullYear(), 2026);
+  assert.equal(d2.getMonth(), 9);
+  assert.equal(d2.getDate(), 7);
+
+  const d3 = parseDueDateString('2026-10-07');
+  assert.ok(d3);
+  assert.equal(d3.getFullYear(), 2026);
+  assert.equal(d3.getMonth(), 9);
+  assert.equal(d3.getDate(), 7);
+
+  assert.equal(parseDueDateString('Removed'), null);
+  assert.equal(parseDueDateString('none'), null);
+});
+
+test('leaderboard-daily-sampling: historical due date is reconstructed from logs when deal dueDate was auto-cleared upon update', () => {
+  const users = [{ id: 'user-yui', name: 'YUI' }];
+
+  // Deal had Due Date set to 07 Oct 2026 on 26 Sept.
+  // On 08 Oct at 10:21, YUI updated with a regular comment.
+  // The system auto-cleared deal.dueDate to null in the database.
+  const dealAnnaTrading: KanbanCardDTO = {
+    id: 'deal-anna',
+    topic: 'ตาม PO คุณขาว',
+    type: 'SALES_DEAL',
+    status: 'OPEN',
+    value: 50000,
+    currency: 'THB',
+    dueDate: null, // Currently null in DB!
+    goodsReadyDate: null,
+    goodsLoadingDate: null,
+    pipelineStageId: 'stage-1',
+    ownerId: 'user-yui',
+    closedAt: null,
+    oemProgress: null,
+    lossReason: null,
+    reserveId: null,
+    invoiceId: null,
+    isPinned: false,
+    hotNote: null,
+    createdAt: createBangkokDate(2026, 7, 19),
+    updatedAt: createBangkokDate(2026, 9, 8, 10, 21),
+    company: { id: 'comp-anna', name: 'Anna Trading', displayName: 'Anna Trading' },
+    owner: { id: 'user-yui', name: 'YUI', email: null, image: null, departments: [] },
+    teamMembers: [],
+    activityLogs: [
+      {
+        id: 'log-oct8',
+        content: '***แนะนำสินค้าใหม่คุณขาว ดีย่า โกทมิลค์...',
+        type: 'COMMENT',
+        createdAt: createBangkokDate(2026, 9, 8, 10, 21),
+        user: { name: 'YUI', image: null },
+      },
+      {
+        id: 'log-sep26-duedate',
+        content: '[DUE DATE: 07 Oct 2026]\nReason: เดือนนี้คุณขาวยังไม่มี Order เนื่องจากสต็อกยังเยอะอยู่ /ติดตามอีกครั้ง',
+        type: 'COMMENT',
+        createdAt: createBangkokDate(2026, 8, 26, 12, 24),
+        user: { name: 'YUI', image: null },
+      },
+    ],
+  };
+
+  const sampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals: [dealAnnaTrading],
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 8, 16, 57),
+  });
+
+  const yuiSummary = sampling.get('user-yui')!;
+  assert.ok(yuiSummary);
+
+  // Day 5 (Oct 5): Clean! (Due date 07 Oct protected it from being red, 0 red cards)
+  const oct5Record = yuiSummary.dailyRecords.find((r) => r.dateKey === '2026-10-05');
+  assert.ok(oct5Record);
+  assert.equal(oct5Record.redCardsCount, 0, 'Oct 5 should be clean because due date was 07 Oct');
+  assert.equal(oct5Record.cleanCardsCount, 1);
+  assert.equal(oct5Record.redHours, 0);
+
+  // Day 6 (Oct 6): Clean!
+  const oct6Record = yuiSummary.dailyRecords.find((r) => r.dateKey === '2026-10-06');
+  assert.ok(oct6Record);
+  assert.equal(oct6Record.redCardsCount, 0, 'Oct 6 should be clean because due date was 07 Oct');
+  assert.equal(oct6Record.cleanCardsCount, 1);
+  assert.equal(oct6Record.redHours, 0);
+
+  // Day 7 (Oct 7): Red Card starting at 08:00 on 07 Oct (9h today, 9h overdue - NOT 134.4h!)
+  const oct7Record = yuiSummary.dailyRecords.find((r) => r.dateKey === '2026-10-07');
+  assert.ok(oct7Record);
+  assert.equal(oct7Record.redCardsCount, 1, 'Oct 7 is due date reached');
+  assert.equal(oct7Record.redHours, 9);
+  assert.equal(oct7Record.redCardDetails[0].overdueWorkingHours, 9, 'Overdue hours should be 9h from due date start, NOT 134h');
+
+  // Day 8 (Oct 8): Clean! Updated at 10:21
+  const oct8Record = yuiSummary.dailyRecords.find((r) => r.dateKey === '2026-10-08');
+  assert.ok(oct8Record);
+  assert.equal(oct8Record.redCardsCount, 0, 'Oct 8 is clean because updated at 10:21');
+  assert.equal(oct8Record.cleanCardsCount, 1);
+});
+
 
 

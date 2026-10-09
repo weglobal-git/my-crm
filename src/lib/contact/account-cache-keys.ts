@@ -2,8 +2,10 @@ import { ContactStatus, ContactType } from "@prisma/client";
 
 export interface AccountListFilters {
   status: ContactStatus | "ALL";
-  type: ContactType | "ALL";
-  country: string;
+  type?: ContactType | "ALL";
+  types?: (ContactType | string)[];
+  country?: string;
+  countries?: string[];
   search: string;
 }
 
@@ -16,12 +18,19 @@ export function getAccountListKey(
   filters: AccountListFilters,
   page: number
 ) {
+  const typeKey = filters.types && filters.types.length > 0
+    ? [...filters.types].sort().join(",")
+    : filters.type || "ALL";
+  const countryKey = filters.countries && filters.countries.length > 0
+    ? [...filters.countries].sort().join(",")
+    : filters.country || "ALL";
+
   return [
     "account-cards-list",
     actorId,
     filters.status,
-    filters.type,
-    filters.country || "ALL",
+    typeKey,
+    countryKey,
     filters.search || "",
     page,
   ] as const;
@@ -34,12 +43,19 @@ export function getAccountFilterKey(
   actorId: string,
   filters: AccountListFilters
 ) {
+  const typeKey = filters.types && filters.types.length > 0
+    ? [...filters.types].sort().join(",")
+    : filters.type || "ALL";
+  const countryKey = filters.countries && filters.countries.length > 0
+    ? [...filters.countries].sort().join(",")
+    : filters.country || "ALL";
+
   return [
     "account-cards-filter",
     actorId,
     filters.status,
-    filters.type,
-    filters.country || "ALL",
+    typeKey,
+    countryKey,
     filters.search || "",
   ] as const;
 }

@@ -341,7 +341,6 @@ export async function getDepartmentLeaderboardData(params: {
               type: 'COMMENT' as const,
               createdAt: { lte: asOfDate },
               NOT: [
-                { content: { startsWith: '[DUE DATE:' } },
                 { content: { startsWith: '[URGENT_' } },
               ],
             },
