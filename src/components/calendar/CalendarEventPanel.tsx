@@ -236,7 +236,12 @@ export function CalendarEventPanel({
     ? calendarEventDetailKey(currentUserId || 'default', editingItemId)
     : null;
 
-  const { data: detailRes, error: detailErr, mutate: mutateDetail } = useSWR(
+  const {
+    data: detailRes,
+    error: detailErr,
+    isLoading: isSwrDetailLoading,
+    mutate: mutateDetail,
+  } = useSWR(
     detailKey,
     async () => {
       const res = await getCalendarEventDetailAction(editingItemId!);
@@ -251,7 +256,18 @@ export function CalendarEventPanel({
     }
   );
 
-  const isHydratingDetail = isEditMode && !detailRes?.event && !detailErr;
+  const resolvedDetailEvent = useMemo<CalendarEventDetailDTO | null>(() => {
+    if (!detailRes || typeof detailRes !== "object") return null;
+    if ("event" in detailRes && detailRes.event) {
+      return detailRes.event;
+    }
+    if ("id" in detailRes && "name" in detailRes) {
+      return detailRes as unknown as CalendarEventDetailDTO;
+    }
+    return null;
+  }, [detailRes]);
+
+  const isHydratingDetail = isEditMode && !resolvedDetailEvent && !detailErr && isSwrDetailLoading;
 
   useEffect(() => {
     if (refreshToken > 0 && detailKey) {
@@ -269,8 +285,8 @@ export function CalendarEventPanel({
         return;
       }
 
-      if (detailRes?.event) {
-        const ev = detailRes.event;
+      if (resolvedDetailEvent) {
+        const ev = resolvedDetailEvent;
         setExpectedRevision(ev.revision);
         setCanEdit(ev.canEdit);
         setSelectedTagDetails(ev.tags.map((tag) => ({ ...tag, departmentId: ev.departmentId })));
@@ -301,7 +317,7 @@ export function CalendarEventPanel({
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [isOpen, isEditMode, editingItemId, detailRes, detailErr, hydrateDraft]);
+  }, [isOpen, isEditMode, editingItemId, resolvedDetailEvent, detailErr, hydrateDraft]);
 
   useCalendarDialog(isOpen, panelRef, onClose, titleInputRef);
 

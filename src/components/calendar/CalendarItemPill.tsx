@@ -80,18 +80,20 @@ export const CalendarItemPill: React.FC<CalendarItemPillProps> = memo(function C
         calendarFinancialInfoKey(userId || 'default', item.sourceId),
         async () => {
           const res = await getCalendarFinancialInfoAction(item.sourceId);
+          if (!res.success || !res.data) throw new Error(res.error || 'Unable to load');
           return res.data;
         }
-      );
+      ).catch(() => {});
     } else {
       void import('./CalendarEventPanel');
       void preload(
         calendarEventDetailKey(userId || 'default', item.sourceId),
         async () => {
           const res = await getCalendarEventDetailAction(item.sourceId);
-          return res.event;
+          if (!res.success || !res.event) throw new Error(res.error || 'Could not load event details');
+          return res;
         }
-      );
+      ).catch(() => {});
     }
   }, [isDeal, item.sourceId, userId]);
 
