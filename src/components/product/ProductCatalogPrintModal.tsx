@@ -20,12 +20,9 @@ import {
   Check,
   LayoutGrid,
   List,
-  Search,
   FileSpreadsheet,
-  CheckSquare,
-  Square,
-  Filter,
-  ChevronDown,
+  FolderTree,
+  Flame,
 } from "lucide-react";
 import {
   ProductListItemDTO,
@@ -34,7 +31,7 @@ import {
   calculateTierPrice,
   PriceStepTier,
 } from "@/lib/product/product-dto";
-import { getBatchProductOverviews, getProductsWithFilters } from "@/lib/actions/product";
+import { getBatchProductOverviews } from "@/lib/actions/product";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 import { SBHeader } from "@/components/common/SBHeader";
 
@@ -84,7 +81,7 @@ const ModernToggleRow = ({
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className="w-full flex items-center justify-between p-2 rounded-xl hover:bg-[#353638] transition-colors cursor-pointer group text-left select-none"
+      className="w-full flex items-center justify-between pb-0.5 rounded-xl hover:bg-[#353638] transition-colors cursor-pointer group text-left select-none"
     >
       <div className="flex items-center gap-2.5 min-w-0 pr-2">
         <span
@@ -134,14 +131,16 @@ function CatalogProductImage({
   size = 400,
   className,
   iconSize = "w-10 h-10",
+  crop = "fill",
 }: {
   src?: string | null;
   size?: number;
   className?: string;
   iconSize?: string;
+  crop?: string;
 }) {
   const [hasError, setHasError] = useState(false);
-  const optimizedSrc = getOptimizedCloudinaryUrl(src, size, "fit");
+  const optimizedSrc = getOptimizedCloudinaryUrl(src, size, crop);
 
   if (!optimizedSrc || hasError) {
     return (
@@ -171,162 +170,8 @@ export function ProductCatalogPrintModal({
   availableBrands = [],
   isExplicitSelection = false,
 }: ProductCatalogPrintModalProps) {
-  // Sidebar tab state: "options" vs "select"
-  const [sidebarTab, setSidebarTab] = useState<"options" | "select">("options");
-
-  // Master candidates list for selection (fetches full unconstrained catalog on mount)
-  const [catalogMasterProducts, setCatalogMasterProducts] = useState<ProductListItemDTO[]>(() => {
-    return allProducts.length > 0 ? allProducts : selectedProducts;
-  });
-  const [isLoadingAllProducts, setIsLoadingAllProducts] = useState(false);
-
-  // Active selected IDs inside modal
-  const [activeSelectedIds, setActiveSelectedIds] = useState<Set<string>>(() => {
-    return new Set(selectedProducts.map((p) => p.id));
-  });
-
-  // Fetch full unconstrained catalog (~60 items) when modal opens
-  useEffect(() => {
-    if (!isOpen) return;
-    let isMounted = true;
-    setIsLoadingAllProducts(true);
-
-    getProductsWithFilters({
-      status: "ALL",
-      pageSize: 500,
-    })
-      .then((res) => {
-        if (isMounted && res?.products && res.products.length > 0) {
-          setCatalogMasterProducts(res.products);
-          setIsLoadingAllProducts(false);
-
-          // If the user did NOT explicitly check specific items on the main table, select all products by default!
-          if (!isExplicitSelection) {
-            setActiveSelectedIds(new Set(res.products.map((p) => p.id)));
-          }
-        }
-      })
-      .catch((err) => {
-        console.error("Failed to load full catalog products:", err);
-        if (isMounted) setIsLoadingAllProducts(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isOpen, isExplicitSelection]);
-
-  // Tab 2 search and filter states
-  const [selectSearch, setSelectSearch] = useState("");
-  const [selectedFilterBrands, setSelectedFilterBrands] = useState<string[]>([]);
-  const [selectedFilterCategories, setSelectedFilterCategories] = useState<string[]>([]);
-  const [openFilterMenu, setOpenFilterMenu] = useState<"brand" | "category" | null>(null);
-  const [filterSearchQuery, setFilterSearchQuery] = useState("");
-
-  const filterMenuRef = useRef<HTMLDivElement>(null);
-
-  // Close filter dropdown on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (filterMenuRef.current && !filterMenuRef.current.contains(e.target as Node)) {
-        setOpenFilterMenu(null);
-        setFilterSearchQuery("");
-      }
-    };
-    if (openFilterMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [openFilterMenu]);
-
-  // Dynamic brand and category options with counts from master catalog
-  const brandOptions = useMemo(() => {
-    const map = new Map<string, number>();
-    catalogMasterProducts.forEach((p) => {
-      if (p.brand) {
-        map.set(p.brand, (map.get(p.brand) || 0) + 1);
-      }
-    });
-    return Array.from(map.entries())
-      .map(([brand, count]) => ({ brand, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [catalogMasterProducts]);
-
-  const categoryOptions = useMemo(() => {
-    const map = new Map<string, number>();
-    catalogMasterProducts.forEach((p) => {
-      if (p.category) {
-        map.set(p.category, (map.get(p.category) || 0) + 1);
-      }
-    });
-    return Array.from(map.entries())
-      .map(([category, count]) => ({ category, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [catalogMasterProducts]);
-
-  // Filtered candidate products for Tab 2
-  const filteredCandidates = useMemo(() => {
-    return catalogMasterProducts.filter((p) => {
-      if (selectedFilterBrands.length > 0 && (!p.brand || !selectedFilterBrands.includes(p.brand))) {
-        return false;
-      }
-      if (
-        selectedFilterCategories.length > 0 &&
-        (!p.category || !selectedFilterCategories.includes(p.category))
-      ) {
-        return false;
-      }
-      if (selectSearch.trim()) {
-        const q = selectSearch.toLowerCase().trim();
-        const matchName = p.name.toLowerCase().includes(q);
-        const matchBrand = p.brand?.toLowerCase().includes(q);
-        const matchCat = p.category?.toLowerCase().includes(q);
-        const matchFormula = p.formulas?.some((f) => f.toLowerCase().includes(q));
-        if (!matchName && !matchBrand && !matchCat && !matchFormula) return false;
-      }
-      return true;
-    });
-  }, [catalogMasterProducts, selectedFilterBrands, selectedFilterCategories, selectSearch]);
-
-  const isAllFilteredSelected = useMemo(() => {
-    if (filteredCandidates.length === 0) return false;
-    return filteredCandidates.every((p) => activeSelectedIds.has(p.id));
-  }, [filteredCandidates, activeSelectedIds]);
-
-  const handleToggleSelectAllFiltered = () => {
-    if (isAllFilteredSelected) {
-      setActiveSelectedIds((prev) => {
-        const next = new Set(prev);
-        filteredCandidates.forEach((p) => next.delete(p.id));
-        return next;
-      });
-    } else {
-      setActiveSelectedIds((prev) => {
-        const next = new Set(prev);
-        filteredCandidates.forEach((p) => next.add(p.id));
-        return next;
-      });
-    }
-  };
-
-  const handleToggleProduct = (id: string) => {
-    setActiveSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
-  // Currently active selected products for the catalog preview and export
-  const effectiveSelectedProducts = useMemo(() => {
-    return catalogMasterProducts.filter((p) => activeSelectedIds.has(p.id));
-  }, [catalogMasterProducts, activeSelectedIds]);
+  // Direct selected products passed from the main product list
+  const effectiveSelectedProducts = selectedProducts;
 
   // Details cache fetched from server
   const [detailsCache, setDetailsCache] = useState<Record<string, ProductOverviewDTO>>({});
@@ -335,6 +180,7 @@ export function ProductCatalogPrintModal({
   // Specification Filters (Toggles)
   const [showImage, setShowImage] = useState(true);
   const [showType, setShowType] = useState(true);
+  const [showTopSell, setShowTopSell] = useState(true);
   const [showFormulas, setShowFormulas] = useState(true);
   const [showHsCode, setShowHsCode] = useState(true);
   const [showCartonGrossWeight, setShowCartonGrossWeight] = useState(true);
@@ -357,6 +203,9 @@ export function ProductCatalogPrintModal({
 
   // Sort State: "type" | "brand" | "default"
   const [sortBy, setSortBy] = useState<"type" | "brand" | "default">("type");
+
+  // Group by Category Toggle
+  const [groupByCategory, setGroupByCategory] = useState(false);
 
   // Pricing Mode: Auto vs Manual Overrides
   const [pricingMode, setPricingMode] = useState<"auto" | "manual">("auto");
@@ -443,15 +292,87 @@ export function ProductCatalogPrintModal({
     return list;
   }, [combinedProducts, sortBy]);
 
-  // For Grid Lookbook layout: Chunk into pages of 4 items (2x2 per page)
-  const pageSize = 4;
-  const catalogPages = useMemo(() => {
-    const pages: (typeof sortedProducts)[] = [];
-    for (let i = 0; i < sortedProducts.length; i += pageSize) {
-      pages.push(sortedProducts.slice(i, i + pageSize));
+  // Group sortedProducts by Category
+  const groupedCategoryList = useMemo(() => {
+    const categoryMap = new Map<string, typeof sortedProducts>();
+    sortedProducts.forEach((item) => {
+      const cat = item.sp.category?.trim() || "General";
+      if (!categoryMap.has(cat)) {
+        categoryMap.set(cat, []);
+      }
+      categoryMap.get(cat)!.push(item);
+    });
+
+    const categoryOrderMap = new Map<string, number>();
+    availableCategories.forEach((cat, idx) => {
+      categoryOrderMap.set(
+        cat.category.toLowerCase().trim(),
+        typeof cat.order === "number" ? cat.order : idx
+      );
+    });
+
+    return Array.from(categoryMap.entries())
+      .sort(([catA], [catB]) => {
+        const orderA = categoryOrderMap.get(catA.toLowerCase().trim());
+        const orderB = categoryOrderMap.get(catB.toLowerCase().trim());
+        if (orderA !== undefined && orderB !== undefined) return orderA - orderB;
+        if (orderA !== undefined) return -1;
+        if (orderB !== undefined) return 1;
+        return catA.localeCompare(catB);
+      })
+      .map(([category, items]) => ({
+        category,
+        items,
+      }));
+  }, [sortedProducts, availableCategories]);
+
+  // List View sections: Flat or Grouped by Category
+  const listSections = useMemo(() => {
+    if (groupByCategory) {
+      return groupedCategoryList;
     }
+    return [{ category: "", items: sortedProducts }];
+  }, [groupByCategory, groupedCategoryList, sortedProducts]);
+
+  // For Grid Lookbook layout: Chunk into pages of 4 items (2x2 per page)
+  // When groupByCategory is enabled, pages are partitioned per category
+  const pageSize = 4;
+  interface CatalogGridPage {
+    category?: string;
+    categoryTotalCount?: number;
+    categoryPageIdx?: number;
+    categoryTotalPages?: number;
+    items: typeof sortedProducts;
+  }
+
+  const catalogPages = useMemo<CatalogGridPage[]>(() => {
+    if (!groupByCategory) {
+      const pages: CatalogGridPage[] = [];
+      for (let i = 0; i < sortedProducts.length; i += pageSize) {
+        pages.push({
+          items: sortedProducts.slice(i, i + pageSize),
+        });
+      }
+      return pages;
+    }
+
+    const pages: CatalogGridPage[] = [];
+    groupedCategoryList.forEach(({ category, items }) => {
+      const categoryTotalCount = items.length;
+      const categoryTotalPages = Math.ceil(categoryTotalCount / pageSize);
+      for (let i = 0; i < categoryTotalCount; i += pageSize) {
+        pages.push({
+          category,
+          categoryTotalCount,
+          categoryPageIdx: Math.floor(i / pageSize),
+          categoryTotalPages,
+          items: items.slice(i, i + pageSize),
+        });
+      }
+    });
+
     return pages;
-  }, [sortedProducts, pageSize]);
+  }, [sortedProducts, pageSize, groupByCategory, groupedCategoryList]);
 
   // Print Action
   const handlePrint = () => {
@@ -506,11 +427,11 @@ export function ProductCatalogPrintModal({
     setManualOverrides({});
   };
 
-  const fmt = (num: number | null | undefined, decimals: number = 2) => {
+  const fmt = (num: number | null | undefined, maxDecimals: number = 2) => {
     if (num === null || num === undefined || isNaN(num)) return "—";
     return num.toLocaleString("en-US", {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: maxDecimals,
     });
   };
 
@@ -518,6 +439,7 @@ export function ProductCatalogPrintModal({
     if (preset === "minimal") {
       setShowImage(true);
       setShowType(true);
+      setShowTopSell(true);
       setShowFormulas(true);
       setShowHsCode(true);
       setShowCartonGrossWeight(true);
@@ -532,6 +454,7 @@ export function ProductCatalogPrintModal({
     } else if (preset === "full") {
       setShowImage(true);
       setShowType(true);
+      setShowTopSell(true);
       setShowFormulas(true);
       setShowHsCode(true);
       setShowCartonGrossWeight(true);
@@ -579,7 +502,11 @@ export function ProductCatalogPrintModal({
 
     const rows: string[] = [headers.map(escapeCsv).join(",")];
 
-    sortedProducts.forEach(({ sp, dp }) => {
+    const exportTargetProducts = groupByCategory
+      ? groupedCategoryList.flatMap((g) => g.items)
+      : sortedProducts;
+
+    exportTargetProducts.forEach(({ sp, dp }) => {
       const variants = dp?.variants || [];
       const fallbackFormulas = sp.formulas || [];
 
@@ -743,6 +670,16 @@ export function ProductCatalogPrintModal({
     >
       {/* High-Fidelity Print Stylesheet */}
       <style jsx global>{`
+        input.print-manual-input::-webkit-outer-spin-button,
+        input.print-manual-input::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        input.print-manual-input {
+          -moz-appearance: textfield;
+          appearance: textfield;
+          field-sizing: content;
+        }
         @media print {
           @page {
             size: A4 portrait;
@@ -788,6 +725,11 @@ export function ProductCatalogPrintModal({
           .print-flex-container {
             display: block !important;
             overflow: visible !important;
+          }
+          .print-document-area {
+            display: block !important;
+            overflow: visible !important;
+            background: white !important;
           }
           #catalog-print-scroll-body {
             overflow: visible !important;
@@ -848,6 +790,14 @@ export function ProductCatalogPrintModal({
             break-inside: avoid !important;
             background-color: #ffffff !important;
           }
+          .print-category-header {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+          .print-category-group {
+            page-break-inside: auto !important;
+            break-inside: auto !important;
+          }
           .print-price-panel {
             background-color: #f8fafc !important;
             -webkit-print-color-adjust: exact !important;
@@ -876,51 +826,23 @@ export function ProductCatalogPrintModal({
       >
         {/* Modal Main Body (2-Column Layout: Left Sidebar + Right Printable Document) */}
         <div className="print-flex-container flex-1 min-h-0 flex flex-row overflow-hidden">
-          {/* Left Sidebar: 2 Tabs (Options & Product Selection) + Sticky Bottom Export */}
+          {/* Left Sidebar: Options + Sticky Bottom Export */}
           <aside className="w-72 sm:w-80 shrink-0 bg-[#202123] border-r border-[#353638] flex flex-col h-full print-hidden select-none">
-            {/* Sidebar Top: Tab Switcher & Modal Close */}
+            {/* Sidebar Top: Header Title & Count */}
             <div className="p-3 border-b border-[#353638] flex items-center justify-between gap-2 shrink-0 bg-[#252627]">
-              <div className="flex items-center gap-1 bg-[#18191A] p-0.5 rounded-xl border border-[#353638] flex-1">
-                <button
-                  type="button"
-                  onClick={() => setSidebarTab("options")}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                    sidebarTab === "options"
-                      ? "bg-[#C7F33C] text-black font-bold shadow-2xs"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                  <span>Options</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSidebarTab("select")}
-                  className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
-                    sidebarTab === "select"
-                      ? "bg-[#C7F33C] text-black font-bold shadow-2xs"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  <Package className="w-3.5 h-3.5" />
-                  <span>Items</span>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold tabular-nums ${
-                      sidebarTab === "select"
-                        ? "bg-black/15 text-black"
-                        : "bg-[#C7F33C]/10 text-[#C7F33C] border border-[#C7F33C]/30"
-                    }`}
-                  >
-                    {effectiveSelectedProducts.length}
-                  </span>
-                </button>
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-[#C7F33C]" />
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                  Catalog Options
+                </span>
               </div>
+              <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-[#C7F33C]/15 text-[#C7F33C] border border-[#C7F33C]/30 tabular-nums">
+                {effectiveSelectedProducts.length} items
+              </span>
             </div>
 
-            {/* Sidebar Middle Content Area */}
-            {sidebarTab === "options" ? (
-              /* Tab 1: Catalog Options (Scrollable) */
-              <div className="flex-1 overflow-y-auto p-3.5 space-y-4 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
+            {/* Sidebar Options Area (Scrollable) */}
+            <div className="flex-1 overflow-y-auto p-3.5 space-y-4 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
                 <div className="space-y-4">
                   {/* Presets & View Layout */}
                   <div className="space-y-2 pb-3 border-b border-[#353638]">
@@ -976,7 +898,7 @@ export function ProductCatalogPrintModal({
                           }`}
                         >
                           <List className="w-3.5 h-3.5" />
-                          <span>List (Rows)</span>
+                          <span>List</span>
                         </button>
                       </div>
                     </div>
@@ -1022,6 +944,17 @@ export function ProductCatalogPrintModal({
                         </button>
                       </div>
                     </div>
+
+                    {/* Group by Category */}
+                    <div className="pt-2 border-t border-[#353638]/60">
+                      <ModernToggleRow
+                        icon={<FolderTree className="w-3.5 h-3.5" />}
+                        label="Group by Category"
+                        description="Divide catalog by category sections"
+                        checked={groupByCategory}
+                        onChange={setGroupByCategory}
+                      />
+                    </div>
                   </div>
 
                   {/* Specification Toggles */}
@@ -1040,6 +973,12 @@ export function ProductCatalogPrintModal({
                       label="Product Type"
                       checked={showType}
                       onChange={setShowType}
+                    />
+                    <ModernToggleRow
+                      icon={<Flame className="w-3.5 h-3.5" />}
+                      label="Top Sell Badge"
+                      checked={showTopSell}
+                      onChange={setShowTopSell}
                     />
                     <ModernToggleRow
                       icon={<Box className="w-3.5 h-3.5" />}
@@ -1205,335 +1144,6 @@ export function ProductCatalogPrintModal({
                   </div>
                 </div>
               </div>
-            ) : (
-              /* Tab 2: Select Products (Full height layout, zero wasted space) */
-              <div className="flex-1 min-h-0 flex flex-col p-3.5 space-y-2.5">
-                {/* Search & Standard Filter Dropdowns */}
-                <div className="shrink-0 space-y-2 relative" ref={filterMenuRef}>
-                  {/* Search Input */}
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={selectSearch}
-                      onChange={(e) => setSelectSearch(e.target.value)}
-                      placeholder="Search name, brand, formula..."
-                      className="w-full bg-[#18191A] border border-[#353638] rounded-xl pl-8.5 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C]/50"
-                    />
-                    {selectSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setSelectSearch("")}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-0.5 cursor-pointer"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Standard Multi-Select Filter Buttons: Brand & Category */}
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenFilterMenu(openFilterMenu === "brand" ? null : "brand");
-                        setFilterSearchQuery("");
-                      }}
-                      className={`py-1.5 px-2 rounded-xl text-[11px] font-semibold flex items-center justify-between border transition-all cursor-pointer ${
-                        selectedFilterBrands.length > 0
-                          ? "bg-[#C7F33C]/10 border-[#C7F33C]/40 text-[#C7F33C]"
-                          : "bg-[#18191A] border-[#353638] text-slate-300 hover:text-white hover:bg-[#252627]"
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 truncate">
-                        <Filter className="w-3 h-3 shrink-0" />
-                        <span className="truncate">
-                          {selectedFilterBrands.length > 0
-                            ? `Brand (${selectedFilterBrands.length})`
-                            : "All Brands"}
-                        </span>
-                      </div>
-                      <ChevronDown className="w-3 h-3 shrink-0 text-slate-400" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenFilterMenu(openFilterMenu === "category" ? null : "category");
-                        setFilterSearchQuery("");
-                      }}
-                      className={`py-1.5 px-2 rounded-xl text-[11px] font-semibold flex items-center justify-between border transition-all cursor-pointer ${
-                        selectedFilterCategories.length > 0
-                          ? "bg-[#C7F33C]/10 border-[#C7F33C]/40 text-[#C7F33C]"
-                          : "bg-[#18191A] border-[#353638] text-slate-300 hover:text-white hover:bg-[#252627]"
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 truncate">
-                        <Filter className="w-3 h-3 shrink-0" />
-                        <span className="truncate">
-                          {selectedFilterCategories.length > 0
-                            ? `Category (${selectedFilterCategories.length})`
-                            : "All Categories"}
-                        </span>
-                      </div>
-                      <ChevronDown className="w-3 h-3 shrink-0 text-slate-400" />
-                    </button>
-                  </div>
-
-                  {/* Standard Multi-Select Dropdown Popover */}
-                  {openFilterMenu && (
-                    <div className="absolute left-0 top-full mt-1.5 w-full z-30 bg-[#252627] border border-[#3E4042] rounded-xl shadow-2xl p-2.5 space-y-2">
-                      <div className="flex items-center justify-between pb-1.5 border-b border-[#353638]">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                          {openFilterMenu === "brand" ? "Filter by Brand" : "Filter by Category"}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (openFilterMenu === "brand") setSelectedFilterBrands([]);
-                              else setSelectedFilterCategories([]);
-                            }}
-                            className="text-[10px] text-slate-400 hover:text-rose-400 hover:underline cursor-pointer"
-                          >
-                            Clear
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setOpenFilterMenu(null);
-                              setFilterSearchQuery("");
-                            }}
-                            className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Dropdown Search */}
-                      <div className="relative">
-                        <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
-                        <input
-                          type="text"
-                          value={filterSearchQuery}
-                          onChange={(e) => setFilterSearchQuery(e.target.value)}
-                          placeholder={
-                            openFilterMenu === "brand" ? "Search brands..." : "Search categories..."
-                          }
-                          className="w-full bg-[#18191A] border border-[#353638] rounded-lg pl-6.5 pr-2 py-1 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-[#C7F33C]/60"
-                        />
-                      </div>
-
-                      {/* Dropdown Options List */}
-                      <div className="max-h-48 overflow-y-auto space-y-1 pr-0.5 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-                        {openFilterMenu === "brand" ? (
-                          brandOptions
-                            .filter((b) =>
-                              b.brand.toLowerCase().includes(filterSearchQuery.toLowerCase().trim())
-                            )
-                            .map(({ brand, count }) => {
-                              const isChecked = selectedFilterBrands.includes(brand);
-                              return (
-                                <button
-                                  key={brand}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedFilterBrands((prev) =>
-                                      prev.includes(brand)
-                                        ? prev.filter((item) => item !== brand)
-                                        : [...prev, brand]
-                                    );
-                                  }}
-                                  className={`w-full flex items-center justify-between p-1.5 rounded-lg text-left text-xs transition-colors cursor-pointer ${
-                                    isChecked
-                                      ? "bg-[#C7F33C]/10 text-white font-semibold"
-                                      : "text-slate-300 hover:bg-[#353638]"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <div
-                                      className={`w-3.5 h-3.5 rounded transition-all shrink-0 flex items-center justify-center border ${
-                                        isChecked
-                                          ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                                          : "border-slate-600/70 bg-[#1E2021]"
-                                      }`}
-                                    >
-                                      {isChecked && <Check className="w-2.5 h-2.5 stroke-[2.5]" />}
-                                    </div>
-                                    <span className="truncate">{brand}</span>
-                                  </div>
-                                  <span className="text-[10px] text-slate-500 tabular-nums shrink-0 ml-1">
-                                    {count}
-                                  </span>
-                                </button>
-                              );
-                            })
-                        ) : (
-                          categoryOptions
-                            .filter((c) =>
-                              c.category.toLowerCase().includes(filterSearchQuery.toLowerCase().trim())
-                            )
-                            .map(({ category, count }) => {
-                              const isChecked = selectedFilterCategories.includes(category);
-                              return (
-                                <button
-                                  key={category}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedFilterCategories((prev) =>
-                                      prev.includes(category)
-                                        ? prev.filter((item) => item !== category)
-                                        : [...prev, category]
-                                    );
-                                  }}
-                                  className={`w-full flex items-center justify-between p-1.5 rounded-lg text-left text-xs transition-colors cursor-pointer ${
-                                    isChecked
-                                      ? "bg-[#242D16]/40 text-white font-medium"
-                                      : "text-slate-300 hover:bg-[#353638]"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <div
-                                      className={`w-3.5 h-3.5 rounded transition-all shrink-0 flex items-center justify-center border ${
-                                        isChecked
-                                          ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                                          : "border-slate-600/70 bg-[#1E2021]"
-                                      }`}
-                                    >
-                                      {isChecked && <Check className="w-2.5 h-2.5 stroke-[2.5]" />}
-                                    </div>
-                                    <span className="truncate">{category}</span>
-                                  </div>
-                                  <span className="text-[10px] text-slate-500 tabular-nums shrink-0 ml-1">
-                                    {count}
-                                  </span>
-                                </button>
-                              );
-                            })
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Multi-Select Toolbar (Matching CRM Header Standard) */}
-                  <div className="bg-[#18191A] p-2 rounded-xl border border-[#353638] space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <button
-                        type="button"
-                        onClick={handleToggleSelectAllFiltered}
-                        className="flex items-center gap-2 text-xs font-semibold text-slate-200 hover:text-white cursor-pointer select-none"
-                      >
-                        <div
-                          className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
-                            isAllFilteredSelected
-                              ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                              : activeSelectedIds.size > 0
-                              ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                              : "border-slate-600 bg-[#1E2021] hover:border-slate-400"
-                          }`}
-                        >
-                          {isAllFilteredSelected && <Check className="w-3 h-3 stroke-[2.5]" />}
-                          {!isAllFilteredSelected && activeSelectedIds.size > 0 && (
-                            <div className="w-2 h-0.5 bg-[#C7F33C] rounded-full" />
-                          )}
-                        </div>
-                        <span>Select Filtered ({filteredCandidates.length})</span>
-                      </button>
-
-                      <div className="flex items-center gap-1.5 text-[10.5px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveSelectedIds(new Set(catalogMasterProducts.map((p) => p.id)));
-                          }}
-                          className="text-[#C7F33C] hover:underline font-medium cursor-pointer"
-                        >
-                          All ({catalogMasterProducts.length})
-                        </button>
-                        <span className="text-slate-600">·</span>
-                        <button
-                          type="button"
-                          onClick={() => setActiveSelectedIds(new Set())}
-                          className="text-slate-400 hover:text-rose-400 hover:underline font-medium cursor-pointer"
-                        >
-                          Clear
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="text-[10px] text-slate-400 flex items-center justify-between border-t border-[#2A2B2D] pt-1">
-                      <span>Selected:</span>
-                      <span className="font-bold text-[#C7F33C] tabular-nums">
-                        {activeSelectedIds.size} of {catalogMasterProducts.length} items
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Candidate Products List (Fills 100% of remaining vertical height) */}
-                <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-0.5 [&::-webkit-scrollbar]:hidden [scrollbar-width:none]">
-                  {isLoadingAllProducts && catalogMasterProducts.length === 0 ? (
-                    <div className="text-center py-10 text-slate-500 text-xs">
-                      Loading products catalog...
-                    </div>
-                  ) : filteredCandidates.length === 0 ? (
-                    <div className="text-center py-10 text-slate-500 text-xs">
-                      No products match your filter criteria.
-                    </div>
-                  ) : (
-                    filteredCandidates.map((p) => {
-                      const isSelected = activeSelectedIds.has(p.id);
-                      return (
-                        <div
-                          key={p.id}
-                          onClick={() => handleToggleProduct(p.id)}
-                          className={`p-2.5 rounded-xl border flex items-start gap-2.5 transition-colors cursor-pointer select-none ${
-                            isSelected
-                              ? "bg-[#242D16]/30 border-[#4D631B]/60 text-white"
-                              : "bg-[#18191A]/60 border-[#303234] text-slate-400 hover:bg-[#252628] hover:text-slate-200"
-                          }`}
-                        >
-                          <div
-                            className={`w-4 h-4 mt-0.5 rounded transition-all shrink-0 flex items-center justify-center border ${
-                              isSelected
-                                ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                                : "border-slate-600/70 bg-[#1E2021]"
-                            }`}
-                          >
-                            {isSelected && <Check className="w-3 h-3 stroke-[2.5]" />}
-                          </div>
-
-                          {/* Details: Full Name, no truncation, no thumbnail */}
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold text-slate-100 leading-snug break-words">
-                              {p.name}
-                            </p>
-                            <div className="flex items-center flex-wrap gap-1.5 text-[10px] text-slate-400 mt-1">
-                              {p.brand && (
-                                <span className="px-1.5 py-0.2 bg-[#252728] border border-[#3E4042] rounded text-slate-300 font-medium">
-                                  {p.brand}
-                                </span>
-                              )}
-                              {p.category && (
-                                <span className="text-slate-400 font-medium">
-                                  {p.category}
-                                </span>
-                              )}
-                              {p.formulas && p.formulas.length > 0 && (
-                                <span className="text-slate-500">
-                                  · {p.formulas.length} formulas
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
 
             {/* Sidebar Sticky Bottom: Dual Export Actions (2 Columns, Compact) */}
             <div className="sticky bottom-0 bg-[#202123] border-t border-[#353638] p-3 shrink-0">
@@ -1563,12 +1173,9 @@ export function ProductCatalogPrintModal({
             </div>
           </aside>
 
-          {/* Right Document Area: Scrollable Printable Preview */}
-          <div
-            id="catalog-print-scroll-body"
-            className="flex-1 min-w-0 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-[#161718] flex flex-col items-center relative [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
-          >
-            {/* Floating Close Button at top-right of preview area */}
+          {/* Right Document Area: Viewport container holding pinned Close button */}
+          <div className="print-document-area flex-1 min-w-0 min-h-0 relative flex flex-col overflow-hidden bg-[#161718]">
+            {/* Pinned Close Button at top-right of preview area - stays fixed, does not scroll with pages */}
             <button
               type="button"
               onClick={onClose}
@@ -1577,6 +1184,12 @@ export function ProductCatalogPrintModal({
             >
               <X className="w-4 h-4" />
             </button>
+
+            {/* Scrollable Printable Document Container */}
+            <div
+              id="catalog-print-scroll-body"
+              className="flex-1 min-w-0 min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-8 flex flex-col items-center [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
+            >
 
             {/* Main Paper Container */}
             <div
@@ -1588,12 +1201,12 @@ export function ProductCatalogPrintModal({
                   <Package className="w-12 h-12 mx-auto text-slate-600 stroke-1" />
                   <p className="text-sm font-semibold text-slate-300">No items selected</p>
                   <p className="text-xs text-slate-500">
-                    Switch to the &ldquo;Items&rdquo; tab on the left to select products for your catalog.
+                    Please select products from the product list to preview and export your catalog.
                   </p>
                 </div>
               ) : layoutMode === "grid" ? (
                 /* GRID LOOKBOOK VIEW (2x2 per page) */
-                catalogPages.map((pageGroup, pageIdx) => (
+                catalogPages.map((page, pageIdx) => (
                   <div
                     key={pageIdx}
                     className="catalog-page w-full max-w-4xl bg-white text-slate-900 rounded-2xl p-6 sm:p-8 flex flex-col justify-between border border-slate-200 min-h-[600px]"
@@ -1603,9 +1216,31 @@ export function ProductCatalogPrintModal({
                       <SBHeader documentTitle="Commercial Product Catalog" />
                     )}
 
+                    {/* Category Header Banner if Group by Category is enabled */}
+                    {groupByCategory && page.category && (
+                      <div className="flex items-center justify-between border-b-2 border-slate-900 pb-1.5 mb-2 mt-1 shrink-0 print-category-header">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#C7F33C] ring-2 ring-slate-900 shrink-0" />
+                          <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-900">
+                            {page.category}
+                          </h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 uppercase tracking-wider">
+                            {page.categoryTotalCount} {page.categoryTotalCount === 1 ? "Product" : "Products"}
+                          </span>
+                          {(page.categoryTotalPages || 0) > 1 && (
+                            <span className="text-[9.5px] font-semibold text-slate-400">
+                              (Part {(page.categoryPageIdx || 0) + 1} of {page.categoryTotalPages})
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* 2x2 Grid Items */}
-                    <div className="print-grid-layout grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-7 flex-1 my-3">
-                      {pageGroup.map(({ sp, dp }) => {
+                    <div className="print-grid-layout grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-7 flex-1 my-2">
+                      {page.items.map(({ sp, dp }) => {
                         const variants = dp?.variants || [];
                         const fallbackFormulas = sp.formulas || [];
 
@@ -1646,6 +1281,8 @@ export function ProductCatalogPrintModal({
                             ? fallbackFormulas.join(", ")
                             : variants.map((v) => v.formula).filter(Boolean).join(", ") || "Standard";
 
+                        const isBestSelling = (sp.starRating || dp?.starRating || 0) > 0;
+
                         return (
                           <div key={sp.id} className="flex flex-col group self-start w-full">
                             <div>
@@ -1658,6 +1295,7 @@ export function ProductCatalogPrintModal({
                                   <CatalogProductImage
                                     src={sp.primaryImageUrl}
                                     size={500}
+                                    crop="fit"
                                     className="w-full h-full object-contain aspect-square transition-transform duration-300 group-hover:scale-105"
                                     iconSize="w-12 h-12"
                                   />
@@ -1668,9 +1306,10 @@ export function ProductCatalogPrintModal({
                                       {sp.category}
                                     </span>
                                   )}
-                                  {showFormulas && formulaCount > 0 && (
-                                    <span className="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-slate-900/85 text-[9px] font-bold text-white uppercase tracking-wider shadow-2xs">
-                                      {formulaCount} {formulaCount === 1 ? "Formula" : "Formulas"}
+                                  {showTopSell && isBestSelling && (
+                                    <span className="absolute top-2.5 right-2.5 px-2.5 py-0.5 rounded-full bg-[#C7F33C] text-[9px] font-bold border border-black text-black uppercase tracking-wider shadow-2xs flex items-center gap-1">
+                                      <Flame className="w-2.5 h-2.5 fill-black text-black" />
+                                      Top Sell
                                     </span>
                                   )}
                                 </div>
@@ -1690,46 +1329,86 @@ export function ProductCatalogPrintModal({
                               {/* Specifications & Price Row */}
                               <div className="flex items-start justify-between gap-3">
                                 {/* Left: Metadata specifications */}
-                                <div className="flex-1 min-w-0 text-[10px] text-slate-500 leading-snug space-y-0.5">
+                                <div className="flex-1 min-w-0 space-y-1 text-[10px] leading-snug">
                                   {showFormulas && formulaNames && (
-                                    <p
-                                      className="line-clamp-3 text-slate-600 font-medium leading-relaxed text-[10px] break-words"
+                                    <div
+                                      className="line-clamp-2 text-[10px] leading-snug break-words"
                                       title={formulaNames}
                                     >
-                                      <span className="text-slate-400 font-semibold">Formulas:</span> {formulaNames}
-                                    </p>
+                                      <span className="font-semibold text-slate-700">
+                                        {formulaCount} {formulaCount === 1 ? "Formula:" : "Formulas:"}
+                                      </span>{" "}
+                                      <span className="text-slate-600 font-normal">
+                                        {formulaNames}
+                                      </span>
+                                    </div>
                                   )}
-                                  <div className="flex items-center flex-wrap gap-1.5 text-slate-600">
-                                    {showCartonQuantity && (
-                                      <span className="font-medium">📦 {cartonQty ? `${cartonQty} pcs/ctn` : "—"}</span>
-                                    )}
-                                    {showCartonGrossWeight && (
-                                      <span>· GW: <strong className="font-semibold text-slate-700">{grossWeight ? `${Number(grossWeight.toFixed(2))} kg` : "—"}</strong></span>
-                                    )}
-                                  </div>
+
+                                  {(showCartonQuantity || showCartonGrossWeight) && (
+                                    <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[10px] leading-snug">
+                                      {showCartonQuantity && (
+                                        <span className="inline-flex items-center gap-1">
+                                          <Package className="w-3 h-3 text-slate-400 shrink-0" />
+                                          <span className="font-semibold text-slate-800">
+                                            {cartonQty ? `${cartonQty} pcs/ctn` : "—"}
+                                          </span>
+                                        </span>
+                                      )}
+                                      {showCartonQuantity && showCartonGrossWeight && (
+                                        <span className="text-slate-300 font-normal select-none">·</span>
+                                      )}
+                                      {showCartonGrossWeight && (
+                                        <span className="inline-flex items-center gap-1">
+                                          <span className="text-slate-500 font-medium">GW:</span>
+                                          <span className="font-semibold text-slate-800">
+                                            {grossWeight ? `${Number(grossWeight.toFixed(2))} kg` : "—"}
+                                          </span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+
                                   {(showCartonDimension || showHsCode) && (
-                                    <div className="text-[9.5px] text-slate-400">
-                                      {showCartonDimension && <span>Dim: <span className="text-slate-600">{formatDimension(dimension)}</span></span>}
-                                      {showCartonDimension && showHsCode && <span> · </span>}
-                                      {showHsCode && <span>HS: <span className="text-slate-600">{sp.hsCode || dp?.hsCode || "—"}</span></span>}
+                                    <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[10px] leading-snug">
+                                      {showCartonDimension && (
+                                        <span className="inline-flex items-center gap-1">
+                                          <span className="text-slate-500 font-medium">Dim:</span>
+                                          <span className="font-semibold text-slate-800">{formatDimension(dimension)}</span>
+                                        </span>
+                                      )}
+                                      {showCartonDimension && showHsCode && (
+                                        <span className="text-slate-300 font-normal select-none">·</span>
+                                      )}
+                                      {showHsCode && (
+                                        <span className="inline-flex items-center gap-1">
+                                          <span className="text-slate-500 font-medium">HS:</span>
+                                          <span className="font-semibold text-slate-800">{sp.hsCode || dp?.hsCode || "—"}</span>
+                                        </span>
+                                      )}
                                     </div>
                                   )}
 
                                   {/* Container 20ft / 40ft with units */}
                                   {showCbmContainer && numericCbm > 0 && (
-                                    <div className="text-[9.5px] text-slate-500 font-medium">
-                                      <span>🚢 20ft: <strong className="text-slate-700">{cartons20ft.toLocaleString()} ctn</strong></span>
-                                      <span> · 40ft: <strong className="text-slate-700">{cartons40ft.toLocaleString()} ctn</strong></span>
+                                    <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[10px] leading-snug">
+                                      <span className="inline-flex items-center gap-1">
+                                        <span className="text-slate-400">🚢</span>
+                                        <span className="text-slate-500 font-medium">20ft:</span>
+                                        <span className="font-semibold text-slate-800">{cartons20ft.toLocaleString()} ctn</span>
+                                      </span>
+                                      <span className="text-slate-300 font-normal select-none">·</span>
+                                      <span className="inline-flex items-center gap-1">
+                                        <span className="text-slate-500 font-medium">40ft:</span>
+                                        <span className="font-semibold text-slate-800">{cartons40ft.toLocaleString()} ctn</span>
+                                      </span>
                                     </div>
                                   )}
 
                                   {/* Exclusive Distributor: Show 5% Support Badge */}
                                   {showExclusiveDistributor && (
-                                    <div className="mt-1 flex items-center gap-1.5">
-                                      <span className="text-[8.5px] font-bold text-emerald-800 uppercase tracking-wide">
-                                        Exclusive:
-                                      </span>
-                                      <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded">
+                                    <div className="pt-0.5 flex items-center">
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-sky-800 text-[9.5px] font-bold tracking-tight">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-sky-800 shrink-0" />
                                         5% Distribution Support
                                       </span>
                                     </div>
@@ -1742,9 +1421,6 @@ export function ProductCatalogPrintModal({
                                     {showExportPrice && (
                                       <div className="flex flex-col items-end">
                                         <div className="flex items-baseline gap-0.5">
-                                          <span className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none">
-                                            ฿
-                                          </span>
                                           {pricingMode === "manual" ? (
                                             <input
                                               type="number"
@@ -1758,7 +1434,11 @@ export function ProductCatalogPrintModal({
                                                   parseFloat(e.target.value) || 0
                                                 )
                                               }
-                                              className="print-manual-input w-20 text-right text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none bg-transparent border-0 outline-none p-0 hover:bg-slate-100/80 focus:bg-slate-100/90 rounded px-1 transition-colors cursor-text"
+                                              style={{
+                                                width: `${Math.max(String(baseExportPrice || "").length, 1.8)}ch`,
+                                                fieldSizing: "content",
+                                              }}
+                                              className="print-manual-input text-right text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none bg-transparent border-0 outline-none p-0 hover:bg-slate-100/80 focus:bg-slate-100/90 rounded transition-colors cursor-text"
                                               title="Click to edit quotation price"
                                             />
                                           ) : (
@@ -1766,8 +1446,11 @@ export function ProductCatalogPrintModal({
                                               {fmt(baseExportPrice)}
                                             </span>
                                           )}
+                                          <span className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none">
+                                            ฿
+                                          </span>
                                         </div>
-                                        <div className="text-[7.5px] sm:text-[8px] text-slate-400 font-medium text-right mt-0.5 uppercase tracking-wide">
+                                        <div className="text-[8px] text-slate-500 font-medium text-right mt-0.5 uppercase tracking-wide">
                                           Ex-Factory · THB
                                         </div>
                                       </div>
@@ -1775,7 +1458,7 @@ export function ProductCatalogPrintModal({
 
                                     {/* Dedicated Step Price Volume Tiers */}
                                     {showStepPrice && (
-                                      <div className="mt-1.5 flex flex-col items-end gap-1">
+                                      <div className="mt-0.5 flex flex-col items-end gap-1">
                                         {displayedTiers.length > 0 ? (
                                           displayedTiers.map((t, idx) => {
                                             const autoTierPrice = calculateTierPrice(
@@ -1795,10 +1478,9 @@ export function ProductCatalogPrintModal({
                                             return (
                                               <span
                                                 key={idx}
-                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-50/90 text-sky-900 text-[8.5px] font-medium border border-sky-200/80 whitespace-nowrap"
+                                                className="inline-flex items-center gap-1 px-1.5 rounded bg-sky-50/90 text-sky-900 text-[8.5px] font-medium border border-sky-200/80 whitespace-nowrap"
                                               >
                                                 <span className="text-sky-600 font-normal">{rangeText}</span>
-                                                <span className="text-sky-950 font-bold">฿</span>
                                                 {pricingMode === "manual" ? (
                                                   <input
                                                     type="number"
@@ -1812,7 +1494,11 @@ export function ProductCatalogPrintModal({
                                                         parseFloat(e.target.value) || 0
                                                       )
                                                     }
-                                                    className="print-manual-input w-12 text-right text-[8.5px] font-bold text-sky-950 bg-transparent border-0 outline-none p-0 hover:bg-sky-100/60 focus:bg-sky-100/80 rounded px-0.5 transition-colors cursor-text"
+                                                    style={{
+                                                      width: `${Math.max(String(tierPrice || "").length, 1.8)}ch`,
+                                                      fieldSizing: "content",
+                                                    }}
+                                                    className="print-manual-input text-right text-[8.5px] font-bold text-sky-950 bg-transparent border-0 outline-none p-0 hover:bg-sky-100/60 focus:bg-sky-100/80 rounded transition-colors cursor-text"
                                                     title="Click to edit tier price"
                                                   />
                                                 ) : (
@@ -1820,6 +1506,7 @@ export function ProductCatalogPrintModal({
                                                     {fmt(tierPrice)}
                                                   </strong>
                                                 )}
+                                                <span className="text-sky-950 font-bold">฿</span>
                                               </span>
                                             );
                                           })
@@ -1859,8 +1546,26 @@ export function ProductCatalogPrintModal({
                   )}
 
                   {/* List Rows */}
-                  <div className="print-list-layout flex flex-col">
-                    {sortedProducts.map(({ sp, dp }) => {
+                  <div className="space-y-6">
+                    {listSections.map((section, sIdx) => (
+                      <div key={section.category || sIdx} className="print-category-group space-y-2.5">
+                        {/* Category Section Header when groupByCategory is ON */}
+                        {groupByCategory && section.category && (
+                          <div className="flex items-center justify-between pb-1.5 pt-3 first:pt-0 border-b-2 border-slate-900 print-category-header">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#C7F33C] ring-2 ring-slate-900 shrink-0" />
+                              <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-900">
+                                {section.category}
+                              </h3>
+                            </div>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 uppercase tracking-wider">
+                              {section.items.length} {section.items.length === 1 ? "Product" : "Products"}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="print-list-layout flex flex-col">
+                          {section.items.map(({ sp, dp }) => {
                       const variants = dp?.variants || [];
                       const fallbackFormulas = sp.formulas || [];
 
@@ -1901,32 +1606,49 @@ export function ProductCatalogPrintModal({
                           ? fallbackFormulas.join(", ")
                           : variants.map((v) => v.formula).filter(Boolean).join(", ") || "Standard";
 
+                      const isBestSelling = (sp.starRating || dp?.starRating || 0) > 0;
+
                       return (
                         <div
                           key={sp.id}
                           className="print-list-card print-product-card bg-white text-slate-900 border-b border-slate-200 overflow-hidden flex items-stretch"
                         >
-                          {/* Left: Product Image strictly Square 1:1 */}
+                          {/* Left: Product Image filling full height */}
                           {showImage && (
-                            <div className="w-24 h-24 sm:w-28 sm:h-28 aspect-square shrink-0 bg-[#F8F9FA] p-2 flex items-center justify-center border-r border-slate-100">
+                            <div className="w-24 sm:w-28 self-stretch shrink-0 bg-[#F8F9FA] flex items-center justify-center border-r border-slate-100 overflow-hidden relative">
                               <CatalogProductImage
                                 src={sp.primaryImageUrl}
-                                size={200}
-                                className="w-full h-full aspect-square object-contain"
+                                size={300}
+                                crop="fill"
+                                className="w-full h-full object-cover"
                                 iconSize="w-8 h-8"
                               />
+                              {showTopSell && isBestSelling && (
+                                <span className="absolute top-1.5 px-1.5 py-0.5 rounded-full bg-[#C7F33C] text-[8px] font-bold text-black uppercase tracking-wider shadow-2xs flex items-center gap-0.5 z-10">
+                                  <Flame className="w-2.5 h-2.5 fill-black text-black" />
+                                  Top Sell
+                                </span>
+                              )}
                             </div>
                           )}
 
                           {/* Center: Information & Bullet List */}
                           <div className="flex-1 min-w-0 p-2.5 sm:p-3 flex flex-col justify-center">
                             {/* Product Name */}
-                            <h4
-                              className="text-[13px] sm:text-[14px] font-bold text-slate-900 leading-snug mb-1"
-                              title={sp.name}
-                            >
-                              {sp.name}
-                            </h4>
+                            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                              <h4
+                                className="text-xs font-bold text-slate-900 leading-snug"
+                                title={sp.name}
+                              >
+                                {sp.name}
+                              </h4>
+                              {!showImage && showTopSell && isBestSelling && (
+                                <span className="inline-flex items-center gap-1 px-1 rounded-full bg-[#C7F33C] border border-black text-[8.5px] font-bold text-black uppercase tracking-wider shadow-2xs">
+                                  <Flame className="w-2.5 h-2.5 fill-black text-black" />
+                                  Top Sell
+                                </span>
+                              )}
+                            </div>
 
                             {/* Bullets List */}
                             <div className="text-[11px] leading-tight text-slate-600">
@@ -1947,7 +1669,7 @@ export function ProductCatalogPrintModal({
                                   <BulletIcon />
                                   <span>
                                     <strong className="font-bold text-slate-800">
-                                      {formulaCount} Formula:
+                                      {formulaCount} {formulaCount === 1 ? "Formula:" : "Formulas:"}
                                     </strong>{" "}
                                     <span className="text-slate-600">{formulaNames}</span>
                                   </span>
@@ -2018,7 +1740,7 @@ export function ProductCatalogPrintModal({
                           </div>
 
                           {/* Right: Quotation Price Column (Seamless Manual Inline Editing) */}
-                          <div className="print-price-panel w-40 sm:w-44 shrink-0 bg-[#F8FAFC] p-2.5 sm:p-3 flex flex-col justify-center">
+                          <div className="print-price-panel w-40 sm:w-44 shrink-0 bg-[#F8FAFC] p-2.5 sm:p-3 flex flex-col justify-start">
                             {showExportPrice && (
                               <div className="flex flex-col items-end text-right">
                                 <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
@@ -2027,9 +1749,7 @@ export function ProductCatalogPrintModal({
 
                                 <div className="flex flex-col items-end">
                                   <div className="flex items-baseline gap-0.5 mt-0.5">
-                                    <span className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
-                                      ฿
-                                    </span>
+
                                     {pricingMode === "manual" ? (
                                       <input
                                         type="number"
@@ -2043,7 +1763,11 @@ export function ProductCatalogPrintModal({
                                             parseFloat(e.target.value) || 0
                                           )
                                         }
-                                        className="print-manual-input w-20 text-right text-base sm:text-lg font-bold text-slate-900 tracking-tight bg-transparent border-0 outline-none p-0 hover:bg-slate-100/80 focus:bg-slate-100/90 rounded px-1 transition-colors cursor-text"
+                                        style={{
+                                          width: `${Math.max(String(baseExportPrice || "").length, 1.8)}ch`,
+                                          fieldSizing: "content",
+                                        }}
+                                        className="print-manual-input text-right text-base sm:text-lg font-bold text-slate-900 tracking-tight bg-transparent border-0 outline-none p-0 hover:bg-slate-100/80 focus:bg-slate-100/90 rounded transition-colors cursor-text"
                                         title="Click to edit quotation price"
                                       />
                                     ) : (
@@ -2051,6 +1775,9 @@ export function ProductCatalogPrintModal({
                                         {fmt(baseExportPrice)}
                                       </span>
                                     )}
+                                    <span className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+                                      ฿
+                                    </span>
                                     <span className="text-[10px] text-slate-500 font-medium">/pc</span>
                                   </div>
                                   <div className="text-[8px] text-slate-400 font-medium uppercase tracking-wide">
@@ -2084,14 +1811,13 @@ export function ProductCatalogPrintModal({
                                         key={idx}
                                         className="text-[10.5px] flex items-center justify-between w-full"
                                       >
-                                        <span className="text-slate-600 font-medium">
+                                        <span className="text-sky-800 font-medium">
                                           {tier.maxQuantity
                                             ? `${tier.minQuantity} - ${tier.maxQuantity}`
                                             : `${tier.minQuantity}+`}{" "}
                                           ctns
                                         </span>
                                         <div className="flex items-center gap-0.5">
-                                          <span className="text-[10.5px] font-semibold text-sky-700">฿</span>
                                           {pricingMode === "manual" ? (
                                             <input
                                               type="number"
@@ -2105,7 +1831,11 @@ export function ProductCatalogPrintModal({
                                                   parseFloat(e.target.value) || 0
                                                 )
                                               }
-                                              className="print-manual-input w-16 text-right text-[10.5px] font-semibold text-sky-700 bg-transparent border-0 outline-none p-0 hover:bg-sky-50 focus:bg-sky-50 rounded px-1 transition-colors cursor-text"
+                                              style={{
+                                                width: `${Math.max(String(tierPrice || "").length, 1.8)}ch`,
+                                                fieldSizing: "content",
+                                              }}
+                                              className="print-manual-input text-right text-[10.5px] font-semibold text-sky-700 bg-transparent border-0 outline-none p-0 hover:bg-sky-50 focus:bg-sky-50 rounded transition-colors cursor-text"
                                               title="Click to edit step price"
                                             />
                                           ) : (
@@ -2113,6 +1843,7 @@ export function ProductCatalogPrintModal({
                                               {fmt(tierPrice)}
                                             </span>
                                           )}
+                                          <span className="text-[10.5px] font-semibold text-sky-700">฿</span>
                                         </div>
                                       </div>
                                     );
@@ -2123,11 +1854,9 @@ export function ProductCatalogPrintModal({
 
                             {/* Exclusive Distributor: Show 5% Support Badge */}
                             {showExclusiveDistributor && (
-                              <div className="mt-2 pt-2 border-t border-slate-200/90 w-full flex items-center justify-between text-right">
-                                <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">
-                                  Exclusive
-                                </span>
-                                <span className="text-[10.5px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded shadow-2xs">
+                              <div className="mt-2 pt-2 border-t border-slate-200/90 w-full flex items-end justify-end">
+                                <span className="inline-flex items-center gap-1 py-0.5 rounded text-sky-800 text-[10px] font-bold tracking-tight">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-800 shrink-0" />
                                   5% Distribution Support
                                 </span>
                               </div>
@@ -2136,6 +1865,9 @@ export function ProductCatalogPrintModal({
                         </div>
                       );
                     })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
 
                   {/* Document Footer */}
@@ -2156,5 +1888,6 @@ export function ProductCatalogPrintModal({
         </div>
       </div>
     </div>
+  </div>
   );
 }

@@ -440,43 +440,47 @@ export function ActivityFeedTab({
       let attachmentText = '';
 
       if (currentAttachments.length > 0) {
-        for (const file of currentAttachments) {
-          const isImage = file.type.startsWith('image/');
-          let fileToUpload = file;
+        const uploadedBlocks = await Promise.all(
+          currentAttachments.map(async (file) => {
+            const isImage = file.type.startsWith('image/');
+            let fileToUpload = file;
 
-          if (isImage) {
-            fileToUpload = await imageCompression(file, {
-              maxSizeMB: 1,
-              maxWidthOrHeight: 1920,
-              useWebWorker: true,
+            if (isImage) {
+              fileToUpload = await imageCompression(file, {
+                maxSizeMB: 1,
+                maxWidthOrHeight: 1920,
+                useWebWorker: true,
+              });
+            }
+
+            const fileBase64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.readAsDataURL(fileToUpload);
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = (error) => reject(error);
             });
-          }
 
-          const fileBase64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(fileToUpload);
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = (error) => reject(error);
-          });
+            const response = await fetch('/api/upload/opportunity', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                opportunityId: deal.id,
+                fileBase64,
+                fileName: file.name,
+                fileType: file.type,
+                size: fileToUpload.size,
+                isRaw: !isImage,
+              }),
+            });
 
-          const response = await fetch('/api/upload/opportunity', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              opportunityId: deal.id,
-              fileBase64,
-              fileName: file.name,
-              fileType: file.type,
-              size: fileToUpload.size,
-              isRaw: !isImage,
-            }),
-          });
-
-          const data = await response.json();
-          if (data.success && data.attachment?.cloudinaryUrl) {
-            attachmentText += `\n[ATTACHMENT:${data.attachment.cloudinaryUrl}|${file.name}|${file.type}]`;
-          }
-        }
+            const data = await response.json();
+            if (data.success && data.attachment?.cloudinaryUrl) {
+              return `\n[ATTACHMENT:${data.attachment.cloudinaryUrl}|${file.name}|${file.type}]`;
+            }
+            return '';
+          })
+        );
+        attachmentText = uploadedBlocks.join('');
       }
 
       const finalLog = (currentNewLog.trim() + attachmentText).trim() || 'Updated deal';

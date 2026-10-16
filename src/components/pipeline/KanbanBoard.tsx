@@ -30,6 +30,7 @@ import {
   setPendingBadgeCount,
   mergePendingAccelerators,
 } from "@/lib/deal-accelerators-sync";
+import { applyNoteEventToPendingTodosMap } from "@/lib/deal-todo-sync";
 import { PipelineStage, User } from "@prisma/client";
 import dynamic from "next/dynamic";
 import { useDialog } from "@/providers/DialogProvider";
@@ -38,7 +39,7 @@ import { moveOpportunity, getPipelineOpportunities } from "@/lib/actions/opportu
 import { getCompletedOpportunitiesCursor } from "@/lib/actions/completed-deals";
 import { getPusherClient } from "@/lib/pusher";
 import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
-import { broadcastEventAcrossTabs } from "@/lib/pusher-connection-manager";
+import { broadcastEventAcrossTabs, PIPELINE_REALTIME_BRIDGE_EVENT } from "@/lib/pusher-connection-manager";
 import useSWR, { mutate as globalMutate } from "swr";
 
 import { EditDealPanel } from "./EditDealPanel";
@@ -54,6 +55,8 @@ type PipelineUpdateEvent = {
   activityLog?: OpportunityWithRelations['activityLogs'][number] & { parentId?: string | null };
   logId?: string;
   nextLatestLog?: OpportunityWithRelations['activityLogs'][number] | null;
+  noteId?: string;
+  note?: DealTodoItem;
   deal?: OpportunityWithRelations;
   state?: DealAcceleratorsState;
   pendingCount?: number;
@@ -428,6 +431,10 @@ export function KanbanBoard({
   useEffect(() => {
     mutatePendingAcceleratorsRef.current = mutatePendingAccelerators;
   }, [mutatePendingAccelerators]);
+  const mutatePendingTodosRef = useRef(mutatePendingTodos);
+  useEffect(() => {
+    mutatePendingTodosRef.current = mutatePendingTodos;
+  }, [mutatePendingTodos]);
   const dealRevisionsRef = useRef<Record<string, number>>({});
   const holidaysSetRef = useRef(holidaysSet);
   useEffect(() => {
@@ -507,9 +514,11 @@ export function KanbanBoard({
         hasConnectedOnce = true;
       }
     };
-    const handlePipelineUpdate = (data?: PipelineUpdateEvent) => {
+    const handlePipelineUpdate = (data?: PipelineUpdateEvent, fromBridge = false) => {
       console.log(`[KANBAN-PUSHER] Received event "pipeline-updated": action="${data?.action}", dealId="${data?.dealId}"`, data);
-      broadcastEventAcrossTabs(channelName, 'pipeline-updated', data);
+      if (!fromBridge) {
+        broadcastEventAcrossTabs(channelName, 'pipeline-updated', data);
+      }
       if (data?.action === 'MEMBER_ADDED' && data.dealId && data.user) {
         const addedUser = data.user;
 
@@ -697,8 +706,11 @@ export function KanbanBoard({
         // This prevents the massive 10-second full board refetch bottleneck.
         return;
       } else if (data?.action?.startsWith('NOTE_')) {
-        // Refresh pending todos for the board without refetching opportunities
-        void mutatePendingTodos();
+        // Patch pending todos map in-memory without refetching all board notes from DB
+        void mutatePendingTodosRef.current(
+          (prev) => applyNoteEventToPendingTodosMap(prev, data),
+          false
+        );
         return;
       } else if (data?.action === 'OPPORTUNITY_CREATED' && data.deal) {
         const createdDeal = data.deal;
@@ -728,14 +740,14 @@ export function KanbanBoard({
         );
         void globalMutate('ltc-count');
         void globalMutate('ltc-accounts-data');
-      } else if (data?.action === 'OPPORTUNITY_UPDATED' && data.deal) {
+      } else if ((data?.action === 'OPPORTUNITY_UPDATED' || data?.action === 'RECONCILE_OPPORTUNITY') && data.deal) {
         const updatedDeal = data.deal;
         const dealId = updatedDeal.id;
         const incomingRev = normalizeRevision(data.revision ?? updatedDeal.updatedAt);
         const lastRev = dealRevisionsRef.current[dealId] || 0;
 
         if (!shouldAcceptRevision(lastRev, incomingRev)) {
-          console.log(`[KANBAN-PUSHER] Ignoring stale OPPORTUNITY_UPDATED: dealId="${dealId}", rev=${incomingRev} < lastRev=${lastRev}`);
+          console.log(`[KANBAN-PUSHER] Ignoring stale ${data.action}: dealId="${dealId}", rev=${incomingRev} < lastRev=${lastRev}`);
           return;
         }
         if (incomingRev) {
@@ -804,9 +816,14 @@ export function KanbanBoard({
           });
         }
         if (rawOpportunitiesRef.current) {
-          rawOpportunitiesRef.current = rawOpportunitiesRef.current.map(opp =>
-            opp.id === dealId ? { ...opp, ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } : opp
-          );
+          const existsInRaw = rawOpportunitiesRef.current.some(opp => opp.id === dealId);
+          rawOpportunitiesRef.current = existsInRaw
+            ? rawOpportunitiesRef.current.map(opp =>
+                opp.id === dealId ? { ...opp, ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } : opp
+              )
+            : updatedDeal.status === 'OPEN'
+              ? [{ ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) }, ...rawOpportunitiesRef.current]
+              : rawOpportunitiesRef.current;
         }
         if (initialOpportunitiesRef.current) {
           initialOpportunitiesRef.current = initialOpportunitiesRef.current.map(opp =>
@@ -818,6 +835,10 @@ export function KanbanBoard({
             const source = currentData || (tabRef.current === initialTabRef.current ? (initialOpportunitiesRef.current || []) : []);
             if (!isCompletedTab && updatedDeal.status && updatedDeal.status !== 'OPEN') {
               return source.filter(opp => opp.id !== updatedDeal.id);
+            }
+            const exists = source.some(opp => opp.id === updatedDeal.id);
+            if (!exists && updatedDeal.status === 'OPEN') {
+              return [{ ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) }, ...source];
             }
             return source.map(opp => {
               if (opp.id === updatedDeal.id) {
@@ -862,14 +883,23 @@ export function KanbanBoard({
       }
     };
 
+    const handleBridgeEvent = (e: Event) => {
+      const detail = (e as CustomEvent<PipelineUpdateEvent>).detail;
+      if (detail) {
+        handlePipelineUpdate(detail, true);
+      }
+    };
+
     channel.bind('pipeline-updated', handlePipelineUpdate);
     connectedClient.connection.bind('connected', handleConnected);
+    window.addEventListener(PIPELINE_REALTIME_BRIDGE_EVENT, handleBridgeEvent);
 
     return () => {
       channel.unbind('pusher:subscription_succeeded', onSubSucceeded);
       channel.unbind('pusher:subscription_error', onSubError);
       channel.unbind('pipeline-updated', handlePipelineUpdate);
       connectedClient.connection.unbind('connected', handleConnected);
+      window.removeEventListener(PIPELINE_REALTIME_BRIDGE_EVENT, handleBridgeEvent);
     };
     });
   }, [currentUserId, isCompletedTab, mutate]);

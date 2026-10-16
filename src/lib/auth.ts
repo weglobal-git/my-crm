@@ -5,6 +5,32 @@ import { PrismaAdapter } from "@auth/prisma-adapter"
 import prisma from "@/lib/prisma"
 import { Adapter } from "next-auth/adapters"
 
+// Short-lived in-memory cache (15s TTL) to eliminate redundant Neon DB queries
+// on every getServerSession(authOptions) call across rapid server actions.
+const AUTH_USER_CACHE_TTL_MS = 15_000;
+const authUserSessionCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    user: {
+      id: string;
+      name: string | null;
+      email: string | null;
+      role: string;
+      image: string | null;
+      departments: { id: string; name: string }[];
+    } | null;
+  }
+>();
+
+export function invalidateAuthUserCache(userId?: string) {
+  if (userId) {
+    authUserSessionCache.delete(userId);
+  } else {
+    authUserSessionCache.clear();
+  }
+}
+
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma) as Adapter,
   providers: [
@@ -66,19 +92,33 @@ export const authOptions: NextAuthOptions = {
       return true;
     },
     async jwt({ token, user, trigger, session }) {
-      if (trigger === "update" && session?.image) {
-        token.picture = session.image;
+      if (trigger === "update") {
+        if (token.sub) invalidateAuthUserCache(token.sub);
+        if (session?.image) {
+          token.picture = session.image;
+        }
       }
       
-      // Check database on every request to ensure user still exists and email matches
+      // Check database (with 15s memory cache) to ensure user still exists and email matches
       if (token.sub) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: token.sub },
-          include: { departments: true }
-        });
+        const now = Date.now();
+        const cached = trigger !== "update" ? authUserSessionCache.get(token.sub) : undefined;
+        let dbUser = cached && cached.expiresAt > now ? cached.user : undefined;
+
+        if (dbUser === undefined) {
+          dbUser = await prisma.user.findUnique({
+            where: { id: token.sub },
+            include: { departments: true }
+          });
+          authUserSessionCache.set(token.sub, {
+            expiresAt: now + AUTH_USER_CACHE_TTL_MS,
+            user: dbUser,
+          });
+        }
 
         // If user was deleted or email was changed by admin, invalidate session
         if (!dbUser || (token.email && dbUser.email && token.email.toLowerCase() !== dbUser.email.toLowerCase())) {
+          authUserSessionCache.delete(token.sub);
           return { ...token, exp: 0, sub: undefined, error: "SessionInvalidated" };
         }
 
@@ -97,6 +137,7 @@ export const authOptions: NextAuthOptions = {
              where: { id: user.id },
              data: { role: "ADMIN" }
            });
+           invalidateAuthUserCache(user.id);
            token.role = "ADMIN";
         }
       }

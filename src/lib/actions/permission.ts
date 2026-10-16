@@ -88,6 +88,10 @@ export async function syncMenuRegistry(shouldRevalidate: boolean = true) {
     }
   }
 
+  // Ensure any department with Sale Deal (pipeline.information) permission also has Product (product) enabled
+  await syncSaleDealProductPermissions();
+  await invalidatePermissionCache();
+
   if (shouldRevalidate) {
     try {
       revalidatePath("/", "layout");
@@ -98,7 +102,71 @@ export async function syncMenuRegistry(shouldRevalidate: boolean = true) {
   return { success: true };
 }
 
+async function syncSaleDealProductPermissions() {
+  const [saleDealMenu, productMenu] = await Promise.all([
+    prisma.menuItem.findUnique({ where: { key: "pipeline.information" } }),
+    prisma.menuItem.findUnique({ where: { key: "product" } }),
+  ]);
+
+  if (!saleDealMenu || !productMenu) return;
+
+  const parentMainMenu = productMenu.parentKey
+    ? await prisma.menuItem.findUnique({ where: { key: productMenu.parentKey } })
+    : null;
+
+  const saleDealPerms = await prisma.departmentMenuPermission.findMany({
+    where: {
+      menuItemId: saleDealMenu.id,
+      visible: true,
+    },
+  });
+
+  for (const perm of saleDealPerms) {
+    await prisma.departmentMenuPermission.upsert({
+      where: {
+        departmentId_menuItemId: {
+          departmentId: perm.departmentId,
+          menuItemId: productMenu.id,
+        },
+      },
+      update: { visible: true },
+      create: {
+        departmentId: perm.departmentId,
+        menuItemId: productMenu.id,
+        visible: true,
+      },
+    });
+
+    if (parentMainMenu) {
+      await prisma.departmentMenuPermission.upsert({
+        where: {
+          departmentId_menuItemId: {
+            departmentId: perm.departmentId,
+            menuItemId: parentMainMenu.id,
+          },
+        },
+        update: { visible: true },
+        create: {
+          departmentId: perm.departmentId,
+          menuItemId: parentMainMenu.id,
+          visible: true,
+        },
+      });
+    }
+  }
+}
+
 export async function getPermissionMatrix() {
+  const existingMenus = await prisma.menuItem.findMany();
+  const existingKeys = new Set(existingMenus.map((m) => m.key));
+  const missingRegistryItems = MENU_REGISTRY.filter((m) => !existingKeys.has(m.key));
+
+  if (missingRegistryItems.length > 0) {
+    await syncMenuRegistry(false);
+  } else {
+    await syncSaleDealProductPermissions();
+  }
+
   const departments = await prisma.department.findMany({
     include: {
       permissions: {
@@ -154,6 +222,28 @@ export async function updatePermission(departmentId: string, menuItemId: string,
         currentParentKey = parentMenu.parentKey;
       } else {
         break;
+      }
+    }
+
+    // If enabling Sale Deal (pipeline.information), also enable Product (product) and its parent
+    if (targetMenu.key === "pipeline.information") {
+      const productMenu = menuMap.get("product");
+      if (productMenu) {
+        await prisma.departmentMenuPermission.upsert({
+          where: { departmentId_menuItemId: { departmentId, menuItemId: productMenu.id } },
+          update: { visible: true },
+          create: { departmentId, menuItemId: productMenu.id, visible: true },
+        });
+        if (productMenu.parentKey) {
+          const productParent = menuMap.get(productMenu.parentKey);
+          if (productParent) {
+            await prisma.departmentMenuPermission.upsert({
+              where: { departmentId_menuItemId: { departmentId, menuItemId: productParent.id } },
+              update: { visible: true },
+              create: { departmentId, menuItemId: productParent.id, visible: true },
+            });
+          }
+        }
       }
     }
   } else {
@@ -280,6 +370,22 @@ export async function getUserVisibleMenuKeys(userId: string): Promise<string[]> 
     }
   });
 
+  // Departments with Sale Deal (pipeline.information) permission automatically get Product access
+  if (visibleKeys.has("pipeline.information")) {
+    visibleKeys.add("product");
+    const productMenu = allMenus.find((m) => m.key === "product") || MENU_REGISTRY.find((m) => m.key === "product");
+    if (productMenu?.parentKey) {
+      visibleKeys.add(productMenu.parentKey);
+    }
+  }
+
+  // Ensure any visible level-2 menu also marks its parent level-1 menu key as visible
+  allMenus.forEach((m: { level: number; parentKey: string | null; key: string }) => {
+    if (m.level === 2 && m.parentKey && visibleKeys.has(m.key)) {
+      visibleKeys.add(m.parentKey);
+    }
+  });
+
   const result = Array.from(visibleKeys);
   userVisibleKeysCache.set(userId, { keys: result, expires: now + USER_VISIBLE_KEYS_TTL });
   return result;
@@ -304,9 +410,26 @@ export async function getDbMenus() {
   }
 
   try {
-    const menus = await prisma.menuItem.findMany({
+    let menus = await prisma.menuItem.findMany({
       orderBy: [{ level: 'asc' }, { sortOrder: 'asc' }]
     });
+
+    // Auto-sync if any MENU_REGISTRY item (e.g. product) is missing in database or missing href
+    const existingByKey = new Map(menus.map((m) => [m.key, m]));
+    const needsSync = MENU_REGISTRY.some((reg) => {
+      const dbItem = existingByKey.get(reg.key);
+      if (!dbItem) return true;
+      if (reg.href && !dbItem.href) return true;
+      return false;
+    });
+
+    if (needsSync) {
+      await syncMenuRegistry(false);
+      menus = await prisma.menuItem.findMany({
+        orderBy: [{ level: 'asc' }, { sortOrder: 'asc' }]
+      });
+    }
+
     cachedDbMenus = menus;
     lastDbMenusFetch = now;
     return menus;
@@ -394,6 +517,7 @@ export async function batchUpdatePermissions(updates: { deptId: string, menuId: 
   // Auto-sync locked children if a parent sub-menu (level 2) visibility changed
   const allMenus = await prisma.menuItem.findMany();
   const menuMap = new Map(allMenus.map(m => [m.id, m]));
+  const menuByKey = new Map(allMenus.map(m => [m.key, m]));
 
   const lockedUpdates: { deptId: string; menuId: string; visible: boolean }[] = [];
   for (const update of updates) {
@@ -406,6 +530,28 @@ export async function batchUpdatePermissions(updates: { deptId: string, menuId: 
           menuId: child.id,
           visible: update.visible,
         });
+      }
+    }
+
+    // If Sale Deal (pipeline.information) is enabled for a department, also enable Product and its parent category
+    if (menu && menu.key === "pipeline.information" && update.visible) {
+      const productMenu = menuByKey.get("product");
+      if (productMenu) {
+        lockedUpdates.push({
+          deptId: update.deptId,
+          menuId: productMenu.id,
+          visible: true,
+        });
+        if (productMenu.parentKey) {
+          const parentMenu = menuByKey.get(productMenu.parentKey);
+          if (parentMenu) {
+            lockedUpdates.push({
+              deptId: update.deptId,
+              menuId: parentMenu.id,
+              visible: true,
+            });
+          }
+        }
       }
     }
   }
@@ -421,6 +567,8 @@ export async function batchUpdatePermissions(updates: { deptId: string, menuId: 
       )
     );
   }
+
+  await invalidatePermissionCache();
 
   try {
     revalidatePath("/", "layout");
@@ -462,6 +610,8 @@ export async function toggleMenuLock(menuId: string, isLocked: boolean) {
       }
     }
   }
+
+  await invalidatePermissionCache();
 
   try {
     revalidatePath("/", "layout");

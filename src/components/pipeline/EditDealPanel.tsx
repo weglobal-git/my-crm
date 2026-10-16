@@ -281,47 +281,26 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
   }, [isOpen, deal.id]);
 
 
-  // Post-Activity Background Cache Priming:
-  // Once the drawer is open and the initial activity tab is painted,
-  // lazily preload both the UI component chunks AND the active deal's data
-  // for Notes, Customer, Media, and Summary during idle time so tab clicks are instant 0ms.
-  useEffect(() => {
-    if (!isOpen || !deal?.id) return;
-    let timer: NodeJS.Timeout | null = null;
-    let cancelled = false;
-
-    const primeActiveDealData = () => {
-      if (cancelled) return;
-      // Active Deal Data (Cache Priming in Background)
+  // Intent-based Tab Data Preloading:
+  // Preload a tab's server data only when the user hovers/focuses/touches that tab icon,
+  // avoiding a 5-query Server Action storm every time a card is opened for a quick comment.
+  const preloadDealTab = useCallback((tabId: TabType) => {
+    if (!deal?.id) return;
+    if (tabId === 'notes') {
       void preload(['deal-notes', deal.id], () => getNotes(deal.id)).catch(() => {});
-      if (deal.company?.id) {
-        const companyId = deal.company.id;
-        void preload(getAccountOverviewKey(companyId), () =>
-          getAccountOverview(companyId, { includeAddresses: true, includeLogs: false })
-        ).catch(() => {});
-      }
+    } else if (tabId === 'information' && deal.company?.id) {
+      const companyId = deal.company.id;
+      void preload(getAccountOverviewKey(companyId), () =>
+        getAccountOverview(companyId, { includeAddresses: true, includeLogs: false })
+      ).catch(() => {});
+    } else if (tabId === 'sharedMedia') {
       void preload(['opportunity-shared-media', deal.id], () => getOpportunitySharedMedia(deal.id)).catch(() => {});
+    } else if (tabId === 'summary') {
       void preload(['deal-summary-on-demand', deal.id], () => getLatestDealSummary(deal.id)).catch(() => {});
+    } else if (tabId === 'collaborate') {
       void preload('all-users', () => getAllUsers()).catch(() => {});
-    };
-
-    const hasIdle = typeof window !== 'undefined' && 'requestIdleCallback' in window;
-    const idleId = hasIdle
-      ? (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(primeActiveDealData, { timeout: 1200 })
-      : null;
-
-    if (!hasIdle) {
-      timer = setTimeout(primeActiveDealData, 250);
     }
-
-    return () => {
-      cancelled = true;
-      if (idleId !== null && typeof window !== 'undefined' && 'cancelIdleCallback' in window) {
-        (window as unknown as { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
-      }
-      if (timer) clearTimeout(timer);
-    };
-  }, [isOpen, deal?.id, deal?.company?.id]);
+  }, [deal?.id, deal?.company?.id]);
 
   // Team Members State & Mutation Hook
   const {
@@ -792,22 +771,6 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     setIsGeneratingSummary(true);
     setSummaryError(null);
     try {
-      // Also generate accelerators if none exist yet
-      if (!acceleratorsState) {
-        generateDealAccelerators(deal.id).then(accRes => {
-          if (accRes.success && accRes.data) {
-            void mutateAccelerators(accRes, false);
-            const pCount = (accRes.data.questions || []).filter(q => q.status === 'PENDING').length;
-            void mutate(
-              isPendingAcceleratorsKey,
-              (prevMap: Record<string, { count: number; earliestPendingAt: string | null }> | undefined) =>
-                setPendingBadgeCount(prevMap, deal.id, pCount),
-              false
-            );
-          }
-        }).catch(() => {});
-      }
-
       const res = await generateDealSummary(deal.id);
       if (res.success && res.data) {
         await mutateDealSummary(res, false);
@@ -1009,7 +972,14 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         } else if (data?.action === 'MEMBERS_ADDED' || data?.action === 'MEMBER_ADDED' || data?.action === 'MEMBER_REMOVED') {
           applyPusherMemberEvent(data);
         } else if (data?.action === 'OPPORTUNITY_UPDATED') {
-          void mutate(['deal-summary-on-demand', deal.id]);
+          void mutate(
+            ['deal-summary-on-demand', deal.id],
+            (current: { success?: boolean; data?: unknown; isOutdated?: boolean } | undefined) => {
+              if (!current?.data) return current;
+              return { ...current, isOutdated: true };
+            },
+            { revalidate: false }
+          );
         }
       }
     };
@@ -1083,13 +1053,15 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
 
   const handleTransfer = async (newOwnerId: string) => {
     if (deal.ownerId === newOwnerId || (!isOwner && !isAdmin)) return;
+    // 0ms Optimistic UI: close drawer and show immediate confirmation
+    setShowTransferDrawer(false);
     setIsTransferring(true);
+    toast({ title: "Success", description: "Transfer request sent successfully", type: "success" });
     try {
       await requestDealTransfer(deal.id, newOwnerId);
-
-      toast({ title: "Success", description: "Transfer request sent successfully", type: "success" });
     } catch (e) {
       console.error(e);
+      setShowTransferDrawer(true);
       toast({ title: "Error", description: "Failed to transfer ownership", type: "error" });
     } finally {
       setIsTransferring(false);
@@ -1250,7 +1222,9 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
           ? (currentIdx + 1) % sidebarTabs.length
           : (currentIdx - 1 + sidebarTabs.length) % sidebarTabs.length;
 
-        setActiveTab(sidebarTabs[nextIdx]);
+        const targetTab = sidebarTabs[nextIdx];
+        preloadDealTab(targetTab);
+        setActiveTab(targetTab);
       }
     };
 
@@ -1269,6 +1243,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
     showInviteDrawer,
     showTransferDrawer,
     onClose,
+    preloadDealTab,
   ]);
 
   if (!isOpen && !mounted) return null;
@@ -1331,6 +1306,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
             return (
               <button
                 key={menu.key}
+                onMouseEnter={() => preloadDealTab(tabId)}
+                onFocus={() => preloadDealTab(tabId)}
                 onClick={() => setActiveTab(tabId)}
                 title={label}
                 className={`
@@ -1357,7 +1334,10 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
             companyName={deal.company?.name}
             companyDisplayName={deal.company?.displayName}
             hasActions={hasCardActions}
-            onOpenActions={() => setIsActionsDrawerOpen(true)}
+            onOpenActions={() => {
+              preloadDealTab('notes');
+              setIsActionsDrawerOpen(true);
+            }}
             onClose={onClose}
           />
 
@@ -1672,6 +1652,8 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
                   <button
                     key={menu.key}
                     type="button"
+                    onTouchStart={() => preloadDealTab(tabId)}
+                    onMouseEnter={() => preloadDealTab(tabId)}
                     onClick={() => {
                       setActiveTab(tabId);
                     }}
@@ -1761,8 +1743,7 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         currentOwnerId={deal.ownerId}
         excludeUserIds={[deal.ownerId]}
         onConfirmSingle={async (selectedId) => {
-          await handleTransfer(selectedId);
-          setShowTransferDrawer(false);
+          void handleTransfer(selectedId);
         }}
         isSubmitting={isTransferring}
       />

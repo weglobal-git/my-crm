@@ -192,7 +192,7 @@ export async function getProductsWithFilters({
   brands = [],
   search = "",
   page = 1,
-  pageSize = 20,
+  pageSize = 300,
 }: ProductFilterParams = {}): Promise<{
   products: ProductListItemDTO[];
   total: number;
@@ -258,12 +258,12 @@ export async function getProductsWithFilters({
           orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
       },
-      orderBy: [{ starRating: "desc" } as any, { updatedAt: "desc" }, { name: "asc" }],
+      orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
       skip,
       take: pageSize,
     });
   } catch (err) {
-    console.warn("Retrying findMany without starRating orderBy:", err);
+    console.warn("Failed findMany with default orderBy:", err);
     rawProducts = await prisma.product.findMany({
       where,
       include: {
@@ -279,7 +279,7 @@ export async function getProductsWithFilters({
           orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
       },
-      orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
+      orderBy: [{ updatedAt: "desc" }],
       skip,
       take: pageSize,
     });
@@ -318,7 +318,7 @@ export async function getCachedInitialProducts(options?: {
     brands: options?.brands && options.brands.length > 0 ? options.brands : undefined,
     search: "",
     page: 1,
-    pageSize: 20,
+    pageSize: 300,
   });
 }
 
@@ -426,11 +426,17 @@ export async function updateProductStatus(
   const session = await getServerSession(authOptions);
   if (!session?.user) throw new Error("Unauthorized");
 
-  const updated = await prisma.product.update({
-    where: { id: productId },
-    data: { status },
-    select: { status: true, updatedAt: true },
-  });
+  const [updated] = await prisma.$transaction([
+    prisma.product.update({
+      where: { id: productId },
+      data: { status },
+      select: { status: true, updatedAt: true },
+    }),
+    prisma.productVariant.updateMany({
+      where: { productId },
+      data: { status },
+    }),
+  ]);
 
   return {
     success: true,

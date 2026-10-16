@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo } from "react";
-import { Check, Package } from "lucide-react";
+import { Check, Package, Flame } from "lucide-react";
 import { ProductListItemDTO } from "@/lib/product/product-dto";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 
@@ -9,9 +9,10 @@ interface ProductCardRowProps {
   product: ProductListItemDTO;
   isSelected?: boolean;
   isChecked?: boolean;
+  isDimmed?: boolean;
   onToggleCheck?: (id: string) => void;
   onSelect: (id: string) => void;
-  onRatingChange?: (id: string, newRating: number) => void;
+  onToggleBestSelling?: (id: string, isBestSelling: boolean) => void;
   onIntent?: (id: string) => void;
 }
 
@@ -19,10 +20,14 @@ export const ProductCardRow = memo(function ProductCardRow({
   product,
   isSelected: _isSelected = false,
   isChecked = false,
+  isDimmed = false,
   onToggleCheck,
   onSelect,
+  onToggleBestSelling,
   onIntent,
 }: ProductCardRowProps) {
+  const isBestSelling = (product.starRating || 0) > 0;
+
   const handleRowClick = () => {
     onSelect(product.id);
   };
@@ -90,7 +95,13 @@ export const ProductCardRow = memo(function ProductCardRow({
       onKeyDown={handleKeyDown}
       onPointerEnter={() => onIntent?.(product.id)}
       onFocus={() => onIntent?.(product.id)}
-      className="group w-full text-left rounded-xl transition-all duration-150 cursor-pointer select-none px-4 py-2 mb-2.5 flex items-center min-h-[52px] border border-transparent bg-[#3A3B3C] hover:bg-[#2C2D30] text-slate-100"
+      className={`group w-full text-left transition-all duration-150 cursor-pointer select-none px-4 flex items-center min-h-[52px] ${
+        isChecked
+          ? "text-white bg-[#252820]/30 hover:bg-[#2C3122]/50"
+          : isDimmed
+          ? "text-slate-600 hover:bg-[#3A3B3C]/40"
+          : "text-slate-200 hover:bg-[#3A3B3C]/60"
+      }`}
     >
       {/* Desktop Grid Layout: Checkbox (20px), Image (44px), Full Product Name (1fr), CBM/GW (110px), 20ft/40ft (110px), General Export Price (120px) */}
       <div className="hidden sm:grid grid-cols-[20px_44px_minmax(0,1fr)_110px_110px_120px] gap-3 items-center w-full">
@@ -116,16 +127,20 @@ export const ProductCardRow = memo(function ProductCardRow({
           <div
             className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
               isChecked
-                ? "bg-[#C7F33C] border-[#C7F33C] text-black"
-                : "border-slate-500/60 bg-[#252728] hover:border-slate-300"
+                ? "border-[#4E5052] bg-[#2D2E30] text-[#C7F33C]"
+                : "border-[#4E5052] bg-[#2D2E30]"
             }`}
           >
-            {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+            {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
           </div>
         </div>
 
         {/* Col 1: Square Product Image */}
-        <div className="w-10 h-10 rounded-lg bg-[#252728] border border-[#4E4F50]/50 overflow-hidden flex items-center justify-center shrink-0 relative">
+        <div
+          className={`w-11 h-11 rounded-lg bg-[#252728] border border-[#4E4F50]/50 overflow-hidden flex items-center justify-center shrink-0 relative transition-opacity duration-150 ${
+            isDimmed ? "opacity-40 group-hover:opacity-80" : "opacity-100"
+          }`}
+        >
           {product.primaryImageUrl ? (
             <img
               src={getOptimizedCloudinaryUrl(product.primaryImageUrl, 100)}
@@ -145,42 +160,106 @@ export const ProductCardRow = memo(function ProductCardRow({
         <div className="min-w-0 pr-3 flex flex-col justify-center">
           <div className="flex items-center gap-2 min-w-0">
             <h4
-              className="font-semibold text-[13px] leading-tight truncate text-white"
+              className={`font-medium text-[13px] leading-tight truncate transition-colors duration-150 ${
+                isDimmed
+                  ? "text-slate-500 group-hover:text-slate-300"
+                  : isChecked
+                  ? "text-white font-semibold"
+                  : "text-slate-200"
+              }`}
               title={product.name}
             >
               {product.name}
             </h4>
             {product.variantCount > 1 && (
-              <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-sm shrink-0 tabular-nums bg-[#252728] text-slate-300">
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.2 rounded-sm shrink-0 tabular-nums transition-colors duration-150 ${
+                  isDimmed
+                    ? "bg-[#252728] text-slate-500"
+                    : "bg-[#3A3B3C] text-slate-300"
+                }`}
+              >
                 {product.variantCount}
               </span>
             )}
+
+            {/* Best Selling Badge / Action */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleBestSelling?.(product.id, !isBestSelling);
+              }}
+              className={`shrink-0 flex items-center gap-1 px-0.5 py-0.5 rounded-full text-[10px] font-semibold transition-all cursor-pointer ${
+                isBestSelling
+                  ? isDimmed
+                    ? "bg-amber-500/10 text-amber-300/50 border border-amber-500/20"
+                    : "bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25 shadow-[0_0_12px_rgba(245,158,11,0.2)]"
+                  : "opacity-0 group-hover:opacity-100 bg-[#252728] hover:bg-[#323438] text-slate-400 hover:text-amber-300 border border-transparent hover:border-amber-500/30"
+              }`}
+              title={isBestSelling ? "Remove from Best Selling" : "Pin as Best Selling in this category"}
+            >
+              <Flame
+                className={`w-3 h-3 ${
+                  isBestSelling ? "fill-amber-400 text-amber-400" : "text-slate-400"
+                }`}
+              />
+            </button>
           </div>
         </div>
 
         {/* Col 3: CBM & GW (ต่อลัง - บนล่าง) */}
         <div className="min-w-0 flex flex-col justify-center">
-          <span className="text-xs truncate font-semibold text-slate-200" title={gwFormatted}>
+          <span
+            className={`text-[11px] font-medium truncate transition-colors duration-150 ${
+              isDimmed ? "text-slate-600 group-hover:text-slate-400" : "text-slate-400"
+            }`}
+            title={gwFormatted}
+          >
             {gwFormatted}
           </span>
-          <span className="text-[11px] font-medium truncate text-slate-400" title={cbmFormatted}>
+          <span
+            className={`text-[11px] font-medium truncate transition-colors duration-150 ${
+              isDimmed ? "text-slate-600 group-hover:text-slate-400" : "text-slate-400"
+            }`}
+            title={cbmFormatted}
+          >
             {cbmFormatted}
           </span>
         </div>
 
         {/* Col 4: จำนวนลัง 20ft & 40ft (บนล่าง) */}
         <div className="min-w-0 flex flex-col justify-center">
-          <span className="text-xs font-semibold truncate text-slate-200" title={container20ftText}>
+          <span
+            className={`text-[11px] truncate font-medium transition-colors duration-150 ${
+              isDimmed ? "text-slate-600 group-hover:text-slate-400" : "text-slate-400"
+            }`}
+            title={container20ftText}
+          >
             {container20ftText}
           </span>
-          <span className="text-[11px] truncate font-medium text-slate-400" title={container40ftText}>
+          <span
+            className={`text-[11px] truncate font-medium transition-colors duration-150 ${
+              isDimmed ? "text-slate-600 group-hover:text-slate-400" : "text-slate-400"
+            }`}
+            title={container40ftText}
+          >
             {container40ftText}
           </span>
         </div>
 
         {/* Col 5: General Export Price (Quotation Price min-max) - Far Right */}
         <div className="min-w-0 flex flex-col justify-center items-end text-right">
-          <span className="text-sm font-bold truncate text-amber-400" title={genPriceText}>
+          <span
+            className={`text-xs font-medium truncate transition-colors duration-150 ${
+              isDimmed
+                ? "text-slate-500 group-hover:text-slate-300"
+                : isChecked
+                ? "text-white font-semibold"
+                : "text-slate-200"
+            }`}
+            title={genPriceText}
+          >
             {genPriceText}
           </span>
         </div>
@@ -203,15 +282,19 @@ export const ProductCardRow = memo(function ProductCardRow({
             <div
               className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                 isChecked
-                  ? "bg-[#C7F33C] border-[#C7F33C] text-black"
-                  : "border-slate-500/60 bg-[#252728]"
+                  ? "bg-[#2D2E30] border-[#688523] text-[#C7F33C]"
+                  : "border-[#4E5052] bg-[#2D2E30]"
               }`}
             >
-              {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+              {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
             </div>
           </div>
 
-          <div className="w-10 h-10 rounded-lg bg-[#252728] border border-[#4E4F50]/50 overflow-hidden flex items-center justify-center shrink-0 relative">
+          <div
+            className={`w-10 h-10 rounded-lg bg-[#252728] border border-[#4E4F50]/50 overflow-hidden flex items-center justify-center shrink-0 relative transition-opacity duration-150 ${
+              isDimmed ? "opacity-40" : "opacity-100"
+            }`}
+          >
             {product.primaryImageUrl ? (
               <img
                 src={getOptimizedCloudinaryUrl(product.primaryImageUrl, 80)}
@@ -224,22 +307,60 @@ export const ProductCardRow = memo(function ProductCardRow({
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <h4 className="text-sm font-bold truncate text-white">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h4
+                className={`text-sm font-bold truncate transition-colors ${
+                  isDimmed ? "text-slate-500" : "text-white"
+                }`}
+              >
                 {product.name}
               </h4>
               {product.variantCount > 1 && (
-                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-sm shrink-0 tabular-nums bg-[#252728] text-slate-300">
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded-sm shrink-0 tabular-nums transition-colors ${
+                    isDimmed ? "bg-[#252728] text-slate-500" : "bg-[#252728] text-slate-300"
+                  }`}
+                >
                   {product.variantCount}
                 </span>
               )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleBestSelling?.(product.id, !isBestSelling);
+                }}
+                className={`shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold transition-all cursor-pointer ${
+                  isBestSelling
+                    ? "bg-amber-500/15 text-amber-300 border border-amber-500/40"
+                    : "bg-[#252728] text-slate-400 border border-transparent"
+                }`}
+                title={isBestSelling ? "Remove from Best Selling" : "Pin as Best Selling in this category"}
+              >
+                <Flame
+                  className={`w-3 h-3 ${
+                    isBestSelling ? "fill-amber-400 text-amber-400" : "text-slate-400"
+                  }`}
+                />
+                <span>{isBestSelling ? "Best Selling" : "Set Best"}</span>
+              </button>
             </div>
             <div className="mt-0.5">
-              <span className="text-xs font-bold text-amber-400">{genPriceText}</span>
+              <span
+                className={`text-xs font-bold transition-colors ${
+                  isDimmed ? "text-amber-400/40" : "text-amber-400"
+                }`}
+              >
+                {genPriceText}
+              </span>
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-between text-[11px] text-slate-400 pl-8 pt-1 border-t border-white/5">
+        <div
+          className={`flex items-center justify-between text-[11px] pl-8 pt-1 border-t border-white/5 transition-colors ${
+            isDimmed ? "text-slate-600" : "text-slate-400"
+          }`}
+        >
           <span>{gwFormatted} · {cbmFormatted}</span>
           <span>{container20ftText} | {container40ftText}</span>
         </div>

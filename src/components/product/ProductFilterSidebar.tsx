@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Search, X, Check, Star } from "lucide-react";
+import { Search, X, Check, Star, Compass, Layers } from "lucide-react";
 
 interface ProductFilterSidebarProps {
   selectedCategories: string[];
@@ -14,6 +14,11 @@ interface ProductFilterSidebarProps {
   onClearBrands: () => void;
   onSelectBrands?: (brands: string[]) => void;
   availableBrands?: { id?: string; brand: string; count: number; isDefault?: boolean }[];
+  onWarpToCategory?: (category: string) => void;
+  onQuickSelectCategory?: (category: string) => void;
+  activeCategoryProductCounts?: Map<string, number>;
+  selectedProductCount?: number;
+  selectedProductsByCategory?: Map<string, number>;
 }
 
 export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
@@ -27,6 +32,11 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
   onClearBrands,
   onSelectBrands,
   availableBrands = [],
+  onWarpToCategory,
+  onQuickSelectCategory,
+  activeCategoryProductCounts,
+  selectedProductCount = 0,
+  selectedProductsByCategory,
 }: ProductFilterSidebarProps) {
   const [categorySearch, setCategorySearch] = useState("");
   const [brandSearch, setBrandSearch] = useState("");
@@ -260,7 +270,7 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
               if (e.key === "Escape") setCategorySearch("");
             }}
             placeholder="Search category..."
-            className="w-full bg-[#3A3B3C] border border-transparent rounded-full pl-8 pr-7 py-1 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-all"
+            className="w-full bg-[#3A3B3C]/80 border border-transparent rounded-full pl-8 pr-7 py-1 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-all"
           />
           {categorySearch && (
             <button
@@ -291,10 +301,10 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
               <div
                 className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                   isAllCategoriesActive
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
                     : categorySelectedCount > 0
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                    : "border-slate-600 bg-[#1E2021] group-hover/item:border-slate-400"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-[#4E5052]"
+                    : "bg-[#2D2E30] border-[#4E5052]"
                 }`}
               >
                 {isAllCategoriesActive && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -303,15 +313,15 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
                 )}
               </div>
               <span className="text-xs font-bold uppercase tracking-wider truncate">
-                {isAllCategoriesActive ? "ALL CATEGORIES" : "SELECT ALL"}
+                ALL
               </span>
-              {categorySelectedCount > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums shrink-0">
-                  {categorySelectedCount} selected
+              {selectedProductCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums shrink-0">
+                  {selectedProductCount}
                 </span>
               )}
             </div>
-            <span className="text-xs font-normal px-1.5 py-0.5 rounded shrink-0 bg-[#1E2021] text-slate-400">
+            <span className="text-[11px] font-normal px-1.5 py-0.5 rounded shrink-0 text-slate-400">
               {totalCategoryCount}
             </span>
           </button>
@@ -321,13 +331,20 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
             const isChecked = isCategoryChecked(c.category);
 
             return (
-              <button
+              <div
                 key={c.category}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => handleToggleSingleCategory(c.category)}
-                className={`group/item w-full flex items-center justify-between gap-2 px-2.5 py-1 text-left transition-colors rounded-md cursor-pointer border-0 ${
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleToggleSingleCategory(c.category);
+                  }
+                }}
+                className={`group/item w-full flex items-center justify-between gap-1.5 px-2.5 py-1 text-left transition-colors rounded-md cursor-pointer border-0 select-none ${
                   isChecked
-                    ? "bg-transparent hover:bg-[#323335] text-slate-200 hover:text-white"
+                    ? "bg-transparent hover:bg-[#323335] text-[#4E5052] hover:text-white"
                     : "bg-transparent hover:bg-[#2D2E30] text-slate-500 hover:text-slate-300"
                 }`}
               >
@@ -335,8 +352,8 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
                   <div
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
-                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021] group-hover/item:border-slate-400"
+                        ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                        : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -351,22 +368,84 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
                     <span className="truncate">{c.category}</span>
                     {c.isDefault && (
                       <span title="Default category view on open" className="shrink-0 flex items-center">
-                        <Star className="w-3 h-3 text-amber-400/80 fill-amber-400/70" />
+                        <Star className="w-3 h-3 text-slate-100 fill-slate-100" />
                       </span>
                     )}
                   </span>
+                  {(() => {
+                    const catKey = c.category.trim().toLowerCase();
+                    const selCount = selectedProductsByCategory?.get(catKey) || 0;
+                    if (selCount <= 0) return null;
+                    return (
+                      <span className="text-[9.5px] px-1.5 py-0.2 rounded-full font-bold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums shrink-0">
+                        {selCount}
+                      </span>
+                    );
+                  })()}
                 </div>
+                <div className="flex items-center gap-0.5 shrink-0">
+                  {onQuickSelectCategory && (() => {
+                    const catKey = c.category.trim().toLowerCase();
+                    const activeCount = activeCategoryProductCounts?.get(catKey) ?? 0;
+                    const selCount = selectedProductsByCategory?.get(catKey) || 0;
+                    const isAllSelected = activeCount > 0 && selCount >= activeCount;
 
-                <span
-                  className={`text-xs font-normal px-1.5 py-0.5 rounded shrink-0 transition-colors ${
-                    isChecked
-                      ? "bg-[#1E2021] text-slate-400 group-hover/item:text-slate-200"
-                      : "bg-transparent text-slate-600 group-hover/item:text-slate-400"
-                  }`}
-                >
-                  {c.count}
-                </span>
-              </button>
+                    return (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onQuickSelectCategory(c.category);
+                        }}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                        }}
+                        className={`p-1 rounded transition-all cursor-pointer ${
+                          isAllSelected
+                            ? "text-[#C7F33C] hover:bg-[#252728] opacity-100"
+                            : selCount > 0
+                            ? "text-[#C7F33C]/80 hover:bg-[#252728] opacity-100"
+                            : "text-slate-500 hover:text-[#C7F33C] hover:bg-[#252728] opacity-0 group-hover/item:opacity-100 focus:opacity-100"
+                        }`}
+                        title={
+                          isAllSelected
+                            ? `Deselect all in ${c.category}`
+                            : `Quick select all ${c.category} items (${activeCount > 0 ? activeCount : c.count})`
+                        }
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                      </button>
+                    );
+                  })()}
+                  {onWarpToCategory && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onWarpToCategory(c.category);
+                      }}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                      }}
+                      className="p-1 rounded text-slate-500 hover:text-[#C7F33C] hover:bg-[#252728] transition-all opacity-0 group-hover/item:opacity-100 focus:opacity-100 cursor-pointer"
+                      title={`Jump to ${c.category} section`}
+                    >
+                      <Compass className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <span
+                    className={`text-[11px] font-normal px-1.5 py-0.5 rounded transition-colors ${
+                      isChecked
+                        ? "text-slate-400 group-hover/item:text-slate-200"
+                        : "bg-transparent text-slate-600 group-hover/item:text-slate-400"
+                    }`}
+                  >
+                    {c.count}
+                  </span>
+                </div>
+              </div>
             );
           })}
         </div>
@@ -426,7 +505,7 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
               isAllBrandsActive
                 ? "bg-[#2D2E30] border-[#4E5052] text-slate-100 hover:bg-[#343638]"
                 : brandSelectedCount > 0
-                ? "bg-[#252728] border-[#3E4042] text-slate-200 hover:bg-[#2C2D2F]"
+                ? "bg-[#252728] border-[#3E4042] text-[#4E5052] hover:bg-[#2C2D2F]"
                 : "bg-[#1C1C1D] border-transparent hover:bg-[#252728] text-slate-400"
             }`}
           >
@@ -434,27 +513,22 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
               <div
                 className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                   isAllBrandsActive
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
                     : brandSelectedCount > 0
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                    : "border-slate-600 bg-[#1E2021] group-hover/item:border-slate-400"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                    : "border-slate-600 bg-[#1E2021]"
                 }`}
               >
                 {isAllBrandsActive && <Check className="w-3 h-3 stroke-[2.5]" />}
                 {!isAllBrandsActive && brandSelectedCount > 0 && (
-                  <div className="w-2 h-0.5 bg-[#C7F33C] rounded-full" />
+                  <div className="w-2 h-0.5 bg-slate-200 rounded-full" />
                 )}
               </div>
               <span className="text-xs font-bold uppercase tracking-wider truncate">
-                {isAllBrandsActive ? "ALL BRANDS" : "SELECT ALL"}
+                ALL
               </span>
-              {brandSelectedCount > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums shrink-0">
-                  {brandSelectedCount} selected
-                </span>
-              )}
             </div>
-            <span className="text-xs font-normal px-1.5 py-0.5 rounded shrink-0 bg-[#1E2021] text-slate-400">
+            <span className="text-[11px] font-normal px-1.5 py-0.5 rounded shrink-0 text-slate-400">
               {totalBrandCount}
             </span>
           </button>
@@ -478,8 +552,8 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
                   <div
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
-                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021] group-hover/item:border-slate-400"
+                        ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                        : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -494,16 +568,16 @@ export const ProductFilterSidebar = React.memo(function ProductFilterSidebar({
                     <span className="truncate">{b.brand}</span>
                     {b.isDefault && (
                       <span title="Default brand view on open" className="shrink-0 flex items-center">
-                        <Star className="w-3 h-3 text-amber-400/80 fill-amber-400/70" />
+                        <Star className="w-3 h-3 text-[#4E5052]" />
                       </span>
                     )}
                   </span>
                 </div>
 
                 <span
-                  className={`text-xs font-normal px-1.5 py-0.5 rounded shrink-0 transition-colors ${
+                  className={`text-[11px] font-normal px-1.5 py-0.5 rounded shrink-0 transition-colors ${
                     isChecked
-                      ? "bg-[#1E2021] text-slate-400 group-hover/item:text-slate-200"
+                      ? "text-slate-400 group-hover/item:text-slate-200"
                       : "bg-transparent text-slate-600 group-hover/item:text-slate-400"
                   }`}
                 >

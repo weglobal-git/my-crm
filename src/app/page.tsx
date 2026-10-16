@@ -34,6 +34,10 @@ export default async function RootPage() {
     redirect("/calendar");
   }
 
+  if (visibleKeys.includes("product") || visibleKeys.includes("pipeline.information")) {
+    redirect("/product");
+  }
+
   redirect("/pipeline");
 }
 

@@ -6,6 +6,7 @@ import {
   disconnectPusher,
   destroyPusherClient,
   getOrCreatePusherClient,
+  getPusherClient,
   isPusherEnabled,
 } from "@/lib/pusher";
 import { releaseAllChannels } from "@/lib/pusher-subscription-manager";
@@ -17,6 +18,7 @@ export const NOTIFICATIONS_CHANGED_EVENT = "my-crm:notifications-changed";
 export const CONTACT_RECOVERY_EVENT = "my-crm:contact-recovery";
 export const CALENDAR_RECOVERY_EVENT = "my-crm:calendar-recovery";
 export const CALENDAR_REALTIME_BRIDGE_EVENT = "my-crm:calendar-realtime-bridge";
+export const PIPELINE_REALTIME_BRIDGE_EVENT = "my-crm:pipeline-realtime-bridge";
 
 let dormancyTimer: ReturnType<typeof setTimeout> | null = null;
 let isInitialized = false;
@@ -163,9 +165,13 @@ export function initPusherConnectionHygiene(userId?: string) {
       }
 
       try {
-        console.log("[PUSHER-HYGIENE] Tab visible. Ensuring Pusher is connected and running targeted recovery...");
+        const existingClient = getPusherClient();
+        const wasConnected = existingClient?.connection.state === "connected";
         activatePusherConnection();
-        triggerTargetedRecovery();
+        if (!wasConnected) {
+          console.log("[PUSHER-HYGIENE] Tab visible after dormancy/disconnect. Running targeted recovery...");
+          triggerTargetedRecovery();
+        }
       } catch {}
     }
   };
@@ -174,8 +180,8 @@ export function initPusherConnectionHygiene(userId?: string) {
 
   // 3. Pageshow event (handles Back/Forward cache restoration)
   handlePageshowRef = (e: PageTransitionEvent) => {
-    if (e.persisted || document.visibilityState === "visible") {
-      console.log("[PUSHER-HYGIENE] Page restored from bfcache/pageshow. Connecting and recovering...");
+    if (e.persisted) {
+      console.log("[PUSHER-HYGIENE] Page restored from bfcache. Connecting and recovering...");
       activatePusherConnection();
       triggerTargetedRecovery();
     }
@@ -202,15 +208,8 @@ export function initPusherConnectionHygiene(userId?: string) {
         if (event.data?.type === "PUSHER_EVENT_BROADCAST") {
           if (markBroadcastSeen(event.data.id)) return; // Deduplicate
 
-          const payload = event.data.data as { dealId?: string; action?: string; deal?: { id?: string } };
-          if (payload?.action?.startsWith("OPPORTUNITY_") || payload?.dealId || payload?.deal?.id) {
-            void mutate((key) => Array.isArray(key) && key[0] === "pipeline-deals");
-          }
-          if (payload?.dealId) {
-            void mutate(["deal-accelerators", payload.dealId]);
-          }
-          if (payload?.action === "DEAL_ACCELERATORS_UPDATED") {
-            void mutate(isPendingAcceleratorsKey);
+          if (event.data.eventName === "pipeline-updated") {
+            window.dispatchEvent(new CustomEvent(PIPELINE_REALTIME_BRIDGE_EVENT, { detail: event.data.data }));
           }
           if (event.data.eventName === "new-notification" || event.data.eventName === "notification-resolved") {
             void mutate("my-notifications");

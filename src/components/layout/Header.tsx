@@ -20,6 +20,7 @@ import type PusherClient from "pusher-js";
 import {
   broadcastEventAcrossTabs,
   NOTIFICATIONS_CHANGED_EVENT,
+  PIPELINE_REALTIME_BRIDGE_EVENT,
 } from "@/lib/pusher-connection-manager";
 
 type ActiveUser = Awaited<ReturnType<typeof getActiveUsers>>[number];
@@ -296,24 +297,54 @@ export function Header() {
   const remainingCount = Math.max(0, uniqueActiveUsers.length - 3);
 
   const handleRespond = async (id: string, accept: boolean) => {
+    const targetNotif = notifications.find((n: NotificationItem) => n.id === id);
+    // 1. 0ms Optimistic UI removal
+    notificationMutationVersionRef.current += 1;
+    setNotifications((prev: NotificationItem[]) => prev.filter((n: NotificationItem) => n.id !== id));
+    if (session?.user?.id) {
+      broadcastEventAcrossTabs(`private-user-${session.user.id}`, 'notification-resolved', { id });
+    }
     try {
-      await respondToNotification(id, accept);
-      notificationMutationVersionRef.current += 1;
-      setNotifications((prev: NotificationItem[]) => prev.filter((n: NotificationItem) => n.id !== id));
-      if (session?.user?.id) {
-        broadcastEventAcrossTabs(`private-user-${session.user.id}`, 'notification-resolved', { id });
+      const res = await respondToNotification(id, accept);
+      if (accept && res && 'deal' in res && res.deal && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent(PIPELINE_REALTIME_BRIDGE_EVENT, {
+            detail: {
+              action: 'RECONCILE_OPPORTUNITY',
+              dealId: res.deal.id,
+              deal: res.deal,
+            },
+          })
+        );
       }
     } catch (e) {
       console.error(e);
+      if (targetNotif) {
+        notificationMutationVersionRef.current += 1;
+        setNotifications((prev: NotificationItem[]) =>
+          prev.some((n) => n.id === id) ? prev : [targetNotif, ...prev]
+        );
+      }
     }
   };
 
   const handleDismiss = async (id: string) => {
-    await dismissNotification(id);
+    const targetNotif = notifications.find((n: NotificationItem) => n.id === id);
     notificationMutationVersionRef.current += 1;
     setNotifications((prev) => prev.filter((notification) => notification.id !== id));
     if (session?.user?.id) {
       broadcastEventAcrossTabs(`private-user-${session.user.id}`, 'notification-resolved', { id });
+    }
+    try {
+      await dismissNotification(id);
+    } catch (e) {
+      console.error(e);
+      if (targetNotif) {
+        notificationMutationVersionRef.current += 1;
+        setNotifications((prev) =>
+          prev.some((n) => n.id === id) ? prev : [targetNotif, ...prev]
+        );
+      }
     }
   };
 
@@ -339,7 +370,7 @@ export function Header() {
             </span>
           )}
           <span className="font-semibold text-base text-slate-100">
-            {currentSubMenu?.label || currentMainMenu?.label || "Overview"}
+            {currentSubMenu?.label || (pathname.startsWith("/product") ? "Product" : currentMainMenu?.label || "Overview")}
           </span>
         </div>
       </div>

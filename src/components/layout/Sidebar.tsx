@@ -172,6 +172,24 @@ export function Sidebar() {
       }
     });
 
+    // Ensure Product menu is always visible for departments with Sale Deal (pipeline.information) or Product access
+    if (
+      (canSee("product") || canSee("pipeline.information")) &&
+      !direct.some((item) => item.key === "product")
+    ) {
+      const productItem: FlattenedMenuItem = {
+        key: "product",
+        label: "Product",
+        href: "/product",
+        iconName: "Package",
+        parentLabel: "Sales & Operations",
+        parentKey: "sales_ops",
+        isSubItem: false,
+      };
+      direct.push(productItem);
+      searchable.push(productItem);
+    }
+
     return {
       directMenuItems: direct,
       systemMenuItems: system,

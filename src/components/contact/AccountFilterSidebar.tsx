@@ -513,7 +513,7 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
                 </span>
               )}
             </div>
-            <span className="text-xs font-normal px-1.5 py-0.5 rounded shrink-0 bg-[#1E2021] text-slate-400">
+            <span className="text-xs font-normal px-1.5 py-0.5 rounded shrink-0 text-slate-400">
               {totalCountryCount}
             </span>
           </button>

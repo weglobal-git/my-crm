@@ -430,7 +430,7 @@ export function ProductFilterContent({
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
                         ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021]"
+                        : "border-[#4E5052] bg-[#2D2E30] "
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -565,7 +565,7 @@ export function ProductFilterContent({
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
                         ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021]"
+                        : "border-[#4E5052] bg-[#2D2E30] "
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}

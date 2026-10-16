@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import prisma from "@/lib/prisma";
 import type { PipelineActor } from "@/lib/pipeline-security";
 import { notifyPrivatePipelineUpdate } from "@/lib/pipeline-security";
@@ -10,6 +11,37 @@ import { isDueDateFulfilled, pipelineOpportunitySelect } from "@/lib/pipeline-op
 import { requireCapability } from "@/lib/access/pipeline-capabilities";
 import type { OpportunityAccessCheckSubject } from "@/lib/access/pipeline-policy";
 import { v2 as cloudinary } from "cloudinary";
+
+function runBackgroundJob(task: () => Promise<void> | void) {
+  try {
+    after(task);
+  } catch {
+    void Promise.resolve().then(task).catch((err) => {
+      console.error("[ACTIVITY-BG-JOB-ERROR]", err);
+    });
+  }
+}
+
+const MENTION_USER_CACHE_TTL_MS = 30_000;
+let mentionUsersCache: {
+  expiresAt: number;
+  users: Array<{ id: string; name: string | null }>;
+} | null = null;
+
+async function getUsersForMentionLookup(): Promise<Array<{ id: string; name: string | null }>> {
+  const now = Date.now();
+  if (mentionUsersCache && mentionUsersCache.expiresAt > now) {
+    return mentionUsersCache.users;
+  }
+  const users = await prisma.user.findMany({ select: { id: true, name: true } });
+  if (users.length > 0) {
+    mentionUsersCache = {
+      expiresAt: now + MENTION_USER_CACHE_TTL_MS,
+      users,
+    };
+  }
+  return users;
+}
 
 export interface ActivityServiceDeps {
   notifyPrivatePipelineUpdate?: (dealId: string, event: Record<string, unknown>) => Promise<unknown>;
@@ -83,7 +115,7 @@ export async function addActivityLogForActor(
     );
     const mentionedUserIds = new Set<string>();
     if (mentionedUsernames.length > 0) {
-      const allUsers = await prisma.user.findMany({ select: { id: true, name: true } });
+      const allUsers = await getUsersForMentionLookup();
       allUsers.forEach((u: { id: string; name: string | null }) => {
         if (u.name && mentionedUsernames.includes(u.name.replace(/\s+/g, "").toLowerCase())) {
           mentionedUserIds.add(u.id);
@@ -178,37 +210,45 @@ export async function addActivityLogForActor(
   const dispatchNotif = deps?.dispatchNotification ?? dispatchNotification;
   const dispatchDash = deps?.dispatchDashboardInvalidation ?? dispatchDashboardInvalidation;
 
-  // Dispatch notifications after successful transaction commit
-  if (createdNotifications.length > 0) {
-    await Promise.all(
-      createdNotifications.map((notification) =>
-        dispatchNotif(notification.recipientId, notification)
-      )
-    ).catch((err) => console.error("[addActivityLog] Notification dispatch failed:", err));
-  }
-
-  // If deal had an active Due Date that was fulfilled by this activity update, notify board
-  if (dueDateCleared) {
-    const fullDeal = await prisma.opportunity.findUnique({
-      where: { id: opportunityId },
-      select: pipelineOpportunitySelect,
-    });
-    if (fullDeal) {
-      await notifyPusher(opportunityId, {
-        action: "OPPORTUNITY_UPDATED",
-        deal: fullDeal,
-      });
+  const publishPostCommitEvents = async () => {
+    // Dispatch notifications after successful transaction commit
+    if (createdNotifications.length > 0) {
+      await Promise.all(
+        createdNotifications.map((notification) =>
+          dispatchNotif(notification.recipientId, notification)
+        )
+      ).catch((err) => console.error("[addActivityLog] Notification dispatch failed:", err));
     }
-  }
 
-  await notifyPusher(opportunityId, {
-    action: "ACTIVITY_ADDED",
-    dealId: opportunityId,
-    activityLog: newLog,
-  });
-  void dispatchDash({
-    resources: ["leaderboard"],
-  }).catch(() => {});
+    // If deal had an active Due Date that was fulfilled by this activity update, notify board
+    if (dueDateCleared) {
+      const fullDeal = await prisma.opportunity.findUnique({
+        where: { id: opportunityId },
+        select: pipelineOpportunitySelect,
+      });
+      if (fullDeal) {
+        await notifyPusher(opportunityId, {
+          action: "OPPORTUNITY_UPDATED",
+          deal: fullDeal,
+        });
+      }
+    }
+
+    await notifyPusher(opportunityId, {
+      action: "ACTIVITY_ADDED",
+      dealId: opportunityId,
+      activityLog: newLog,
+    });
+    void dispatchDash({
+      resources: ["leaderboard"],
+    }).catch(() => {});
+  };
+
+  if (deps) {
+    await publishPostCommitEvents();
+  } else {
+    runBackgroundJob(publishPostCommitEvents);
+  }
 
   return newLog;
 }
@@ -244,11 +284,21 @@ export async function addSystemLogForActor(
   });
 
   const notifyPusher = deps?.notifyPrivatePipelineUpdate ?? notifyPrivatePipelineUpdate;
-  await notifyPusher(opportunityId, {
-    action: "ACTIVITY_ADDED",
-    dealId: opportunityId,
-    activityLog: result,
-  });
+  if (deps) {
+    await notifyPusher(opportunityId, {
+      action: "ACTIVITY_ADDED",
+      dealId: opportunityId,
+      activityLog: result,
+    });
+  } else {
+    runBackgroundJob(async () => {
+      await notifyPusher(opportunityId, {
+        action: "ACTIVITY_ADDED",
+        dealId: opportunityId,
+        activityLog: result,
+      });
+    });
+  }
   return result;
 }
 
@@ -307,41 +357,50 @@ export async function deleteActivityLogForActor(
     where: { id: logId },
   });
 
-  await Promise.all(
-    attachmentCleanup.map(async (att) => {
-      if (!att.cloudinaryPublicId) return;
-      const resourceType = att.fileType.startsWith("image/") ? "image" : "raw";
-      try {
-        await cloudinary.uploader.destroy(att.cloudinaryPublicId, {
-          resource_type: resourceType,
-        });
-      } catch (error) {
-        console.error("Failed to delete from Cloudinary after Activity deletion:", error);
-      }
-    })
-  );
-
-  const nextLatestLog = await prisma.activityLog.findFirst({
-    where: {
-      opportunityId: log.opportunityId,
-      parentId: null,
-      type: "COMMENT",
-      NOT: { content: { startsWith: "[DUE DATE:" } },
-    },
-    orderBy: { createdAt: "desc" },
-    include: {
-      user: true,
-      replies: { include: { user: true }, orderBy: { createdAt: "asc" } },
-    },
-  });
-
   const notifyPusher = deps?.notifyPrivatePipelineUpdate ?? notifyPrivatePipelineUpdate;
-  await notifyPusher(log.opportunityId, {
-    action: "ACTIVITY_DELETED",
-    dealId: log.opportunityId,
-    logId,
-    nextLatestLog,
-  });
+
+  const postDeleteTask = async () => {
+    await Promise.all(
+      attachmentCleanup.map(async (att) => {
+        if (!att.cloudinaryPublicId) return;
+        const resourceType = att.fileType.startsWith("image/") ? "image" : "raw";
+        try {
+          await cloudinary.uploader.destroy(att.cloudinaryPublicId, {
+            resource_type: resourceType,
+          });
+        } catch (error) {
+          console.error("Failed to delete from Cloudinary after Activity deletion:", error);
+        }
+      })
+    );
+
+    const nextLatestLog = await prisma.activityLog.findFirst({
+      where: {
+        opportunityId: log.opportunityId,
+        parentId: null,
+        type: "COMMENT",
+        NOT: { content: { startsWith: "[DUE DATE:" } },
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: true,
+        replies: { include: { user: true }, orderBy: { createdAt: "asc" } },
+      },
+    });
+
+    await notifyPusher(log.opportunityId, {
+      action: "ACTIVITY_DELETED",
+      dealId: log.opportunityId,
+      logId,
+      nextLatestLog,
+    });
+  };
+
+  if (deps) {
+    await postDeleteTask();
+  } else {
+    runBackgroundJob(postDeleteTask);
+  }
 
   return { success: true };
 }

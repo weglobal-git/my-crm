@@ -65,18 +65,27 @@ export const KanbanColumn = memo(function KanbanColumn({
       return;
     }
 
+    const previousTitle = title;
+    const optimisticTitle = trimmed || null;
+
+    // 1. 0ms Optimistic UI update
+    onTitleChanged?.(id, optimisticTitle);
+    setDraftTitle(optimisticTitle || defaultTitle);
+    setIsEditingTitle(false);
     setIsSavingTitle(true);
+
     try {
       const result = await updatePipelineStageDepartmentTitle(id, departmentId, trimmed);
       onTitleChanged?.(id, result.title);
       setDraftTitle(result.title || defaultTitle);
-      setIsEditingTitle(false);
       toast({
         title: result.title ? 'Column renamed' : 'Column title reset',
         description: result.title || defaultTitle,
         type: 'success',
       });
     } catch (error) {
+      onTitleChanged?.(id, previousTitle === defaultTitle ? null : previousTitle);
+      setDraftTitle(previousTitle);
       toast({
         title: 'Unable to rename column',
         description: error instanceof Error ? error.message : 'Please try again.',

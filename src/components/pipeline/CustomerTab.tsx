@@ -156,20 +156,38 @@ export const CustomerTab = forwardRef<CustomerTabRef, CustomerTabProps>(function
       type: "success",
     });
 
-    // 3. Fire server action in background
+    // 3. Fire server action in background and reconcile single card in-memory
     setIsSaving(true);
     try {
-      await updateOpportunity(deal.id, updatedPayload);
-      void mutate((key) => Array.isArray(key) && key[0] === "pipeline-deals");
+      const updatedDeal = await updateOpportunity(deal.id, updatedPayload);
+      void mutate(
+        (key) => Array.isArray(key) && key[0] === "pipeline-deals",
+        (currentDeals: OpportunityWithRelations[] | undefined) => {
+          if (!currentDeals) return currentDeals;
+          return currentDeals.map((d) =>
+            d.id === deal.id ? { ...d, ...updatedDeal } : d
+          );
+        },
+        false
+      );
     } catch (error: unknown) {
       setFormData(previousFormData);
-      void mutate((key) => Array.isArray(key) && key[0] === "pipeline-deals");
+      void mutate(
+        (key) => Array.isArray(key) && key[0] === "pipeline-deals",
+        (currentDeals: OpportunityWithRelations[] | undefined) => {
+          if (!currentDeals) return currentDeals;
+          return currentDeals.map((d) =>
+            d.id === deal.id ? { ...d, ...deal } : d
+          );
+        },
+        false
+      );
       const message = error instanceof Error ? error.message : "Failed to save information.";
       toast({ title: "Error", description: message, type: "error" });
     } finally {
       setIsSaving(false);
     }
-  }, [deal.id, formData, initialFormData, mutate, toast]);
+  }, [deal, formData, initialFormData, mutate, toast]);
 
   useImperativeHandle(
     ref,

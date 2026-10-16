@@ -1,5 +1,6 @@
 "use server";
 
+import { after } from "next/server";
 import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -8,10 +9,22 @@ import { Prisma } from "@prisma/client";
 import { 
   notifyPrivatePipelineUpdate, 
   requireOpportunityAccess,
-  invalidatePipelineRecipientCache 
+  invalidatePipelineRecipientCache,
+  invalidateOpportunityReadAccess,
 } from "@/lib/pipeline-security";
+import { pipelineOpportunitySelect } from "@/lib/pipeline-opportunities";
 import { dispatchNotification } from "@/lib/notification-dispatcher";
 import { withSerializableRetry } from "@/lib/serializable-transaction";
+
+function runBackgroundJob(task: () => Promise<void> | void) {
+  try {
+    after(task);
+  } catch {
+    void Promise.resolve().then(task).catch((err) => {
+      console.error("[NOTIFICATION-BG-JOB-ERROR]", err);
+    });
+  }
+}
 
 export interface NotificationItem {
   id: string;
@@ -137,21 +150,21 @@ export async function dismissNotification(notificationId: string) {
 
 // Request to transfer ownership
 export async function requestDealTransfer(dealId: string, newOwnerId: string) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) throw new Error("Unauthorized");
-  await requireOpportunityAccess(dealId, { capability: 'deal:transfer_owner' });
+  const { actor } = await requireOpportunityAccess(dealId, { capability: 'deal:transfer_owner' });
 
-  const deal = await prisma.opportunity.findUnique({
-    where: { id: dealId }
-  });
+  const [deal, newOwner] = await Promise.all([
+    prisma.opportunity.findUnique({
+      where: { id: dealId },
+      select: { id: true, ownerId: true, topic: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: newOwnerId },
+      select: { name: true },
+    }),
+  ]);
   
   if (!deal) throw new Error("Deal not found");
   if (deal.ownerId === newOwnerId) throw new Error("Already the owner");
-
-  const newOwner = await prisma.user.findUnique({
-    where: { id: newOwnerId },
-    select: { name: true },
-  });
 
   const { notification, transferLog, alreadyExists } = await withSerializableRetry(() =>
     prisma.$transaction(async (tx) => {
@@ -176,7 +189,7 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
       const notification = await tx.notification.create({
         data: {
           recipientId: newOwnerId,
-          senderId: session.user.id,
+          senderId: actor.id,
           type: 'DEAL_TRANSFER_REQUEST',
           title: 'Deal Transfer Request',
           message: `requests to transfer deal "${deal.topic}" to you.`,
@@ -193,7 +206,7 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
         data: {
           content: `Requested ownership transfer to ${newOwner?.name || 'user'}`,
           opportunity: { connect: { id: dealId } },
-          user: { connect: { id: session.user.id } },
+          user: { connect: { id: actor.id } },
           type: 'SYSTEM_UPDATE',
         },
         include: {
@@ -209,21 +222,22 @@ export async function requestDealTransfer(dealId: string, newOwnerId: string) {
     return { success: true, notification, alreadyExists: true };
   }
 
-  void notifyPrivatePipelineUpdate(dealId, {
-    action: 'ACTIVITY_ADDED',
-    dealId,
-    activityLog: transferLog,
-  }).catch(() => {});
+  runBackgroundJob(async () => {
+    void notifyPrivatePipelineUpdate(dealId, {
+      action: 'ACTIVITY_ADDED',
+      dealId,
+      activityLog: transferLog,
+    }).catch(() => {});
 
-  await dispatchNotification(newOwnerId, notification);
+    await dispatchNotification(newOwnerId, notification);
+  });
+
   return { success: true, notification };
 }
 
 // Request to invite to team
 export async function requestTeamInvite(dealId: string, userId: string) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) throw new Error("Unauthorized");
-  await requireOpportunityAccess(dealId, { capability: 'deal:manage_members' });
+  const { actor } = await requireOpportunityAccess(dealId, { capability: 'deal:manage_members' });
 
   const deal = await prisma.opportunity.findUnique({
     where: { id: dealId },
@@ -256,7 +270,7 @@ export async function requestTeamInvite(dealId: string, userId: string) {
   const notification = await prisma.notification.create({
     data: {
       recipientId: userId,
-      senderId: session.user.id,
+      senderId: actor.id,
       type: 'TEAM_INVITE_REQUEST',
       title: 'Team Invite Request',
       message: `requests you to join the team for deal "${deal.topic}".`,
@@ -269,7 +283,9 @@ export async function requestTeamInvite(dealId: string, userId: string) {
     }
   });
 
-  await dispatchNotification(userId, notification);
+  runBackgroundJob(async () => {
+    await dispatchNotification(userId, notification);
+  });
   return { success: true, notification };
 }
 
@@ -289,22 +305,24 @@ export async function respondToNotification(notificationId: string, accept: bool
   }
   if (notification.status !== 'PENDING') throw new Error("Notification already handled");
 
-  const sender = notification.senderId
-    ? await prisma.user.findUnique({ where: { id: notification.senderId }, select: { name: true } })
-    : null;
-  const previousDeal = await prisma.opportunity.findUnique({
-    where: { id: notification.referenceId },
-    select: { ownerId: true, teamMembers: { select: { id: true } } },
-  });
+  const [sender, previousDeal] = await Promise.all([
+    notification.senderId
+      ? prisma.user.findUnique({ where: { id: notification.senderId }, select: { name: true } })
+      : Promise.resolve(null),
+    prisma.opportunity.findUnique({
+      where: { id: notification.referenceId },
+      select: { ownerId: true, teamMembers: { select: { id: true } } },
+    }),
+  ]);
   if (!previousDeal) throw new Error("Deal not found");
 
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const { updatedDeal } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const claimed = await tx.notification.updateMany({
       where: { id: notificationId, recipientId: session.user.id, status: 'PENDING' },
-      data: { status: accept ? 'ACCEPTED' : 'REJECTED' },
+      data: { status: accept ? 'ACCEPTED' : 'REJECTED', readAt: new Date() },
     });
     if (claimed.count !== 1) throw new Error("Notification already handled");
-    if (!accept) return;
+    if (!accept) return { updatedDeal: null };
 
     if (notification.type === 'DEAL_TRANSFER_REQUEST') {
       const teamMembersUpdate: Prisma.OpportunityUpdateInput['teamMembers'] = {};
@@ -315,12 +333,13 @@ export async function respondToNotification(notificationId: string, accept: bool
         teamMembersUpdate.disconnect = [{ id: session.user.id }];
       }
 
-      await tx.opportunity.update({
+      const fullDeal = await tx.opportunity.update({
         where: { id: notification.referenceId! },
         data: { 
           ownerId: session.user.id,
           ...(Object.keys(teamMembersUpdate).length > 0 && { teamMembers: teamMembersUpdate })
         },
+        select: pipelineOpportunitySelect,
       });
       await tx.activityLog.create({
         data: {
@@ -328,10 +347,12 @@ export async function respondToNotification(notificationId: string, accept: bool
           type: 'SYSTEM_UPDATE', opportunityId: notification.referenceId!, userId: session.user.id,
         },
       });
+      return { updatedDeal: fullDeal };
     } else {
-      await tx.opportunity.update({
+      const fullDeal = await tx.opportunity.update({
         where: { id: notification.referenceId! },
         data: { teamMembers: { connect: { id: session.user.id } } },
+        select: pipelineOpportunitySelect,
       });
       await tx.activityLog.create({
         data: {
@@ -339,17 +360,26 @@ export async function respondToNotification(notificationId: string, accept: bool
           type: 'SYSTEM_UPDATE', opportunityId: notification.referenceId!, userId: session.user.id,
         },
       });
+      return { updatedDeal: fullDeal };
     }
   });
 
   if (accept && notification.referenceId) {
+    invalidateOpportunityReadAccess(notification.referenceId);
     invalidatePipelineRecipientCache(notification.referenceId);
-    await notifyPrivatePipelineUpdate(
-      notification.referenceId,
-      { action: 'RECONCILE_OPPORTUNITY', dealId: notification.referenceId },
-      [previousDeal.ownerId, session.user.id],
-    );
+    const dealId = notification.referenceId;
+    runBackgroundJob(async () => {
+      await notifyPrivatePipelineUpdate(
+        dealId,
+        {
+          action: 'RECONCILE_OPPORTUNITY',
+          dealId,
+          deal: updatedDeal,
+        },
+        [previousDeal.ownerId, session.user.id],
+      );
+    });
   }
 
-  return { success: true };
+  return { success: true, deal: updatedDeal };
 }

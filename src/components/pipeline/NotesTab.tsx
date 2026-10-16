@@ -23,7 +23,10 @@ import {
   filterDealNotes,
   toggleNoteCompletion,
   toggleNotePriority,
+  isPendingTodosKey,
+  syncDealNotesToPendingTodosMap,
   type DealTodoNote,
+  type PendingTodoSummaryItem,
 } from "@/lib/deal-todo-sync";
 
 export type NoteItem = DealTodoNote;
@@ -48,6 +51,15 @@ export function NotesTab({
     () => getNotes(deal.id),
     { revalidateOnFocus: true, revalidateOnReconnect: true, dedupingInterval: 5_000 }
   );
+
+  const syncBoardPendingTodos = (nextNotes: NoteItem[]) => {
+    void globalMutate(
+      isPendingTodosKey,
+      (prevMap: Record<string, PendingTodoSummaryItem[]> | undefined) =>
+        syncDealNotesToPendingTodosMap(prevMap, deal.id, nextNotes),
+      { revalidate: false }
+    );
+  };
 
   const [internalSearchQuery] = useState("");
   const activeSearchQuery =
@@ -156,28 +168,37 @@ export function NotesTab({
         email: session?.user?.email || null,
       },
     };
-    await mutateNotes((current) => [optimisticNote, ...(current || [])], {
+    const optimisticNotes = [optimisticNote, ...(notes || [])].sort(sortDealNotes);
+    await mutateNotes(optimisticNotes, {
       revalidate: false,
     });
+    syncBoardPendingTodos(optimisticNotes);
     setNewNote("");
     setIsSubmitting(true);
     try {
       const persistedNote = await createNote(deal.id, content);
       await mutateNotes(
-        (current) => [
-          persistedNote,
-          ...(current || []).filter(
-            (note) => note.id !== temporaryId && note.id !== persistedNote.id
-          ),
-        ].sort(sortDealNotes),
+        (current) => {
+          const reconciled = [
+            persistedNote,
+            ...(current || []).filter(
+              (note) => note.id !== temporaryId && note.id !== persistedNote.id
+            ),
+          ].sort(sortDealNotes);
+          syncBoardPendingTodos(reconciled);
+          return reconciled;
+        },
         { revalidate: false }
       );
       toast({ title: "To-Do created", type: "success" });
-      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       setNewNote(content);
       await mutateNotes(
-        (current) => (current || []).filter((note) => note.id !== temporaryId),
+        (current) => {
+          const rolledBack = (current || []).filter((note) => note.id !== temporaryId);
+          syncBoardPendingTodos(rolledBack);
+          return rolledBack;
+        },
         { revalidate: false }
       );
       toast({ title: "Failed to create to-do", type: "error" });
@@ -188,17 +209,22 @@ export function NotesTab({
 
   const handleDelete = async (id: string) => {
     const targetNote = notes?.find((n) => n.id === id);
-    await mutateNotes((current) => (current || []).filter((note) => note.id !== id), {
+    const optimisticNotes = (notes || []).filter((note) => note.id !== id);
+    await mutateNotes(optimisticNotes, {
       revalidate: false,
     });
+    syncBoardPendingTodos(optimisticNotes);
     try {
       await deleteNote(id);
       toast({ title: "To-Do deleted", type: "success" });
-      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       if (targetNote) {
         await mutateNotes(
-          (current) => rollbackDeletedItem(current, targetNote, sortDealNotes),
+          (current) => {
+            const rolledBack = rollbackDeletedItem(current, targetNote, sortDealNotes);
+            syncBoardPendingTodos(rolledBack || []);
+            return rolledBack;
+          },
           { revalidate: false }
         );
       }
@@ -209,39 +235,37 @@ export function NotesTab({
   const handleTogglePriority = async (id: string, currentPinned: boolean) => {
     const nextPinned = !currentPinned;
     const previousNotes = notes;
+    const optimisticNotes = toggleNotePriority(notes || [], id, nextPinned);
     try {
-      await mutateNotes(
-        (current) => toggleNotePriority(current || [], id, nextPinned),
-        { revalidate: false }
-      );
+      await mutateNotes(optimisticNotes, { revalidate: false });
+      syncBoardPendingTodos(optimisticNotes);
       await togglePinNote(id, nextPinned);
       toast({
         title: nextPinned ? "Marked as priority" : "Priority removed",
         type: "success",
       });
-      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       toast({ title: "Failed to update priority", type: "error" });
       await mutateNotes(previousNotes, { revalidate: false });
+      syncBoardPendingTodos(previousNotes);
     }
   };
 
   const handleToggleComplete = async (id: string, targetCompleted: boolean) => {
     const previousNotes = notes;
+    const optimisticNotes = toggleNoteCompletion(notes || [], id, targetCompleted);
     try {
-      await mutateNotes(
-        (current) => toggleNoteCompletion(current || [], id, targetCompleted),
-        { revalidate: false }
-      );
+      await mutateNotes(optimisticNotes, { revalidate: false });
+      syncBoardPendingTodos(optimisticNotes);
       await toggleCompleteNote(id, targetCompleted);
       toast({
         title: targetCompleted ? "Moved to Completed" : "Moved back to To-Do",
         type: "success",
       });
-      void globalMutate((key) => Array.isArray(key) && key[0] === 'pipeline-pending-todos');
     } catch {
       toast({ title: "Failed to update status", type: "error" });
       await mutateNotes(previousNotes, { revalidate: false });
+      syncBoardPendingTodos(previousNotes);
     }
   };
 

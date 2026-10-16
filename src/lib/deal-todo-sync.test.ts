@@ -7,6 +7,8 @@ import {
   toggleNotePriority,
   getIncompleteTodosCount,
   canCloseDealAsWon,
+  syncDealNotesToPendingTodosMap,
+  applyNoteEventToPendingTodosMap,
   type DealTodoNote,
 } from './deal-todo-sync';
 
@@ -195,5 +197,44 @@ test('canCloseDealAsWon: blocks closing as won if there are pending to-dos', () 
     }),
     true
   );
+});
+
+test('syncDealNotesToPendingTodosMap & applyNoteEventToPendingTodosMap: patches board pending todos in-memory without DB refetch', () => {
+  const initialMap = syncDealNotesToPendingTodosMap({}, 'deal-1', mockNotes);
+  assert.equal(initialMap['deal-1']?.length, 2);
+  assert.equal(initialMap['deal-1']?.[0].id, 'note-2'); // Pinned first
+  assert.equal(initialMap['deal-1']?.[1].id, 'note-1');
+
+  // Add a new pinned note via Pusher event
+  const afterAdd = applyNoteEventToPendingTodosMap(initialMap, {
+    action: 'NOTE_ADDED',
+    dealId: 'deal-1',
+    note: { id: 'note-5', content: 'Call CEO', isPinned: true, isCompleted: false },
+  });
+  assert.equal(afterAdd['deal-1']?.length, 3);
+  assert.equal(afterAdd['deal-1']?.[0].id, 'note-5');
+
+  // Mark note-2 as completed via Pusher event -> removed from pending todos map
+  const afterComplete = applyNoteEventToPendingTodosMap(afterAdd, {
+    action: 'NOTE_UPDATED',
+    dealId: 'deal-1',
+    noteId: 'note-2',
+    note: { id: 'note-2', content: 'URGENT', isPinned: true, isCompleted: true },
+  });
+  assert.equal(afterComplete['deal-1']?.length, 2);
+  assert.equal(afterComplete['deal-1']?.some((n) => n.id === 'note-2'), false);
+
+  // Delete remaining notes -> removes deal-1 key cleanly
+  const afterDelete5 = applyNoteEventToPendingTodosMap(afterComplete, {
+    action: 'NOTE_DELETED',
+    dealId: 'deal-1',
+    noteId: 'note-5',
+  });
+  const afterDelete1 = applyNoteEventToPendingTodosMap(afterDelete5, {
+    action: 'NOTE_DELETED',
+    dealId: 'deal-1',
+    noteId: 'note-1',
+  });
+  assert.equal(afterDelete1['deal-1'], undefined);
 });
 

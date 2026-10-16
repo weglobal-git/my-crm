@@ -11,7 +11,6 @@ import {
   Loader2,
   Check,
   Search,
-  Star,
   Upload,
   X,
   Package,
@@ -53,7 +52,6 @@ import {
   updateVariantStatus,
   setDefaultVariant,
   upsertCompanyPrice,
-  updateProductStarRating,
   getProductCategories,
   getProductBrands,
   reorderProductVariants,
@@ -138,7 +136,6 @@ export function EditProductPanel({
   const [remark, setRemark] = useState("");
   const [status, setStatus] = useState<ProductStatus>(ProductStatus.AVAILABLE);
   const [starRating, setStarRating] = useState(0);
-  const [hoverRating, setHoverRating] = useState<number | null>(null);
 
   // Logistics state
   const [cbm, setCbm] = useState<number | string>("");
@@ -662,19 +659,31 @@ export function EditProductPanel({
   // Toggle status (parent product fallback)
   const handleToggleStatus = async () => {
     if (!productId) return;
+    const prevStatus = status;
     const nextStatus =
-      status === ProductStatus.AVAILABLE
+      prevStatus === ProductStatus.AVAILABLE
         ? ProductStatus.UNAVAILABLE
         : ProductStatus.AVAILABLE;
 
     setStatus(nextStatus);
+
+    // Optimistically update variant edits in local state
+    setVariantEdits((prev) => {
+      const next = { ...prev };
+      for (const vId of Object.keys(next)) {
+        next[vId] = { ...next[vId], status: nextStatus };
+      }
+      return next;
+    });
+
     try {
       await updateProductStatus(productId, nextStatus);
       onProductUpdated?.({ id: productId, status: nextStatus });
       void mutate();
     } catch (err) {
       console.error("Failed to toggle product status:", err);
-      setStatus(status); // Rollback
+      setStatus(prevStatus); // Rollback
+      void mutate();
     }
   };
 
@@ -892,8 +901,6 @@ export function EditProductPanel({
   const hasDimensions = numericW > 0 && numericL > 0 && numericH > 0;
   const hasPackingSpecs = hasDimensions && derivedGrossWeight > 0;
 
-  const effectiveRating = hoverRating !== null ? hoverRating : starRating;
-
   const categoryOptions = useMemo(() => {
     const opts = categoriesList.map((c) => ({
       label: c.category,
@@ -949,6 +956,34 @@ export function EditProductPanel({
         </div>
       }
       subtitle={null}
+      headerRight={
+        <div className="flex items-center px-1">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={status === ProductStatus.AVAILABLE}
+            onClick={handleToggleStatus}
+            className={`w-9 h-5 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer focus:outline-none ${
+              status === ProductStatus.AVAILABLE
+                ? "bg-[#C7F33C]"
+                : "bg-[#3A3B3C]"
+            }`}
+            title={
+              status === ProductStatus.AVAILABLE
+                ? "Available (Click to switch to Unavailable)"
+                : "Unavailable (Click to switch to Available)"
+            }
+          >
+            <div
+              className={`w-4 h-4 rounded-full transition-transform ${
+                status === ProductStatus.AVAILABLE
+                  ? "translate-x-4 bg-black"
+                  : "translate-x-0 bg-slate-400"
+              }`}
+            />
+          </button>
+        </div>
+      }
       subBar={
         <SlideOverSubBar
           customActionSlot={
@@ -1022,43 +1057,11 @@ export function EditProductPanel({
             <div className="flex flex-col gap-5">
               {/* Box 1: Product Basic Details */}
               <div className="bg-[#3A3B3C] rounded-2xl p-5 space-y-5 border-0">
-                {/* Header: Title & Priority Star Rating */}
+                {/* Header: Title */}
                 <div className="flex items-center justify-between border-b border-[#252728] pb-3">
                   <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
                     Product Details
                   </span>
-
-                  {/* Priority Star Rating */}
-                  <div
-                    className="flex items-center gap-1.5"
-                    onMouseLeave={() => setHoverRating(null)}
-                  >
-                    <span className="text-xs font-semibold text-slate-400 mr-1">Priority:</span>
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => {
-                          const next = starRating === star ? 0 : star;
-                          setStarRating(next);
-                          if (productId) {
-                            void updateProductStarRating(productId, next);
-                            onProductUpdated?.({ id: productId, starRating: next });
-                          }
-                        }}
-                        onMouseEnter={() => setHoverRating(star)}
-                        className="p-0.5 cursor-pointer hover:scale-125 transition-transform"
-                      >
-                        <Star
-                          className={`w-4 h-4 ${
-                            star <= effectiveRating
-                              ? "fill-amber-400 text-amber-400"
-                              : "text-slate-600 fill-transparent"
-                          }`}
-                        />
-                      </button>
-                    ))}
-                  </div>
                 </div>
 
                 {/* Full-Width Product Name */}
@@ -1221,23 +1224,6 @@ export function EditProductPanel({
                     />
                   </div>
                 </div>
-
-                {/* Clean Simulator Shortcut (Replaces inline calculator for maximum elegance) */}
-                {hasPackingSpecs && (
-                  <div className="pt-2 flex items-center justify-between border-t border-[#252728]">
-                    <span className="text-[11px] text-slate-400">
-                      คำนวนการบรรจุตู้คอนเทนเนอร์ (Container Loading Simulation)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setLogisticsModalOpen(true)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#242D16] border border-[#688523] text-[#C7F33C] text-[11px] font-bold hover:bg-[#2e3b18] transition-colors cursor-pointer"
-                    >
-                      <Calculator className="w-3 h-3" />
-                      <span>เปิด Simulator</span>
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -1442,6 +1428,7 @@ export function EditProductPanel({
           isOpen={logisticsModalOpen}
           onClose={() => setLogisticsModalOpen(false)}
           initialProductId={productId}
+          initialProductOverview={overview}
         />
       )}
     </>

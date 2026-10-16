@@ -8,7 +8,7 @@ import {
   parsePriceConditions,
   PriceStepTier,
 } from "@/lib/product/product-dto";
-import { getProductOverview, getProductsWithFilters } from "@/lib/actions/product";
+import { getProductOverview } from "@/lib/actions/product";
 import {
   X,
   Printer,
@@ -17,12 +17,9 @@ import {
   SlidersHorizontal,
   Package,
   RotateCcw,
-  Boxes,
-  Search,
-  Filter,
   Info,
   Settings,
-  ArrowLeft,
+  Sparkles,
 } from "lucide-react";
 
 interface ContainerTypeSpec {
@@ -315,6 +312,7 @@ export interface ProductLogisticsModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialProductId?: string | null;
+  initialProductOverview?: ProductOverviewDTO | null;
   products?: ProductListItemDTO[];
 }
 
@@ -322,44 +320,25 @@ export function ProductLogisticsModal({
   isOpen,
   onClose,
   initialProductId,
+  initialProductOverview,
   products = [],
 }: ProductLogisticsModalProps) {
-  // Sidebar tab state: "controls" vs "settings" (Products moved to Header Dropdown)
+  // Sidebar tab state: "controls" vs "settings"
   const [sidebarTab, setSidebarTab] = useState<"controls" | "settings">("controls");
 
-  // Header Product Dropdown state
-  const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
-  const productDropdownRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Close product dropdown on Escape or clicking outside modal
+  // Handle Escape key to close modal
   useEffect(() => {
-    if (!isProductDropdownOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      const modal = document.getElementById("logistics-calculator-modal-card");
-      if (modal && !modal.contains(e.target as Node)) {
-        setIsProductDropdownOpen(false);
-      }
-    };
+    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setIsProductDropdownOpen(false);
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        onClose();
       }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isProductDropdownOpen]);
-
-  // Auto-focus search input when product dropdown opens
-  useEffect(() => {
-    if (isProductDropdownOpen) {
-      setTimeout(() => searchInputRef.current?.focus(), 50);
-    }
-  }, [isProductDropdownOpen]);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [isOpen, onClose]);
 
   // Custom Container Specs State (editable in Settings tab, defaults to CONTAINER_SPECS)
   const [customContainerSpecs, setCustomContainerSpecs] = useState<Record<string, ContainerTypeSpec>>(() => ({
@@ -392,15 +371,9 @@ export function ProductLogisticsModal({
     }
   };
 
-  // Master product catalog
-  const [catalogProducts, setCatalogProducts] = useState<ProductListItemDTO[]>(products);
+  // Product selection & overview
   const [selectedProductId, setSelectedProductId] = useState<string | null>(initialProductId || null);
-  const [productOverview, setProductOverview] = useState<ProductOverviewDTO | null>(null);
-
-  // Search & filter state for Products dropdown
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
-  const [selectedBrand, setSelectedBrand] = useState<string>("ALL");
+  const [productOverview, setProductOverview] = useState<ProductOverviewDTO | null>(initialProductOverview || null);
 
   // Simulation controls state
   const [selectedContainer, setSelectedContainer] = useState<"20ft" | "40ft" | "40ftHq">("20ft");
@@ -410,16 +383,18 @@ export function ProductLogisticsModal({
   const [showTiltedCartons, setShowTiltedCartons] = useState<boolean>(true);
   const [copied, setCopied] = useState(false);
 
-  const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
-
-  // Reset cartons to 0, clear price override, and product selection when modal opens
+  // Reset cartons to 0, clear price override, and sync product selection when modal opens
   const [prevIsOpen, setPrevIsOpen] = useState(isOpen);
   if (!prevIsOpen && isOpen) {
     setPrevIsOpen(true);
     setCartons(0);
     setSelectedProductId(initialProductId || null);
+    if (initialProductOverview) {
+      setProductOverview(initialProductOverview);
+    }
+    setSelectedContainer("20ft");
+    setOrientationMode("AUTO");
     setUnitPriceInput("");
-    setIsLoadingCatalog(true);
   } else if (prevIsOpen && !isOpen) {
     setPrevIsOpen(false);
   }
@@ -428,8 +403,9 @@ export function ProductLogisticsModal({
   const [prevInitialProductId, setPrevInitialProductId] = useState(initialProductId);
   if (prevInitialProductId !== initialProductId) {
     setPrevInitialProductId(initialProductId);
-    if (initialProductId) {
-      setSelectedProductId(initialProductId);
+    setSelectedProductId(initialProductId || null);
+    if (initialProductOverview) {
+      setProductOverview(initialProductOverview);
     }
   }
 
@@ -442,32 +418,10 @@ export function ProductLogisticsModal({
     }
   }
 
-  // Fetch complete product catalog for simulator so all products (199+) are available
-  useEffect(() => {
-    if (!isOpen) return;
-
-    let isMounted = true;
-
-    getProductsWithFilters({ status: "ALL", pageSize: 1000 })
-      .then((res) => {
-        if (!isMounted) return;
-        if (res?.products && res.products.length > 0) {
-          setCatalogProducts(res.products);
-        }
-      })
-      .catch((err) => console.error("Failed to load products for simulator:", err))
-      .finally(() => {
-        if (isMounted) setIsLoadingCatalog(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isOpen]);
-
-  // Load detailed ProductOverviewDTO for active product
+  // Load detailed ProductOverviewDTO for active product if not already passed
   useEffect(() => {
     if (!selectedProductId) return;
+    if (productOverview?.id === selectedProductId) return;
     let isMounted = true;
 
     getProductOverview(selectedProductId)
@@ -483,13 +437,13 @@ export function ProductLogisticsModal({
     return () => {
       isMounted = false;
     };
-  }, [selectedProductId]);
+  }, [selectedProductId, productOverview?.id]);
 
-  // Active product item from list (null if user has not selected any product yet)
+  // Active product item from list (if products prop passed)
   const activeListItem = useMemo(() => {
     if (!selectedProductId) return null;
-    return catalogProducts.find((p) => p.id === selectedProductId) || null;
-  }, [catalogProducts, selectedProductId]);
+    return products.find((p) => p.id === selectedProductId) || null;
+  }, [products, selectedProductId]);
 
   // Resolve packing specs: prioritize detailed overview, fallback to list item
   const resolvedSpecs = useMemo(() => {
@@ -644,6 +598,37 @@ export function ProductLogisticsModal({
     };
   }, [resolvedSpecs, currentContainer]);
 
+  // Best Fit Calculation: Compares Plan A vs Plan B (orthogonal + tilted gap fill) to find maximum possible cartons
+  const bestFitResult = useMemo(() => {
+    const { cartonW, cartonL, cartonH, cbmPerCtn } = resolvedSpecs;
+    const cartonObj = { w: cartonW, l: cartonL, h: cartonH, cbmPerCtn };
+
+    const planAHybrid = calculateTiltedGapOptimization(currentContainer, cartonObj, orientationAnalysis.planA);
+    const planBHybrid = calculateTiltedGapOptimization(currentContainer, cartonObj, orientationAnalysis.planB);
+
+    const totalA = planAHybrid.totalHybridCartons;
+    const totalB = planBHybrid.totalHybridCartons;
+
+    const bestIsA = totalA >= totalB;
+    const bestPlan = bestIsA ? ("A" as const) : ("B" as const);
+    const bestTotal = bestIsA ? totalA : totalB;
+    const bestHybrid = bestIsA ? planAHybrid : planBHybrid;
+
+    return {
+      bestPlan,
+      bestTotal,
+      hasTilted: bestHybrid.totalOrangeCartons > 0,
+      greenCartons: bestHybrid.greenCartons,
+      orangeCartons: bestHybrid.totalOrangeCartons,
+    };
+  }, [currentContainer, resolvedSpecs, orientationAnalysis]);
+
+  const handleCalculateBestFit = () => {
+    setOrientationMode(bestFitResult.bestPlan);
+    setShowTiltedCartons(true);
+    setCartons(bestFitResult.bestTotal);
+  };
+
   const activePlan = useMemo(() => {
     if (orientationMode === "A") return orientationAnalysis.planA;
     if (orientationMode === "B") return orientationAnalysis.planB;
@@ -770,42 +755,19 @@ export function ProductLogisticsModal({
     setTimeout(() => setCopied(false), 2500);
   };
 
-  // Categories list for filter in Products dropdown
-  const categoriesList = useMemo(() => {
-    const set = new Set<string>();
-    catalogProducts.forEach((p) => {
-      if (p.category) set.add(p.category);
-    });
-    return ["ALL", ...Array.from(set)];
-  }, [catalogProducts]);
 
-  // Brands list for filter in Products dropdown
-  const brandsList = useMemo(() => {
-    const set = new Set<string>();
-    catalogProducts.forEach((p) => {
-      if (p.brand) set.add(p.brand);
-    });
-    return ["ALL", ...Array.from(set)];
-  }, [catalogProducts]);
-
-  // Filtered products list for selector dropdown
-  const filteredProducts = useMemo(() => {
-    return catalogProducts.filter((p) => {
-      const matchCat = selectedCategory === "ALL" || p.category === selectedCategory;
-      const matchBrand = selectedBrand === "ALL" || p.brand === selectedBrand;
-      const matchQuery =
-        !searchQuery.trim() ||
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.brand?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.category?.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchCat && matchBrand && matchQuery;
-    });
-  }, [catalogProducts, selectedCategory, selectedBrand, searchQuery]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 select-none animate-in fade-in duration-200">
+    <div
+      className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 select-none animate-in fade-in duration-200"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       {/* Modal Container: Full-height sleek layout (matching Image 2 architecture) */}
       <div
         id="logistics-calculator-modal-card"
@@ -817,153 +779,7 @@ export function ProductLogisticsModal({
           {/* LEFT SIDEBAR: 2 TABS (Controls vs Product Selector) + Sticky Bottom Export */}
           {/* ========================================================================= */}
           <aside className="w-76 sm:w-84 shrink-0 bg-[#202123] border-r border-[#353638] flex flex-col h-full select-none">
-            {isProductDropdownOpen ? (
-              /* ========================================================================= */
-              /* SIDEBAR MODE: CATALOG FILTERS (When Product Selection is Active)          */
-              /* ========================================================================= */
-              <div className="flex flex-col h-full overflow-hidden">
-                <div className="p-3 border-b border-[#2C2E33] flex items-center justify-between gap-2 shrink-0 bg-[#1A1B1D]">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-6 h-6 rounded-lg bg-[#22252A] flex items-center justify-center shrink-0 border border-[#33373E]">
-                      <Filter className="w-3.5 h-3.5 text-[#C7F33C]" />
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-bold text-white truncate">Catalog Filters</span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        {filteredProducts.length} of {catalogProducts.length} items
-                      </span>
-                    </div>
-                  </div>
-                  {(selectedCategory !== "ALL" || selectedBrand !== "ALL" || searchQuery) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedCategory("ALL");
-                        setSelectedBrand("ALL");
-                        setSearchQuery("");
-                      }}
-                      className="text-[10.5px] text-[#C7F33C] hover:underline cursor-pointer flex items-center gap-1 font-medium shrink-0"
-                      title="Reset all filters"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      <span>Reset</span>
-                    </button>
-                  )}
-                </div>
 
-                {/* Filter Controls Body */}
-                <div className="flex-1 overflow-y-auto p-3.5 space-y-4 custom-scrollbar">
-                  {/* Search Bar */}
-                  <div className="space-y-1.5">
-                    <span className="text-[10.5px] font-bold uppercase tracking-wider text-slate-400 font-mono">Search</span>
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        ref={searchInputRef}
-                        type="text"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Name, brand, category..."
-                        className="w-full bg-[#141517] border border-[#2B2D31] focus:border-[#C7F33C] rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 outline-none transition-colors"
-                      />
-                      {searchQuery && (
-                        <button
-                          type="button"
-                          onClick={() => setSearchQuery("")}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer p-0.5"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Category Filter */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider text-slate-400 font-mono border-b border-[#2C2E33] pb-1">
-                      <span>Category</span>
-                      <span className="text-[9.5px] text-slate-400">{categoriesList.length - 1} types</span>
-                    </div>
-                    <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                      {categoriesList.map((cat) => {
-                        const isSelected = selectedCategory === cat;
-                        const count = cat === "ALL" 
-                          ? catalogProducts.length 
-                          : catalogProducts.filter((p) => p.category === cat).length;
-                        return (
-                          <button
-                            key={cat}
-                            type="button"
-                            onClick={() => setSelectedCategory(cat)}
-                            className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                              isSelected
-                                ? "bg-[#282B30] text-[#C7F33C] border border-[#444852]"
-                                : "text-slate-400 hover:text-white hover:bg-[#1A1B1D]"
-                            }`}
-                          >
-                            <span className="truncate">{cat}</span>
-                            <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${isSelected ? "bg-[#C7F33C]/20 text-[#C7F33C]" : "bg-white/5 text-slate-400"}`}>
-                              {count}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Brand Filter */}
-                  {brandsList.length > 2 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-[10.5px] font-bold uppercase tracking-wider text-slate-400 font-mono border-b border-[#2C2E33] pb-1">
-                        <span>Brand</span>
-                        <span className="text-[9.5px] text-slate-400">{brandsList.length - 1} brands</span>
-                      </div>
-                      <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar pr-1">
-                        {brandsList.map((b) => {
-                          const isSelected = selectedBrand === b;
-                          const count = b === "ALL" 
-                            ? catalogProducts.length 
-                            : catalogProducts.filter((p) => p.brand === b).length;
-                          return (
-                            <button
-                              key={b}
-                              type="button"
-                              onClick={() => setSelectedBrand(b)}
-                              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                                isSelected
-                                  ? "bg-[#282B30] text-[#C7F33C] border border-[#444852]"
-                                  : "text-slate-400 hover:text-white hover:bg-[#1A1B1D]"
-                              }`}
-                            >
-                              <span className="truncate">{b}</span>
-                              <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full ${isSelected ? "bg-[#C7F33C]/20 text-[#C7F33C]" : "bg-white/5 text-slate-400"}`}>
-                                {count}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Sidebar Bottom: Back to Simulator button */}
-                <div className="p-3 border-t border-[#2C2E33] bg-[#1A1B1D] shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setIsProductDropdownOpen(false)}
-                    className="w-full py-2.5 px-3 rounded-xl bg-[#25272B] hover:bg-[#2F3238] border border-[#3A3D44] text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-xs"
-                  >
-                    <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
-                    <span>Return to Simulator</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              /* ========================================================================= */
-              /* SIDEBAR MODE: CONTROLS & SETTINGS (Normal Simulation Mode)                */
-              /* ========================================================================= */
-              <>
                 {/* Sidebar Top: Tab Switcher (Controls vs Settings) */}
                 <div className="p-2.5 border-b border-[#2C2E33] flex items-center justify-between gap-2 shrink-0 bg-[#1A1B1D]">
                   <div className="flex items-center gap-1 bg-[#141517] p-1 rounded-xl border border-[#2B2D31] flex-1">
@@ -1008,39 +824,26 @@ export function ProductLogisticsModal({
                   </div>
 
                   <div className="space-y-3 text-xs">
-                    {/* Tilted Cartons (Gap Fill) Toggle (Moved from Header) */}
-                    <div className="pb-2.5 border-b border-[#242629]">
-                      <label className="flex items-center justify-between p-2 rounded-xl bg-[#18191B] hover:bg-[#202225] border border-[#2B2D31] cursor-pointer transition-colors select-none">
-                        <div className="flex items-center gap-2.5">
-                          <input
-                            type="checkbox"
-                            checked={showTiltedCartons}
-                            onChange={(e) => setShowTiltedCartons(e.target.checked)}
-                            className="sr-only"
-                          />
-                          <div
-                            className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
-                              showTiltedCartons
-                                ? "bg-amber-500 border-amber-500 text-black"
-                                : "border-[#4E4F50] bg-[#141517] text-transparent hover:border-slate-400"
-                            }`}
-                          >
-                            <Check className={`w-3 h-3 stroke-[3] transition-transform ${showTiltedCartons ? "scale-100" : "scale-0"}`} />
+                    {/* Calculate (Best Fit) Button */}
+                    <div className="pb-1">
+                      <button
+                        type="button"
+                        onClick={handleCalculateBestFit}
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-[#C7F33C] via-[#B8F024] to-[#A3E635] hover:brightness-105 active:scale-[0.99] text-black font-bold text-xs flex items-center justify-between gap-2 shadow-md shadow-[#C7F33C]/10 border border-[#C7F33C]/40 transition-all cursor-pointer group"
+                        title="จัดเรียงลังสินค้าให้ได้จำนวนมากที่สุดเต็มตู้คอนเทนเนอร์ (Best Fit Optimization)"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-5 h-5 rounded-lg bg-black/15 flex items-center justify-center">
+                            <Sparkles className="w-3.5 h-3.5 text-black" />
                           </div>
-                          <div>
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-slate-200">
-                              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
-                              <span>Show Tilted Cartons (Gap Fill)</span>
-                            </div>
-                            <div className="text-[10px] text-slate-400">Optimize empty side, door & ceiling space</div>
-                          </div>
-                        </div>
-                        {packingPlan.orangeCartons > 0 && (
-                          <span className="text-[10.5px] text-amber-400 font-mono font-bold">
-                            +{packingPlan.orangeCartons.toLocaleString()} ctns
+                          <span className="tracking-tight text-xs font-extrabold font-mono">
+                            Calculate (Best Fit)
                           </span>
-                        )}
-                      </label>
+                        </div>
+                        <span className="text-[10px] font-mono bg-black/20 px-2 py-0.5 rounded-md text-black font-bold">
+                          {selectedProductId ? `${bestFitResult.bestTotal.toLocaleString()} ctns max` : "Auto-Optimize"}
+                        </span>
+                      </button>
                     </div>
 
                     {/* Row 2: Container Type */}
@@ -1231,6 +1034,36 @@ export function ProductLogisticsModal({
                           </button>
                         )}
                       </div>
+
+                      {/* Minimal Show Tilted Cartons Toggle */}
+                      <label className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#161719] hover:bg-[#1E2023] border border-[#27292D] cursor-pointer transition-colors select-none text-[11px]">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={showTiltedCartons}
+                            onChange={(e) => setShowTiltedCartons(e.target.checked)}
+                            className="sr-only"
+                          />
+                          <div
+                            className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                              showTiltedCartons
+                                ? "bg-amber-500 border-amber-500 text-black"
+                                : "border-[#4E4F50] bg-[#141517] text-transparent hover:border-slate-400"
+                            }`}
+                          >
+                            <Check className={`w-2.5 h-2.5 stroke-[3] transition-transform ${showTiltedCartons ? "scale-100" : "scale-0"}`} />
+                          </div>
+                          <span className="text-slate-300 font-medium flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                            Show Tilted Cartons (Gap Fill)
+                          </span>
+                        </div>
+                        {packingPlan.orangeCartons > 0 && (
+                          <span className="text-[10px] text-amber-400 font-mono font-bold">
+                            +{packingPlan.orangeCartons.toLocaleString()} ctns
+                          </span>
+                        )}
+                      </label>
 
                       {/* Tier pricing if any */}
                       {resolvedSpecs.tiers.length > 0 && (
@@ -1614,58 +1447,41 @@ export function ProductLogisticsModal({
                 <span>Print</span>
               </button>
             </div>
-              </>
-            )}
           </aside>
 
           {/* ========================================================================= */}
           {/* RIGHT MAIN AREA: PRODUCT CATALOG (FULL WIDTH) OR SIMULATOR CANVASES        */}
           {/* ========================================================================= */}
           <main className="flex-1 flex flex-col bg-[#141516] min-w-0 h-full overflow-hidden">
-            {/* Top Canvas Bar: Active Product Display with Quick Dropdown Selector + Close X */}
+            {/* Top Canvas Bar: Active Product Display + Close X */}
             <header className="h-12 w-full border-b border-[#2A2B2D] bg-[#1A1B1D] px-4 flex items-center justify-between gap-3 shrink-0 relative z-30">
-              <div className="relative flex items-center w-full" ref={productDropdownRef}>
-                <button
-                  type="button"
-                  onClick={() => setIsProductDropdownOpen((prev) => !prev)}
-                  className={`group flex items-center w-full gap-2.5 sm:gap-3 px-3 py-1.5 rounded-xl border transition-all cursor-pointer text-left ${
-                    isProductDropdownOpen
-                      ? "bg-[#222428] border-[#C7F33C]/60 text-white shadow-lg"
-                      : "bg-[#141517] hover:bg-[#1E2024] border-[#2B2D31] hover:border-[#3E424A] text-slate-200"
-                  }`}
-                  title={isProductDropdownOpen ? "Close catalog view" : "Click to browse and change product"}
-                >
-                  <div className="w-6 h-6 rounded-lg bg-[#22252A] flex items-center justify-center shrink-0 border border-[#33373E] group-hover:border-[#C7F33C]/40">
-                    <Package className="w-3.5 h-3.5 text-[#C7F33C]" />
-                  </div>
+              <div className="flex items-center w-full gap-2.5 sm:gap-3 px-3 py-1.5 rounded-xl bg-[#141517] border border-[#2B2D31] text-slate-200">
+                <div className="w-6 h-6 rounded-lg bg-[#22252A] flex items-center justify-center shrink-0 border border-[#33373E]">
+                  <Package className="w-3.5 h-3.5 text-[#C7F33C]" />
+                </div>
 
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs sm:text-sm font-bold text-slate-100 group-hover:text-white truncate max-w-[150px] sm:max-w-xs md:max-w-sm">
-                      {activeListItem?.name || productOverview?.name || "เลือกสินค้าเพื่อจำลองการบรรจุ (Select a Product...)"}
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs sm:text-sm font-bold text-slate-100 truncate max-w-[200px] sm:max-w-md md:max-w-lg">
+                    {productOverview?.name || activeListItem?.name || "Product Loading Simulation"}
+                  </span>
+                  {(productOverview?.brand || productOverview?.category || activeListItem?.brand || activeListItem?.category) ? (
+                    <span className="hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded-md bg-[#25282D] text-slate-400 font-medium">
+                      {productOverview?.brand || activeListItem?.brand || productOverview?.category || activeListItem?.category}
                     </span>
-                    {(activeListItem?.brand || activeListItem?.category) ? (
-                      <span className="hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded-md bg-[#25282D] text-slate-400 font-medium">
-                        {activeListItem?.brand || activeListItem?.category}
-                      </span>
-                    ) : !activeListItem ? (
-                      <span className="hidden sm:inline-block text-[10px] px-1.5 py-0.5 rounded-md bg-[#C7F33C]/10 text-[#C7F33C] font-medium border border-[#C7F33C]/30">
-                        ตู้ว่าง / ยังไม่เลือกสินค้า
-                      </span>
-                    ) : null}
-                  </div>
+                  ) : null}
+                </div>
 
-                  {activeListItem ? (
-                    <div className="hidden lg:flex items-center gap-1.5 text-[11px] font-mono text-slate-400 bg-[#0E0F11] px-2 py-0.5 rounded-lg border border-[#222428]">
-                      <span>{resolvedSpecs.cartonW}×{resolvedSpecs.cartonL}×{resolvedSpecs.cartonH} cm</span>
+                <div className="hidden lg:flex items-center gap-1.5 text-[11px] font-mono text-slate-400 bg-[#0E0F11] px-2 py-0.5 rounded-lg border border-[#222428] ml-auto">
+                  <span>{resolvedSpecs.cartonW}×{resolvedSpecs.cartonL}×{resolvedSpecs.cartonH} cm</span>
+                  <span className="text-slate-600">·</span>
+                  <span>{resolvedSpecs.cartonGw} kg</span>
+                  {resolvedSpecs.cartonQty > 1 && (
+                    <>
                       <span className="text-slate-600">·</span>
-                      <span>{resolvedSpecs.cartonGw} kg</span>
-                    </div>
-                  ) : (
-                    <div className="hidden lg:flex items-center gap-1.5 text-[11px] font-mono text-slate-400 bg-[#0E0F11] px-2 py-0.5 rounded-lg border border-[#222428]">
-                      <span className="text-slate-400">Carton: 0 ctns (ตู้โล่ง)</span>
-                    </div>
+                      <span>{resolvedSpecs.cartonQty} pcs/ctn</span>
+                    </>
                   )}
-                </button>
+                </div>
               </div>
 
               {/* Close Button */}
@@ -1679,190 +1495,8 @@ export function ProductLogisticsModal({
               </button>
             </header>
 
-            {isProductDropdownOpen ? (
-              /* ========================================================================= */
-              /* FULL-WIDTH PRODUCT CATALOG VIEW (ความกว้างเต็มพื้นที่ สุด modal)                 */
-              /* ========================================================================= */
-              <div className="flex-1 flex flex-col min-h-0 bg-[#121315] overflow-hidden">
-                {/* Catalog View Subheader */}
-                <div className="px-5 py-3 border-b border-[#24262A] bg-[#202123] flex items-center justify-between gap-3 shrink-0">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-lg bg-[#C7F33C]/10 border border-[#C7F33C]/30 flex items-center justify-center text-[#C7F33C]">
-                      <Boxes className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h2 className="text-sm font-bold text-white">Product Catalog for Container Simulation</h2>
-                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#24272D] text-[#C7F33C] font-mono font-bold border border-[#343842]">
-                          {filteredProducts.length} items
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-400">
-                        Select a product below to simulate container packaging, load capacities, and 3D/2D CAD blueprints.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    {(selectedCategory !== "ALL" || selectedBrand !== "ALL" || searchQuery) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCategory("ALL");
-                          setSelectedBrand("ALL");
-                          setSearchQuery("");
-                        }}
-                        className="text-xs text-[#C7F33C] hover:underline cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#202327] border border-[#31353D]"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Reset Filters</span>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setIsProductDropdownOpen(false)}
-                      className="px-3 py-1.5 rounded-xl bg-[#26282D] hover:bg-[#30333A] text-slate-200 hover:text-white text-xs font-semibold border border-[#393D45] transition-colors cursor-pointer flex items-center gap-1.5"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Back to Simulator</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Catalog Grid Area */}
-                <div className="flex-1 p-5 overflow-y-auto custom-scrollbar bg-[#202123]">
-                  {isLoadingCatalog && catalogProducts.length === 0 ? (
-                    <div className="py-20 text-center flex flex-col items-center justify-center gap-3">
-                      <div className="w-10 h-10 border-2 border-[#C7F33C] border-t-transparent rounded-full animate-spin" />
-                      <div className="text-xs text-slate-400">Loading complete product catalog...</div>
-                    </div>
-                  ) : filteredProducts.length === 0 ? (
-                    <div className="py-20 text-center flex flex-col items-center justify-center gap-3">
-                      <div className="w-14 h-14 rounded-2xl bg-[#1D1F23] border border-[#2D3037] flex items-center justify-center text-slate-500">
-                        <Package className="w-7 h-7 stroke-[1.5]" />
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-sm font-semibold text-slate-300">No products match the selected criteria</div>
-                        <div className="text-xs text-slate-500 max-w-sm">
-                          Try adjusting your search query or selecting a different category or brand filter on the sidebar.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedCategory("ALL");
-                          setSelectedBrand("ALL");
-                          setSearchQuery("");
-                        }}
-                        className="mt-2 px-3.5 py-2 rounded-xl bg-[#26282D] hover:bg-[#32363E] border border-[#3C404B] text-[#C7F33C] text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        <span>Clear All Filters</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {/* Table Column Headers (Visible on md+ screens) */}
-                      <div className="hidden md:flex items-center justify-between px-4 py-2 text-[10px] uppercase font-mono font-bold text-slate-400 border-b border-[#222428] gap-4">
-                        <div className="flex-1 min-w-0">Product Info</div>
-                        <div className="w-40 text-left shrink-0">Carton Dimensions (W×L×H)</div>
-                        <div className="w-24 text-right shrink-0">Gross Weight</div>
-                        <div className="w-24 text-right shrink-0">Packaging</div>
-                      </div>
-
-                      {/* Product Rows List */}
-                      {filteredProducts.map((p) => {
-                        const isSelected = p.id === selectedProductId;
-                        const dim = p.cartonDimension || "30×40×12.3 cm";
-                        const gw = p.cartonGrossWeight ? `${p.cartonGrossWeight} kg` : "—";
-                        const qty = p.cartonQuantity ? `${p.cartonQuantity} pcs/ctn` : "—";
-
-                        return (
-                          <div
-                            key={p.id}
-                            onClick={() => {
-                              setSelectedProductId(p.id);
-                              setIsProductDropdownOpen(false);
-                            }}
-                            className={`group w-full px-3.5 py-2.5 rounded-xl border-none transition-all duration-150 cursor-pointer flex flex-col md:flex-row md:items-center justify-between gap-2.5 md:gap-4 text-left ${
-                              isSelected
-                                ? "bg-[#25282D] text-white"
-                                : "bg-[#202123] hover:bg-[#1C1E22]"
-                            }`}
-                          >
-                            {/* Product Info (Icon + Full Name + Brand/Category Badges) */}
-                            <div className="flex items-center gap-3 flex-1 min-w-0 pr-3">
-                              <div
-                                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border transition-colors ${
-                                  isSelected
-                                    ? "bg-[#C7F33C]/20 border-[#C7F33C]/50 text-[#C7F33C]"
-                                    : "bg-[#202226] border-[#2B2E34] text-slate-400 group-hover:text-slate-200 group-hover:border-[#3A3E47]"
-                                }`}
-                              >
-                                {isSelected ? (
-                                  <Check className="w-4 h-4 text-[#C7F33C] stroke-[2.5]" />
-                                ) : (
-                                  <Package className="w-4 h-4" />
-                                )}
-                              </div>
-                              <div className="flex flex-col min-w-0 flex-1">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span
-                                    className={`text-xs font-bold transition-colors ${
-                                      isSelected ? "text-[#C7F33C]" : "text-slate-100 group-hover:text-white"
-                                    }`}
-                                    title={p.name}
-                                  >
-                                    {p.name}
-                                  </span>
-                                  {isSelected && (
-                                    <span className="text-[9.5px] px-1.5 py-0.2 rounded-full bg-[#C7F33C]/15 border border-[#C7F33C]/40 text-[#C7F33C] font-semibold shrink-0">
-                                      Active
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  {p.brand && (
-                                    <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-[#202226] text-slate-300 border border-[#2B2D33] font-medium">
-                                      {p.brand}
-                                    </span>
-                                  )}
-                                  {p.category && (
-                                    <span className="text-[9.5px] text-slate-400">
-                                      {p.category}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Mobile Specs Summary (shown only on small screens) */}
-                            <div className="md:hidden flex items-center justify-between text-[11px] font-mono text-slate-400 bg-[#111214] px-2.5 py-1.5 rounded-lg border border-[#222428]">
-                              <span className="text-slate-200 font-bold">{dim}</span>
-                              <span>· {gw}</span>
-                              <span>· {qty}</span>
-                            </div>
-
-                            {/* Desktop Columns: Dimensions, Gross Wt, Packaging */}
-                            <div className="hidden md:block w-40 text-left shrink-0 font-mono text-xs text-slate-200 font-medium">
-                              {dim}
-                            </div>
-                            <div className="hidden md:block w-24 text-right shrink-0 font-mono text-xs text-slate-300">
-                              {gw}
-                            </div>
-                            <div className="hidden md:block w-24 text-right shrink-0 font-mono text-xs text-slate-300">
-                              {qty}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              /* Canvas Body: All 4 Views Sequentially Displayed on the Same Page */
-              <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-8 bg-[#202123] custom-scrollbar">
+            {/* Canvas Body: All 4 Views Sequentially Displayed on the Same Page */}
+            <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-8 bg-[#202123] custom-scrollbar">
               {/* ============================================================== */}
               {/* 01 · 3D ISOMETRIC SIMULATION                                   */}
               {/* ============================================================== */}
@@ -3722,6 +3356,7 @@ export function ProductLogisticsModal({
                       const contW = currentContainer.widthCm;
                       const scale = 0.56; // 0.56 px/cm matches Side View exactly
 
+                      const shiftX = (selectedContainer === "20ft" || contL < 1000) ? Math.round((maxContL - contL) * scale / 2) : 0;
                       const originX = 195; // Container front bulkhead
                       const contL_px = contL * scale;
                       const contW_px = contW * scale; // 131.7 px
@@ -3741,7 +3376,7 @@ export function ProductLogisticsModal({
                       const remCartons = cartons % packingPlan.cartonsPerRow;
 
                       return (
-                        <g>
+                        <g transform={shiftX > 0 ? `translate(${shiftX}, 0)` : undefined}>
                           {/* =================================================== */}
                           {/* 1. TRACTOR CAB (BIRD'S EYE TOP-DOWN SILHOUETTE)     */}
                           {/* =================================================== */}
@@ -4282,6 +3917,7 @@ export function ProductLogisticsModal({
                       const contH = currentContainer.heightCm;
                       const scale = 0.56; // 0.56 px/cm ensures 40ft (674px) + tractor cab (130px) fits in 960px canvas
 
+                      const shiftX = (selectedContainer === "20ft" || contL < 1000) ? Math.round((maxContL - contL) * scale / 2) : 0;
                       const originX = 195; // Container front bulkhead
                       const contL_px = contL * scale; // 673.8 px (40ft) or 330.3 px (20ft)
                       const contH_px = contH * scale; // 134.0 px (GP) or 151.1 px (HQ)
@@ -4312,9 +3948,11 @@ export function ProductLogisticsModal({
                             ROAD SURFACE ▼
                           </text>
 
-                          {/* =================================================== */}
-                          {/* 2. TRACTOR CAB - LEFT OF CONTAINER                  */}
-                          {/* =================================================== */}
+                          {/* Vehicle, Container, Cargo & Dimensions */}
+                          <g transform={shiftX > 0 ? `translate(${shiftX}, 0)` : undefined}>
+                            {/* =================================================== */}
+                            {/* 2. TRACTOR CAB - LEFT OF CONTAINER                  */}
+                            {/* =================================================== */}
                           <g id="tractor-cab-side">
                             {/* Aerodynamic Roof Deflector & Cab Shell */}
                             <path
@@ -4936,14 +4574,14 @@ export function ProductLogisticsModal({
                             </text>
                           </g>
                         </g>
-                      );
+                      </g>
+                    );
                     })()}
 
                   </svg>
                 </div>
               </div>
             </div>
-          )}
         </main>
         </div>
       </div>

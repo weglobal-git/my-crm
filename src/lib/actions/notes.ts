@@ -1,7 +1,24 @@
 "use server";
 
+import { after } from "next/server";
 import prisma from "@/lib/prisma";
 import { notifyPrivatePipelineUpdate, requireOpportunityAccess } from "@/lib/pipeline-security";
+
+function runBackgroundJob(task: () => Promise<unknown>) {
+  try {
+    after(async () => {
+      try {
+        await task();
+      } catch (err) {
+        console.error("[NotesBackgroundJob] Error:", err);
+      }
+    });
+  } catch {
+    void task().catch((err) => {
+      console.error("[NotesBackgroundJob] Fallback error:", err);
+    });
+  }
+}
 
 export async function getNotes(opportunityId: string) {
   try {
@@ -46,7 +63,9 @@ export async function createNote(opportunityId: string, content: string, color?:
       },
     });
 
-    await notifyPrivatePipelineUpdate(opportunityId, { action: 'NOTE_ADDED', dealId: opportunityId, note });
+    runBackgroundJob(() =>
+      notifyPrivatePipelineUpdate(opportunityId, { action: 'NOTE_ADDED', dealId: opportunityId, note })
+    );
 
     return note;
   } catch (error) {
@@ -57,7 +76,10 @@ export async function createNote(opportunityId: string, content: string, color?:
 
 export async function deleteNote(noteId: string) {
   try {
-    const note = await prisma.note.findUnique({ where: { id: noteId } });
+    const note = await prisma.note.findUnique({
+      where: { id: noteId },
+      select: { id: true, opportunityId: true, authorId: true },
+    });
     if (!note) throw new Error("Note not found");
     const { actor } = await requireOpportunityAccess(note.opportunityId, { capability: 'deal:interact' });
 
@@ -66,7 +88,9 @@ export async function deleteNote(noteId: string) {
     }
 
     await prisma.note.delete({ where: { id: noteId } });
-    await notifyPrivatePipelineUpdate(note.opportunityId, { action: 'NOTE_DELETED', dealId: note.opportunityId, noteId });
+    runBackgroundJob(() =>
+      notifyPrivatePipelineUpdate(note.opportunityId, { action: 'NOTE_DELETED', dealId: note.opportunityId, noteId })
+    );
     
     return true;
   } catch (error) {
@@ -77,7 +101,10 @@ export async function deleteNote(noteId: string) {
 
 export async function togglePinNote(noteId: string, isPinned: boolean) {
   try {
-    const existingNote = await prisma.note.findUnique({ where: { id: noteId } });
+    const existingNote = await prisma.note.findUnique({
+      where: { id: noteId },
+      select: { id: true, opportunityId: true },
+    });
     if (!existingNote) throw new Error("Note not found");
     await requireOpportunityAccess(existingNote.opportunityId, { capability: 'deal:interact' });
 
@@ -87,7 +114,9 @@ export async function togglePinNote(noteId: string, isPinned: boolean) {
       include: { author: { select: { name: true, image: true, email: true } } },
     });
     
-    await notifyPrivatePipelineUpdate(existingNote.opportunityId, { action: 'NOTE_UPDATED', dealId: existingNote.opportunityId, noteId, note });
+    runBackgroundJob(() =>
+      notifyPrivatePipelineUpdate(existingNote.opportunityId, { action: 'NOTE_UPDATED', dealId: existingNote.opportunityId, noteId, note })
+    );
     
     return note;
   } catch (error) {
@@ -98,7 +127,10 @@ export async function togglePinNote(noteId: string, isPinned: boolean) {
 
 export async function toggleCompleteNote(noteId: string, isCompleted: boolean) {
   try {
-    const existingNote = await prisma.note.findUnique({ where: { id: noteId } });
+    const existingNote = await prisma.note.findUnique({
+      where: { id: noteId },
+      select: { id: true, opportunityId: true },
+    });
     if (!existingNote) throw new Error("Note not found");
     await requireOpportunityAccess(existingNote.opportunityId, { capability: 'deal:interact' });
 
@@ -108,7 +140,9 @@ export async function toggleCompleteNote(noteId: string, isCompleted: boolean) {
       include: { author: { select: { name: true, image: true, email: true } } },
     });
 
-    await notifyPrivatePipelineUpdate(existingNote.opportunityId, { action: 'NOTE_UPDATED', dealId: existingNote.opportunityId, noteId, note });
+    runBackgroundJob(() =>
+      notifyPrivatePipelineUpdate(existingNote.opportunityId, { action: 'NOTE_UPDATED', dealId: existingNote.opportunityId, noteId, note })
+    );
 
     return note;
   } catch (error) {

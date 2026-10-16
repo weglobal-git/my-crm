@@ -94,3 +94,94 @@ export function canCloseDealAsWon(params: {
   return true;
 }
 
+export interface PendingTodoSummaryItem {
+  id: string;
+  content: string;
+  isPinned: boolean;
+  isCompleted?: boolean;
+}
+
+export function isPendingTodosKey(key: unknown): boolean {
+  return Array.isArray(key) && key[0] === 'pipeline-pending-todos';
+}
+
+export function syncDealNotesToPendingTodosMap<T extends PendingTodoSummaryItem>(
+  prevMap: Record<string, PendingTodoSummaryItem[]> | undefined,
+  dealId: string,
+  notes: T[]
+): Record<string, PendingTodoSummaryItem[]> {
+  const nextMap = { ...(prevMap || {}) };
+  const incompleteItems = notes
+    .filter((n) => !n.isCompleted)
+    .sort((a, b) => Number(b.isPinned) - Number(a.isPinned))
+    .map((n) => ({
+      id: n.id,
+      content: n.content,
+      isPinned: !!n.isPinned,
+      isCompleted: false,
+    }));
+  if (incompleteItems.length > 0) {
+    nextMap[dealId] = incompleteItems;
+  } else {
+    delete nextMap[dealId];
+  }
+  return nextMap;
+}
+
+export function applyNoteEventToPendingTodosMap(
+  prevMap: Record<string, PendingTodoSummaryItem[]> | undefined,
+  event: {
+    action?: string;
+    dealId?: string;
+    noteId?: string;
+    note?: {
+      id: string;
+      content: string;
+      isPinned: boolean;
+      isCompleted?: boolean;
+    };
+  }
+): Record<string, PendingTodoSummaryItem[]> {
+  if (!event.dealId) return prevMap || {};
+  const dealId = event.dealId;
+  const nextMap = { ...(prevMap || {}) };
+  const currentList = [...(nextMap[dealId] || [])];
+
+  if (event.action === 'NOTE_DELETED' && event.noteId) {
+    const filtered = currentList.filter((item) => item.id !== event.noteId);
+    if (filtered.length > 0) {
+      nextMap[dealId] = filtered;
+    } else {
+      delete nextMap[dealId];
+    }
+    return nextMap;
+  }
+
+  if (event.note) {
+    const note = event.note;
+    const withoutTarget = currentList.filter((item) => item.id !== note.id);
+    if (note.isCompleted) {
+      if (withoutTarget.length > 0) {
+        nextMap[dealId] = withoutTarget;
+      } else {
+        delete nextMap[dealId];
+      }
+      return nextMap;
+    }
+
+    const updatedItem: PendingTodoSummaryItem = {
+      id: note.id,
+      content: note.content,
+      isPinned: !!note.isPinned,
+      isCompleted: false,
+    };
+    const merged = [updatedItem, ...withoutTarget].sort(
+      (a, b) => Number(b.isPinned) - Number(a.isPinned)
+    );
+    nextMap[dealId] = merged;
+  }
+
+  return nextMap;
+}
+
+

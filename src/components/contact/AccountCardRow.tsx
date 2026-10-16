@@ -76,7 +76,7 @@ export const AccountCardRow = memo(function AccountCardRow({
         <div className="min-w-0 pr-2 flex flex-col justify-center">
           <div className="flex items-center gap-1.5 min-w-0">
             <h4
-              className="font-semibold text-[13px] leading-tight truncate text-white"
+              className="font-semibold text-[13px] leading-tight truncate text-slate-100"
               title={displayName}
             >
               {displayName}

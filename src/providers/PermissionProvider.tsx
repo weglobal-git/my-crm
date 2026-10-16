@@ -63,6 +63,37 @@ function saveStoredPermissions(userId: string, menus: MenuDefinition[], keys: st
   }
 }
 
+function normalizeMenusWithRegistry(menus: MenuDefinition[]): MenuDefinition[] {
+  const byKey = new Map<string, MenuDefinition>();
+  for (const m of menus) {
+    const reg = MENU_REGISTRY.find((r) => r.key === m.key);
+    byKey.set(m.key, {
+      ...m,
+      href: m.href || reg?.href,
+      iconName: m.iconName || reg?.iconName,
+      parentKey: m.parentKey || reg?.parentKey,
+    });
+  }
+  for (const reg of MENU_REGISTRY) {
+    if (!byKey.has(reg.key)) {
+      byKey.set(reg.key, reg);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function expandSaleDealVisibleKeys(keys: Iterable<string>, menus: MenuDefinition[]): Set<string> {
+  const set = new Set<string>(keys);
+  if (set.has("pipeline.information")) {
+    set.add("product");
+    const productMenu = menus.find((m) => m.key === "product") || MENU_REGISTRY.find((m) => m.key === "product");
+    if (productMenu?.parentKey) {
+      set.add(productMenu.parentKey);
+    }
+  }
+  return set;
+}
+
 export function PermissionProvider({ 
   children,
   initialVisibleKeys = [],
@@ -73,15 +104,15 @@ export function PermissionProvider({
   initialDbMenus?: MenuDefinition[];
 }) {
   const { data: session, status } = useSession();
-  const userId = session?.user?.id;
   const isAdmin = session?.user?.role === "ADMIN";
 
-  const [dbMenus, setDbMenus] = useState<MenuDefinition[]>(initialDbMenus);
+  const [dbMenus, setDbMenus] = useState<MenuDefinition[]>(() => normalizeMenusWithRegistry(initialDbMenus));
 
   // Initialize from server-passed keys to guarantee 100% hydration match between SSR and client
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(() => {
-    if (initialVisibleKeys.length > 0) return new Set(initialVisibleKeys);
-    if (isAdmin) return new Set(MENU_REGISTRY.map((m) => m.key));
+    const normalizedMenus = normalizeMenusWithRegistry(initialDbMenus);
+    if (initialVisibleKeys.length > 0) return expandSaleDealVisibleKeys(initialVisibleKeys, normalizedMenus);
+    if (isAdmin) return new Set(normalizedMenus.map((m) => m.key));
     return new Set<string>();
   });
 
@@ -106,22 +137,25 @@ export function PermissionProvider({
       ])
         .then(([menus, keys]) => {
           if (cancelled) return;
-          const mappedMenus: MenuDefinition[] = menus.map((m: { key: string; label: string; level: number; parentKey: string | null; icon: string | null; href: string | null; sortOrder: number }) => ({
-            key: m.key,
-            label: m.label,
-            level: m.level as 1 | 2 | 3,
-            parentKey: m.parentKey || undefined,
-            iconName: m.icon || undefined,
-            href: m.href || undefined,
-            sortOrder: m.sortOrder,
-          }));
+          const mappedMenus: MenuDefinition[] = normalizeMenusWithRegistry(
+            menus.map((m: { key: string; label: string; level: number; parentKey: string | null; icon: string | null; href: string | null; sortOrder: number }) => ({
+              key: m.key,
+              label: m.label,
+              level: m.level as 1 | 2 | 3,
+              parentKey: m.parentKey || undefined,
+              iconName: m.icon || undefined,
+              href: m.href || undefined,
+              sortOrder: m.sortOrder,
+            }))
+          );
 
-          const resolvedKeys = isAdmin
-            ? mappedMenus.map((m) => m.key)
-            : keys || [];
+          const expandedSet = isAdmin
+            ? new Set(mappedMenus.map((m) => m.key))
+            : expandSaleDealVisibleKeys(keys || [], mappedMenus);
+          const resolvedKeys = Array.from(expandedSet);
 
           setDbMenus(mappedMenus);
-          setVisibleKeys(new Set(resolvedKeys));
+          setVisibleKeys(expandedSet);
           setIsLoading(false);
           saveStoredPermissions(currentUserId, mappedMenus, resolvedKeys);
         })
@@ -140,7 +174,12 @@ export function PermissionProvider({
     }
   }, [session, status, isAdmin]);
 
-  const canSee = useCallback((menuKey: string) => visibleKeys.has(menuKey), [visibleKeys]);
+  const canSee = useCallback(
+    (menuKey: string) =>
+      visibleKeys.has(menuKey) ||
+      (menuKey === "product" && visibleKeys.has("pipeline.information")),
+    [visibleKeys]
+  );
 
   const visibleMainMenus = useMemo(() => {
     return dbMenus

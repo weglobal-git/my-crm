@@ -22,7 +22,7 @@ export default async function ProductPage() {
 
   if (role !== "ADMIN") {
     const visibleKeys = await getUserVisibleMenuKeys(userId);
-    if (!visibleKeys.includes("product")) {
+    if (!visibleKeys.includes("product") && !visibleKeys.includes("pipeline.information")) {
       redirect("/");
     }
   }

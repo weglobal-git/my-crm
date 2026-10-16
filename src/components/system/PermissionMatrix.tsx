@@ -17,6 +17,12 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
   const [menuList, setMenuList] = useState<MenuItem[]>(menus);
   const [localPermissions, setLocalPermissions] = useState<Record<string, Record<string, boolean>>>(() => {
     const map: Record<string, Record<string, boolean>> = {};
+    const saleDealMenu = menus.find(m => m.key === "pipeline.information");
+    const productMenu = menus.find(m => m.key === "product");
+    const productParentMenu = productMenu?.parentKey
+      ? menus.find(m => m.key === productMenu.parentKey)
+      : undefined;
+
     initialDepartments.forEach(dept => {
       map[dept.id] = {};
       dept.permissions.forEach((p) => {
@@ -33,6 +39,14 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
           }
         }
       });
+
+      // If department has Sale Deal (pipeline.information) enabled, ensure Product is also enabled
+      if (saleDealMenu && productMenu && map[dept.id][saleDealMenu.id]) {
+        map[dept.id][productMenu.id] = true;
+        if (productParentMenu) {
+          map[dept.id][productParentMenu.id] = true;
+        }
+      }
     });
     return map;
   });
@@ -90,6 +104,16 @@ export function PermissionMatrix({ initialDepartments, menus }: PermissionMatrix
           children.forEach(child => {
             next[deptId][child.id] = true;
           });
+        }
+        if (menu.key === "pipeline.information") {
+          const productMenu = menus.find(m => m.key === "product");
+          if (productMenu) {
+            next[deptId][productMenu.id] = true;
+            if (productMenu.parentKey) {
+              const productParent = menus.find(m => m.key === productMenu.parentKey);
+              if (productParent) next[deptId][productParent.id] = true;
+            }
+          }
         }
       } else {
         if (menu.level === 2) {

@@ -20,6 +20,7 @@ import {
   requirePipelineActor,
   requireCapability,
   invalidateOpportunityReadAccess,
+  invalidatePipelineRecipientCache,
 } from "@/lib/pipeline-security";
 import {
   getPipelineOpportunitiesForActor,
@@ -216,16 +217,19 @@ export async function moveOpportunity(
 
   const isClosing = newStatus === "WON" || newStatus === "LOST";
 
-  // If validation passes, perform the update
-  const result = await prisma.opportunity.update({
+  // Perform the update and select pipelineOpportunitySelect directly in 1 DB trip
+  const fullDeal = await prisma.opportunity.update({
     where: { id: opportunityId },
     data: {
       pipelineStageId: newStageId,
       status: newStatus,
       closedAt: isClosing ? new Date() : null,
       ...(effectiveLossReason ? { lossReason: effectiveLossReason } : {}),
-    }
+    },
+    select: pipelineOpportunitySelect,
   });
+
+  invalidateOpportunityReadAccess(opportunityId);
 
   // Record a system audit log if status changed
   if (newStatus !== opportunity.status) {
@@ -286,27 +290,26 @@ export async function moveOpportunity(
     }
   }
 
-  const fullDeal = await prisma.opportunity.findUnique({
-    where: { id: opportunityId },
-    select: pipelineOpportunitySelect
+  runBackgroundJob(async () => {
+    await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+    if (opportunity.type === 'SALES_DEAL' || fullDeal?.type === 'SALES_DEAL') {
+      const years = [
+        opportunity.goodsLoadingDate ? new Date(opportunity.goodsLoadingDate).getFullYear() : undefined,
+        fullDeal?.goodsLoadingDate ? new Date(fullDeal.goodsLoadingDate).getFullYear() : undefined,
+      ].filter((y): y is number => typeof y === 'number');
+      void dispatchDashboardInvalidation({
+        resources: ['summary', 'tracking', 'annual', 'map-summary', 'leaderboard'],
+        affectedYears: years.length > 0 ? [...new Set(years)] : undefined,
+        companyIds: [opportunity.companyId, fullDeal?.company?.id].filter((id): id is string => Boolean(id)),
+      });
+    } else {
+      void dispatchDashboardInvalidation({
+        resources: ['leaderboard'],
+      });
+    }
   });
-  await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
-  if (opportunity.type === 'SALES_DEAL' || fullDeal?.type === 'SALES_DEAL') {
-    const years = [
-      opportunity.goodsLoadingDate ? new Date(opportunity.goodsLoadingDate).getFullYear() : undefined,
-      fullDeal?.goodsLoadingDate ? new Date(fullDeal.goodsLoadingDate).getFullYear() : undefined,
-    ].filter((y): y is number => typeof y === 'number');
-    void dispatchDashboardInvalidation({
-      resources: ['summary', 'tracking', 'annual', 'map-summary', 'leaderboard'],
-      affectedYears: years.length > 0 ? [...new Set(years)] : undefined,
-      companyIds: [opportunity.companyId, fullDeal?.company?.id].filter((id): id is string => Boolean(id)),
-    });
-  } else {
-    void dispatchDashboardInvalidation({
-      resources: ['leaderboard'],
-    });
-  }
-  return result;
+
+  return fullDeal;
 }
 
 type SafeOpportunityUpdate = {
@@ -343,27 +346,30 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
   if (data.value !== undefined && data.value !== null && (!Number.isFinite(data.value) || data.value < 0)) {
     throw new Error('Invalid value');
   }
-  const { updated, createdLogs } = await withSerializableRetry(() => prisma.$transaction(async (tx) => {
-    const current = await tx.opportunity.findUnique({
-      where: { id },
-      select: { topic: true, type: true }
-    });
 
-    if (!current) throw new Error('Opportunity not found');
+  const requiresSerializableAudit = data.topic !== undefined || data.type !== undefined;
+
+  const executeTx = (tx: Prisma.TransactionClient) => (async () => {
+    const current = requiresSerializableAudit
+      ? await tx.opportunity.findUnique({
+          where: { id },
+          select: { topic: true, type: true }
+        })
+      : null;
+
+    if (requiresSerializableAudit && !current) throw new Error('Opportunity not found');
 
     if (data.type === 'INTERNAL_TASK') {
-      if (current.type === 'SALES_DEAL' && actor?.role !== 'ADMIN') {
+      if (current?.type === 'SALES_DEAL' && actor?.role !== 'ADMIN') {
         throw new Error('Only System Admin can downgrade a Sales Deal to an Internal Task.');
       }
     }
 
-    // Under serializable isolation, a concurrent writer aborts this attempt.
-    // The retry then derives the audit message from the newly committed value.
     const auditLogs: string[] = [];
-    if (data.topic !== undefined && current.topic && data.topic.trim() !== current.topic) {
+    if (data.topic !== undefined && current?.topic && data.topic.trim() !== current.topic) {
       auditLogs.push(`Changed topic from "${current.topic}" to "${data.topic.trim()}".`);
     }
-    if (data.type !== undefined && current.type && data.type !== current.type) {
+    if (data.type !== undefined && current?.type && data.type !== current.type) {
       if (data.type === 'SALES_DEAL') {
         auditLogs.push('Converted opportunity type from Internal Task to Sales Deal.');
       } else if (data.type === 'INTERNAL_TASK') {
@@ -371,16 +377,23 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
       }
     }
 
-    let updatedRecord;
+    let fullDeal;
     if (expectedRevision === undefined) {
-      updatedRecord = await tx.opportunity.update({ where: { id }, data });
+      fullDeal = await tx.opportunity.update({
+        where: { id },
+        data,
+        select: pipelineOpportunitySelect,
+      });
     } else {
       const changed = await tx.opportunity.updateMany({
         where: { id, updatedAt: new Date(expectedRevision) },
         data,
       });
       if (changed.count !== 1) throw new Error('CONFLICT');
-      updatedRecord = await tx.opportunity.findUniqueOrThrow({ where: { id } });
+      fullDeal = await tx.opportunity.findUniqueOrThrow({
+        where: { id },
+        select: pipelineOpportunitySelect,
+      });
     }
 
     const createdRecords = [];
@@ -400,47 +413,63 @@ export async function updateOpportunity(id: string, data: SafeOpportunityUpdate,
       createdRecords.push(created);
     }
 
-    return { updated: updatedRecord, createdLogs: createdRecords };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+    return { fullDeal, createdLogs: createdRecords };
+  })();
+
+  const { fullDeal, createdLogs } = requiresSerializableAudit
+    ? await withSerializableRetry(() =>
+        prisma.$transaction(executeTx, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        })
+      )
+    : await prisma.$transaction(executeTx);
 
   invalidateOpportunityReadAccess(id);
 
-  if (createdLogs.length > 0) {
-    for (const logRecord of createdLogs) {
-      void notifyPrivatePipelineUpdate(id, {
-        action: 'ACTIVITY_ADDED',
-        dealId: id,
-        activityLog: logRecord,
-      }).catch(() => {});
-    }
-  }
-  const fullDeal = await prisma.opportunity.findUnique({
-    where: { id },
-    select: pipelineOpportunitySelect
-  });
   const revision = fullDeal?.updatedAt ? new Date(fullDeal.updatedAt).getTime() : Date.now();
-  await notifyPrivatePipelineUpdate(id, {
-    action: 'OPPORTUNITY_UPDATED',
-    deal: fullDeal,
-    dealId: id,
-    revision,
-    mutationId,
+  const affectsDashboardMetrics =
+    data.value !== undefined ||
+    data.currency !== undefined ||
+    data.goodsLoadingDate !== undefined ||
+    data.goodsReadyDate !== undefined ||
+    data.type !== undefined;
+
+  runBackgroundJob(async () => {
+    if (createdLogs.length > 0) {
+      for (const logRecord of createdLogs) {
+        void notifyPrivatePipelineUpdate(id, {
+          action: 'ACTIVITY_ADDED',
+          dealId: id,
+          activityLog: logRecord,
+        }).catch(() => {});
+      }
+    }
+    await notifyPrivatePipelineUpdate(id, {
+      action: 'OPPORTUNITY_UPDATED',
+      deal: fullDeal,
+      dealId: id,
+      revision,
+      mutationId,
+    });
+    if (affectsDashboardMetrics) {
+      if (fullDeal?.type === 'SALES_DEAL') {
+        const goodsLoadingDate = fullDeal?.goodsLoadingDate;
+        void dispatchDashboardInvalidation({
+          resources: ['summary', 'tracking', 'annual', 'map-summary', 'leaderboard'],
+          mutationId,
+          affectedYears: goodsLoadingDate ? [new Date(goodsLoadingDate).getFullYear()] : undefined,
+          companyIds: fullDeal?.company?.id ? [fullDeal.company.id] : undefined,
+        });
+      } else {
+        void dispatchDashboardInvalidation({
+          resources: ['leaderboard'],
+          mutationId,
+        });
+      }
+    }
   });
-  if (fullDeal?.type === 'SALES_DEAL' || updated.type === 'SALES_DEAL') {
-    const goodsLoadingDate = fullDeal?.goodsLoadingDate || updated.goodsLoadingDate;
-    void dispatchDashboardInvalidation({
-      resources: ['summary', 'tracking', 'annual', 'map-summary', 'leaderboard'],
-      mutationId,
-      affectedYears: goodsLoadingDate ? [new Date(goodsLoadingDate).getFullYear()] : undefined,
-      companyIds: fullDeal?.company?.id || updated.companyId ? [fullDeal?.company?.id || updated.companyId!] : undefined,
-    });
-  } else {
-    void dispatchDashboardInvalidation({
-      resources: ['leaderboard'],
-      mutationId,
-    });
-  }
-  return fullDeal || updated;
+
+  return fullDeal;
 }
 
 export interface OpportunitySharedAttachment {
@@ -523,17 +552,24 @@ export async function getOpportunitySharedMedia(dealId: string): Promise<Opportu
 export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string, mutationId?: string, expectedRevision?: number) {
   if (!reason.trim()) throw new Error('Reason is required');
   const { actor } = await requireOpportunityDateEdit(opportunityId, 'dueDate');
-  const { opp: result, activityLog, systemLog } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const { fullDeal, activityLog, systemLog } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     let opp;
     if (expectedRevision === undefined) {
-      opp = await tx.opportunity.update({ where: { id: opportunityId }, data: { dueDate } });
+      opp = await tx.opportunity.update({
+        where: { id: opportunityId },
+        data: { dueDate },
+        select: pipelineOpportunitySelect,
+      });
     } else {
       const changed = await tx.opportunity.updateMany({
         where: { id: opportunityId, updatedAt: new Date(expectedRevision) },
         data: { dueDate },
       });
       if (changed.count !== 1) throw new Error('CONFLICT');
-      opp = await tx.opportunity.findUniqueOrThrow({ where: { id: opportunityId } });
+      opp = await tx.opportunity.findUniqueOrThrow({
+        where: { id: opportunityId },
+        select: pipelineOpportunitySelect,
+      });
     }
     let formattedDate = 'Removed';
     if (dueDate) {
@@ -544,52 +580,60 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
         timeZone: 'Asia/Bangkok',
       }).format(dueDate);
     }
-    
+
+    const logInclude = {
+      user: true,
+      replies: { include: { user: true }, orderBy: { createdAt: 'asc' as const } },
+    };
+
     // 1. Log to Activity (with special format for pill badge)
-    const activityLog = await tx.activityLog.create({
+    const createdActivityLog = await tx.activityLog.create({
       data: {
         content: `[DUE DATE: ${formattedDate}]\nReason: ${reason}`,
         type: "COMMENT",
         opportunityId,
-        userId: actor.id
-      }
+        userId: actor.id,
+      },
+      include: logInclude,
     });
 
     // 2. Log to System (text only)
-    const systemLog = await tx.activityLog.create({
+    const createdSystemLog = await tx.activityLog.create({
       data: {
         content: `Due Date changed to ${formattedDate}. Reason: ${reason}`,
         type: "SYSTEM_UPDATE",
         opportunityId,
-        userId: actor.id
-      }
+        userId: actor.id,
+      },
+      include: logInclude,
     });
-    
-    return { opp, activityLog, systemLog };
+
+    return { fullDeal: opp, activityLog: createdActivityLog, systemLog: createdSystemLog };
   });
 
-  const logsWithUsers = await prisma.activityLog.findMany({
-    where: { id: { in: [activityLog.id, systemLog.id] } },
-    include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } },
-  });
-  
-  const fullDeal = await prisma.opportunity.findUnique({
-    where: { id: opportunityId },
-    select: pipelineOpportunitySelect
-  });
+  invalidateOpportunityReadAccess(opportunityId);
+
   const revision = fullDeal?.updatedAt ? new Date(fullDeal.updatedAt).getTime() : Date.now();
-  await notifyPrivatePipelineUpdate(opportunityId, {
-    action: 'OPPORTUNITY_UPDATED',
-    deal: fullDeal,
-    dealId: opportunityId,
-    revision,
-    mutationId,
+  runBackgroundJob(async () => {
+    await notifyPrivatePipelineUpdate(opportunityId, {
+      action: 'OPPORTUNITY_UPDATED',
+      deal: fullDeal,
+      dealId: opportunityId,
+      revision,
+      mutationId,
+    });
+    await Promise.all(
+      [activityLog, systemLog].map((log) =>
+        notifyPrivatePipelineUpdate(opportunityId, {
+          action: 'ACTIVITY_ADDED',
+          dealId: opportunityId,
+          activityLog: log,
+        })
+      )
+    );
   });
-  await Promise.all(logsWithUsers.map((log: (typeof logsWithUsers)[number]) =>
-    notifyPrivatePipelineUpdate(opportunityId, { action: 'ACTIVITY_ADDED', dealId: opportunityId, activityLog: log })
-  ));
-  const commentLog = logsWithUsers.find((l: (typeof logsWithUsers)[number]) => l.id === activityLog.id) || null;
-  return { opp: result, activityLog: commentLog, revision, mutationId };
+
+  return { opp: fullDeal, activityLog, revision, mutationId };
 }
 
 export async function getOpportunityActivityLogs(opportunityId: string, limit = 10, cursor?: string, type?: 'COMMENT' | 'SYSTEM_UPDATE') {
@@ -672,7 +716,13 @@ export async function editActivityLog(logId: string, content: string) {
     },
     include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } }
   });
-  await notifyPrivatePipelineUpdate(log.opportunityId, { action: 'ACTIVITY_UPDATED', dealId: log.opportunityId, activityLog: updatedLog });
+  runBackgroundJob(async () => {
+    await notifyPrivatePipelineUpdate(log.opportunityId, {
+      action: 'ACTIVITY_UPDATED',
+      dealId: log.opportunityId,
+      activityLog: updatedLog,
+    });
+  });
   return updatedLog;
 }
 
@@ -700,6 +750,9 @@ export async function addTeamMember(opportunityId: string, userId: string) {
     }
   });
 
+  invalidateOpportunityReadAccess(opportunityId);
+  invalidatePipelineRecipientCache(opportunityId);
+
   // Create and send notification to the invited user
   if (actor.id !== userId) {
     const notification = await prisma.notification.create({
@@ -717,7 +770,9 @@ export async function addTeamMember(opportunityId: string, userId: string) {
   }
 
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, image: true, email: true, role: true, departments: { select: { id: true, name: true } } } });
-  await notifyPrivatePipelineUpdate(opportunityId, { action: 'MEMBER_ADDED', dealId: opportunityId, user });
+  runBackgroundJob(async () => {
+    await notifyPrivatePipelineUpdate(opportunityId, { action: 'MEMBER_ADDED', dealId: opportunityId, user });
+  });
   return result;
 }
 
@@ -739,6 +794,9 @@ export async function addTeamMembers(opportunityId: string, userIds: string[], m
       }
     }
   });
+
+  invalidateOpportunityReadAccess(opportunityId);
+  invalidatePipelineRecipientCache(opportunityId);
 
   // Create notifications in batch for added users (except actor)
   const usersToNotify = userIds.filter(id => id !== actor.id);
@@ -768,9 +826,10 @@ export async function addTeamMembers(opportunityId: string, userIds: string[], m
   }
 
   // Create system log on server
+  let createdLog: unknown = null;
   try {
     const names = result.teamMembers.map(u => u.name || 'user').join(', ');
-    const log = await prisma.activityLog.create({
+    createdLog = await prisma.activityLog.create({
       data: {
         content: `Invited ${names} to the team`,
         opportunity: { connect: { id: opportunityId } },
@@ -778,23 +837,27 @@ export async function addTeamMembers(opportunityId: string, userIds: string[], m
         type: "SYSTEM_UPDATE"
       }
     });
-    void notifyPrivatePipelineUpdate(opportunityId, {
-      action: 'ACTIVITY_ADDED',
-      dealId: opportunityId,
-      activityLog: log
-    }).catch(() => {});
   } catch (err) {
     console.warn("[addTeamMembers] Failed to log system update:", err);
   }
 
   const revision = result.updatedAt.getTime();
-  await notifyPrivatePipelineUpdate(opportunityId, {
-    action: 'MEMBERS_ADDED',
-    dealId: opportunityId,
-    users: result.teamMembers,
-    revision,
-    mutationId,
-  }).catch(() => {});
+  runBackgroundJob(async () => {
+    if (createdLog) {
+      void notifyPrivatePipelineUpdate(opportunityId, {
+        action: 'ACTIVITY_ADDED',
+        dealId: opportunityId,
+        activityLog: createdLog,
+      }).catch(() => {});
+    }
+    await notifyPrivatePipelineUpdate(opportunityId, {
+      action: 'MEMBERS_ADDED',
+      dealId: opportunityId,
+      users: result.teamMembers,
+      revision,
+      mutationId,
+    }).catch(() => {});
+  });
 
   return {
     success: true,
@@ -830,13 +893,17 @@ export async function removeTeamMember(opportunityId: string, userId: string, mu
     }
   });
 
+  invalidateOpportunityReadAccess(opportunityId);
+  invalidatePipelineRecipientCache(opportunityId);
+
   // Create system log on server while actor still has access context
+  let createdLog: unknown = null;
   try {
     const logContent = isSelf
       ? `${actor.name || 'A team member'} left the team`
       : `Removed ${userToRemove?.name || 'user'} from the team`;
 
-    const log = await prisma.activityLog.create({
+    createdLog = await prisma.activityLog.create({
       data: {
         content: logContent,
         opportunity: { connect: { id: opportunityId } },
@@ -844,22 +911,26 @@ export async function removeTeamMember(opportunityId: string, userId: string, mu
         type: "SYSTEM_UPDATE"
       }
     });
-
-    void notifyPrivatePipelineUpdate(opportunityId, {
-      action: 'ACTIVITY_ADDED',
-      dealId: opportunityId,
-      activityLog: log
-    }).catch(() => {});
   } catch (err) {
     console.warn("[removeTeamMember] Failed to log system update:", err);
   }
 
   const revision = result.updatedAt.getTime();
-  await notifyPrivatePipelineUpdate(
-    opportunityId,
-    { action: 'MEMBER_REMOVED', dealId: opportunityId, userId, revision, mutationId },
-    previousRecipientIds,
-  );
+  runBackgroundJob(async () => {
+    if (createdLog) {
+      void notifyPrivatePipelineUpdate(opportunityId, {
+        action: 'ACTIVITY_ADDED',
+        dealId: opportunityId,
+        activityLog: createdLog
+      }).catch(() => {});
+    }
+    await notifyPrivatePipelineUpdate(
+      opportunityId,
+      { action: 'MEMBER_REMOVED', dealId: opportunityId, userId, revision, mutationId },
+      previousRecipientIds,
+    );
+  });
+
   return {
     success: true,
     opportunityId,
@@ -875,23 +946,26 @@ export async function deleteOpportunity(id: string) {
 
   invalidateOpportunityReadAccess(id);
   const recipientIds = await getPipelineRecipientUserIds(id);
+  invalidatePipelineRecipientCache(id);
   const result = await prisma.opportunity.delete({
     where: { id }
   });
-  if (recipientIds.length > 0) {
-    await pusherServer.trigger(
-      recipientIds.map(userId => `private-pipeline-${userId}`),
-      'pipeline-updated',
-      { action: 'OPPORTUNITY_DELETED', dealId: id },
-    );
-  }
-  if (result.type === 'SALES_DEAL') {
-    void dispatchDashboardInvalidation({
-      resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options', 'leaderboard'],
-      affectedYears: result.goodsLoadingDate ? [new Date(result.goodsLoadingDate).getFullYear()] : undefined,
-      companyIds: result.companyId ? [result.companyId] : undefined,
-    });
-  }
+  runBackgroundJob(async () => {
+    if (recipientIds.length > 0) {
+      await pusherServer.trigger(
+        recipientIds.map(userId => `private-pipeline-${userId}`),
+        'pipeline-updated',
+        { action: 'OPPORTUNITY_DELETED', dealId: id },
+      );
+    }
+    if (result.type === 'SALES_DEAL') {
+      void dispatchDashboardInvalidation({
+        resources: ['summary', 'tracking', 'annual', 'map-summary', 'filter-options', 'leaderboard'],
+        affectedYears: result.goodsLoadingDate ? [new Date(result.goodsLoadingDate).getFullYear()] : undefined,
+        companyIds: result.companyId ? [result.companyId] : undefined,
+      });
+    }
+  });
   return result;
 }
 

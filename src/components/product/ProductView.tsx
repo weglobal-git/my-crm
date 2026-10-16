@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import dynamic from "next/dynamic";
 import { ProductStatus } from "@prisma/client";
 import { preload } from "swr";
-import { FolderTree, Plus, Printer, SlidersHorizontal, Calculator } from "lucide-react";
+import { FolderTree, Plus, Printer, SlidersHorizontal, Eye } from "lucide-react";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
 import {
@@ -25,9 +25,6 @@ import { ProductCardList } from "./ProductCardList";
 import { ProductSearch } from "./ProductSearch";
 import { ProductFiltersDrawer, ProductFilterContent } from "./ProductFiltersDrawer";
 
-const loadProductLogisticsModal = () =>
-  import("./ProductLogisticsModal").then((mod) => mod.ProductLogisticsModal);
-const ProductLogisticsModal = dynamic(loadProductLogisticsModal, { ssr: false });
 
 const loadProductCatalogPrintModal = () =>
   import("./ProductCatalogPrintModal").then((mod) => mod.ProductCatalogPrintModal);
@@ -90,6 +87,19 @@ export function ProductView({
   const [availableCategories, setAvailableCategories] = useState(initialCategories);
   const [availableBrands, setAvailableBrands] = useState(initialBrands);
 
+  // Registry of known products across filters & pages for 0ms optimistic filtering
+  const knownProductsMapRef = useRef<Map<string, ProductListItemDTO>>(
+    new Map(initialProducts.map((p) => [p.id, p]))
+  );
+
+  useEffect(() => {
+    for (const p of initialProducts) {
+      if (!knownProductsMapRef.current.has(p.id)) {
+        knownProductsMapRef.current.set(p.id, p);
+      }
+    }
+  }, [initialProducts]);
+
   // Modals & Panels State
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [isManageOpen, setIsManageOpen] = useState(false);
@@ -99,10 +109,17 @@ export function ProductView({
     initialProducts[0]?.id || null
   );
 
-  // Print & Logistics simulation modals state
+  // Print modal state
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
-  const [isLogisticsModalOpen, setIsLogisticsModalOpen] = useState(false);
   const [selectedForPrintIds, setSelectedForPrintIds] = useState<Set<string>>(new Set());
+  const [viewOnlySelected, setViewOnlySelected] = useState(false);
+
+  // Auto-reset viewOnlySelected if all selected items are cleared
+  useEffect(() => {
+    if (selectedForPrintIds.size === 0 && viewOnlySelected) {
+      setViewOnlySelected(false);
+    }
+  }, [selectedForPrintIds.size, viewOnlySelected]);
 
   const handleToggleSelectForPrint = useCallback((id: string) => {
     setSelectedForPrintIds((prev) => {
@@ -111,6 +128,18 @@ export function ProductView({
         next.delete(id);
       } else {
         next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleGroupForPrint = useCallback((productIds: string[], select: boolean) => {
+    setSelectedForPrintIds((prev) => {
+      const next = new Set(prev);
+      if (select) {
+        productIds.forEach((id) => next.add(id));
+      } else {
+        productIds.forEach((id) => next.delete(id));
       }
       return next;
     });
@@ -128,6 +157,113 @@ export function ProductView({
     if (selectedForPrintIds.size === 0) return products;
     return products.filter((p) => selectedForPrintIds.has(p.id));
   }, [products, selectedForPrintIds]);
+
+  // Count of selected products for the active tab (On vs Off)
+  const activeSelectedProductCount = useMemo(() => {
+    if (selectedForPrintIds.size === 0) return 0;
+    let count = 0;
+    for (const id of selectedForPrintIds) {
+      const p = knownProductsMapRef.current?.get(id) || products.find((prod) => prod.id === id);
+      if (!p?.status || p.status === activeTab) {
+        count++;
+      }
+    }
+    return count;
+  }, [activeTab, products, selectedForPrintIds]);
+
+  // Selected products grouped by category, scoped to the current active tab
+  const selectedProductsByCategory = useMemo(() => {
+    if (selectedForPrintIds.size === 0) return new Map<string, number>();
+    const map = new Map<string, number>();
+    for (const id of selectedForPrintIds) {
+      const p = knownProductsMapRef.current?.get(id) || products.find((prod) => prod.id === id);
+      if (p?.category && (!p.status || p.status === activeTab)) {
+        const catKey = p.category.trim().toLowerCase();
+        map.set(catKey, (map.get(catKey) || 0) + 1);
+      }
+    }
+    return map;
+  }, [activeTab, products, selectedForPrintIds]);
+
+  // Total products in each category for the active tab
+  const activeCategoryProductCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of knownProductsMapRef.current.values()) {
+      if (p.status === activeTab && p.category) {
+        const catKey = p.category.trim().toLowerCase();
+        map.set(catKey, (map.get(catKey) || 0) + 1);
+      }
+    }
+    for (const p of products) {
+      if (p.status === activeTab && p.category) {
+        const catKey = p.category.trim().toLowerCase();
+        if (!map.has(catKey)) {
+          map.set(catKey, 1);
+        }
+      }
+    }
+    return map;
+  }, [activeTab, products]);
+
+  // Quick Select: Select all or deselect all items in a category for the active tab only
+  const handleQuickSelectCategory = useCallback(
+    async (category: string) => {
+      const catKey = category.trim().toLowerCase();
+
+      // Gather matching items in memory
+      const targetMap = new Map<string, ProductListItemDTO>();
+      for (const p of knownProductsMapRef.current.values()) {
+        if (p.category?.trim().toLowerCase() === catKey && p.status === activeTab) {
+          targetMap.set(p.id, p);
+        }
+      }
+      for (const p of products) {
+        if (p.category?.trim().toLowerCase() === catKey && p.status === activeTab) {
+          targetMap.set(p.id, p);
+        }
+      }
+
+      // If none found in memory, query server
+      if (targetMap.size === 0) {
+        try {
+          const res = await getProductsWithFilters({
+            status: activeTab,
+            categories: [category],
+            pageSize: 500,
+          });
+          for (const p of res.products) {
+            knownProductsMapRef.current.set(p.id, p);
+            if (p.category?.trim().toLowerCase() === catKey && p.status === activeTab) {
+              targetMap.set(p.id, p);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to load category products for quick select:", err);
+        }
+      }
+
+      if (targetMap.size === 0) return;
+
+      const targetIds = Array.from(targetMap.keys());
+
+      setSelectedForPrintIds((prev) => {
+        const next = new Set(prev);
+        const allSelected = targetIds.length > 0 && targetIds.every((id) => next.has(id));
+
+        if (allSelected) {
+          for (const id of targetIds) {
+            next.delete(id);
+          }
+        } else {
+          for (const id of targetIds) {
+            next.add(id);
+          }
+        }
+        return next;
+      });
+    },
+    [activeTab, products]
+  );
 
   const defaultCategoryNames = useMemo(
     () => availableCategories.filter((c) => c.isDefault).map((c) => c.category),
@@ -230,20 +366,56 @@ export function ProductView({
     []
   );
 
-  // 0ms Optimistic Star Rating Mutation
-  const handleRatingChange = useCallback(async (id: string, newRating: number) => {
+  // Category Warp Navigation Handler (Instant jump, no smooth sliding or visual effects)
+  const handleWarpToCategory = useCallback(
+    (categoryName: string) => {
+      const isCatChecked =
+        selectedCategories.length === 0 ||
+        selectedCategories.some((c) => c.toLowerCase() === categoryName.toLowerCase());
+
+      if (!isCatChecked) {
+        setSelectedCategories((prev) => [...prev, categoryName]);
+      }
+
+      const normalizedId = `category-group-${encodeURIComponent(categoryName.trim().toLowerCase())}`;
+
+      const jumpToTarget = () => {
+        const el = document.getElementById(normalizedId);
+        if (el) {
+          el.scrollIntoView({ behavior: "auto", block: "start" });
+          return true;
+        }
+        return false;
+      };
+
+      if (!jumpToTarget()) {
+        requestAnimationFrame(() => {
+          jumpToTarget();
+        });
+      }
+    },
+    [selectedCategories]
+  );
+
+  // 0ms Optimistic Best Selling Mutation
+  const handleToggleBestSelling = useCallback(async (id: string, isBestSelling: boolean) => {
+    const newRating = isBestSelling ? 1 : 0;
+
+    // 1. Instant 0ms optimistic state update
     setProducts((prev) =>
       prev.map((p) => (p.id === id ? { ...p, starRating: newRating } : p))
     );
+
     const cached = knownProductsMapRef.current.get(id);
     if (cached) {
       knownProductsMapRef.current.set(id, { ...cached, starRating: newRating });
     }
 
+    // 2. Server persistence
     try {
       await updateProductStarRating(id, newRating);
     } catch (err) {
-      console.error("Failed to update star rating:", err);
+      console.error("Failed to update best selling status:", err);
       if (cached) {
         setProducts((prev) =>
           prev.map((p) => (p.id === id ? { ...p, starRating: cached.starRating } : p))
@@ -251,17 +423,6 @@ export function ProductView({
       }
     }
   }, []);
-
-  // Registry of known products for 0ms optimistic filtering
-  const knownProductsMapRef = useRef<Map<string, ProductListItemDTO>>(new Map());
-
-  useEffect(() => {
-    for (const p of initialProducts) {
-      if (!knownProductsMapRef.current.has(p.id)) {
-        knownProductsMapRef.current.set(p.id, p);
-      }
-    }
-  }, [initialProducts]);
 
   // Idle Background Preload
   useEffect(() => {
@@ -319,7 +480,7 @@ export function ProductView({
         brands: selectedBrandsRef.current.length > 0 ? selectedBrandsRef.current : undefined,
         search: debouncedSearchRef.current,
         page: 1,
-        pageSize: 20,
+        pageSize: 300,
       });
 
       setProducts(res.products);
@@ -383,7 +544,7 @@ export function ProductView({
         brands: selectedBrands.length > 0 ? selectedBrands : undefined,
         search: debouncedSearch,
         page: nextPage,
-        pageSize: 20,
+        pageSize: 300,
       });
 
       setProducts((prev) => {
@@ -503,12 +664,18 @@ export function ProductView({
             onSelectBrands={handleSelectBrands}
             onClearBrands={handleClearBrands}
             availableBrands={availableBrands}
+            onWarpToCategory={handleWarpToCategory}
+            onQuickSelectCategory={handleQuickSelectCategory}
+            activeCategoryProductCounts={activeCategoryProductCounts}
+            selectedProductCount={activeSelectedProductCount}
+            selectedProductsByCategory={selectedProductsByCategory}
           />
 
           {/* Right Main Cards Workspace */}
           <div className="flex-1 min-w-0 flex flex-col min-h-0">
             <ProductCardList
               products={products}
+              categories={availableCategories}
               isLoading={isFilterLoading}
               isLoadingMore={isLoadingMore}
               hasMore={hasMore}
@@ -516,10 +683,13 @@ export function ProductView({
               selectedProductId={selectedProductId}
               selectedForPrintIds={selectedForPrintIds}
               onToggleSelectForPrint={handleToggleSelectForPrint}
+              onToggleGroupSelectForPrint={handleToggleGroupForPrint}
               onSelectAllForPrint={handleSelectAllForPrint}
               onClearSelectForPrint={handleClearSelectForPrint}
+              viewOnlySelected={viewOnlySelected}
+              onViewOnlySelectedChange={setViewOnlySelected}
               onSelectProduct={handleSelectProduct}
-              onRatingChange={handleRatingChange}
+              onToggleBestSelling={handleToggleBestSelling}
               onLoadMore={handleLoadMore}
               onRowIntent={handleProductIntent}
               headerAction={
@@ -529,13 +699,14 @@ export function ProductView({
                     <button
                       type="button"
                       onClick={() => setActiveTab(ProductStatus.AVAILABLE)}
-                      className={`px-3 py-1 text-xs font-bold rounded-full transition-all cursor-pointer ${
+                      className={`px-2.5 py-1 text-xs font-bold rounded-full transition-all cursor-pointer ${
                         activeTab === ProductStatus.AVAILABLE
                           ? "bg-[#3A3B3C] text-white"
                           : "text-slate-400 hover:text-slate-200"
                       }`}
+                      title={`Available: ${stats.availableCount} products`}
                     >
-                      <span>AVAILABLE</span>
+                      <span>ON</span>
                       <span className="ml-1 text-[11px] opacity-70 tabular-nums">
                         {stats.availableCount}
                       </span>
@@ -543,13 +714,14 @@ export function ProductView({
                     <button
                       type="button"
                       onClick={() => setActiveTab(ProductStatus.UNAVAILABLE)}
-                      className={`px-3 py-1 text-xs font-bold rounded-full transition-all cursor-pointer ${
+                      className={`px-2.5 py-1 text-xs font-bold rounded-full transition-all cursor-pointer ${
                         activeTab === ProductStatus.UNAVAILABLE
                           ? "bg-[#3A3B3C] text-white"
                           : "text-slate-400 hover:text-slate-200"
                       }`}
+                      title={`Unavailable: ${stats.unavailableCount} products`}
                     >
-                      <span>UNAVAILABLE</span>
+                      <span>OFF</span>
                       <span className="ml-1 text-[11px] opacity-70 tabular-nums">
                         {stats.unavailableCount}
                       </span>
@@ -562,6 +734,26 @@ export function ProductView({
                     onChange={handleSearchChange}
                     placeholder="Search products..."
                   />
+
+                  {/* View Selected Quick Toggle (Icon only, directly to the right of Search) */}
+                  {selectedForPrintIds.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setViewOnlySelected((prev) => !prev)}
+                      className={`hidden md:flex w-8 h-8 rounded-full items-center justify-center border transition-all cursor-pointer relative shrink-0 ${
+                        viewOnlySelected
+                          ? "bg-[#C7F33C] border-[#C7F33C] text-black shadow-xs font-bold"
+                          : "bg-[#252728] border-[#3A3B3C] text-[#C7F33C] hover:text-white hover:bg-[#3A3B3C]"
+                      }`}
+                      title={
+                        viewOnlySelected
+                          ? "Show all products"
+                          : `View only selected products (${selectedForPrintIds.size})`
+                      }
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                    </button>
+                  )}
 
                   {/* Centralized Filters Button (Desktop Only, matches Pipeline/Account style) */}
                   <button
@@ -595,18 +787,6 @@ export function ProductView({
                     <FolderTree className="w-3.5 h-3.5" />
                   </button>
 
-                  {/* Logistics & Container Loading Simulator Button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void loadProductLogisticsModal();
-                      setIsLogisticsModalOpen(true);
-                    }}
-                    className="hidden md:flex w-8 h-8 rounded-full items-center justify-center border border-[#3A3B3C] bg-[#252728] text-slate-300 hover:text-[#C7F33C] hover:border-[#C7F33C]/50 hover:bg-[#2F3031] transition-all cursor-pointer shrink-0"
-                    title="Logistics & Container Loading Simulation"
-                  >
-                    <Calculator className="w-3.5 h-3.5" />
-                  </button>
 
                   {/* Print / Export Catalog Button */}
                   <button
@@ -722,24 +902,41 @@ export function ProductView({
           availableBrands={availableBrands}
           onProductUpdated={(updated) => {
             if (updated.id) {
-              setProducts((prev) =>
-                prev.map((p) =>
-                  p.id === updated.id
-                    ? {
-                        ...p,
-                        ...(updated.name ? { name: updated.name } : {}),
-                        ...(updated.brand !== undefined ? { brand: updated.brand } : {}),
-                        ...(updated.category !== undefined ? { category: updated.category } : {}),
-                        ...(updated.description !== undefined ? { description: updated.description } : {}),
-                        ...(updated.status ? { status: updated.status } : {}),
-                        ...(updated.cbm !== undefined ? { cbm: updated.cbm } : {}),
-                        ...(updated.cartonQuantity !== undefined ? { cartonQuantity: updated.cartonQuantity } : {}),
-                        ...(updated.primaryImageUrl !== undefined ? { primaryImageUrl: updated.primaryImageUrl } : {}),
-                        ...(updated.starRating !== undefined ? { starRating: updated.starRating } : {}),
-                      }
-                    : p
-                )
-              );
+              if (updated.status && updated.status !== activeTab) {
+                setProducts((prev) => prev.filter((p) => p.id !== updated.id));
+                void fetchFilteredProducts();
+              } else {
+                setProducts((prev) =>
+                  prev.map((p) =>
+                    p.id === updated.id
+                      ? {
+                          ...p,
+                          ...(updated.name ? { name: updated.name } : {}),
+                          ...(updated.brand !== undefined ? { brand: updated.brand } : {}),
+                          ...(updated.category !== undefined ? { category: updated.category } : {}),
+                          ...(updated.description !== undefined ? { description: updated.description } : {}),
+                          ...(updated.status ? { status: updated.status } : {}),
+                          ...(updated.cbm !== undefined ? { cbm: updated.cbm } : {}),
+                          ...(updated.cartonQuantity !== undefined ? { cartonQuantity: updated.cartonQuantity } : {}),
+                          ...(updated.primaryImageUrl !== undefined ? { primaryImageUrl: updated.primaryImageUrl } : {}),
+                          ...(updated.starRating !== undefined ? { starRating: updated.starRating } : {}),
+                        }
+                      : p
+                  )
+                );
+                if (updated.status) {
+                  void fetchFilteredProducts();
+                }
+              }
+
+              const existing = knownProductsMapRef.current.get(updated.id);
+              if (existing) {
+                knownProductsMapRef.current.set(updated.id, {
+                  ...existing,
+                  ...(updated.status ? { status: updated.status } : {}),
+                  ...(updated.name ? { name: updated.name } : {}),
+                });
+              }
             }
           }}
         />
@@ -758,15 +955,7 @@ export function ProductView({
         />
       )}
 
-      {/* Product Logistics & Container Loading Simulator Modal */}
-      {isLogisticsModalOpen && (
-        <ProductLogisticsModal
-          isOpen={isLogisticsModalOpen}
-          onClose={() => setIsLogisticsModalOpen(false)}
-          products={products}
-          initialProductId={selectedProductId}
-        />
-      )}
+
     </WorkspaceLayout>
   );
 }
