@@ -65,16 +65,98 @@ async function validateEventReferences(
   return department;
 }
 
+const CALENDAR_EVENT_DETAIL_INCLUDE = {
+  department: { select: { id: true, name: true } },
+  owner: { select: { id: true, name: true, image: true, email: true } },
+  recipients: {
+    include: {
+      user: { select: { id: true, name: true, image: true, email: true } },
+    },
+  },
+  tags: {
+    include: {
+      tag: true,
+    },
+  },
+  exceptions: true,
+} as const;
+
 function toMonthItem(event: {
   id: string; name: string; startAt: Date; endAt: Date; allDay: boolean; departmentId: string; revision: number;
+  department?: { id: string; name: string } | null;
   owner: { id: string; name: string | null; image: string | null };
-  tags: Array<{ tagId: string; tag: { color: string } }>;
+  tags: Array<{ tagId: string; tag: { id: string; name: string; color: string } }>;
 }): CalendarMonthItemDTO {
   return {
     id: event.id, sourceType: 'EVENT', sourceId: event.id, title: event.name,
     startAt: event.startAt.toISOString(), endAt: event.endAt.toISOString(), allDay: event.allDay,
     color: event.tags[0]?.tag.color ?? '#3B82F6', tagIds: event.tags.map((tag) => tag.tagId),
-    owner: event.owner, departmentId: event.departmentId, canEdit: true, revision: event.revision,
+    tags: event.tags.map(({ tag }) => ({ id: tag.id, name: tag.name, color: tag.color })),
+    owner: { id: event.owner.id, name: event.owner.name, image: event.owner.image },
+    departmentId: event.departmentId,
+    departmentName: event.department?.name ?? null,
+    canEdit: true, revision: event.revision,
+  };
+}
+
+function toEventDetailDTO(
+  event: {
+    id: string;
+    name: string;
+    detail: string | null;
+    departmentId: string;
+    department: { id: string; name: string };
+    ownerId: string;
+    owner: { id: string; name: string | null; image: string | null; email: string | null };
+    allDay: boolean;
+    startAt: Date;
+    endAt: Date;
+    timezone: string;
+    repeatFrequency: string;
+    repeatUntil: Date | null;
+    revision: number;
+    tags: Array<{ tag: { id: string; name: string; color: string } }>;
+    recipients: Array<{
+      userId: string;
+      reminderEnabled: boolean;
+      reminderOffsetMins: number;
+      user: { id: string; name: string | null; email: string | null; image: string | null };
+    }>;
+    exceptions: Array<{
+      occurrenceStartAt: Date;
+      overrideStartAt: Date | null;
+      overrideEndAt: Date | null;
+      isCancelled: boolean;
+    }>;
+  },
+  canEdit: boolean
+): CalendarEventDetailDTO {
+  return {
+    id: event.id,
+    name: event.name,
+    detail: event.detail,
+    departmentId: event.departmentId,
+    department: event.department,
+    ownerId: event.ownerId,
+    owner: event.owner,
+    allDay: event.allDay,
+    startAt: event.startAt.toISOString(),
+    endAt: event.endAt.toISOString(),
+    timezone: event.timezone,
+    repeatFrequency: event.repeatFrequency,
+    repeatUntil: event.repeatUntil ? event.repeatUntil.toISOString() : null,
+    revision: event.revision,
+    canEdit,
+    tags: event.tags.map((t) => ({ id: t.tag.id, name: t.tag.name, color: t.tag.color })),
+    recipients: event.recipients.map((r) => ({
+      userId: r.userId,
+      name: r.user.name,
+      email: r.user.email,
+      image: r.user.image,
+      reminderEnabled: r.reminderEnabled,
+      reminderOffsetMins: r.reminderOffsetMins,
+    })),
+    exceptions: event.exceptions,
   };
 }
 
@@ -332,6 +414,7 @@ export async function createCalendarEventAction(
 ): Promise<{
   success: boolean;
   item?: CalendarMonthItemDTO;
+  detail?: CalendarEventDetailDTO;
   error?: string;
   fieldErrors?: Record<string, string[]>;
 }> {
@@ -351,9 +434,9 @@ export async function createCalendarEventAction(
 
     const prior = await prisma.calendarEvent.findUnique({
       where: { ownerId_clientRequestId: { ownerId: actor.id, clientRequestId: input.idempotencyKey } },
-      include: { owner: { select: { id: true, name: true, image: true } }, tags: { include: { tag: true } } },
+      include: CALENDAR_EVENT_DETAIL_INCLUDE,
     });
-    if (prior) return { success: true, item: toMonthItem(prior) };
+    if (prior) return { success: true, item: toMonthItem(prior), detail: toEventDetailDTO(prior, true) };
 
     // Transactional create
     const event = await prisma.$transaction(async (tx) => {
@@ -384,12 +467,7 @@ export async function createCalendarEventAction(
             })),
           },
         },
-        include: {
-          owner: { select: { id: true, name: true, image: true } },
-          tags: {
-            include: { tag: true },
-          },
-        },
+        include: CALENDAR_EVENT_DETAIL_INCLUDE,
       });
 
       return created;
@@ -403,7 +481,7 @@ export async function createCalendarEventAction(
       console.error('[CALENDAR-REALTIME] Create event dispatch failed:', err);
     });
 
-    return { success: true, item: toMonthItem(event) };
+    return { success: true, item: toMonthItem(event), detail: toEventDetailDTO(event, true) };
   } catch (err: unknown) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       const parsed = createCalendarEventSchema.safeParse(rawInput);
@@ -411,9 +489,9 @@ export async function createCalendarEventAction(
         const actor = await requireCalendarActor();
         const prior = await prisma.calendarEvent.findUnique({
           where: { ownerId_clientRequestId: { ownerId: actor.id, clientRequestId: parsed.data.idempotencyKey } },
-          include: { owner: { select: { id: true, name: true, image: true } }, tags: { include: { tag: true } } },
+          include: CALENDAR_EVENT_DETAIL_INCLUDE,
         });
-        if (prior) return { success: true, item: toMonthItem(prior) };
+        if (prior) return { success: true, item: toMonthItem(prior), detail: toEventDetailDTO(prior, true) };
       }
     }
     const message = err instanceof Error ? err.message : 'Failed to create event';
@@ -426,6 +504,7 @@ export async function updateCalendarEventAction(
 ): Promise<{
   success: boolean;
   item?: CalendarMonthItemDTO;
+  detail?: CalendarEventDetailDTO;
   error?: string;
   fieldErrors?: Record<string, string[]>;
   currentRevision?: number;
@@ -529,10 +608,7 @@ export async function updateCalendarEventAction(
 
       const res = await tx.calendarEvent.findUniqueOrThrow({
         where: { id: input.id },
-        include: {
-          owner: { select: { id: true, name: true, image: true } },
-          tags: { include: { tag: true } },
-        },
+        include: CALENDAR_EVENT_DETAIL_INCLUDE,
       });
 
       return res;
@@ -552,30 +628,10 @@ export async function updateCalendarEventAction(
       console.error('[CALENDAR-REALTIME] Update event dispatch failed:', err);
     });
 
-    const tagColor = updated.tags?.[0]?.tag?.color || '#3B82F6';
-    const tagIds = updated.tags?.map((t) => t.tagId) || [];
+    const item = toMonthItem(updated);
+    const detail = toEventDetailDTO(updated, true);
 
-    const item: CalendarMonthItemDTO = {
-      id: updated.id,
-      sourceType: 'EVENT',
-      sourceId: updated.id,
-      title: updated.name,
-      startAt: updated.startAt.toISOString(),
-      endAt: updated.endAt.toISOString(),
-      allDay: updated.allDay,
-      color: tagColor,
-      tagIds,
-      owner: {
-        id: updated.owner.id,
-        name: updated.owner.name,
-        image: updated.owner.image,
-      },
-      departmentId: updated.departmentId,
-      canEdit: true,
-      revision: updated.revision,
-    };
-
-    return { success: true, item };
+    return { success: true, item, detail };
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'REVISION_CONFLICT') {
       const current = await prisma.calendarEvent.findUnique({ where: { id: rawInput.id }, select: { revision: true } });
@@ -703,21 +759,7 @@ export async function getCalendarEventDetailAction(
 
     const event = await prisma.calendarEvent.findUnique({
       where: { id: eventId },
-      include: {
-        department: { select: { id: true, name: true } },
-        owner: { select: { id: true, name: true, image: true, email: true } },
-        recipients: {
-          include: {
-            user: { select: { id: true, name: true, image: true, email: true } },
-          },
-        },
-        tags: {
-          include: {
-            tag: true,
-          },
-        },
-        exceptions: true,
-      },
+      include: CALENDAR_EVENT_DETAIL_INCLUDE,
     });
 
     if (!event) {
@@ -737,33 +779,7 @@ export async function getCalendarEventDetailAction(
 
     return {
       success: true,
-      event: {
-        id: event.id,
-        name: event.name,
-        detail: event.detail,
-        departmentId: event.departmentId,
-        department: event.department,
-        ownerId: event.ownerId,
-        owner: event.owner,
-        allDay: event.allDay,
-        startAt: event.startAt.toISOString(),
-        endAt: event.endAt.toISOString(),
-        timezone: event.timezone,
-        repeatFrequency: event.repeatFrequency,
-        repeatUntil: event.repeatUntil ? event.repeatUntil.toISOString() : null,
-        revision: event.revision,
-        canEdit,
-        tags: event.tags.map((t) => t.tag),
-        recipients: event.recipients.map((r) => ({
-          userId: r.userId,
-          name: r.user.name,
-          email: r.user.email,
-          image: r.user.image,
-          reminderEnabled: r.reminderEnabled,
-          reminderOffsetMins: r.reminderOffsetMins,
-        })),
-        exceptions: event.exceptions,
-      },
+      event: toEventDetailDTO(event, canEdit),
     };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to fetch event detail';

@@ -11,9 +11,10 @@ import { CalendarMobileAgenda } from './CalendarMobileAgenda';
 import { useSidebar } from '@/components/layout/SidebarContext';
 import { indexCalendarItemsByLocalDate } from '@/lib/calendar/calendar-presentation';
 import { CalendarMobileFilterContent } from './CalendarMobileFilterContent';
-import { calendarMonthKey } from '@/lib/calendar/calendar-cache';
+import { calendarEventDetailKey, calendarFinancialInfoKey, calendarMonthKey } from '@/lib/calendar/calendar-cache';
+import { clearCalendarDraft } from '@/lib/calendar/calendar-draft-store';
 import { getMonthSnapshotAction } from '@/lib/actions/calendar';
-import type { CalendarMonthItemDTO, CalendarMonthSnapshotDTO } from '@/lib/calendar/calendar-dto';
+import type { CalendarEventDetailDTO, CalendarFinancialInfoDTO, CalendarMonthItemDTO, CalendarMonthSnapshotDTO } from '@/lib/calendar/calendar-dto';
 import { getGridRangeForMonth, getOccurrenceStartFromItemId } from '@/lib/calendar/calendar-recurrence';
 import { acquireChannelWhenConnected } from '@/lib/pusher-subscription-manager';
 import { getPusherClient } from '@/lib/pusher';
@@ -297,6 +298,26 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   // SWR for month snapshot data
   const isInitial = year === initialYear && month === initialMonth;
+  const initialKey = useMemo(() => calendarMonthKey(userId, initialYear, initialMonth), [userId, initialYear, initialMonth]);
+  const hasSubscribedOnceRef = useRef(false);
+
+  // Seed SWR internal cache on mount so early optimistic mutations (drag-and-drop, create, edit, delete)
+  // never encounter `current === undefined` when `revalidateOnMount: false` is used with `fallbackData`.
+  useEffect(() => {
+    const serializedMonth = unstable_serialize(initialKey);
+    const existingMonth = cache.get(serializedMonth) as { data?: CalendarMonthSnapshotDTO } | undefined;
+    if (!existingMonth?.data) {
+      void mutate(initialKey, initialSnapshot, { revalidate: false });
+    }
+    if (initialHolidays) {
+      const serializedHolidays = unstable_serialize('company-holidays');
+      const existingHolidays = cache.get(serializedHolidays) as { data?: string[] } | undefined;
+      if (!existingHolidays?.data) {
+        void mutate('company-holidays', initialHolidays, { revalidate: false });
+      }
+    }
+  }, [cache, initialHolidays, initialKey, initialSnapshot, mutate]);
+
   const { data: snapshotData, isLoading } = useSWR(
     currentKey,
     async () => {
@@ -413,6 +434,29 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     const decision = decideCalendarRealtimeEvent(event, seenRealtimeIds.current, latestRealtimeRevisions.current, ownMutationIds.current);
     if (decision === 'IGNORE') return;
 
+    if (event.sourceType === 'EVENT') {
+      const detailKey = calendarEventDetailKey(userId || 'default', event.itemId);
+      if (decision === 'REMOVE') {
+        clearCalendarDraft(userId || 'anonymous', event.itemId);
+        void mutate(detailKey, undefined, { revalidate: false });
+      } else {
+        const cachedDetail = cache.get(unstable_serialize(detailKey)) as { data?: unknown } | undefined;
+        if (cachedDetail?.data !== undefined) {
+          void mutate(detailKey);
+        }
+      }
+    } else {
+      const parts = event.itemId.split(':');
+      const opportunityId = parts.length >= 2 ? parts[1] : '';
+      if (opportunityId) {
+        const finKey = calendarFinancialInfoKey(userId || 'default', opportunityId);
+        const cachedFin = cache.get(unstable_serialize(finKey)) as { data?: unknown } | undefined;
+        if (cachedFin?.data !== undefined) {
+          void mutate(finKey);
+        }
+      }
+    }
+
     if (editingItemId === event.itemId) {
       if (decision === 'REMOVE') setIsPanelOpen(false);
       else setDetailRefreshToken((value) => value + 1);
@@ -425,7 +469,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       return;
     }
     scheduleReconcile();
-  }, [activeSnapshot.rangeEnd, activeSnapshot.rangeStart, currentKey, editingItemId, mutate, scheduleReconcile]);
+  }, [activeSnapshot.rangeEnd, activeSnapshot.rangeStart, cache, currentKey, editingItemId, mutate, scheduleReconcile, userId]);
 
   useEffect(() => {
     const channelName = `private-calendar-${userId}`;
@@ -442,8 +486,14 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         broadcastEventAcrossTabs(channelName, 'holidays-updated', event);
       };
       const onSubscribed = () => {
+        const isFirstSubscription = !hasSubscribedOnceRef.current;
+        hasSubscribedOnceRef.current = true;
         subscriptionReady = true;
         lastSafetyReconcileAt = Date.now();
+        const snapshotAgeMs = Date.now() - Date.parse(initialSnapshot.generatedAt || '');
+        if (isFirstSubscription && Number.isFinite(snapshotAgeMs) && snapshotAgeMs < 15_000) {
+          return;
+        }
         scheduleReconcile();
       };
       const onSubscriptionError = () => {
@@ -488,7 +538,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       if (reconcileTimer.current) clearTimeout(reconcileTimer.current);
       reconcileTimer.current = null;
     };
-  }, [consumeRealtimeEvent, scheduleReconcile, userId]);
+  }, [consumeRealtimeEvent, initialSnapshot.generatedAt, mutateHolidays, mutateUserLeaves, scheduleReconcile, userId]);
 
   const handlePrevMonth = useCallback(() => {
     const target = getAdjacentCalendarMonth(viewMonth.current.year, viewMonth.current.month, -1);
@@ -706,13 +756,44 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       },
       false,
     );
-    if (item.sourceType !== 'EVENT') {
+    if (item.sourceType === 'EVENT') {
+      const detailKey = calendarEventDetailKey(userId || 'default', item.sourceId);
+      const cachedDetail = cache.get(unstable_serialize(detailKey)) as { data?: { success: boolean; event?: CalendarEventDetailDTO } } | undefined;
+      if (cachedDetail?.data?.event && !isRecurringCalendarOccurrence(item)) {
+        void mutate(
+          detailKey,
+          (current: { success: boolean; event?: CalendarEventDetailDTO } | undefined) =>
+            current?.event
+              ? {
+                  ...current,
+                  event: {
+                    ...current.event,
+                    startAt: moved.startAt,
+                    endAt: moved.endAt,
+                    revision,
+                  },
+                }
+              : current,
+          false,
+        );
+      }
+    } else {
       const field = item.sourceType === 'DEAL_GOODS_READY' ? 'goodsReadyDate' : 'goodsLoadingDate';
       void mutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals',
         (deals: Array<Record<string, unknown>> | undefined) => deals?.map((deal) => deal.id === item.sourceId ? { ...deal, [field]: moved.startAt, updatedAt: new Date(revision).toISOString() } : deal), false);
+      const finKey = calendarFinancialInfoKey(userId || 'default', item.sourceId);
+      const cachedFin = cache.get(unstable_serialize(finKey)) as { data?: CalendarFinancialInfoDTO } | undefined;
+      if (cachedFin?.data) {
+        void mutate(
+          finKey,
+          (current: CalendarFinancialInfoDTO | undefined) =>
+            current ? { ...current, [field]: moved.startAt, revision } : current,
+          false,
+        );
+      }
     }
     return next;
-  }, [mutate, userId]);
+  }, [cache, mutate, userId]);
 
   const executeMove = useCallback(async (
     move: { item: CalendarMonthItemDTO; startAt: string; endAt: string },
@@ -735,6 +816,16 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       movedItemsRef.current[move.item.id] = confirmed;
       setMovedItems((prev) => ({ ...prev, [move.item.id]: confirmed }));
       patchMovedItem(baseItem, confirmed, response.revision);
+      if (move.item.sourceType === 'EVENT') {
+        clearCalendarDraft(userId || 'anonymous', move.item.sourceId);
+        if (recurrenceScope === 'ENTIRE_SERIES' || recurrenceScope === 'THIS_OCCURRENCE') {
+          const detailKey = calendarEventDetailKey(userId || 'default', move.item.sourceId);
+          const cachedDetail = cache.get(unstable_serialize(detailKey)) as { data?: unknown } | undefined;
+          if (cachedDetail?.data !== undefined) {
+            void mutate(detailKey);
+          }
+        }
+      }
       if (recurrenceScope === 'ENTIRE_SERIES') void mutate((key) => Array.isArray(key) && key[0] === 'calendar-month' && key[1] === userId);
       if (move.item.sourceType !== 'EVENT') void mutate((key) => Array.isArray(key) && key[0] === 'pipeline-deals');
     } catch (caught) {
@@ -744,7 +835,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
     } finally {
       pendingMoveIds.current.delete(move.item.id);
     }
-  }, [mutate, patchMovedItem, toast, userId]);
+  }, [cache, mutate, patchMovedItem, toast, userId]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     clearEdgeHover();
@@ -773,7 +864,30 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
 
   // Optimistic updates on save success
   const handleSaveSuccess = useCallback(
-    (savedItem: CalendarMonthItemDTO, recurring: boolean, optimisticId?: string) => {
+    (
+      savedItem: CalendarMonthItemDTO,
+      recurring: boolean,
+      optimisticId?: string,
+      savedDetail?: CalendarEventDetailDTO
+    ) => {
+      if (savedDetail) {
+        void mutate(
+          calendarEventDetailKey(userId || 'default', savedDetail.id),
+          { success: true, event: savedDetail },
+          false
+        );
+      }
+      if (movedItemsRef.current[savedItem.id]) {
+        delete movedItemsRef.current[savedItem.id];
+        setMovedItems((prev) => {
+          if (!prev[savedItem.id]) return prev;
+          const next = { ...prev };
+          delete next[savedItem.id];
+          return next;
+        });
+      }
+      setEditingItem((prev) => (prev && (prev.id === savedItem.id || prev.sourceId === savedItem.sourceId) ? savedItem : prev));
+
       void mutate(
         currentKey,
         (current: CalendarMonthSnapshotDTO | undefined) => {
@@ -811,7 +925,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         false // Do not immediately re-fetch over the optimistic value
       ).then(() => recurring ? mutate(currentKey) : undefined);
     },
-    [currentKey, mutate]
+    [currentKey, mutate, userId]
   );
 
   const handleOptimisticSave = useCallback((optimisticItem: CalendarMonthItemDTO, mutationId: string) => {
@@ -823,7 +937,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
       return {
         ...current,
         items: exists
-          ? current.items.map((item) => item.id === optimisticItem.id ? { ...item, ...optimisticItem, owner: item.owner, color: item.color } : item)
+          ? current.items.map((item) => item.id === optimisticItem.id ? { ...item, ...optimisticItem, owner: item.owner, color: optimisticItem.color || item.color } : item)
           : [...current.items, optimisticItem],
       };
     }, false);
@@ -863,6 +977,12 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   // Optimistic update on delete success
   const handleDeleteSuccess = useCallback(
     (deletedId: string) => {
+      clearCalendarDraft(userId || 'anonymous', deletedId);
+      void mutate(
+        calendarEventDetailKey(userId || 'default', deletedId),
+        undefined,
+        { revalidate: false }
+      );
       mutate(
         currentKey,
         (current: CalendarMonthSnapshotDTO | undefined) => {
@@ -877,7 +997,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
         false
       );
     },
-    [currentKey, mutate]
+    [currentKey, mutate, userId]
   );
 
   return (

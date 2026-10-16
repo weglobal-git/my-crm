@@ -290,8 +290,14 @@ export async function moveOpportunity(
     }
   }
 
+  const revision = fullDeal?.updatedAt ? new Date(fullDeal.updatedAt).getTime() : Date.now();
   runBackgroundJob(async () => {
-    await notifyPrivatePipelineUpdate(opportunityId, { action: 'OPPORTUNITY_UPDATED', deal: fullDeal });
+    await notifyPrivatePipelineUpdate(opportunityId, {
+      action: 'OPPORTUNITY_UPDATED',
+      deal: fullDeal,
+      dealId: opportunityId,
+      revision,
+    });
     if (opportunity.type === 'SALES_DEAL' || fullDeal?.type === 'SALES_DEAL') {
       const years = [
         opportunity.goodsLoadingDate ? new Date(opportunity.goodsLoadingDate).getFullYear() : undefined,

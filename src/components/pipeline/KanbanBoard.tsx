@@ -287,6 +287,91 @@ export function KanbanBoard({
     return () => window.removeEventListener("storage", handleStorage);
   }, [currentUserId]);
 
+  const rawOpportunitiesRef = useRef(rawOpportunities);
+  useEffect(() => {
+    rawOpportunitiesRef.current = rawOpportunities;
+  }, [rawOpportunities]);
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+  const initialTabRef = useRef(initialTab);
+  useEffect(() => {
+    initialTabRef.current = initialTab;
+  }, [initialTab]);
+  const initialOpportunitiesRef = useRef(initialOpportunities);
+  useEffect(() => {
+    initialOpportunitiesRef.current = initialOpportunities;
+  }, [initialOpportunities]);
+
+  // Seed SWR internal cache with SSR fallbackData on mount (without a network request)
+  // so bound mutate() and globalMutate(keyFilter) always operate on a defined array.
+  useEffect(() => {
+    if (tab === initialTab && initialOpportunities !== undefined) {
+      void mutate(
+        (currentData: OpportunityWithRelations[] | undefined) =>
+          currentData ?? initialOpportunitiesRef.current ?? initialOpportunities,
+        { revalidate: false }
+      );
+    }
+  }, [tab, initialTab, initialOpportunities, mutate]);
+
+  const updatePipelineDealsCache = useCallback(
+    (updater: (source: OpportunityWithRelations[]) => OpportunityWithRelations[]) => {
+      const base =
+        rawOpportunitiesRef.current ??
+        (tabRef.current === initialTabRef.current ? initialOpportunitiesRef.current : undefined) ??
+        [];
+      const nextSnapshot = updater(base);
+      rawOpportunitiesRef.current = nextSnapshot;
+      if (tabRef.current === initialTabRef.current && initialOpportunitiesRef.current) {
+        initialOpportunitiesRef.current = nextSnapshot;
+      }
+      return mutate(
+        (currentData: OpportunityWithRelations[] | undefined) => {
+          const source =
+            currentData ??
+            rawOpportunitiesRef.current ??
+            (tabRef.current === initialTabRef.current ? initialOpportunitiesRef.current : undefined) ??
+            [];
+          return updater(source);
+        },
+        { revalidate: false }
+      );
+    },
+    [mutate]
+  );
+
+  // Optimistic stage overrides keyed by dealId -> stageId so groupedDeals and
+  // background re-renders never snap a moved card back to its old column while
+  // SWR / Server Action / Pusher updates are settling.
+  const [optimisticStageByDealId, setOptimisticStageByDealId] = useState<Record<string, string>>({});
+  const optimisticStageByDealIdRef = useRef<Record<string, string>>({});
+  const inFlightStageMovesRef = useRef<Record<string, number>>({});
+  const dragTargetColRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!rawOpportunities) return;
+    const currentOverrides = optimisticStageByDealIdRef.current;
+    const overrideIds = Object.keys(currentOverrides);
+    if (overrideIds.length === 0) return;
+
+    let changed = false;
+    const nextOverrides = { ...currentOverrides };
+    for (const id of overrideIds) {
+      if ((inFlightStageMovesRef.current[id] || 0) > 0) continue;
+      const matched = rawOpportunities.find(d => d.id === id);
+      if (!matched || matched.pipelineStageId === currentOverrides[id]) {
+        delete nextOverrides[id];
+        changed = true;
+      }
+    }
+    if (changed) {
+      optimisticStageByDealIdRef.current = nextOverrides;
+      setOptimisticStageByDealId(nextOverrides);
+    }
+  }, [rawOpportunities]);
+
   // Instant optimistic toggle for deal pin (< 2ms)
   const togglePinDeal = useCallback((dealId: string) => {
     const currentPinned = pinnedDealIdsRef.current;
@@ -324,20 +409,17 @@ export function KanbanBoard({
           );
         }
       }
+      dealsRef.current = updated;
       return updated;
     });
 
     // 4. Update SWR cache so any background reads have the new pin state
-    void mutate(
-      (currentData: OpportunityWithRelations[] | undefined) => {
-        if (!currentData) return currentData;
-        return currentData.map(item =>
-          item.id === dealId ? { ...item, isPinned: isNowPinned } : item
-        );
-      },
-      { revalidate: false }
+    void updatePipelineDealsCache(source =>
+      source.map(item =>
+        item.id === dealId ? { ...item, isPinned: isNowPinned } : item
+      )
     );
-  }, [currentUserId, mutate]);
+  }, [currentUserId, updatePipelineDealsCache]);
 
   const pinnedDealsContextValue = useMemo(() => ({
     pinnedDealIds,
@@ -345,28 +427,37 @@ export function KanbanBoard({
   }), [pinnedDealIds, togglePinDeal]);
 
   // Group opportunities by stageId
-  const groupedDeals = useMemo(() => initialStages.reduce((acc, stage) => {
-    const fallback = tab === initialTab ? (initialOpportunities || []) : [];
-    let stageDeals = (rawOpportunities || fallback).filter(o => o.pipelineStageId === stage.id);
-    if (cardTypeFilter && cardTypeFilter !== 'ALL') {
-      stageDeals = stageDeals.filter(o => o.type === cardTypeFilter);
-    }
-    if (ownerFilter && ownerFilter !== 'ALL') {
-      stageDeals = stageDeals.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
-    }
-    if (hasValueFilter) {
-      stageDeals = stageDeals.filter(o => o.value != null && Number(o.value) > 0);
-    }
-    if (!isCompletedTab && searchQuery.trim()) {
-      stageDeals = stageDeals.filter(o => matchesPipelineCardSearch(o, searchQuery));
-    }
-    const stageDealsWithPins = stageDeals.map(o => ({
-      ...o,
-      isPinned: pinnedDealIds.has(o.id),
-    }));
-    acc[stage.id] = sortDeals(stageDealsWithPins, pendingAcceleratorsMap, holidaysSet, leavesByUser);
-    return acc;
-  }, {} as Record<string, OpportunityWithRelations[]>), [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, cardTypeFilter, ownerFilter, hasValueFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery, holidaysSet, leavesByUser, pinnedDealIds]);
+  const groupedDeals = useMemo(() => {
+    const fallback = tab === initialTab ? (initialOpportunitiesRef.current || initialOpportunities || []) : [];
+    const baseDeals = (rawOpportunities || fallback).map(o => {
+      const optimisticStageId = optimisticStageByDealId[o.id];
+      if (optimisticStageId && optimisticStageId !== o.pipelineStageId) {
+        return { ...o, pipelineStageId: optimisticStageId };
+      }
+      return o;
+    });
+    return initialStages.reduce((acc, stage) => {
+      let stageDeals = baseDeals.filter(o => o.pipelineStageId === stage.id);
+      if (cardTypeFilter && cardTypeFilter !== 'ALL') {
+        stageDeals = stageDeals.filter(o => o.type === cardTypeFilter);
+      }
+      if (ownerFilter && ownerFilter !== 'ALL') {
+        stageDeals = stageDeals.filter(o => o.ownerId === ownerFilter || o.owner?.id === ownerFilter);
+      }
+      if (hasValueFilter) {
+        stageDeals = stageDeals.filter(o => o.value != null && Number(o.value) > 0);
+      }
+      if (!isCompletedTab && searchQuery.trim()) {
+        stageDeals = stageDeals.filter(o => matchesPipelineCardSearch(o, searchQuery));
+      }
+      const stageDealsWithPins = stageDeals.map(o => ({
+        ...o,
+        isPinned: pinnedDealIds.has(o.id),
+      }));
+      acc[stage.id] = sortDeals(stageDealsWithPins, pendingAcceleratorsMap, holidaysSet, leavesByUser);
+      return acc;
+    }, {} as Record<string, OpportunityWithRelations[]>);
+  }, [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, optimisticStageByDealId, cardTypeFilter, ownerFilter, hasValueFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery, holidaysSet, leavesByUser, pinnedDealIds]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
 
@@ -411,22 +502,6 @@ export function KanbanBoard({
   const [activePanelDeal, setActivePanelDeal] = useState<{deal: OpportunityWithRelations, tab: TabType} | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [closingTimeout, setClosingTimeout] = useState<NodeJS.Timeout | null>(null);
-  const rawOpportunitiesRef = useRef(rawOpportunities);
-  useEffect(() => {
-    rawOpportunitiesRef.current = rawOpportunities;
-  }, [rawOpportunities]);
-  const tabRef = useRef(tab);
-  useEffect(() => {
-    tabRef.current = tab;
-  }, [tab]);
-  const initialTabRef = useRef(initialTab);
-  useEffect(() => {
-    initialTabRef.current = initialTab;
-  }, [initialTab]);
-  const initialOpportunitiesRef = useRef(initialOpportunities);
-  useEffect(() => {
-    initialOpportunitiesRef.current = initialOpportunities;
-  }, [initialOpportunities]);
   const mutatePendingAcceleratorsRef = useRef(mutatePendingAccelerators);
   useEffect(() => {
     mutatePendingAcceleratorsRef.current = mutatePendingAccelerators;
@@ -435,6 +510,10 @@ export function KanbanBoard({
   useEffect(() => {
     mutatePendingTodosRef.current = mutatePendingTodos;
   }, [mutatePendingTodos]);
+  const updatePipelineDealsCacheRef = useRef(updatePipelineDealsCache);
+  useEffect(() => {
+    updatePipelineDealsCacheRef.current = updatePipelineDealsCache;
+  }, [updatePipelineDealsCache]);
   const dealRevisionsRef = useRef<Record<string, number>>({});
   const holidaysSetRef = useRef(holidaysSet);
   useEffect(() => {
@@ -524,78 +603,68 @@ export function KanbanBoard({
 
         // If the deal is not in our current data, we probably just got added to it.
         // We need to fetch it to show it on the board.
-        const dealExists = rawOpportunitiesRef.current?.some(opp => opp.id === data.dealId);
+        const currentPool = rawOpportunitiesRef.current ?? (tabRef.current === initialTabRef.current ? initialOpportunitiesRef.current : undefined);
+        const dealExists = currentPool?.some(opp => opp.id === data.dealId);
         if (!dealExists) {
           mutate();
           return;
         }
 
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.map(opp => {
-              if (opp.id === data.dealId) {
-                const isExisting = (opp.teamMembers || []).some(u => u.id === addedUser.id);
-                if (!isExisting) {
-                  const normalizedMember = {
-                    id: addedUser.id,
-                    name: addedUser.name || null,
-                    email: addedUser.email || null,
-                    image: addedUser.image || null,
-                    departments: (addedUser as unknown as { departments?: { id: string; name: string }[] }).departments || [],
-                  };
-                  return { ...opp, teamMembers: [...(opp.teamMembers || []), normalizedMember] };
-                }
+        void updatePipelineDealsCacheRef.current(source =>
+          source.map(opp => {
+            if (opp.id === data.dealId) {
+              const isExisting = (opp.teamMembers || []).some(u => u.id === addedUser.id);
+              if (!isExisting) {
+                const normalizedMember = {
+                  id: addedUser.id,
+                  name: addedUser.name || null,
+                  email: addedUser.email || null,
+                  image: addedUser.image || null,
+                  departments: (addedUser as unknown as { departments?: { id: string; name: string }[] }).departments || [],
+                };
+                return { ...opp, teamMembers: [...(opp.teamMembers || []), normalizedMember] };
               }
-              return opp;
-            });
-          },
-          { revalidate: false }
+            }
+            return opp;
+          })
         );
       } else if (data?.action === 'MEMBERS_ADDED' && data.dealId && data.users) {
         const addedUsers = data.users;
-        const dealExists = rawOpportunitiesRef.current?.some(opp => opp.id === data.dealId);
+        const currentPool = rawOpportunitiesRef.current ?? (tabRef.current === initialTabRef.current ? initialOpportunitiesRef.current : undefined);
+        const dealExists = currentPool?.some(opp => opp.id === data.dealId);
         if (!dealExists) {
           mutate();
           return;
         }
 
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.map(opp => {
-              if (opp.id === data.dealId) {
-                const currentMembers = opp.teamMembers || [];
-                const newMembers = addedUsers
-                  .filter(u => !currentMembers.some(existing => existing.id === u.id))
-                  .map(u => ({
-                    id: u.id,
-                    name: u.name || null,
-                    email: u.email || null,
-                    image: u.image || null,
-                    departments: (u as unknown as { departments?: { id: string; name: string }[] }).departments || [],
-                  }));
-                if (newMembers.length > 0) {
-                  return { ...opp, teamMembers: [...currentMembers, ...newMembers] };
-                }
+        void updatePipelineDealsCacheRef.current(source =>
+          source.map(opp => {
+            if (opp.id === data.dealId) {
+              const currentMembers = opp.teamMembers || [];
+              const newMembers = addedUsers
+                .filter(u => !currentMembers.some(existing => existing.id === u.id))
+                .map(u => ({
+                  id: u.id,
+                  name: u.name || null,
+                  email: u.email || null,
+                  image: u.image || null,
+                  departments: (u as unknown as { departments?: { id: string; name: string }[] }).departments || [],
+                }));
+              if (newMembers.length > 0) {
+                return { ...opp, teamMembers: [...currentMembers, ...newMembers] };
               }
-              return opp;
-            });
-          },
-          { revalidate: false }
+            }
+            return opp;
+          })
         );
       } else if (data?.action === 'MEMBER_REMOVED' && data.dealId && data.userId) {
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.map(opp => {
-              if (opp.id === data.dealId) {
-                return { ...opp, teamMembers: (opp.teamMembers || []).filter(u => u.id !== data.userId) };
-              }
-              return opp;
-            });
-          },
-          { revalidate: false }
+        void updatePipelineDealsCacheRef.current(source =>
+          source.map(opp => {
+            if (opp.id === data.dealId) {
+              return { ...opp, teamMembers: (opp.teamMembers || []).filter(u => u.id !== data.userId) };
+            }
+            return opp;
+          })
         );
       } else if (
         data?.action === 'ACTIVITY_ADDED' &&
@@ -607,56 +676,44 @@ export function KanbanBoard({
         !data.activityLog.content.startsWith('[URGENT_')
       ) {
         const addedActivityLog = data.activityLog;
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.map(opp => {
-              if (opp.id === data.dealId) {
-                return { ...opp, activityLogs: [addedActivityLog] };
-              }
-              return opp;
-            });
-          },
-          { revalidate: false }
+        void updatePipelineDealsCacheRef.current(source =>
+          source.map(opp => {
+            if (opp.id === data.dealId) {
+              return { ...opp, activityLogs: [addedActivityLog] };
+            }
+            return opp;
+          })
         );
       } else if (data?.action === 'ACTIVITY_UPDATED' && data.dealId && data.activityLog) {
         const updatedActivityLog = data.activityLog;
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.map(opp => {
-              if (opp.id === data.dealId) {
-                // Only replace if the currently shown log is the one being updated
-                const updatedLogs = opp.activityLogs.map(log => 
-                  log.id === updatedActivityLog.id ? updatedActivityLog : log
-                );
-                return { ...opp, activityLogs: updatedLogs };
-              }
-              return opp;
-            });
-          },
-          { revalidate: false }
+        void updatePipelineDealsCacheRef.current(source =>
+          source.map(opp => {
+            if (opp.id === data.dealId) {
+              // Only replace if the currently shown log is the one being updated
+              const updatedLogs = opp.activityLogs.map(log => 
+                log.id === updatedActivityLog.id ? updatedActivityLog : log
+              );
+              return { ...opp, activityLogs: updatedLogs };
+            }
+            return opp;
+          })
         );
       } else if (data?.action === 'ACTIVITY_DELETED' && data.dealId && data.logId) {
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.map(opp => {
-              if (opp.id === data.dealId) {
-                // If we deleted the log currently shown (or if it was just cleared by Optimistic UI),
-                // replace with the nextLatestLog (if provided) or empty array
-                const isCurrentlyShown = opp.activityLogs.some(log => log.id === data.logId);
-                const isEmpty = opp.activityLogs.length === 0;
-                
-                if (isCurrentlyShown || isEmpty) {
-                  return { ...opp, activityLogs: data.nextLatestLog ? [data.nextLatestLog] : [] };
-                }
-                return opp;
+        void updatePipelineDealsCacheRef.current(source =>
+          source.map(opp => {
+            if (opp.id === data.dealId) {
+              // If we deleted the log currently shown (or if it was just cleared by Optimistic UI),
+              // replace with the nextLatestLog (if provided) or empty array
+              const isCurrentlyShown = opp.activityLogs.some(log => log.id === data.logId);
+              const isEmpty = opp.activityLogs.length === 0;
+              
+              if (isCurrentlyShown || isEmpty) {
+                return { ...opp, activityLogs: data.nextLatestLog ? [data.nextLatestLog] : [] };
               }
               return opp;
-            });
-          },
-          { revalidate: false }
+            }
+            return opp;
+          })
         );
       } else if (data?.action === 'DEAL_ACCELERATORS_UPDATED') {
         const dealId = data.dealId;
@@ -727,17 +784,13 @@ export function KanbanBoard({
             holidaysSetRef.current,
             leavesByUserRef.current
           );
+          dealsRef.current = next;
           return next;
         });
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            // Prevent duplicate creation
-            if (currentData.some(opp => opp.id === createdDeal.id)) return currentData;
-            return [createdDeal, ...currentData];
-          },
-          { revalidate: false }
-        );
+        void updatePipelineDealsCacheRef.current(source => {
+          if (source.some(opp => opp.id === createdDeal.id)) return source;
+          return [createdDeal, ...source];
+        });
         void globalMutate('ltc-count');
         void globalMutate('ltc-accounts-data');
       } else if ((data?.action === 'OPPORTUNITY_UPDATED' || data?.action === 'RECONCILE_OPPORTUNITY') && data.deal) {
@@ -754,13 +807,29 @@ export function KanbanBoard({
           dealRevisionsRef.current[dealId] = incomingRev;
         }
 
-        if (!isCompletedTab && updatedDeal.status !== 'OPEN') {
+        const hasInFlightMove = (inFlightStageMovesRef.current[dealId] || 0) > 0;
+        const effectiveStageOverride = hasInFlightMove
+          ? optimisticStageByDealIdRef.current[dealId]
+          : undefined;
+        const effectiveUpdatedDeal = effectiveStageOverride
+          ? { ...updatedDeal, pipelineStageId: effectiveStageOverride }
+          : updatedDeal;
+
+        if (!hasInFlightMove && updatedDeal.pipelineStageId && optimisticStageByDealIdRef.current[dealId]) {
+          const nextOverrides = { ...optimisticStageByDealIdRef.current };
+          delete nextOverrides[dealId];
+          optimisticStageByDealIdRef.current = nextOverrides;
+          setOptimisticStageByDealId(nextOverrides);
+        }
+
+        if (!isCompletedTab && effectiveUpdatedDeal.status && effectiveUpdatedDeal.status !== 'OPEN') {
           // Deal was closed (WON/LOST) - immediately remove from all active board columns
           setDeals(prev => {
             const next = { ...prev };
             for (const colId in next) {
-              next[colId] = next[colId].filter(opp => opp.id !== updatedDeal.id);
+              next[colId] = next[colId].filter(opp => opp.id !== effectiveUpdatedDeal.id);
             }
+            dealsRef.current = next;
             return next;
           });
         } else {
@@ -770,16 +839,16 @@ export function KanbanBoard({
             let found = false;
             for (const colId in next) {
               const list = next[colId];
-              const idx = list.findIndex(opp => opp.id === updatedDeal.id);
+              const idx = list.findIndex(opp => opp.id === effectiveUpdatedDeal.id);
               if (idx !== -1) {
                 found = true;
                 const existing = list[idx];
                 const mergedDeal = { 
                   ...existing, 
-                  ...updatedDeal, 
-                  isPinned: pinnedDealIdsRef.current.has(updatedDeal.id),
+                  ...effectiveUpdatedDeal, 
+                  isPinned: pinnedDealIdsRef.current.has(effectiveUpdatedDeal.id),
                 };
-                const targetStageId = updatedDeal.pipelineStageId || existing.pipelineStageId;
+                const targetStageId = effectiveUpdatedDeal.pipelineStageId || existing.pipelineStageId;
                 if (targetStageId === colId) {
                   const updatedList = [...list];
                   updatedList[idx] = mergedDeal;
@@ -791,7 +860,7 @@ export function KanbanBoard({
                   );
                 } else if (targetStageId && next[targetStageId]) {
                   // Deal moved to another stage
-                  next[colId] = list.filter(opp => opp.id !== updatedDeal.id);
+                  next[colId] = list.filter(opp => opp.id !== effectiveUpdatedDeal.id);
                   const targetList = [...next[targetStageId], mergedDeal];
                   next[targetStageId] = sortDeals(
                     targetList,
@@ -803,70 +872,49 @@ export function KanbanBoard({
                 break;
               }
             }
-            if (!found && updatedDeal.status === 'OPEN' && updatedDeal.pipelineStageId && next[updatedDeal.pipelineStageId]) {
-              const targetList = [...next[updatedDeal.pipelineStageId], { ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } as OpportunityWithRelations];
-              next[updatedDeal.pipelineStageId] = sortDeals(
+            if (!found && effectiveUpdatedDeal.status === 'OPEN' && effectiveUpdatedDeal.pipelineStageId && next[effectiveUpdatedDeal.pipelineStageId]) {
+              const targetList = [...next[effectiveUpdatedDeal.pipelineStageId], { ...effectiveUpdatedDeal, isPinned: pinnedDealIdsRef.current.has(effectiveUpdatedDeal.id) } as OpportunityWithRelations];
+              next[effectiveUpdatedDeal.pipelineStageId] = sortDeals(
                 targetList,
                 pendingAcceleratorsMapRef.current,
                 holidaysSetRef.current,
                 leavesByUserRef.current
               );
             }
+            dealsRef.current = next;
             return next;
           });
         }
-        if (rawOpportunitiesRef.current) {
-          const existsInRaw = rawOpportunitiesRef.current.some(opp => opp.id === dealId);
-          rawOpportunitiesRef.current = existsInRaw
-            ? rawOpportunitiesRef.current.map(opp =>
-                opp.id === dealId ? { ...opp, ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } : opp
-              )
-            : updatedDeal.status === 'OPEN'
-              ? [{ ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) }, ...rawOpportunitiesRef.current]
-              : rawOpportunitiesRef.current;
-        }
-        if (initialOpportunitiesRef.current) {
-          initialOpportunitiesRef.current = initialOpportunitiesRef.current.map(opp =>
-            opp.id === dealId ? { ...opp, ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) } : opp
-          );
-        }
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            const source = currentData || (tabRef.current === initialTabRef.current ? (initialOpportunitiesRef.current || []) : []);
-            if (!isCompletedTab && updatedDeal.status && updatedDeal.status !== 'OPEN') {
-              return source.filter(opp => opp.id !== updatedDeal.id);
+        void updatePipelineDealsCacheRef.current(source => {
+          if (!isCompletedTab && effectiveUpdatedDeal.status && effectiveUpdatedDeal.status !== 'OPEN') {
+            return source.filter(opp => opp.id !== effectiveUpdatedDeal.id);
+          }
+          const exists = source.some(opp => opp.id === effectiveUpdatedDeal.id);
+          if (!exists && effectiveUpdatedDeal.status === 'OPEN') {
+            return [{ ...effectiveUpdatedDeal, isPinned: pinnedDealIdsRef.current.has(effectiveUpdatedDeal.id) }, ...source];
+          }
+          return source.map(opp => {
+            if (opp.id === effectiveUpdatedDeal.id) {
+              return {
+                ...opp,
+                ...effectiveUpdatedDeal,
+                isPinned: pinnedDealIdsRef.current.has(effectiveUpdatedDeal.id),
+              };
             }
-            const exists = source.some(opp => opp.id === updatedDeal.id);
-            if (!exists && updatedDeal.status === 'OPEN') {
-              return [{ ...updatedDeal, isPinned: pinnedDealIdsRef.current.has(updatedDeal.id) }, ...source];
-            }
-            return source.map(opp => {
-              if (opp.id === updatedDeal.id) {
-                return {
-                  ...opp,
-                  ...updatedDeal,
-                  isPinned: pinnedDealIdsRef.current.has(updatedDeal.id),
-                };
-              }
-              return opp;
-            });
-          },
-          { revalidate: false }
-        );
+            return opp;
+          });
+        });
       } else if (data?.action === 'OPPORTUNITY_DELETED' && data.dealId) {
         setDeals(prev => {
           const next = { ...prev };
           for (const colId in next) {
             next[colId] = next[colId].filter(opp => opp.id !== data.dealId);
           }
+          dealsRef.current = next;
           return next;
         });
-        mutate(
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.filter(opp => opp.id !== data.dealId);
-          },
-          { revalidate: false }
+        void updatePipelineDealsCacheRef.current(source =>
+          source.filter(opp => opp.id !== data.dealId)
         );
         void globalMutate('ltc-count');
         void globalMutate('ltc-accounts-data');
@@ -945,13 +993,22 @@ export function KanbanBoard({
       setDeals(prev => {
         const prevKeys = Object.keys(prev);
         const nextKeys = Object.keys(groupedDeals);
-        if (prevKeys.length !== nextKeys.length) return groupedDeals;
+        if (prevKeys.length !== nextKeys.length) {
+          dealsRef.current = groupedDeals;
+          return groupedDeals;
+        }
         for (const key of nextKeys) {
           const prevList = prev[key];
           const nextList = groupedDeals[key];
-          if (!prevList || !nextList || prevList.length !== nextList.length) return groupedDeals;
+          if (!prevList || !nextList || prevList.length !== nextList.length) {
+            dealsRef.current = groupedDeals;
+            return groupedDeals;
+          }
           for (let i = 0; i < prevList.length; i++) {
-            if (prevList[i] !== nextList[i]) return groupedDeals;
+            if (prevList[i] !== nextList[i]) {
+              dealsRef.current = groupedDeals;
+              return groupedDeals;
+            }
           }
         }
         return prev;
@@ -960,7 +1017,7 @@ export function KanbanBoard({
       if (panelOpen) {
         setActivePanelDeal(prev => {
           if (!prev) return prev;
-          const fallback = tab === initialTab ? (initialOpportunities || []) : [];
+          const fallback = tab === initialTab ? (initialOpportunitiesRef.current || initialOpportunities || []) : [];
           const freshDeal = (rawOpportunities || fallback).find(o => o.id === prev.deal.id);
           if (freshDeal && freshDeal !== prev.deal) return { ...prev, deal: freshDeal };
           return prev;
@@ -1063,29 +1120,34 @@ export function KanbanBoard({
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } })
   );
 
-  const findColumnOfDeal = useCallback((dealId: string) => {
-    for (const [colId, colDeals] of Object.entries(deals)) {
-      if (colDeals.some(d => d.id === dealId)) return colId;
-    }
-    return null;
-  }, [deals]);
+  const findColumnOfDeal = useCallback(
+    (dealId: string, sourceDeals: Record<string, OpportunityWithRelations[]> = dealsRef.current) => {
+      for (const [colId, colDeals] of Object.entries(sourceDeals)) {
+        if (colDeals.some(d => d.id === dealId)) return colId;
+      }
+      return null;
+    },
+    []
+  );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event;
     const dealId = active.id as string;
-    dragOriginRef.current = deals;
+    const currentDeals = dealsRef.current;
+    dragOriginRef.current = currentDeals;
+    dragTargetColRef.current = findColumnOfDeal(dealId, currentDeals);
     
     const el = active.rect.current.initial;
     if (el) setActiveWidth(el.width);
 
-    for (const colDeals of Object.values(deals)) {
+    for (const colDeals of Object.values(currentDeals)) {
       const deal = colDeals.find(d => d.id === dealId);
       if (deal) {
         setActiveDeal(deal);
         break;
       }
     }
-  }, [deals]);
+  }, [findColumnOfDeal]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event;
@@ -1094,38 +1156,64 @@ export function KanbanBoard({
     const overId = over.id as string;
     if (activeId === overId) return;
 
-    const activeCol = findColumnOfDeal(activeId);
-    let overCol = findColumnOfDeal(overId);
-    if (!overCol && initialStages.some(c => c.id === overId)) {
-      overCol = overId;
+    const currentDeals = dealsRef.current;
+    const activeCol = findColumnOfDeal(activeId, currentDeals);
+    let overCol = initialStages.some(c => c.id === overId)
+      ? overId
+      : findColumnOfDeal(overId, currentDeals);
+    if (!overCol && over.data?.current?.type === 'Column' && over.data.current.column?.id) {
+      overCol = over.data.current.column.id as string;
     }
 
     if (!activeCol || !overCol || activeCol === overCol) return;
 
+    dragTargetColRef.current = overCol;
+
     setDeals(prev => {
-      const sourceItems = [...prev[activeCol]];
-      const destItems = [...prev[overCol]];
+      const sourceList = prev[activeCol];
+      const destList = prev[overCol];
+      if (!sourceList || !destList) return prev;
+      const sourceItems = [...sourceList];
+      const destItems = [...destList];
       const activeIndex = sourceItems.findIndex(d => d.id === activeId);
       if (activeIndex === -1) return prev;
       
       const [item] = sourceItems.splice(activeIndex, 1);
+      const movedItem = { ...item, pipelineStageId: overCol };
       const overIndex = destItems.findIndex(d => d.id === overId);
-      if (overIndex !== -1) destItems.splice(overIndex, 0, item);
-      else destItems.push(item);
+      if (overIndex !== -1) destItems.splice(overIndex, 0, movedItem);
+      else destItems.push(movedItem);
 
-      return { ...prev, [activeCol]: sourceItems, [overCol]: destItems };
+      const next = { ...prev, [activeCol]: sourceItems, [overCol]: destItems };
+      dealsRef.current = next;
+      return next;
     });
   }, [initialStages, findColumnOfDeal]);
 
-  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
-    const { active, over } = event;
+  const handleDragCancel = useCallback(() => {
     setActiveDeal(null);
     setActiveWidth(0);
+    dragTargetColRef.current = null;
+    if (dragOriginRef.current) {
+      dealsRef.current = dragOriginRef.current;
+      setDeals(dragOriginRef.current);
+      dragOriginRef.current = null;
+    }
+  }, []);
+
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event;
+    const originalDeals = dragOriginRef.current;
+    const trackedTargetCol = dragTargetColRef.current;
+    dragOriginRef.current = null;
+    dragTargetColRef.current = null;
 
     if (!over) {
-      if (dragOriginRef.current) {
-        setDeals(dragOriginRef.current);
-        dragOriginRef.current = null;
+      setActiveDeal(null);
+      setActiveWidth(0);
+      if (originalDeals) {
+        dealsRef.current = originalDeals;
+        setDeals(originalDeals);
       }
       return;
     }
@@ -1133,33 +1221,61 @@ export function KanbanBoard({
     const activeId = active.id as string;
     const overId = over.id as string;
 
-    const originCol = dragOriginRef.current
-      ? Object.entries(dragOriginRef.current).find(([, items]) => items.some(d => d.id === activeId))?.[0]
+    const originCol = originalDeals
+      ? Object.entries(originalDeals).find(([, items]) => items.some(d => d.id === activeId))?.[0] ?? null
       : null;
 
-    let targetCol = findColumnOfDeal(activeId);
-    let overCol = findColumnOfDeal(overId);
-    if (!overCol && initialStages.some(c => c.id === overId)) {
-      overCol = overId;
+    const currentDeals = dealsRef.current;
+    let targetCol = findColumnOfDeal(activeId, currentDeals);
+    let overCol = initialStages.some(c => c.id === overId)
+      ? overId
+      : findColumnOfDeal(overId, currentDeals);
+
+    if (!overCol && over.data?.current?.type === 'Column' && over.data.current.column?.id) {
+      overCol = over.data.current.column.id as string;
     }
 
     if (overCol && overCol !== originCol) {
       targetCol = overCol;
+    } else if (trackedTargetCol && trackedTargetCol !== originCol && overId === activeId) {
+      targetCol = trackedTargetCol;
     }
 
-    if (!targetCol) return;
-
-    if (originCol === targetCol) {
-      // Re-sort within same column according to system logic (Orange -> Red [longest overdue first] -> Normal)
-      setDeals(prev => ({
-        ...prev,
-        [targetCol]: sortDeals(prev[targetCol] || [], pendingAcceleratorsMap, holidaysSet, leavesByUser),
-      }));
-      dragOriginRef.current = null;
+    if (!targetCol) {
+      setActiveDeal(null);
+      setActiveWidth(0);
       return;
     }
 
-    // Moved across columns: place in destination column and sort according to logic
+    if (originCol === targetCol) {
+      // Re-sort within same column according to system logic (Orange -> Red [longest overdue first] -> Normal)
+      setActiveDeal(null);
+      setActiveWidth(0);
+      setDeals(prev => {
+        const next = {
+          ...prev,
+          [targetCol]: sortDeals(prev[targetCol] || [], pendingAcceleratorsMap, holidaysSet, leavesByUser),
+        };
+        dealsRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    // 1. Record optimistic stage override BEFORE clearing activeDeal so groupedDeals
+    // already places activeId in targetCol on the exact render where activeDeal becomes null.
+    inFlightStageMovesRef.current[activeId] = (inFlightStageMovesRef.current[activeId] || 0) + 1;
+    const nextOptimisticStages = {
+      ...optimisticStageByDealIdRef.current,
+      [activeId]: targetCol,
+    };
+    optimisticStageByDealIdRef.current = nextOptimisticStages;
+    setOptimisticStageByDealId(nextOptimisticStages);
+
+    setActiveDeal(null);
+    setActiveWidth(0);
+
+    // 2. Moved across columns: place in destination column and sort according to logic
     setDeals(prev => {
       const next = { ...prev };
       let draggedDeal: OpportunityWithRelations | undefined;
@@ -1177,27 +1293,53 @@ export function KanbanBoard({
       if (originCol && next[originCol]) {
         next[originCol] = sortDeals(next[originCol], pendingAcceleratorsMap, holidaysSet, leavesByUser);
       }
+      dealsRef.current = next;
       return next;
     });
 
     try {
-      await mutate(
-        currentData => currentData?.map(deal =>
+      await updatePipelineDealsCache(source =>
+        source.map(deal =>
           deal.id === activeId ? { ...deal, pipelineStageId: targetCol } : deal
-        ),
-        { revalidate: false }
+        )
       );
-      await moveOpportunity(activeId, targetCol);
+      const updatedDeal = await moveOpportunity(activeId, targetCol);
+      if (updatedDeal) {
+        const rev = normalizeRevision(updatedDeal.updatedAt) || Date.now();
+        dealRevisionsRef.current[activeId] = Math.max(dealRevisionsRef.current[activeId] || 0, rev);
+        await updatePipelineDealsCache(source =>
+          source.map(deal =>
+            deal.id === activeId
+              ? {
+                  ...deal,
+                  ...updatedDeal,
+                  pipelineStageId: updatedDeal.pipelineStageId ?? targetCol,
+                  isPinned: pinnedDealIdsRef.current.has(activeId),
+                }
+              : deal
+          )
+        );
+      }
     } catch (error: unknown) {
-      const originalDeals = dragOriginRef.current;
       const originalDeal = originalDeals
         ? Object.values(originalDeals).flat().find(deal => deal.id === activeId)
         : undefined;
-      if (originalDeals) setDeals(originalDeals);
+      const revertedOptimistic = { ...optimisticStageByDealIdRef.current };
+      if (originCol) {
+        revertedOptimistic[activeId] = originCol;
+      } else {
+        delete revertedOptimistic[activeId];
+      }
+      optimisticStageByDealIdRef.current = revertedOptimistic;
+      setOptimisticStageByDealId(revertedOptimistic);
+
+      if (originalDeals) {
+        dealsRef.current = originalDeals;
+        setDeals(originalDeals);
+      }
       if (originalDeal) {
-        await mutate(
-          currentData => currentData?.map(deal => deal.id === activeId ? originalDeal : deal),
-          { revalidate: false }
+        await updatePipelineDealsCache(source =>
+          source.map(deal => (deal.id === activeId ? originalDeal : deal))
         );
       } else {
         await mutate();
@@ -1206,9 +1348,14 @@ export function KanbanBoard({
         toast({ title: "Error", description: "Error moving opportunity: " + error.message, type: "error" });
       }
     } finally {
-      dragOriginRef.current = null;
+      const remaining = Math.max(0, (inFlightStageMovesRef.current[activeId] || 1) - 1);
+      if (remaining === 0) {
+        delete inFlightStageMovesRef.current[activeId];
+      } else {
+        inFlightStageMovesRef.current[activeId] = remaining;
+      }
     }
-  }, [findColumnOfDeal, initialStages, pendingAcceleratorsMap, toast, mutate, holidaysSet, leavesByUser]);
+  }, [findColumnOfDeal, initialStages, pendingAcceleratorsMap, toast, mutate, updatePipelineDealsCache, holidaysSet, leavesByUser]);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const columnRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -1554,6 +1701,7 @@ export function KanbanBoard({
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
           >
             {initialStages.map((col) => (
               <div
@@ -1608,14 +1756,11 @@ export function KanbanBoard({
               for (const colId in next) {
                 next[colId] = next[colId].filter(d => d.id !== dealId);
               }
+              dealsRef.current = next;
               return next;
             });
-            void mutate(
-              (currentData: OpportunityWithRelations[] | undefined) => {
-                const source = currentData || (tab === initialTab ? (initialOpportunities || []) : []);
-                return source.filter(d => d.id !== dealId);
-              },
-              { revalidate: false }
+            void updatePipelineDealsCache(source =>
+              source.filter(d => d.id !== dealId)
             );
           }}
         />

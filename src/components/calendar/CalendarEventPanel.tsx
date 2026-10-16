@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { X, Calendar as CalendarIcon, Trash2, Save, Loader2, AlertCircle } from "lucide-react";
 import { format, addDays, addHours, startOfDay, subDays } from "date-fns";
 import { CalendarTagPicker } from "./CalendarTagPicker";
 import { CalendarRecipientPicker, type RecipientState } from "./CalendarRecipientPicker";
 import {
+  buildNewEventDraftKey,
   useCalendarDraft,
   type CalendarEventDraft,
 } from "@/lib/calendar/calendar-draft-store";
@@ -20,7 +21,7 @@ import {
 } from "@/lib/actions/calendar";
 import { calendarDepartmentsKey, calendarEventDetailKey } from "@/lib/calendar/calendar-cache";
 import type { CalendarRepeatFrequency } from "@prisma/client";
-import type { CalendarMonthItemDTO } from "@/lib/calendar/calendar-dto";
+import type { CalendarEventDetailDTO, CalendarMonthItemDTO } from "@/lib/calendar/calendar-dto";
 import { useCalendarDialog } from "@/lib/calendar/use-calendar-dialog";
 import { calendarPanelBackdropClass, calendarPanelMotionClass, useCalendarPanelTransition } from "@/lib/calendar/use-calendar-panel-transition";
 import { CalendarSelect } from './CalendarSelect';
@@ -35,7 +36,12 @@ export interface CalendarEventPanelProps {
   editingOccurrence?: { itemId: string; startAt: string } | null;
   initialItem?: CalendarMonthItemDTO | null;
   defaultDate?: Date | null;
-  onSaveSuccess?: (item: CalendarMonthItemDTO, recurring: boolean, optimisticId?: string) => void;
+  onSaveSuccess?: (
+    item: CalendarMonthItemDTO,
+    recurring: boolean,
+    optimisticId?: string,
+    detail?: CalendarEventDetailDTO
+  ) => void;
   onOptimisticSave?: (item: CalendarMonthItemDTO, mutationId: string) => () => void;
   onOptimisticDelete?: (eventId: string, mutationId: string) => () => void;
   onDeleteSuccess?: (deletedId: string) => void;
@@ -64,8 +70,12 @@ export function CalendarEventPanel({
   const deleteMenuRef = useRef<HTMLDivElement>(null);
   const createRequestIdRef = useRef(`cal-${crypto.randomUUID()}`);
   const isEditMode = Boolean(editingItemId);
-  const draftKey = editingItemId || "new";
+  const draftKey = useMemo(
+    () => (isEditMode && editingItemId ? editingItemId : buildNewEventDraftKey(defaultDate)),
+    [isEditMode, editingItemId, defaultDate]
+  );
   const { toast } = useDialog();
+  const { mutate: globalMutate } = useSWRConfig();
 
   const isInitialMatch = Boolean(
     initialItem && editingItemId && (initialItem.sourceId === editingItemId || initialItem.id === editingItemId)
@@ -98,7 +108,11 @@ export function CalendarEventPanel({
   const [canEdit, setCanEdit] = useState(
     isInitialMatch && initialItem?.canEdit !== undefined ? initialItem.canEdit : true
   );
-  const [selectedTagDetails, setSelectedTagDetails] = useState<Array<{ id: string; name: string; color: string; departmentId: string }>>([]);
+  const [selectedTagDetails, setSelectedTagDetails] = useState<Array<{ id: string; name: string; color: string; departmentId: string }>>(() =>
+    isInitialMatch && initialItem?.tags
+      ? initialItem.tags.map((tag) => ({ ...tag, departmentId: initialItem.departmentId || '' }))
+      : []
+  );
   const [prevEditingItemId, setPrevEditingItemId] = useState<string | null>(null);
 
   // Mutation states
@@ -131,6 +145,15 @@ export function CalendarEventPanel({
     setPrevEditingItemId(editingItemId);
     setIsLoadingDetail(!isInitialMatch);
     setErrorMsg(null);
+    if (isInitialMatch && initialItem) {
+      setExpectedRevision(initialItem.revision || 1);
+      setCanEdit(initialItem.canEdit !== undefined ? initialItem.canEdit : true);
+      setSelectedTagDetails(
+        initialItem.tags
+          ? initialItem.tags.map((tag) => ({ ...tag, departmentId: initialItem.departmentId || '' }))
+          : []
+      );
+    }
   } else if (!isOpen && prevEditingItemId !== null) {
     setPrevEditingItemId(null);
   }
@@ -178,13 +201,11 @@ export function CalendarEventPanel({
   }, [defaultDate, departments, isInitialMatch, initialItem, editingOccurrence]);
 
   // Draft store hook
-  const { draft, updateDraft, clearCurrentDraft } = useCalendarDraft(
+  const { draft, updateDraft, hydrateDraft, clearCurrentDraft } = useCalendarDraft(
     currentUserId,
     draftKey,
     initialFallbackDraft
   );
-
-  const hasUserModifiedDraftRef = useRef(false);
 
   // Fetch departments if empty with SWR cache
   const deptKey = isOpen && departments.length === 0 ? calendarDepartmentsKey(currentUserId || 'default') : null;
@@ -203,12 +224,12 @@ export function CalendarEventPanel({
       const timer = setTimeout(() => {
         setDepartments(cachedDepartments);
         if (!draft.departmentId) {
-          updateDraft({ departmentId: cachedDepartments[0].id });
+          hydrateDraft({ departmentId: cachedDepartments[0].id });
         }
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [cachedDepartments, departments.length, draft.departmentId, updateDraft]);
+  }, [cachedDepartments, departments.length, draft.departmentId, hydrateDraft]);
 
   // SWR hook for authoritative event detail from server
   const detailKey = isOpen && isEditMode && editingItemId
@@ -230,9 +251,11 @@ export function CalendarEventPanel({
     }
   );
 
+  const isHydratingDetail = isEditMode && !detailRes?.event && !detailErr;
+
   useEffect(() => {
     if (refreshToken > 0 && detailKey) {
-      mutateDetail();
+      void mutateDetail();
     }
   }, [refreshToken, detailKey, mutateDetail]);
 
@@ -252,35 +275,33 @@ export function CalendarEventPanel({
         setCanEdit(ev.canEdit);
         setSelectedTagDetails(ev.tags.map((tag) => ({ ...tag, departmentId: ev.departmentId })));
 
-        if (!hasUserModifiedDraftRef.current) {
-          updateDraft({
-            name: ev.name,
-            detail: ev.detail || "",
-            departmentId: ev.departmentId,
-            allDay: ev.allDay,
-            startAt: ev.startAt,
-            endAt: ev.endAt,
-            repeatFrequency: ev.repeatFrequency as CalendarRepeatFrequency,
-            repeatUntil: ev.repeatUntil,
-            tagIds: ev.tags.map((t: { id: string }) => t.id),
-            reminderEnabled: ev.recipients.some((r: RecipientState) => r.reminderEnabled),
-            reminderOffsetMins: ev.recipients.find((r: RecipientState) => r.reminderEnabled)?.reminderOffsetMins ?? 0,
-            recipients: ev.recipients.map((r: RecipientState) => ({
-              userId: r.userId,
-              name: r.name,
-              email: r.email,
-              image: r.image,
-              reminderEnabled: r.reminderEnabled,
-              reminderOffsetMins: r.reminderOffsetMins,
-            })),
-          });
-        }
+        hydrateDraft({
+          name: ev.name,
+          detail: ev.detail || "",
+          departmentId: ev.departmentId,
+          allDay: ev.allDay,
+          startAt: ev.startAt,
+          endAt: ev.endAt,
+          repeatFrequency: ev.repeatFrequency as CalendarRepeatFrequency,
+          repeatUntil: ev.repeatUntil,
+          tagIds: ev.tags.map((t: { id: string }) => t.id),
+          reminderEnabled: ev.recipients.some((r: RecipientState) => r.reminderEnabled),
+          reminderOffsetMins: ev.recipients.find((r: RecipientState) => r.reminderEnabled)?.reminderOffsetMins ?? 0,
+          recipients: ev.recipients.map((r: RecipientState) => ({
+            userId: r.userId,
+            name: r.name,
+            email: r.email,
+            image: r.image,
+            reminderEnabled: r.reminderEnabled,
+            reminderOffsetMins: r.reminderOffsetMins,
+          })),
+        });
         setIsLoadingDetail(false);
       }
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [isOpen, isEditMode, editingItemId, detailRes, detailErr, updateDraft]);
+  }, [isOpen, isEditMode, editingItemId, detailRes, detailErr, hydrateDraft]);
 
   useCalendarDialog(isOpen, panelRef, onClose, titleInputRef);
 
@@ -362,7 +383,7 @@ export function CalendarEventPanel({
   // Submit handler (create or update)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draft.name.trim() || isSubmitting || !canEdit) return;
+    if (!draft.name.trim() || isSubmitting || isHydratingDetail || !canEdit) return;
 
     setIsSubmitting(true);
     setErrorMsg(null);
@@ -370,6 +391,8 @@ export function CalendarEventPanel({
     const isNonRecurring = draft.repeatFrequency === "NONE";
     const mutationId = isEditMode ? `cal-${crypto.randomUUID()}` : createRequestIdRef.current;
     const requestId = isEditMode && editingItemId ? editingItemId : `optimistic:${createRequestIdRef.current}`;
+    const optimisticTags = selectedTagDetails.filter((t) => draft.tagIds.includes(t.id));
+    const optimisticColor = optimisticTags[0]?.color || initialItem?.color || "#3B82F6";
     const rollback = isNonRecurring ? onOptimisticSave?.({
       id: requestId,
       sourceType: "EVENT",
@@ -378,16 +401,17 @@ export function CalendarEventPanel({
       startAt: draft.startAt,
       endAt: draft.endAt,
       allDay: draft.allDay,
-      color: "#3B82F6",
+      color: optimisticColor,
       tagIds: draft.tagIds,
-      owner: { id: currentUserId || "", name: null, image: null },
+      tags: optimisticTags.map(({ id, name, color }) => ({ id, name, color })),
+      owner: initialItem?.owner || { id: currentUserId || "", name: null, image: null },
       departmentId: draft.departmentId,
+      departmentName: departments.find((d) => d.id === draft.departmentId)?.name ?? initialItem?.departmentName ?? null,
       canEdit: true,
       revision: isEditMode ? expectedRevision : 0,
     }, mutationId) : undefined;
 
     if (isNonRecurring) {
-      clearCurrentDraft();
       onClose();
     }
 
@@ -416,13 +440,25 @@ export function CalendarEventPanel({
         });
 
         if (res.success && res.item) {
+          clearCurrentDraft(false);
+          if (res.detail) {
+            setExpectedRevision(res.detail.revision);
+            await globalMutate(
+              calendarEventDetailKey(currentUserId || 'default', res.detail.id),
+              { success: true, event: res.detail },
+              { revalidate: false }
+            );
+          }
           if (!isNonRecurring) {
-            clearCurrentDraft();
             onClose();
           }
-          onSaveSuccess?.(res.item, draft.repeatFrequency !== "NONE", requestId);
+          onSaveSuccess?.(res.item, draft.repeatFrequency !== "NONE", requestId, res.detail);
         } else if (res.error === "REVISION_CONFLICT") {
           rollback?.();
+          if (res.currentRevision) {
+            setExpectedRevision(res.currentRevision);
+          }
+          void mutateDetail();
           toast({
             title: "Revision Conflict",
             description: "Another user updated this event. Please review changes.",
@@ -467,11 +503,18 @@ export function CalendarEventPanel({
         });
 
         if (res.success && res.item) {
+          clearCurrentDraft(false);
+          if (res.detail) {
+            await globalMutate(
+              calendarEventDetailKey(currentUserId || 'default', res.detail.id),
+              { success: true, event: res.detail },
+              { revalidate: false }
+            );
+          }
           if (!isNonRecurring) {
-            clearCurrentDraft();
             onClose();
           }
-          onSaveSuccess?.(res.item, draft.repeatFrequency !== "NONE", requestId);
+          onSaveSuccess?.(res.item, draft.repeatFrequency !== "NONE", requestId, res.detail);
         } else {
           rollback?.();
           toast({
@@ -515,7 +558,14 @@ export function CalendarEventPanel({
         : await deleteCalendarEventAction({ id: editingItemId, expectedRevision, mutationId });
 
       if (res.success) {
-        clearCurrentDraft();
+        clearCurrentDraft(false);
+        if (!isOccurrenceCancel) {
+          void globalMutate(
+            calendarEventDetailKey(currentUserId || 'default', editingItemId),
+            undefined,
+            { revalidate: false }
+          );
+        }
         onDeleteSuccess?.(isOccurrenceCancel ? editingOccurrence.itemId : editingItemId);
         onClose();
       } else if (res.error === "REVISION_CONFLICT") {
@@ -776,13 +826,18 @@ export function CalendarEventPanel({
               <button
                 type="submit"
                 form="calendar-event-form"
-                disabled={isSubmitting || !draft.name.trim()}
+                disabled={isSubmitting || isHydratingDetail || !draft.name.trim()}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#C7F33C] text-black text-xs font-semibold hover:bg-[#b8e432] disabled:opacity-50 transition-colors"
               >
                 {isSubmitting ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     <span>Saving...</span>
+                  </>
+                ) : isHydratingDetail ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Loading details...</span>
                   </>
                 ) : (
                   <>

@@ -11,7 +11,9 @@ import {
   type CalendarEventWithRelations,
 } from './calendar-queries';
 import {
+  buildNewEventDraftKey,
   getCalendarDraft,
+  mergeHydratedDraftWithDirtyFields,
   setCalendarDraft,
   clearCalendarDraft,
   resetAllCalendarDrafts,
@@ -333,6 +335,65 @@ describe('Calendar Event CRUD & Validation (Phase 2)', () => {
       clearCalendarDraft('user-A', 'new');
       assert.strictEqual(getCalendarDraft('user-A', 'new'), undefined);
       assert.strictEqual(getCalendarDraft('user-A', 'evt-123')?.name, 'Editing Existing Event');
+    });
+
+    it('generates distinct date-scoped keys for new events on different calendar days', () => {
+      const day10 = new Date(2026, 8, 10, 14, 30);
+      const day25 = new Date(2026, 8, 25, 9, 0);
+      assert.strictEqual(buildNewEventDraftKey(day10), 'new:2026-09-10');
+      assert.strictEqual(buildNewEventDraftKey(day25), 'new:2026-09-25');
+      assert.strictEqual(buildNewEventDraftKey(null), 'new');
+    });
+
+    it('preserves user-typed description (detail) when server detail hydration completes after typing starts', () => {
+      const initialFallback: CalendarEventDraft = {
+        name: 'Customer Visit',
+        detail: 'User just typed this new description while detail was loading',
+        departmentId: 'dept-1',
+        allDay: false,
+        startAt: '2026-09-15T09:00:00.000Z',
+        endAt: '2026-09-15T10:00:00.000Z',
+        repeatFrequency: 'NONE',
+        repeatUntil: null,
+        tagIds: ['tag-1'],
+        reminderEnabled: true,
+        reminderOffsetMins: 0,
+        recipients: [],
+      };
+
+      const serverHydratedPatch: Partial<CalendarEventDraft> = {
+        name: 'Customer Visit',
+        detail: 'Old server description',
+        departmentId: 'dept-1',
+        allDay: false,
+        startAt: '2026-09-15T09:00:00.000Z',
+        endAt: '2026-09-15T10:00:00.000Z',
+        repeatFrequency: 'WEEKLY',
+        repeatUntil: '2026-12-31T23:59:59.000Z',
+        tagIds: ['tag-1', 'tag-2'],
+        reminderEnabled: true,
+        reminderOffsetMins: 15,
+        recipients: [{ userId: 'user-99', reminderEnabled: true, reminderOffsetMins: 15 }],
+      };
+
+      // Case 1: User modified `detail` before server hydration arrived
+      const dirtyFields = new Set<keyof CalendarEventDraft>(['detail']);
+      const merged = mergeHydratedDraftWithDirtyFields(initialFallback, serverHydratedPatch, dirtyFields);
+
+      assert.strictEqual(merged.detail, 'User just typed this new description while detail was loading');
+      assert.strictEqual(merged.repeatFrequency, 'WEEKLY');
+      assert.strictEqual(merged.repeatUntil, '2026-12-31T23:59:59.000Z');
+      assert.deepStrictEqual(merged.tagIds, ['tag-1', 'tag-2']);
+      assert.strictEqual(merged.recipients.length, 1);
+      assert.strictEqual(merged.recipients[0].userId, 'user-99');
+
+      // Case 2: User has not modified any fields -> server detail hydrates cleanly
+      const cleanMerged = mergeHydratedDraftWithDirtyFields(
+        { ...initialFallback, detail: '' },
+        serverHydratedPatch,
+        new Set()
+      );
+      assert.strictEqual(cleanMerged.detail, 'Old server description');
     });
   });
 

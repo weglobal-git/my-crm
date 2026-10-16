@@ -3,6 +3,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { createPortal } from 'react-dom';
+import { addDays } from 'date-fns';
 import { Archive, Save, X } from 'lucide-react';
 import { getCalendarFinancialInfoAction, updateCalendarSaleDealAction } from '@/lib/actions/calendar';
 import type { CalendarFinancialInfoDTO } from '@/lib/calendar/calendar-dto';
@@ -109,17 +110,21 @@ export function CalendarFinancialInfoPopover({ opportunityId, initialData, ancho
         (current: CalendarMonthSnapshotDTO | undefined) => {
           if (!current) return current;
           let changed = false;
-          const updatedItems = current.items.map((item) => {
-            if (item.sourceId !== opportunityId) return item;
-            if (item.sourceType === 'DEAL_GOODS_READY' && optimistic.goodsReadyDate) {
+          const updatedItems = current.items.flatMap((item) => {
+            if (item.sourceId !== opportunityId) return [item];
+            if (item.sourceType === 'DEAL_GOODS_READY') {
               changed = true;
-              return { ...item, startAt: optimistic.goodsReadyDate };
+              if (!optimistic.goodsReadyDate) return [];
+              const nextEnd = addDays(new Date(optimistic.goodsReadyDate), 1).toISOString();
+              return [{ ...item, startAt: optimistic.goodsReadyDate, endAt: nextEnd }];
             }
-            if (item.sourceType === 'DEAL_GOODS_LOADING' && optimistic.goodsLoadingDate) {
+            if (item.sourceType === 'DEAL_GOODS_LOADING') {
               changed = true;
-              return { ...item, startAt: optimistic.goodsLoadingDate };
+              if (!optimistic.goodsLoadingDate) return [];
+              const nextEnd = addDays(new Date(optimistic.goodsLoadingDate), 1).toISOString();
+              return [{ ...item, startAt: optimistic.goodsLoadingDate, endAt: nextEnd }];
             }
-            return item;
+            return [item];
           });
           return changed ? { ...current, items: updatedItems } : current;
         },
@@ -166,7 +171,23 @@ export function CalendarFinancialInfoPopover({ opportunityId, initialData, ancho
       return;
     }
 
-    await mutate((current) => current ? { ...current, revision: response.revision ?? current.revision } : current, false);
+    const confirmedRevision = response.revision;
+    await mutate((current) => current ? { ...current, revision: confirmedRevision ?? current.revision } : current, false);
+    if (globalMutate && confirmedRevision !== undefined) {
+      void globalMutate(
+        (k) => Array.isArray(k) && k[0] === 'calendar-month' && (userId ? k[1] === userId : true),
+        (current: CalendarMonthSnapshotDTO | undefined) => {
+          if (!current) return current;
+          return {
+            ...current,
+            items: current.items.map((item) =>
+              item.sourceId === opportunityId ? { ...item, revision: confirmedRevision } : item
+            ),
+          };
+        },
+        false
+      );
+    }
     setIsSaving(false);
   };
 
