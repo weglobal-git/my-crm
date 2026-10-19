@@ -1,28 +1,20 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import useSWR from "swr";
 import {
   FileText,
   Tag,
   Users,
-  Box,
   Save,
   Loader2,
   Check,
-  Search,
-  Upload,
   X,
   Package,
-  Plus,
-  Trash2,
-  Copy,
   Printer,
   ChevronDown,
   ChevronUp,
   AlertCircle,
-  GripVertical,
-  Sparkles,
   Calculator,
 } from "lucide-react";
 import { ProductStatus } from "@prisma/client";
@@ -61,7 +53,6 @@ import {
   ProductVariantDTO,
   parsePriceConditions,
   serializePriceConditions,
-  calculateTierPrice,
   PriceStepTier,
 } from "@/lib/product/product-dto";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
@@ -73,6 +64,7 @@ import {
 import { ProductCommercialReportModal } from "./ProductCommercialReportModal";
 import { SortableVariantCard } from "./SortableVariantCard";
 import { ProductLogisticsModal } from "./ProductLogisticsModal";
+import { CustomerPriceComparisonTab } from "./CustomerPriceComparisonTab";
 
 interface EditProductPanelProps {
   productId: string | null;
@@ -97,36 +89,40 @@ export function EditProductPanel({
   availableCategories = [],
   availableBrands = [],
 }: EditProductPanelProps) {
-  const { commercialRates } = useCompanyCostOverhead();
+  const {
+    commercialRates,
+    totalPercent: companyCostOverheadPercent,
+    calculateEffectiveCost,
+  } = useCompanyCostOverhead();
   const [activeTab, setActiveTab] = useState("details");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Available categories & brands with fallback loading
-  const [categoriesList, setCategoriesList] = useState(availableCategories);
-  const [brandsList, setBrandsList] = useState(availableBrands);
+  const [categoriesList, setCategoriesList] = useState<{ category: string; count: number }[]>([]);
+  const [brandsList, setBrandsList] = useState<{ brand: string; count: number }[]>([]);
 
   useEffect(() => {
-    if (availableCategories.length > 0) {
-      setCategoriesList(availableCategories);
-    } else if (isOpen) {
+    if (availableCategories.length === 0 && isOpen) {
       void getProductCategories().then((res) => {
         if (Array.isArray(res)) setCategoriesList(res);
       });
     }
-  }, [availableCategories, isOpen]);
+  }, [availableCategories.length, isOpen]);
 
   useEffect(() => {
-    if (availableBrands.length > 0) {
-      setBrandsList(availableBrands);
-    } else if (isOpen) {
+    if (availableBrands.length === 0 && isOpen) {
       void getProductBrands().then((res) => {
         if (Array.isArray(res)) setBrandsList(res);
       });
     }
-  }, [availableBrands, isOpen]);
+  }, [availableBrands.length, isOpen]);
+
+  const effectiveCategoriesList =
+    availableCategories.length > 0 ? availableCategories : categoriesList;
+  const effectiveBrandsList =
+    availableBrands.length > 0 ? availableBrands : brandsList;
 
   // Form states
   const [name, setName] = useState("");
@@ -164,7 +160,18 @@ export function EditProductPanel({
   const [customerPriceEdits, setCustomerPriceEdits] = useState<
     Record<string, Record<string, number>>
   >({});
-  const [customerSearch, setCustomerSearch] = useState("");
+  const handleCustomerPriceChange = useCallback(
+    (variantId: string, companyId: string, price: number) => {
+      setCustomerPriceEdits((prev) => ({
+        ...prev,
+        [variantId]: {
+          ...(prev[variantId] || {}),
+          [companyId]: price,
+        },
+      }));
+    },
+    []
+  );
   const [variantRates, setVariantRates] = useState<Record<string, CommercialRates>>({});
 
   const [primaryVariantId, setPrimaryVariantId] = useState<string | null>(null);
@@ -265,7 +272,8 @@ export function EditProductPanel({
   // Populate local form state when overview loads
   useEffect(() => {
     if (overview) {
-      setName(overview.name || "");
+      React.startTransition(() => {
+        setName(overview.name || "");
       setBrand(overview.brand || "");
       setCategory(overview.category || "");
       setDescription(overview.description || "");
@@ -319,7 +327,8 @@ export function EditProductPanel({
       setVariantEdits(vMap);
       setCustomerPriceEdits(cpMap);
       setOrderedVariants(overview.variants || []);
-      setExpandedVariantIds({});
+        setExpandedVariantIds({});
+      });
     }
   }, [overview]);
 
@@ -793,48 +802,6 @@ export function EditProductPanel({
           }
         }
       }
-
-      // 0b. Validate Profit Margin: cannot be negative if cost is provided
-      const cost = vData.productCost;
-      if (typeof cost === "number" && cost > 0) {
-        const basePrice = Number(vData.price || 0);
-        const pricesToCheck = [basePrice];
-        tiers.forEach((t) => {
-          if (t.discountPercent > 0) {
-            pricesToCheck.push(calculateTierPrice(basePrice, t.discountPercent));
-          }
-        });
-
-        const vRate = commercialRates || DEFAULT_COMMERCIAL_RATES;
-        const genDeductionRate = vRate.commissionRate;
-
-        for (const p of pricesToCheck) {
-          const genNetRev = p * (1 - genDeductionRate / 100);
-          const genMargin = genNetRev - cost;
-          if (genMargin < 0) {
-            setSaveError(
-              `ไม่สามารถบันทึกได้: สูตร "${formulaName}" มี Profit Margin ติดลบใน General Export (${genMargin.toFixed(2)} THB) ที่ราคา ฿${p.toFixed(2)} กรุณาปรับราคาหรือส่วนลด`
-            );
-            setActiveTab("pricing");
-            setExpandedVariantIds((prev) => ({ ...prev, [v.id]: true }));
-            setIsSaving(false);
-            return;
-          }
-
-          const exclQuotation = p * (1 - vRate.distFeeRate / 100);
-          const exclNetRev = exclQuotation * (1 - (vRate.mktSupportRate + vRate.rebateRate) / 100);
-          const exclMargin = exclNetRev - cost;
-          if (exclMargin < 0) {
-            setSaveError(
-              `ไม่สามารถบันทึกได้: สูตร "${formulaName}" มี Profit Margin ติดลบใน Exclusive Distributor (${exclMargin.toFixed(2)} THB) ที่ราคา ฿${p.toFixed(2)} กรุณาปรับราคาหรือส่วนลด`
-            );
-            setActiveTab("pricing");
-            setExpandedVariantIds((prev) => ({ ...prev, [v.id]: true }));
-            setIsSaving(false);
-            return;
-          }
-        }
-      }
     }
 
     try {
@@ -912,9 +879,10 @@ export function EditProductPanel({
       });
 
       void mutate();
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Failed to save product:", err);
-      setSaveError(err?.message || "บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      const errMsg = err instanceof Error ? err.message : (err as { message?: string })?.message;
+      setSaveError(errMsg || "บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
     } finally {
       setIsSaving(false);
     }
@@ -928,18 +896,6 @@ export function EditProductPanel({
     numericW > 0 && numericL > 0 && numericH > 0
       ? Number(((numericW * numericL * numericH) / 1_000_000).toFixed(4))
       : 0;
-  const numericCbm =
-    computedCbmFromDim > 0
-      ? computedCbmFromDim
-      : typeof cbm === "number"
-      ? cbm
-      : parseFloat(cbm as string) || 0;
-  const numericCartonQty = typeof cartonQuantity === "number" ? cartonQuantity : parseInt(cartonQuantity as string, 10) || 0;
-
-  const cartons20ft = numericCbm > 0 ? Math.floor(28 / numericCbm) : 0;
-  const cartons40ft = numericCbm > 0 ? Math.floor(58 / numericCbm) : 0;
-  const units20ft = cartons20ft * (numericCartonQty || 1);
-  const units40ft = cartons40ft * (numericCartonQty || 1);
 
   const derivedGrossWeight = useMemo(() => {
     const list = orderedVariants.length > 0 ? orderedVariants : overview?.variants || [];
@@ -953,11 +909,8 @@ export function EditProductPanel({
     return anyGw?.cartonGrossWeight || 0;
   }, [orderedVariants, overview?.variants, primaryVariantId]);
 
-  const hasDimensions = numericW > 0 && numericL > 0 && numericH > 0;
-  const hasPackingSpecs = hasDimensions && derivedGrossWeight > 0;
-
   const categoryOptions = useMemo(() => {
-    const opts = categoriesList.map((c) => ({
+    const opts = effectiveCategoriesList.map((c) => ({
       label: c.category,
       value: c.category,
       searchTerms: c.category,
@@ -966,10 +919,10 @@ export function EditProductPanel({
       opts.unshift({ label: category, value: category, searchTerms: category });
     }
     return opts;
-  }, [categoriesList, category]);
+  }, [effectiveCategoriesList, category]);
 
   const brandOptions = useMemo(() => {
-    const opts = brandsList.map((b) => ({
+    const opts = effectiveBrandsList.map((b) => ({
       label: b.brand,
       value: b.brand,
       searchTerms: b.brand,
@@ -978,7 +931,7 @@ export function EditProductPanel({
       opts.unshift({ label: brand, value: brand, searchTerms: brand });
     }
     return opts;
-  }, [brandsList, brand]);
+  }, [effectiveBrandsList, brand]);
 
   return (
     <>
@@ -1081,7 +1034,11 @@ export function EditProductPanel({
       tabs={TABS}
       activeTab={activeTab}
       onTabChange={setActiveTab}
-      widthClass="w-[650px]"
+      widthClass={
+        activeTab === "customer_prices"
+          ? "w-[960px] max-w-[96vw]"
+          : "w-[650px]"
+      }
     >
       {isLoading && !overview ? (
         <div className="flex items-center justify-center h-64">
@@ -1388,73 +1345,21 @@ export function EditProductPanel({
             </div>
           )}
 
-          {/* TAB 3: CUSTOMER PRICES */}
+          {/* TAB 3: CUSTOMER PRICES & PROFITABILITY COMPARISON */}
           {activeTab === "customer_prices" && (
-            <div className="flex flex-col gap-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  value={customerSearch}
-                  onChange={(e) => setCustomerSearch(e.target.value)}
-                  placeholder="Filter customer company..."
-                  className="w-full bg-[#3A3B3C] border border-transparent rounded-xl pl-9 pr-3.5 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C]"
-                />
-              </div>
-
-              {(orderedVariants.length > 0 ? orderedVariants : overview?.variants || []).map((v) => {
-                const filteredPrices = v.customPrices.filter((cp) =>
-                  cp.companyName.toLowerCase().includes(customerSearch.toLowerCase())
-                );
-
-                if (filteredPrices.length === 0) return null;
-
-                return (
-                  <div key={v.id} className="bg-[#3A3B3C] rounded-2xl p-5 space-y-3 border-0">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                      {v.fullName || v.formula} — Customer Specific Rates
-                    </h4>
-
-                    <div className="divide-y divide-[#252728]">
-                      {filteredPrices.map((cp) => {
-                        const currentVal =
-                          customerPriceEdits[v.id]?.[cp.companyId] ?? cp.price;
-
-                        return (
-                          <div
-                            key={cp.id}
-                            className="flex items-center justify-between py-2 gap-4"
-                          >
-                            <span className="text-xs font-medium text-slate-200 truncate flex-1">
-                              {cp.companyName}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-400">฿</span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={currentVal}
-                                onChange={(e) => {
-                                  const num = parseFloat(e.target.value) || 0;
-                                  setCustomerPriceEdits((prev) => ({
-                                    ...prev,
-                                    [v.id]: {
-                                      ...(prev[v.id] || {}),
-                                      [cp.companyId]: num,
-                                    },
-                                  }));
-                                }}
-                                className="w-24 bg-[#252728] border border-[#4E4F50] hover:border-slate-400 focus:border-[#C7F33C] rounded-lg px-2.5 py-1 text-xs text-right text-slate-100 outline-none transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <CustomerPriceComparisonTab
+              variants={
+                orderedVariants.length > 0
+                  ? orderedVariants
+                  : overview?.variants || []
+              }
+              variantEdits={variantEdits}
+              customerPriceEdits={customerPriceEdits}
+              onCustomerPriceChange={handleCustomerPriceChange}
+              commercialRates={commercialRates}
+              companyCostOverheadPercent={companyCostOverheadPercent}
+              calculateEffectiveCost={calculateEffectiveCost}
+            />
           )}
 
 

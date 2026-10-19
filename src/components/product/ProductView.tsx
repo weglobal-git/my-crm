@@ -9,7 +9,6 @@ import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
 import {
   ProductListItemDTO,
-  productMatchesFilters,
   getProductOverviewKey,
 } from "@/lib/product/product-dto";
 import {
@@ -91,18 +90,10 @@ export function ProductView({
   const [availableCategories, setAvailableCategories] = useState(initialCategories);
   const [availableBrands, setAvailableBrands] = useState(initialBrands);
 
-  // Registry of known products across filters & pages for 0ms optimistic filtering
-  const knownProductsMapRef = useRef<Map<string, ProductListItemDTO>>(
-    new Map(initialProducts.map((p) => [p.id, p]))
+  // Registry of known products across filters & pages
+  const [knownProductsMap, setKnownProductsMap] = useState<Map<string, ProductListItemDTO>>(
+    () => new Map(initialProducts.map((p) => [p.id, p]))
   );
-
-  useEffect(() => {
-    for (const p of initialProducts) {
-      if (!knownProductsMapRef.current.has(p.id)) {
-        knownProductsMapRef.current.set(p.id, p);
-      }
-    }
-  }, [initialProducts]);
 
   // Modals & Panels State
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
@@ -118,13 +109,7 @@ export function ProductView({
   const [isOverviewReportOpen, setIsOverviewReportOpen] = useState(false);
   const [selectedForPrintIds, setSelectedForPrintIds] = useState<Set<string>>(new Set());
   const [viewOnlySelected, setViewOnlySelected] = useState(false);
-
-  // Auto-reset viewOnlySelected if all selected items are cleared
-  useEffect(() => {
-    if (selectedForPrintIds.size === 0 && viewOnlySelected) {
-      setViewOnlySelected(false);
-    }
-  }, [selectedForPrintIds.size, viewOnlySelected]);
+  const effectiveViewOnlySelected = viewOnlySelected && selectedForPrintIds.size > 0;
 
   const handleToggleSelectForPrint = useCallback((id: string) => {
     setSelectedForPrintIds((prev) => {
@@ -156,6 +141,7 @@ export function ProductView({
 
   const handleClearSelectForPrint = useCallback(() => {
     setSelectedForPrintIds(new Set());
+    setViewOnlySelected(false);
   }, []);
 
   const printTargetProducts = useMemo(() => {
@@ -170,7 +156,7 @@ export function ProductView({
     }
     for (const id of selectedForPrintIds) {
       if (!seen.has(id)) {
-        const known = knownProductsMapRef.current.get(id);
+        const known = knownProductsMap.get(id);
         if (known) {
           result.push(known);
           seen.add(id);
@@ -178,39 +164,39 @@ export function ProductView({
       }
     }
     return result;
-  }, [products, selectedForPrintIds]);
+  }, [products, selectedForPrintIds, knownProductsMap]);
 
   // Count of selected products for the active tab (On vs Off)
   const activeSelectedProductCount = useMemo(() => {
     if (selectedForPrintIds.size === 0) return 0;
     let count = 0;
     for (const id of selectedForPrintIds) {
-      const p = knownProductsMapRef.current?.get(id) || products.find((prod) => prod.id === id);
+      const p = knownProductsMap.get(id) || products.find((prod) => prod.id === id);
       if (!p?.status || p.status === activeTab) {
         count++;
       }
     }
     return count;
-  }, [activeTab, products, selectedForPrintIds]);
+  }, [activeTab, products, selectedForPrintIds, knownProductsMap]);
 
   // Selected products grouped by category, scoped to the current active tab
   const selectedProductsByCategory = useMemo(() => {
     if (selectedForPrintIds.size === 0) return new Map<string, number>();
     const map = new Map<string, number>();
     for (const id of selectedForPrintIds) {
-      const p = knownProductsMapRef.current?.get(id) || products.find((prod) => prod.id === id);
+      const p = knownProductsMap.get(id) || products.find((prod) => prod.id === id);
       if (p?.category && (!p.status || p.status === activeTab)) {
         const catKey = p.category.trim().toLowerCase();
         map.set(catKey, (map.get(catKey) || 0) + 1);
       }
     }
     return map;
-  }, [activeTab, products, selectedForPrintIds]);
+  }, [activeTab, products, selectedForPrintIds, knownProductsMap]);
 
   // Total products in each category for the active tab
   const activeCategoryProductCounts = useMemo(() => {
     const map = new Map<string, number>();
-    for (const p of knownProductsMapRef.current.values()) {
+    for (const p of knownProductsMap.values()) {
       if (p.status === activeTab && p.category) {
         const catKey = p.category.trim().toLowerCase();
         map.set(catKey, (map.get(catKey) || 0) + 1);
@@ -225,7 +211,7 @@ export function ProductView({
       }
     }
     return map;
-  }, [activeTab, products]);
+  }, [activeTab, products, knownProductsMap]);
 
   // Quick Select: Select all or deselect all items in a category for the active tab only
   const handleQuickSelectCategory = useCallback(
@@ -234,7 +220,7 @@ export function ProductView({
 
       // Gather matching items in memory
       const targetMap = new Map<string, ProductListItemDTO>();
-      for (const p of knownProductsMapRef.current.values()) {
+      for (const p of knownProductsMap.values()) {
         if (p.category?.trim().toLowerCase() === catKey && p.status === activeTab) {
           targetMap.set(p.id, p);
         }
@@ -253,8 +239,14 @@ export function ProductView({
             categories: [category],
             pageSize: 500,
           });
+          setKnownProductsMap((prev) => {
+            const next = new Map(prev);
+            for (const p of res.products) {
+              next.set(p.id, p);
+            }
+            return next;
+          });
           for (const p of res.products) {
-            knownProductsMapRef.current.set(p.id, p);
             if (p.category?.trim().toLowerCase() === catKey && p.status === activeTab) {
               targetMap.set(p.id, p);
             }
@@ -284,7 +276,7 @@ export function ProductView({
         return next;
       });
     },
-    [activeTab, products]
+    [activeTab, knownProductsMap, products]
   );
 
   const defaultCategoryNames = useMemo(
@@ -428,21 +420,33 @@ export function ProductView({
       prev.map((p) => (p.id === id ? { ...p, starRating: newRating } : p))
     );
 
-    const cached = knownProductsMapRef.current.get(id);
-    if (cached) {
-      knownProductsMapRef.current.set(id, { ...cached, starRating: newRating });
-    }
+    let prevRating = 0;
+    setKnownProductsMap((prev) => {
+      const next = new Map(prev);
+      const cached = next.get(id);
+      if (cached) {
+        prevRating = cached.starRating ?? 0;
+        next.set(id, { ...cached, starRating: newRating });
+      }
+      return next;
+    });
 
     // 2. Server persistence
     try {
       await updateProductStarRating(id, newRating);
     } catch (err) {
       console.error("Failed to update best selling status:", err);
-      if (cached) {
-        setProducts((prev) =>
-          prev.map((p) => (p.id === id ? { ...p, starRating: cached.starRating } : p))
-        );
-      }
+      setProducts((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, starRating: prevRating } : p))
+      );
+      setKnownProductsMap((prev) => {
+        const next = new Map(prev);
+        const cached = next.get(id);
+        if (cached) {
+          next.set(id, { ...cached, starRating: prevRating });
+        }
+        return next;
+      });
     }
   }, []);
 
@@ -484,23 +488,14 @@ export function ProductView({
   }, [searchQuery]);
 
   // Fetch with filters on change
-  const activeTabRef = useRef(activeTab);
-  activeTabRef.current = activeTab;
-  const selectedCategoriesRef = useRef(selectedCategories);
-  selectedCategoriesRef.current = selectedCategories;
-  const selectedBrandsRef = useRef(selectedBrands);
-  selectedBrandsRef.current = selectedBrands;
-  const debouncedSearchRef = useRef(debouncedSearch);
-  debouncedSearchRef.current = debouncedSearch;
-
   const fetchFilteredProducts = useCallback(async () => {
     setIsFilterLoading(true);
     try {
       const res = await getProductsWithFilters({
-        status: activeTabRef.current,
-        categories: selectedCategoriesRef.current.length > 0 ? selectedCategoriesRef.current : undefined,
-        brands: selectedBrandsRef.current.length > 0 ? selectedBrandsRef.current : undefined,
-        search: debouncedSearchRef.current,
+        status: activeTab,
+        categories: selectedCategories.length > 0 ? selectedCategories : undefined,
+        brands: selectedBrands.length > 0 ? selectedBrands : undefined,
+        search: debouncedSearch,
         page: 1,
         pageSize: 300,
       });
@@ -511,47 +506,31 @@ export function ProductView({
       setPage(1);
       setHasMore(res.total > res.products.length);
 
-      for (const p of res.products) {
-        knownProductsMapRef.current.set(p.id, p);
-      }
+      setKnownProductsMap((prev) => {
+        const next = new Map(prev);
+        for (const p of res.products) {
+          next.set(p.id, p);
+        }
+        return next;
+      });
     } catch (err) {
       console.error("Failed to filter products:", err);
     } finally {
       setIsFilterLoading(false);
     }
-  }, []);
+  }, [activeTab, selectedCategories, selectedBrands, debouncedSearch]);
 
   const isInitialMountRef = useRef(true);
 
-  // Filter effect: 0ms in-memory optimistic filter followed by server sync
+  // Filter effect: Fetch authoritative page from server on filter changes
   useEffect(() => {
     if (isInitialMountRef.current) {
       isInitialMountRef.current = false;
       return;
     }
 
-    // 1. Optimistic instant filter from known registry
-    const localMatches: ProductListItemDTO[] = [];
-    for (const p of knownProductsMapRef.current.values()) {
-      if (
-        productMatchesFilters(p, {
-          status: activeTab,
-          categories: selectedCategories.length > 0 ? selectedCategories : undefined,
-          brands: selectedBrands.length > 0 ? selectedBrands : undefined,
-          search: debouncedSearch,
-        })
-      ) {
-        localMatches.push(p);
-      }
-    }
-
-    if (localMatches.length > 0) {
-      setProducts(localMatches);
-    }
-
-    // 2. Fetch authoritative page from server
     void fetchFilteredProducts();
-  }, [activeTab, selectedCategories, selectedBrands, debouncedSearch, fetchFilteredProducts]);
+  }, [fetchFilteredProducts]);
 
   // Infinite scroll loader
   const handleLoadMore = useCallback(async () => {
@@ -575,9 +554,13 @@ export function ProductView({
         return [...prev, ...newItems];
       });
 
-      for (const p of res.products) {
-        knownProductsMapRef.current.set(p.id, p);
-      }
+      setKnownProductsMap((prev) => {
+        const next = new Map(prev);
+        for (const p of res.products) {
+          next.set(p.id, p);
+        }
+        return next;
+      });
 
       setPage(nextPage);
       setHasMore(products.length + res.products.length < res.total);
@@ -708,7 +691,7 @@ export function ProductView({
               onToggleGroupSelectForPrint={handleToggleGroupForPrint}
               onSelectAllForPrint={handleSelectAllForPrint}
               onClearSelectForPrint={handleClearSelectForPrint}
-              viewOnlySelected={viewOnlySelected}
+              viewOnlySelected={effectiveViewOnlySelected}
               onViewOnlySelectedChange={setViewOnlySelected}
               onSelectProduct={handleSelectProduct}
               onToggleBestSelling={handleToggleBestSelling}
@@ -763,12 +746,12 @@ export function ProductView({
                       type="button"
                       onClick={() => setViewOnlySelected((prev) => !prev)}
                       className={`hidden md:flex w-8 h-8 rounded-full items-center justify-center border transition-all cursor-pointer relative shrink-0 ${
-                        viewOnlySelected
+                        effectiveViewOnlySelected
                           ? "bg-[#C7F33C] border-[#C7F33C] text-black shadow-xs font-bold"
                           : "bg-[#252728] border-[#3A3B3C] text-[#C7F33C] hover:text-white hover:bg-[#3A3B3C]"
                       }`}
                       title={
-                        viewOnlySelected
+                        effectiveViewOnlySelected
                           ? "Show all products"
                           : `View only selected products (${selectedForPrintIds.size})`
                       }
@@ -926,7 +909,11 @@ export function ProductView({
           onProductCreated={(newProduct) => {
             setIsCreateProductOpen(false);
             if (newProduct) {
-              knownProductsMapRef.current.set(newProduct.id, newProduct);
+              setKnownProductsMap((prev) => {
+                const next = new Map(prev);
+                next.set(newProduct.id, newProduct);
+                return next;
+              });
               setProducts((prev) => [newProduct, ...prev]);
               setStats((prev) => ({
                 ...prev,
@@ -949,14 +936,15 @@ export function ProductView({
           availableCategories={availableCategories}
           availableBrands={availableBrands}
           onProductUpdated={(updated) => {
-            if (updated.id) {
+            const updatedId = updated.id;
+            if (updatedId) {
               if (updated.status && updated.status !== activeTab) {
-                setProducts((prev) => prev.filter((p) => p.id !== updated.id));
+                setProducts((prev) => prev.filter((p) => p.id !== updatedId));
                 void fetchFilteredProducts();
               } else {
                 setProducts((prev) =>
                   prev.map((p) =>
-                    p.id === updated.id
+                    p.id === updatedId
                       ? {
                           ...p,
                           ...(updated.name ? { name: updated.name } : {}),
@@ -977,14 +965,17 @@ export function ProductView({
                 }
               }
 
-              const existing = knownProductsMapRef.current.get(updated.id);
-              if (existing) {
-                knownProductsMapRef.current.set(updated.id, {
+              setKnownProductsMap((prev) => {
+                const existing = prev.get(updatedId);
+                if (!existing) return prev;
+                const next = new Map(prev);
+                next.set(updatedId, {
                   ...existing,
                   ...(updated.status ? { status: updated.status } : {}),
                   ...(updated.name ? { name: updated.name } : {}),
                 });
-              }
+                return next;
+              });
             }
           }}
         />
