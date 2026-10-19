@@ -482,6 +482,8 @@ export interface ContainerCartonRangeResult {
   maxByCbm: number;
 }
 
+const containerRangeCache = new Map<string, ContainerCartonRangeResult>();
+
 export function calculateContainerCartonRange(
   product: {
     cartonWidth?: number | null;
@@ -515,6 +517,15 @@ export function calculateContainerCartonRange(
       ? product.cartonGrossWeight
       : 0;
 
+  const cacheKey = !customContainer
+    ? `${containerId}|${cartonW}|${cartonL}|${cartonH}|${cbmPerCtn}|${gwForMin}|${gwForMax}|${toleranceMm}`
+    : null;
+
+  if (cacheKey) {
+    const cached = containerRangeCache.get(cacheKey);
+    if (cached) return cached;
+  }
+
   const maxByGwMin =
     gwForMin > 0 && container.maxPayloadKg > 0
       ? Math.floor(container.maxPayloadKg / gwForMin)
@@ -529,6 +540,8 @@ export function calculateContainerCartonRange(
     cbmPerCtn > 0 && container.nominalCbm > 0
       ? Math.floor(container.nominalCbm / cbmPerCtn)
       : Infinity;
+
+  let result: ContainerCartonRangeResult;
 
   if (hasDimensions) {
     // 1. Conservative Min: Strict rigid dimensions (0 mm compression) across Plan A & Plan B
@@ -604,7 +617,7 @@ export function calculateContainerCartonRange(
     const cappedMin = Math.max(0, Math.min(rawMin, maxByCbm, maxByGwMin));
     const cappedMax = Math.max(0, Math.min(rawMax, maxByCbm, maxByGwMax));
 
-    return {
+    result = {
       minCartons: Math.min(cappedMin, cappedMax),
       maxCartons: Math.max(cappedMin, cappedMax),
       planACartons: Math.max(0, Math.min(greenA, maxByCbm, maxByGwMax)),
@@ -614,9 +627,7 @@ export function calculateContainerCartonRange(
       maxByGwMax,
       maxByCbm,
     };
-  }
-
-  if (cbmPerCtn > 0) {
+  } else if (cbmPerCtn > 0) {
     const practicalCbm = containerId === "20ft" ? 28 : containerId === "40ft" ? 58 : 65;
     const rawMin = Math.floor(practicalCbm / cbmPerCtn);
     const rawMax = Math.floor(container.nominalCbm / cbmPerCtn);
@@ -624,7 +635,7 @@ export function calculateContainerCartonRange(
     const cappedMin = Math.max(0, Math.min(rawMin, maxByCbm, maxByGwMin));
     const cappedMax = Math.max(0, Math.min(rawMax, maxByCbm, maxByGwMax));
 
-    return {
+    result = {
       minCartons: Math.min(cappedMin, cappedMax),
       maxCartons: Math.max(cappedMin, cappedMax),
       planACartons: Math.min(cappedMin, cappedMax),
@@ -634,18 +645,27 @@ export function calculateContainerCartonRange(
       maxByGwMax,
       maxByCbm,
     };
+  } else {
+    result = {
+      minCartons: 0,
+      maxCartons: 0,
+      planACartons: 0,
+      planBCartons: 0,
+      bestHybridCartons: 0,
+      maxByGwMin,
+      maxByGwMax,
+      maxByCbm,
+    };
   }
 
-  return {
-    minCartons: 0,
-    maxCartons: 0,
-    planACartons: 0,
-    planBCartons: 0,
-    bestHybridCartons: 0,
-    maxByGwMin,
-    maxByGwMax,
-    maxByCbm,
-  };
+  if (cacheKey) {
+    if (containerRangeCache.size > 2000) {
+      containerRangeCache.clear();
+    }
+    containerRangeCache.set(cacheKey, result);
+  }
+
+  return result;
 }
 
 export function formatContainerRangeLabel(

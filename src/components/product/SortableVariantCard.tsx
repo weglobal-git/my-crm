@@ -27,7 +27,6 @@ import {
   CommercialRates,
   DEFAULT_COMMERCIAL_RATES,
 } from "./ExportPricingSimulation";
-import { useCompanyCostOverhead } from "@/lib/product/use-company-cost-overhead";
 
 // Dedicated carton min quantity input for the first tier
 interface CartonMinInputProps {
@@ -365,6 +364,9 @@ export interface SortableVariantCardProps {
   uploadingVariantId: string | null;
   variantRates: CommercialRates;
   appliedVariantId: string | null;
+  companyCostOverheadPercent?: number;
+  commercialRates?: CommercialRates;
+  calculateEffectiveCost?: (baseCost: number | null | undefined) => number;
   onToggleExpand: () => void;
   onMove?: (idx: number, direction: "up" | "down") => void;
   onImageUpload: (file: File) => void;
@@ -384,7 +386,7 @@ export interface SortableVariantCardProps {
   onRatesChange: (newRates: CommercialRates) => void;
 }
 
-export function SortableVariantCard({
+export const SortableVariantCard = React.memo(function SortableVariantCard({
   v,
   idx: _idx,
   total: _total,
@@ -393,8 +395,11 @@ export function SortableVariantCard({
   isExpanded,
   productName: _productName,
   uploadingVariantId,
-  variantRates,
+  variantRates: _variantRates,
   appliedVariantId,
+  companyCostOverheadPercent: propOverheadPercent,
+  commercialRates: propCommercialRates,
+  calculateEffectiveCost: propCalculateEffectiveCost,
   onToggleExpand,
   onMove: _onMove,
   onImageUpload,
@@ -407,7 +412,7 @@ export function SortableVariantCard({
   onUpdateTier,
   onRemoveTier,
   onApplyToAll,
-  onRatesChange,
+  onRatesChange: _onRatesChange,
 }: SortableVariantCardProps) {
   const {
     attributes,
@@ -427,12 +432,13 @@ export function SortableVariantCard({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const tiers = parsePriceConditions(currentEdit.priceCondition);
-  const {
-    totalPercent: companyCostOverheadPercent,
-    commercialRates,
-    calculateEffectiveCost,
-  } = useCompanyCostOverhead();
-  const effectiveCost = calculateEffectiveCost(currentEdit.productCost);
+  const companyCostOverheadPercent = propOverheadPercent ?? 10;
+  const commercialRates = propCommercialRates ?? DEFAULT_COMMERCIAL_RATES;
+  const effectiveCost = propCalculateEffectiveCost
+    ? propCalculateEffectiveCost(currentEdit.productCost)
+    : currentEdit.productCost && currentEdit.productCost > 0
+    ? Number((currentEdit.productCost * (1 + companyCostOverheadPercent / 100)).toFixed(4))
+    : 0;
 
   return (
     <div
@@ -847,4 +853,4 @@ export function SortableVariantCard({
       )}
     </div>
   );
-}
+});

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import dynamic from "next/dynamic";
 import useSWR from "swr";
 import {
   FileText,
@@ -39,11 +40,9 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import {
   getProductOverview,
   updateProductStatus,
-  updateProductDetails,
-  updateVariantPrice,
   updateVariantStatus,
   setDefaultVariant,
-  upsertCompanyPrice,
+  saveProductAll,
   getProductCategories,
   getProductBrands,
   reorderProductVariants,
@@ -61,13 +60,26 @@ import {
   DEFAULT_COMMERCIAL_RATES,
   useCompanyCostOverhead,
 } from "@/lib/product/use-company-cost-overhead";
-import { ProductCommercialReportModal } from "./ProductCommercialReportModal";
 import { SortableVariantCard } from "./SortableVariantCard";
-import { ProductLogisticsModal } from "./ProductLogisticsModal";
-import { CustomerPriceComparisonTab } from "./CustomerPriceComparisonTab";
+
+const ProductCommercialReportModal = dynamic(
+  () => import("./ProductCommercialReportModal").then((mod) => mod.ProductCommercialReportModal),
+  { ssr: false }
+);
+
+const ProductLogisticsModal = dynamic(
+  () => import("./ProductLogisticsModal").then((mod) => mod.ProductLogisticsModal),
+  { ssr: false }
+);
+
+const CustomerPriceComparisonTab = dynamic(
+  () => import("./CustomerPriceComparisonTab").then((mod) => mod.CustomerPriceComparisonTab),
+  { ssr: false }
+);
 
 interface EditProductPanelProps {
   productId: string | null;
+  initialProduct?: ProductListItemDTO | null;
   isOpen: boolean;
   onClose: () => void;
   onProductUpdated?: (updated: Partial<ProductListItemDTO>) => void;
@@ -83,6 +95,7 @@ const TABS: SlideOverTab[] = [
 
 export function EditProductPanel({
   productId,
+  initialProduct,
   isOpen,
   onClose,
   onProductUpdated,
@@ -98,6 +111,7 @@ export function EditProductPanel({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const userEditedDetailsRef = useRef(false);
 
   // Available categories & brands with fallback loading
   const [categoriesList, setCategoriesList] = useState<{ category: string; count: number }[]>([]);
@@ -124,24 +138,36 @@ export function EditProductPanel({
   const effectiveBrandsList =
     availableBrands.length > 0 ? availableBrands : brandsList;
 
-  // Form states
-  const [name, setName] = useState("");
-  const [brand, setBrand] = useState("");
-  const [category, setCategory] = useState("");
-  const [description, setDescription] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [hsCode, setHsCode] = useState("");
+  // Form states seeded immediately from initialProduct so Details tab opens in 0ms
+  const [name, setName] = useState(() => initialProduct?.name || "");
+  const [brand, setBrand] = useState(() => initialProduct?.brand || "");
+  const [category, setCategory] = useState(() => initialProduct?.category || "");
+  const [description, setDescription] = useState(() => initialProduct?.description || "");
+  const [imageUrl, setImageUrl] = useState(() => initialProduct?.primaryImageUrl || "");
+  const [hsCode, setHsCode] = useState(() => initialProduct?.hsCode || "");
   const [remark, setRemark] = useState("");
-  const [status, setStatus] = useState<ProductStatus>(ProductStatus.AVAILABLE);
-  const [starRating, setStarRating] = useState(0);
+  const [status, setStatus] = useState<ProductStatus>(
+    () => initialProduct?.status || ProductStatus.AVAILABLE
+  );
+  const [starRating, setStarRating] = useState(() => initialProduct?.starRating || 0);
 
-  // Logistics state
-  const [cbm, setCbm] = useState<number | string>("");
-  const [cartonQuantity, setCartonQuantity] = useState<number | string>("");
-  const [cartonWidth, setCartonWidth] = useState<number | string>("");
-  const [cartonLength, setCartonLength] = useState<number | string>("");
-  const [cartonHeight, setCartonHeight] = useState<number | string>("");
-  const [cartonDimension, setCartonDimension] = useState("");
+  // Logistics state seeded from initialProduct
+  const [cbm, setCbm] = useState<number | string>(() => initialProduct?.cbm ?? "");
+  const [cartonQuantity, setCartonQuantity] = useState<number | string>(
+    () => initialProduct?.cartonQuantity ?? ""
+  );
+  const [cartonWidth, setCartonWidth] = useState<number | string>(
+    () => initialProduct?.cartonWidth ?? ""
+  );
+  const [cartonLength, setCartonLength] = useState<number | string>(
+    () => initialProduct?.cartonLength ?? ""
+  );
+  const [cartonHeight, setCartonHeight] = useState<number | string>(
+    () => initialProduct?.cartonHeight ?? ""
+  );
+  const [cartonDimension, setCartonDimension] = useState(
+    () => initialProduct?.cartonDimension || ""
+  );
 
   // Variants and Customer Prices state
   const [variantEdits, setVariantEdits] = useState<
@@ -273,60 +299,65 @@ export function EditProductPanel({
   useEffect(() => {
     if (overview) {
       React.startTransition(() => {
-        setName(overview.name || "");
-      setBrand(overview.brand || "");
-      setCategory(overview.category || "");
-      setDescription(overview.description || "");
-      setHsCode(overview.hsCode || "");
-      setRemark(overview.remark || "");
-      setStatus(overview.status);
-      setStarRating(overview.starRating || 0);
-
-      // Default variant
-      const primaryV = overview.variants.find((v) => v.isDefault) || overview.variants[0];
-      if (primaryV) {
-        setPrimaryVariantId(primaryV.id);
-        if (primaryV.imageUrl) setImageUrl(primaryV.imageUrl);
-      }
-
-      setCbm(overview.cbm ?? "");
-      setCartonQuantity(overview.cartonQuantity ?? "");
-      setCartonWidth(overview.cartonWidth ?? "");
-      setCartonLength(overview.cartonLength ?? "");
-      setCartonHeight(overview.cartonHeight ?? "");
-      setCartonDimension(overview.cartonDimension || "");
-
-      // Initialize variant pricing edits
-      const vMap: Record<
-        string,
-        {
-          price: number;
-          productCost: number | null;
-          priceCondition: string;
-          imageUrl?: string | null;
-          status?: ProductStatus;
+        if (!userEditedDetailsRef.current) {
+          setName(overview.name || "");
+          setBrand(overview.brand || "");
+          setCategory(overview.category || "");
+          setDescription(overview.description || "");
+          setHsCode(overview.hsCode || "");
+          setRemark(overview.remark || "");
+          setStatus(overview.status);
+          setStarRating(overview.starRating || 0);
+          setCbm(overview.cbm ?? "");
+          setCartonQuantity(overview.cartonQuantity ?? "");
+          setCartonWidth(overview.cartonWidth ?? "");
+          setCartonLength(overview.cartonLength ?? "");
+          setCartonHeight(overview.cartonHeight ?? "");
+          setCartonDimension(overview.cartonDimension || "");
+        } else {
+          setRemark((prev) => (prev === "" ? overview.remark || "" : prev));
         }
-      > = {};
-      const cpMap: Record<string, Record<string, number>> = {};
 
-      overview.variants.forEach((v) => {
-        vMap[v.id] = {
-          price: v.price,
-          productCost: v.productCost,
-          priceCondition: v.priceCondition || "",
-          imageUrl: v.imageUrl,
-          status: v.status || ProductStatus.AVAILABLE,
-        };
+        // Default variant
+        const primaryV = overview.variants.find((v) => v.isDefault) || overview.variants[0];
+        if (primaryV) {
+          setPrimaryVariantId((prev) => prev || primaryV.id);
+          if (primaryV.imageUrl && !userEditedDetailsRef.current) {
+            setImageUrl(primaryV.imageUrl);
+          }
+        }
 
-        cpMap[v.id] = {};
-        v.customPrices.forEach((cp) => {
-          cpMap[v.id][cp.companyId] = cp.price;
+        // Initialize variant pricing edits
+        const vMap: Record<
+          string,
+          {
+            price: number;
+            productCost: number | null;
+            priceCondition: string;
+            imageUrl?: string | null;
+            status?: ProductStatus;
+          }
+        > = {};
+        const cpMap: Record<string, Record<string, number>> = {};
+
+        overview.variants.forEach((v) => {
+          vMap[v.id] = {
+            price: v.price,
+            productCost: v.productCost,
+            priceCondition: v.priceCondition || "",
+            imageUrl: v.imageUrl,
+            status: v.status || ProductStatus.AVAILABLE,
+          };
+
+          cpMap[v.id] = {};
+          v.customPrices.forEach((cp) => {
+            cpMap[v.id][cp.companyId] = cp.price;
+          });
         });
-      });
 
-      setVariantEdits(vMap);
-      setCustomerPriceEdits(cpMap);
-      setOrderedVariants(overview.variants || []);
+        setVariantEdits(vMap);
+        setCustomerPriceEdits(cpMap);
+        setOrderedVariants(overview.variants || []);
         setExpandedVariantIds({});
       });
     }
@@ -805,7 +836,6 @@ export function EditProductPanel({
     }
 
     try {
-      // 1. Update parent product details
       const wVal = typeof cartonWidth === "number" ? cartonWidth : parseFloat(cartonWidth as string) || 0;
       const lVal = typeof cartonLength === "number" ? cartonLength : parseFloat(cartonLength as string) || 0;
       const hVal = typeof cartonHeight === "number" ? cartonHeight : parseFloat(cartonHeight as string) || 0;
@@ -815,70 +845,106 @@ export function EditProductPanel({
           : typeof cbm === "number"
           ? cbm
           : parseFloat(cbm as string) || null;
+      const parsedCartonQuantity =
+        typeof cartonQuantity === "number"
+          ? cartonQuantity
+          : parseInt(cartonQuantity as string, 10) || null;
 
-      await updateProductDetails(productId, {
-        name,
-        brand: brand || null,
-        category: category || null,
-        description: description || null,
-        imageUrl: displayImage || null,
-        hsCode: hsCode || null,
-        remark: remark || null,
-        starRating,
-        cbm: autoComputedCbm,
-        cartonQuantity: typeof cartonQuantity === "number" ? cartonQuantity : parseInt(cartonQuantity as string, 10) || null,
-        cartonWidth: wVal || null,
-        cartonLength: lVal || null,
-        cartonHeight: hVal || null,
-        cartonDimension: cartonDimension || null,
-      });
+      // Dirty check variants: only send variants that actually changed
+      const origVariantsMap = new Map(
+        (overview?.variants || []).map((v) => [v.id, v])
+      );
+      const dirtyVariants: Array<{
+        id: string;
+        price?: number;
+        productCost?: number | null;
+        priceCondition?: string | null;
+        imageUrl?: string | null;
+        status?: ProductStatus;
+      }> = [];
 
-      // 2. Update variant prices, images, price conditions, and status
       for (const [vId, vData] of Object.entries(variantEdits)) {
-        await updateVariantPrice(vId, {
-          price: vData.price,
-          productCost: vData.productCost,
-          priceCondition: vData.priceCondition || null,
-          imageUrl: vData.imageUrl,
-          status: vData.status,
-        });
+        const origV = origVariantsMap.get(vId);
+        const nextCond = vData.priceCondition || null;
+        const origCond = origV?.priceCondition || null;
+        if (
+          !origV ||
+          vData.price !== origV.price ||
+          vData.productCost !== origV.productCost ||
+          nextCond !== origCond ||
+          vData.imageUrl !== origV.imageUrl ||
+          vData.status !== origV.status
+        ) {
+          dirtyVariants.push({
+            id: vId,
+            price: vData.price,
+            productCost: vData.productCost,
+            priceCondition: nextCond,
+            imageUrl: vData.imageUrl,
+            status: vData.status,
+          });
+        }
       }
 
-      // If primary variant was selected, persist it
-      if (primaryVariantId) {
-        await setDefaultVariant(productId, primaryVariantId);
-      }
+      const origPrimaryV =
+        overview?.variants.find((v) => v.isDefault) || overview?.variants[0];
+      const dirtyPrimaryVariantId =
+        primaryVariantId && primaryVariantId !== origPrimaryV?.id
+          ? primaryVariantId
+          : displayImage !== origPrimaryV?.imageUrl
+          ? primaryVariantId || origPrimaryV?.id || null
+          : null;
 
-      // 3. Upsert customer prices
+      // Dirty check customer prices: only send customer prices that were added or changed
+      const dirtyCustomerPrices: Array<{
+        variantId: string;
+        companyId: string;
+        price: number;
+      }> = [];
       for (const [vId, compMap] of Object.entries(customerPriceEdits)) {
+        const origV = origVariantsMap.get(vId);
+        const origCpMap = new Map(
+          (origV?.customPrices || []).map((cp) => [cp.companyId, cp.price])
+        );
         for (const [compId, price] of Object.entries(compMap)) {
-          if (price > 0) {
-            await upsertCompanyPrice(vId, compId, price);
+          if (price > 0 && origCpMap.get(compId) !== price) {
+            dirtyCustomerPrices.push({
+              variantId: vId,
+              companyId: compId,
+              price,
+            });
           }
         }
       }
 
+      const res = await saveProductAll(productId, {
+        details: {
+          name,
+          brand: brand || null,
+          category: category || null,
+          description: description || null,
+          imageUrl: displayImage || null,
+          hsCode: hsCode || null,
+          remark: remark || null,
+          starRating,
+          cbm: autoComputedCbm,
+          cartonQuantity: parsedCartonQuantity,
+          cartonWidth: wVal || null,
+          cartonLength: lVal || null,
+          cartonHeight: hVal || null,
+          cartonDimension: cartonDimension || null,
+        },
+        variants: dirtyVariants,
+        primaryVariantId: dirtyPrimaryVariantId,
+        customerPrices: dirtyCustomerPrices,
+      });
+
+      userEditedDetailsRef.current = false;
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2500);
 
-      onProductUpdated?.({
-        id: productId,
-        name,
-        brand: brand || null,
-        category: category || null,
-        description: description || null,
-        status,
-        starRating,
-        primaryImageUrl: displayImage || null,
-        cbm: autoComputedCbm,
-        cartonWidth: wVal || null,
-        cartonLength: lVal || null,
-        cartonHeight: hVal || null,
-        cartonDimension: cartonDimension || null,
-        cartonQuantity: typeof cartonQuantity === "number" ? cartonQuantity : parseInt(cartonQuantity as string, 10) || null,
-      });
-
-      void mutate();
+      onProductUpdated?.(res.product);
+      void mutate(res.overview, false);
     } catch (err: unknown) {
       console.error("Failed to save product:", err);
       const errMsg = err instanceof Error ? err.message : (err as { message?: string })?.message;
@@ -906,8 +972,9 @@ export function EditProductPanel({
       return pv.cartonGrossWeight;
     }
     const anyGw = list.find((v) => (v.cartonGrossWeight ?? 0) > 0);
-    return anyGw?.cartonGrossWeight || 0;
-  }, [orderedVariants, overview?.variants, primaryVariantId]);
+    if (anyGw?.cartonGrossWeight) return anyGw.cartonGrossWeight;
+    return initialProduct?.cartonGrossWeight || 0;
+  }, [orderedVariants, overview?.variants, primaryVariantId, initialProduct?.cartonGrossWeight]);
 
   const categoryOptions = useMemo(() => {
     const opts = effectiveCategoriesList.map((c) => ({
@@ -933,6 +1000,10 @@ export function EditProductPanel({
     return opts;
   }, [effectiveBrandsList, brand]);
 
+  const headerVariantCount = overview
+    ? overview.variants.length
+    : initialProduct?.variantCount ?? 0;
+
   return (
     <>
       <SlideOverPanel
@@ -957,8 +1028,8 @@ export function EditProductPanel({
             </h3>
             <p className="text-xs text-slate-400 truncate mt-0.5 font-normal">
               {category
-                ? `${category} • ${brand || "No Brand"} • ${overview?.variants?.length || 0} Variants`
-                : `${brand || "No Brand"} • ${overview?.variants?.length || 0} Variants`}
+                ? `${category} • ${brand || "No Brand"} • ${headerVariantCount} Variants`
+                : `${brand || "No Brand"} • ${headerVariantCount} Variants`}
             </p>
           </div>
         </div>
@@ -1040,7 +1111,7 @@ export function EditProductPanel({
           : "w-[650px]"
       }
     >
-      {isLoading && !overview ? (
+      {isLoading && !overview && (!initialProduct || activeTab !== "details") ? (
         <div className="flex items-center justify-center h-64">
           <Loader2 className="w-8 h-8 text-[#C7F33C] animate-spin" />
         </div>
@@ -1084,7 +1155,10 @@ export function EditProductPanel({
                   <input
                     type="text"
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => {
+                      userEditedDetailsRef.current = true;
+                      setName(e.target.value);
+                    }}
                     className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:border-[#C7F33C] outline-none"
                     placeholder="Enter product title..."
                   />
@@ -1097,7 +1171,10 @@ export function EditProductPanel({
                     <SearchableSelect
                       options={categoryOptions}
                       value={category}
-                      onChange={setCategory}
+                      onChange={(val) => {
+                        userEditedDetailsRef.current = true;
+                        setCategory(val);
+                      }}
                       placeholder="Select or type category..."
                       isClearable
                       allowCustom
@@ -1110,7 +1187,10 @@ export function EditProductPanel({
                     <SearchableSelect
                       options={brandOptions}
                       value={brand}
-                      onChange={setBrand}
+                      onChange={(val) => {
+                        userEditedDetailsRef.current = true;
+                        setBrand(val);
+                      }}
                       placeholder="Select or type brand..."
                       isClearable
                       allowCustom
@@ -1128,7 +1208,10 @@ export function EditProductPanel({
                     <input
                       type="text"
                       value={description}
-                      onChange={(e) => setDescription(e.target.value)}
+                      onChange={(e) => {
+                        userEditedDetailsRef.current = true;
+                        setDescription(e.target.value);
+                      }}
                       className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:border-[#C7F33C] outline-none"
                       placeholder="Thai name or local description..."
                     />
@@ -1139,7 +1222,10 @@ export function EditProductPanel({
                     <input
                       type="text"
                       value={hsCode}
-                      onChange={(e) => setHsCode(e.target.value)}
+                      onChange={(e) => {
+                        userEditedDetailsRef.current = true;
+                        setHsCode(e.target.value);
+                      }}
                       className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:border-[#C7F33C] outline-none"
                       placeholder="e.g. 3304.99.90"
                     />
@@ -1152,7 +1238,10 @@ export function EditProductPanel({
                   <textarea
                     rows={2}
                     value={remark}
-                    onChange={(e) => setRemark(e.target.value)}
+                    onChange={(e) => {
+                      userEditedDetailsRef.current = true;
+                      setRemark(e.target.value);
+                    }}
                     className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:border-[#C7F33C] outline-none resize-none"
                     placeholder="Additional notes for this product..."
                   />
@@ -1180,7 +1269,10 @@ export function EditProductPanel({
                     <input
                       type="number"
                       value={cartonQuantity}
-                      onChange={(e) => setCartonQuantity(e.target.value)}
+                      onChange={(e) => {
+                        userEditedDetailsRef.current = true;
+                        setCartonQuantity(e.target.value);
+                      }}
                       className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       placeholder="e.g. 12"
                     />
@@ -1208,7 +1300,10 @@ export function EditProductPanel({
                       type="number"
                       step="0.1"
                       value={cartonWidth}
-                      onChange={(e) => setCartonWidth(e.target.value)}
+                      onChange={(e) => {
+                        userEditedDetailsRef.current = true;
+                        setCartonWidth(e.target.value);
+                      }}
                       className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       placeholder="Width"
                     />
@@ -1219,7 +1314,10 @@ export function EditProductPanel({
                       type="number"
                       step="0.1"
                       value={cartonLength}
-                      onChange={(e) => setCartonLength(e.target.value)}
+                      onChange={(e) => {
+                        userEditedDetailsRef.current = true;
+                        setCartonLength(e.target.value);
+                      }}
                       className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       placeholder="Length"
                     />
@@ -1230,7 +1328,10 @@ export function EditProductPanel({
                       type="number"
                       step="0.1"
                       value={cartonHeight}
-                      onChange={(e) => setCartonHeight(e.target.value)}
+                      onChange={(e) => {
+                        userEditedDetailsRef.current = true;
+                        setCartonHeight(e.target.value);
+                      }}
                       className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-100 outline-none focus:border-[#C7F33C] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       placeholder="Height"
                     />
@@ -1304,6 +1405,9 @@ export function EditProductPanel({
                           uploadingVariantId={uploadingVariantId}
                           variantRates={variantRates[v.id] || DEFAULT_COMMERCIAL_RATES}
                           appliedVariantId={appliedVariantId}
+                          companyCostOverheadPercent={companyCostOverheadPercent}
+                          commercialRates={commercialRates}
+                          calculateEffectiveCost={calculateEffectiveCost}
                           onToggleExpand={() => toggleVariantExpanded(v.id, isExpanded)}
                           onMove={handleMoveVariant}
                           onImageUpload={(file) => void handleVariantImageUpload(v.id, file)}
@@ -1367,8 +1471,8 @@ export function EditProductPanel({
       )}
       </SlideOverPanel>
 
-      {/* Commercial Specification & Pricing Waterfall Report Modal */}
-      {overview && (
+      {/* Commercial Specification & Pricing Waterfall Report Modal (Lazy mounted only when opened) */}
+      {overview && reportModalOpen && (
         <ProductCommercialReportModal
           isOpen={reportModalOpen}
           onClose={() => setReportModalOpen(false)}
@@ -1383,8 +1487,8 @@ export function EditProductPanel({
         />
       )}
 
-      {/* Logistics & Container Loading Simulation Modal */}
-      {overview && (
+      {/* Logistics & Container Loading Simulation Modal (Lazy mounted only when opened) */}
+      {overview && logisticsModalOpen && (
         <ProductLogisticsModal
           isOpen={logisticsModalOpen}
           onClose={() => setLogisticsModalOpen(false)}

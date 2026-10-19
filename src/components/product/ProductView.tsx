@@ -571,20 +571,31 @@ export function ProductView({
     }
   }, [isLoadingMore, hasMore, page, activeTab, selectedCategories, selectedBrands, debouncedSearch, products.length]);
 
+  const intentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Select card to open Slide-over drawer
   const handleSelectProduct = useCallback((id: string) => {
+    if (intentTimerRef.current) {
+      clearTimeout(intentTimerRef.current);
+      intentTimerRef.current = null;
+    }
     setSelectedProductId(id);
     void loadEditProductPanel();
     setIsEditProductOpen(true);
   }, []);
 
-  // Intent preload on card hover
+  // Intent preload on card hover (debounced so sweeping cursor across rows doesn't flood DB)
   const handleProductIntent = useCallback((id: string) => {
     void loadEditProductPanel();
-    const key = getProductOverviewKey(id);
-    if (key) {
-      void preload(key, fetchProductOverview);
+    if (intentTimerRef.current) {
+      clearTimeout(intentTimerRef.current);
     }
+    intentTimerRef.current = setTimeout(() => {
+      const key = getProductOverviewKey(id);
+      if (key) {
+        void preload(key, fetchProductOverview);
+      }
+    }, 120);
   }, []);
 
   const handleCreatePanelIntent = useCallback(() => {
@@ -932,35 +943,43 @@ export function ProductView({
           key={selectedProductId}
           isOpen={isEditProductOpen}
           productId={selectedProductId}
+          initialProduct={
+            knownProductsMap.get(selectedProductId) ||
+            products.find((p) => p.id === selectedProductId) ||
+            null
+          }
           onClose={() => setIsEditProductOpen(false)}
           availableCategories={availableCategories}
           availableBrands={availableBrands}
           onProductUpdated={(updated) => {
             const updatedId = updated.id;
             if (updatedId) {
+              const mergePatch = (base: ProductListItemDTO): ProductListItemDTO => {
+                const next = { ...base };
+                for (const [k, v] of Object.entries(updated)) {
+                  if (v !== undefined) {
+                    (next as Record<string, unknown>)[k] = v;
+                  }
+                }
+                return next;
+              };
+
+              const existingItem =
+                knownProductsMap.get(updatedId) ||
+                products.find((p) => p.id === updatedId);
+              const statusChanged =
+                Boolean(updated.status) &&
+                Boolean(existingItem) &&
+                updated.status !== existingItem?.status;
+
               if (updated.status && updated.status !== activeTab) {
                 setProducts((prev) => prev.filter((p) => p.id !== updatedId));
                 void fetchFilteredProducts();
               } else {
                 setProducts((prev) =>
-                  prev.map((p) =>
-                    p.id === updatedId
-                      ? {
-                          ...p,
-                          ...(updated.name ? { name: updated.name } : {}),
-                          ...(updated.brand !== undefined ? { brand: updated.brand } : {}),
-                          ...(updated.category !== undefined ? { category: updated.category } : {}),
-                          ...(updated.description !== undefined ? { description: updated.description } : {}),
-                          ...(updated.status ? { status: updated.status } : {}),
-                          ...(updated.cbm !== undefined ? { cbm: updated.cbm } : {}),
-                          ...(updated.cartonQuantity !== undefined ? { cartonQuantity: updated.cartonQuantity } : {}),
-                          ...(updated.primaryImageUrl !== undefined ? { primaryImageUrl: updated.primaryImageUrl } : {}),
-                          ...(updated.starRating !== undefined ? { starRating: updated.starRating } : {}),
-                        }
-                      : p
-                  )
+                  prev.map((p) => (p.id === updatedId ? mergePatch(p) : p))
                 );
-                if (updated.status) {
+                if (statusChanged) {
                   void fetchFilteredProducts();
                 }
               }
@@ -969,11 +988,7 @@ export function ProductView({
                 const existing = prev.get(updatedId);
                 if (!existing) return prev;
                 const next = new Map(prev);
-                next.set(updatedId, {
-                  ...existing,
-                  ...(updated.status ? { status: updated.status } : {}),
-                  ...(updated.name ? { name: updated.name } : {}),
-                });
+                next.set(updatedId, mergePatch(existing));
                 return next;
               });
             }

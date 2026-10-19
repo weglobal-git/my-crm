@@ -86,19 +86,19 @@ export function ExportPricingSimulation({
   const exclExportBase = basePrice;
   const exclExportStep = stepPrice;
 
-  // Distribution Fee (e.g. 5%) on both Base and Step
-  const exclDistFeeBase = (exclExportBase * distFeeRate) / 100;
-  const exclDistFeeStep = (exclExportStep * distFeeRate) / 100;
+  // Quotation Price after Distribution Fee (Actual net invoice price to customer, rounded to 2 decimals)
+  const exclQuotationBase = calculateTierPrice(exclExportBase, distFeeRate);
+  const exclQuotationStep = calculateTierPrice(exclExportStep, distFeeRate);
 
-  // Quotation Price after Distribution Fee (Actual price to appear on Quotation)
-  const exclQuotationBase = exclExportBase - exclDistFeeBase;
-  const exclQuotationStep = exclExportStep - exclDistFeeStep;
+  // Distribution Fee (e.g. 5%) deducted directly on Invoice
+  const exclDistFeeBase = Math.round((exclExportBase - exclQuotationBase) * 100) / 100;
+  const exclDistFeeStep = Math.round((exclExportStep - exclQuotationStep) * 100) / 100;
 
-  // Marketing Support (e.g. 2%) based on Quotation Price
+  // Marketing Support (e.g. 2%) claimed post-invoice based on customer's net Quotation/Invoice Price
   const exclMktBase = (exclQuotationBase * mktSupportRate) / 100;
   const exclMktStep = (exclQuotationStep * mktSupportRate) / 100;
 
-  // Rebate (e.g. 3%) based on Quotation Price
+  // Rebate (e.g. 3%) claimed post-invoice based on customer's net Quotation/Invoice Price
   const exclRebateBase = (exclQuotationBase * rebateRate) / 100;
   const exclRebateStep = (exclQuotationStep * rebateRate) / 100;
 
@@ -110,11 +110,11 @@ export function ExportPricingSimulation({
   const exclProfitBase = exclSubtotalBase - cost;
   const exclProfitStep = exclSubtotalStep - cost;
 
-  // Margin %
+  // Margin % (relative to customer's net Quotation/Invoice Price)
   const exclMarginPctBase =
-    exclExportBase > 0 ? (exclProfitBase / exclExportBase) * 100 : 0;
+    exclQuotationBase > 0 ? (exclProfitBase / exclQuotationBase) * 100 : 0;
   const exclMarginPctStep =
-    exclExportStep > 0 ? (exclProfitStep / exclExportStep) * 100 : 0;
+    exclQuotationStep > 0 ? (exclProfitStep / exclQuotationStep) * 100 : 0;
 
   const fmt = (num: number, decimals: number = 2) =>
     num.toLocaleString("en-US", {

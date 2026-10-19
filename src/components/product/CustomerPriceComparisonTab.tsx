@@ -9,7 +9,7 @@ import {
   AlertCircle,
   Building2,
 } from "lucide-react";
-import { ProductVariantDTO } from "@/lib/product/product-dto";
+import { ProductVariantDTO, calculateTierPrice } from "@/lib/product/product-dto";
 import { CommercialRates } from "@/lib/product/use-company-cost-overhead";
 import { getCompanies } from "@/lib/actions/company";
 
@@ -91,7 +91,7 @@ export function CustomerPriceComparisonTab({
           genNetRev: sellingPrice * (1 - commercialRates.commissionRate / 100),
           genProfit: 0,
           genMarginPct: 0,
-          exclStep1Net: sellingPrice * (1 - commercialRates.distFeeRate / 100),
+          exclStep1Net: calculateTierPrice(sellingPrice, commercialRates.distFeeRate),
           exclStep1Profit: 0,
           exclStep1MarginPct: 0,
           exclStep2Net: 0,
@@ -116,23 +116,22 @@ export function CustomerPriceComparisonTab({
     const isGenLoss = genProfit < -0.005;
 
     // 2. Exclusive Distributor Model (3 Cumulative Steps)
-    // Step 1: Distribution Fee (default 5%)
-    const exclDistFee = (sellingPrice * commercialRates.distFeeRate) / 100;
-    const exclStep1Net = sellingPrice - exclDistFee;
+    // Step 1: Distribution Fee (default 5%) deducted directly on customer invoice (2-decimal invoice price)
+    const exclStep1Net = calculateTierPrice(sellingPrice, commercialRates.distFeeRate);
     const exclStep1Profit = exclStep1Net - effectiveCost;
-    const exclStep1MarginPct = (exclStep1Profit / sellingPrice) * 100;
+    const exclStep1MarginPct = exclStep1Net > 0 ? (exclStep1Profit / exclStep1Net) * 100 : 0;
 
     // Step 2: MKT Support (default 2% of quotation after DisFee)
     const exclMkt = (exclStep1Net * commercialRates.mktSupportRate) / 100;
     const exclStep2Net = exclStep1Net - exclMkt;
     const exclStep2Profit = exclStep2Net - effectiveCost;
-    const exclStep2MarginPct = (exclStep2Profit / sellingPrice) * 100;
+    const exclStep2MarginPct = exclStep1Net > 0 ? (exclStep2Profit / exclStep1Net) * 100 : 0;
 
     // Step 3: Rebate (default 3% of quotation after DisFee)
     const exclRebate = (exclStep1Net * commercialRates.rebateRate) / 100;
     const exclStep3Net = exclStep1Net - exclMkt - exclRebate;
     const exclStep3Profit = exclStep3Net - effectiveCost;
-    const exclStep3MarginPct = (exclStep3Profit / sellingPrice) * 100;
+    const exclStep3MarginPct = exclStep1Net > 0 ? (exclStep3Profit / exclStep1Net) * 100 : 0;
     const isExclLoss = exclStep3Profit < -0.005;
 
     // Break-even reference prices

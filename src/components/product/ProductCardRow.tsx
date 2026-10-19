@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo } from "react";
+import React, { memo, useMemo } from "react";
 import { Check, Package, Flame } from "lucide-react";
 import { ProductListItemDTO } from "@/lib/product/product-dto";
 import {
@@ -82,12 +82,34 @@ export const ProductCardRow = memo(function ProductCardRow({
     return "GW: —";
   })();
 
-  // Containers Calculation (20ft & 40ft - บนล่าง) from Plan A / Plan B + Tilted Gap Fill, capped by Max GW & Max CBM
-  const range20ft = calculateContainerCartonRange(product, "20ft");
-  const range40ft = calculateContainerCartonRange(product, "40ft");
-
-  const container20ftText = formatContainerRangeLabel("20ft", range20ft);
-  const container40ftText = formatContainerRangeLabel("40ft", range40ft);
+  // Memoize 20ft & 40ft container range calculations so row re-renders (e.g. checkbox selection) don't re-run 3D simulations
+  const { container20ftText, container40ftText } = useMemo(() => {
+    const dims = {
+      cartonWidth: product.cartonWidth,
+      cartonLength: product.cartonLength,
+      cartonHeight: product.cartonHeight,
+      cartonDimension: product.cartonDimension,
+      cbm: product.cbm,
+      cartonGrossWeight: product.cartonGrossWeight,
+      minGrossWeight: product.minGrossWeight,
+      maxGrossWeight: product.maxGrossWeight,
+    };
+    const r20 = calculateContainerCartonRange(dims, "20ft");
+    const r40 = calculateContainerCartonRange(dims, "40ft");
+    return {
+      container20ftText: formatContainerRangeLabel("20ft", r20),
+      container40ftText: formatContainerRangeLabel("40ft", r40),
+    };
+  }, [
+    product.cartonWidth,
+    product.cartonLength,
+    product.cartonHeight,
+    product.cartonDimension,
+    product.cbm,
+    product.cartonGrossWeight,
+    product.minGrossWeight,
+    product.maxGrossWeight,
+  ]);
 
   return (
     <div

@@ -13,18 +13,19 @@ import {
 
 export async function getProductCategories(): Promise<{ id?: string; category: string; count: number; order?: number; isDefault?: boolean }[]> {
   try {
-    let dbCategories: { id: string; name: string; order: number; isDefault?: boolean }[] = [];
-    if ((prisma as any).productCategory) {
-      dbCategories = await (prisma as any).productCategory.findMany({ orderBy: { order: "asc" } });
-    } else {
-      dbCategories = await prisma.$queryRaw<any[]>`SELECT id, name, "order", "isDefault" FROM "ProductCategory" ORDER BY "order" ASC`;
-    }
+    const dbCategoriesPromise: Promise<{ id: string; name: string; order: number; isDefault?: boolean }[]> =
+      (prisma as any).productCategory
+        ? (prisma as any).productCategory.findMany({ orderBy: { order: "asc" } })
+        : prisma.$queryRaw<any[]>`SELECT id, name, "order", "isDefault" FROM "ProductCategory" ORDER BY "order" ASC`;
 
-    const productCounts = await prisma.product.groupBy({
-      by: ["category"],
-      _count: { _all: true },
-      where: { category: { not: null } },
-    });
+    const [dbCategories, productCounts] = await Promise.all([
+      dbCategoriesPromise,
+      prisma.product.groupBy({
+        by: ["category"],
+        _count: { _all: true },
+        where: { category: { not: null } },
+      }),
+    ]);
 
     const countMap = new Map<string, number>();
     for (const pc of productCounts) {
@@ -67,18 +68,19 @@ export async function getProductCategories(): Promise<{ id?: string; category: s
 
 export async function getProductBrands(): Promise<{ id?: string; brand: string; count: number; order?: number; isDefault?: boolean }[]> {
   try {
-    let dbBrands: { id: string; name: string; order: number; isDefault?: boolean }[] = [];
-    if ((prisma as any).productBrand) {
-      dbBrands = await (prisma as any).productBrand.findMany({ orderBy: { order: "asc" } });
-    } else {
-      dbBrands = await prisma.$queryRaw<any[]>`SELECT id, name, "order", "isDefault" FROM "ProductBrand" ORDER BY "order" ASC`;
-    }
+    const dbBrandsPromise: Promise<{ id: string; name: string; order: number; isDefault?: boolean }[]> =
+      (prisma as any).productBrand
+        ? (prisma as any).productBrand.findMany({ orderBy: { order: "asc" } })
+        : prisma.$queryRaw<any[]>`SELECT id, name, "order", "isDefault" FROM "ProductBrand" ORDER BY "order" ASC`;
 
-    const productCounts = await prisma.product.groupBy({
-      by: ["brand"],
-      _count: { _all: true },
-      where: { brand: { not: null } },
-    });
+    const [dbBrands, productCounts] = await Promise.all([
+      dbBrandsPromise,
+      prisma.product.groupBy({
+        by: ["brand"],
+        _count: { _all: true },
+        where: { brand: { not: null } },
+      }),
+    ]);
 
     const countMap = new Map<string, number>();
     for (const pb of productCounts) {
@@ -202,6 +204,7 @@ export async function getProductsWithFilters({
   stats: { availableCount: number; unavailableCount: number; totalCount: number };
 }> {
   const where: Prisma.ProductWhereInput = {};
+  let hasExtraFilters = false;
 
   if (status && status !== "ALL") {
     where.status = status;
@@ -209,17 +212,22 @@ export async function getProductsWithFilters({
 
   if (categories && categories.length > 0) {
     where.category = { in: categories };
+    hasExtraFilters = true;
   } else if (category && category !== "ALL" && category.trim()) {
     where.category = { equals: category.trim(), mode: "insensitive" };
+    hasExtraFilters = true;
   }
 
   if (brands && brands.length > 0) {
     where.brand = { in: brands };
+    hasExtraFilters = true;
   } else if (brand && brand !== "ALL" && brand.trim()) {
     where.brand = { equals: brand.trim(), mode: "insensitive" };
+    hasExtraFilters = true;
   }
 
   if (search && search.trim()) {
+    hasExtraFilters = true;
     const q = search.trim();
     where.OR = [
       { name: { contains: q, mode: "insensitive" } },
@@ -244,55 +252,77 @@ export async function getProductsWithFilters({
 
   const skip = Math.max(0, (page - 1) * pageSize);
 
-  let rawProducts: any[] = [];
-  try {
-    rawProducts = await prisma.product.findMany({
-      where,
-      include: {
-        variants: {
-          select: {
-            id: true,
-            formula: true,
-            price: true,
-            imageUrl: true,
-            isDefault: true,
-            cartonGrossWeight: true,
+  const findManyQuery = async () => {
+    try {
+      return await prisma.product.findMany({
+        where,
+        include: {
+          variants: {
+            select: {
+              id: true,
+              formula: true,
+              price: true,
+              imageUrl: true,
+              isDefault: true,
+              cartonGrossWeight: true,
+            },
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           },
-          orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
-      },
-      orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
-      skip,
-      take: pageSize,
-    });
-  } catch (err) {
-    console.warn("Failed findMany with default orderBy:", err);
-    rawProducts = await prisma.product.findMany({
-      where,
-      include: {
-        variants: {
-          select: {
-            id: true,
-            formula: true,
-            price: true,
-            imageUrl: true,
-            isDefault: true,
-            cartonGrossWeight: true,
+        orderBy: [{ updatedAt: "desc" }, { name: "asc" }],
+        skip,
+        take: pageSize,
+      });
+    } catch (err) {
+      console.warn("Failed findMany with default orderBy:", err);
+      return await prisma.product.findMany({
+        where,
+        include: {
+          variants: {
+            select: {
+              id: true,
+              formula: true,
+              price: true,
+              imageUrl: true,
+              isDefault: true,
+              cartonGrossWeight: true,
+            },
+            orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
           },
-          orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
-      },
-      orderBy: [{ updatedAt: "desc" }],
-      skip,
-      take: pageSize,
-    });
+        orderBy: [{ updatedAt: "desc" }],
+        skip,
+        take: pageSize,
+      });
+    }
+  };
+
+  // Run findMany and status/filter counts in a single parallel wave
+  const [rawProducts, statusGroupCounts, filteredTotal] = await Promise.all([
+    findManyQuery(),
+    prisma.product.groupBy({
+      by: ["status"],
+      _count: { _all: true },
+    }),
+    hasExtraFilters ? prisma.product.count({ where }) : Promise.resolve<number | null>(null),
+  ]);
+
+  let availableCount = 0;
+  let unavailableCount = 0;
+  for (const row of statusGroupCounts) {
+    if (row.status === ProductStatus.AVAILABLE) availableCount = row._count._all;
+    else if (row.status === ProductStatus.UNAVAILABLE) unavailableCount = row._count._all;
   }
 
-  const [total, availableCount, unavailableCount] = await Promise.all([
-    prisma.product.count({ where }),
-    prisma.product.count({ where: { status: ProductStatus.AVAILABLE } }),
-    prisma.product.count({ where: { status: ProductStatus.UNAVAILABLE } }),
-  ]);
+  const totalCount = availableCount + unavailableCount;
+  const total =
+    filteredTotal !== null
+      ? filteredTotal
+      : status === ProductStatus.AVAILABLE
+      ? availableCount
+      : status === ProductStatus.UNAVAILABLE
+      ? unavailableCount
+      : totalCount;
 
   const products = rawProducts.map(mapProductToListItemDTO);
 
@@ -302,7 +332,7 @@ export async function getProductsWithFilters({
     stats: {
       availableCount,
       unavailableCount,
-      totalCount: availableCount + unavailableCount,
+      totalCount,
     },
   };
 }
@@ -736,6 +766,245 @@ export async function upsertCompanyPrice(
   });
 
   return { success: true };
+}
+
+export async function saveProductAll(
+  productId: string,
+  payload: {
+    details: {
+      name?: string;
+      brand?: string | null;
+      category?: string | null;
+      description?: string | null;
+      websiteUrl?: string | null;
+      imageUrl?: string | null;
+      hsCode?: string | null;
+      cartonDimension?: string | null;
+      cartonWidth?: number | null;
+      cartonLength?: number | null;
+      cartonHeight?: number | null;
+      cbm?: number | null;
+      cartonQuantity?: number | null;
+      remark?: string | null;
+      starRating?: number;
+    };
+    variants?: Array<{
+      id: string;
+      price?: number;
+      productCost?: number | null;
+      priceCondition?: string | null;
+      imageUrl?: string | null;
+      status?: ProductStatus;
+    }>;
+    primaryVariantId?: string | null;
+    customerPrices?: Array<{
+      variantId: string;
+      companyId: string;
+      price: number;
+    }>;
+  }
+): Promise<{
+  success: boolean;
+  product: ProductListItemDTO;
+  overview: ProductOverviewDTO;
+}> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) throw new Error("Unauthorized");
+
+  const { details, variants = [], primaryVariantId, customerPrices = [] } = payload;
+  const ops: Prisma.PrismaPromise<any>[] = [];
+
+  if (primaryVariantId) {
+    ops.push(
+      prisma.productVariant.updateMany({
+        where: { productId, isDefault: true, id: { not: primaryVariantId } },
+        data: { isDefault: false },
+      })
+    );
+  }
+
+  const updatedVariantIds = new Set<string>();
+  for (const v of variants) {
+    updatedVariantIds.add(v.id);
+    ops.push(
+      prisma.productVariant.update({
+        where: { id: v.id },
+        data: {
+          ...(v.price !== undefined ? { price: v.price } : {}),
+          ...(v.productCost !== undefined ? { productCost: v.productCost } : {}),
+          ...(v.priceCondition !== undefined ? { priceCondition: v.priceCondition } : {}),
+          ...(v.imageUrl !== undefined ? { imageUrl: v.imageUrl } : {}),
+          ...(v.status !== undefined ? { status: v.status } : {}),
+          ...(primaryVariantId === v.id ? { isDefault: true } : {}),
+        },
+      })
+    );
+  }
+
+  if (primaryVariantId && !updatedVariantIds.has(primaryVariantId)) {
+    ops.push(
+      prisma.productVariant.update({
+        where: { id: primaryVariantId },
+        data: {
+          isDefault: true,
+          ...(details.imageUrl !== undefined ? { imageUrl: details.imageUrl } : {}),
+        },
+      })
+    );
+  }
+
+  for (const cp of customerPrices) {
+    if (cp.price > 0) {
+      ops.push(
+        prisma.companyPrice.upsert({
+          where: {
+            variantId_companyId: {
+              variantId: cp.variantId,
+              companyId: cp.companyId,
+            },
+          },
+          create: {
+            variantId: cp.variantId,
+            companyId: cp.companyId,
+            price: cp.price,
+          },
+          update: {
+            price: cp.price,
+          },
+        })
+      );
+    }
+  }
+
+  const productUpdatePromise = prisma.product.update({
+    where: { id: productId },
+    data: {
+      ...(details.name !== undefined ? { name: details.name } : {}),
+      ...(details.brand !== undefined ? { brand: details.brand } : {}),
+      ...(details.category !== undefined ? { category: details.category } : {}),
+      ...(details.description !== undefined ? { description: details.description } : {}),
+      ...(details.websiteUrl !== undefined ? { websiteUrl: details.websiteUrl } : {}),
+      ...(details.hsCode !== undefined ? { hsCode: details.hsCode } : {}),
+      ...(details.cartonDimension !== undefined ? { cartonDimension: details.cartonDimension } : {}),
+      ...(details.cartonWidth !== undefined ? { cartonWidth: details.cartonWidth } : {}),
+      ...(details.cartonLength !== undefined ? { cartonLength: details.cartonLength } : {}),
+      ...(details.cartonHeight !== undefined ? { cartonHeight: details.cartonHeight } : {}),
+      ...(details.cbm !== undefined ? { cbm: details.cbm } : {}),
+      ...(details.cartonQuantity !== undefined ? { cartonQuantity: details.cartonQuantity } : {}),
+      ...(details.remark !== undefined ? { remark: details.remark } : {}),
+      ...(details.starRating !== undefined ? { starRating: details.starRating } : {}),
+      updatedAt: new Date(),
+    },
+    include: {
+      variants: {
+        include: {
+          customPrices: {
+            include: {
+              company: {
+                select: {
+                  id: true,
+                  name: true,
+                  displayName: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      },
+    },
+  });
+
+  ops.push(productUpdatePromise);
+
+  const txResults = await prisma.$transaction(ops);
+  const updatedProduct = txResults[txResults.length - 1] as Prisma.ProductGetPayload<{
+    include: {
+      variants: {
+        include: {
+          customPrices: {
+            include: {
+              company: {
+                select: {
+                  id: true;
+                  name: true;
+                  displayName: true;
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  }>;
+
+  // Synchronize parent status if any variant status was modified
+  const anyVariantStatusChanged = variants.some((v) => v.status !== undefined);
+  if (anyVariantStatusChanged && updatedProduct.variants.length > 0) {
+    const hasAvailable = updatedProduct.variants.some(
+      (v) => v.status === ProductStatus.AVAILABLE
+    );
+    const nextStatus = hasAvailable
+      ? ProductStatus.AVAILABLE
+      : ProductStatus.UNAVAILABLE;
+    if (updatedProduct.status !== nextStatus) {
+      await prisma.product.update({
+        where: { id: productId },
+        data: { status: nextStatus },
+      });
+      updatedProduct.status = nextStatus;
+    }
+  }
+
+  const overview: ProductOverviewDTO = {
+    id: updatedProduct.id,
+    name: updatedProduct.name,
+    brand: updatedProduct.brand,
+    category: updatedProduct.category,
+    description: updatedProduct.description,
+    websiteUrl: updatedProduct.websiteUrl,
+    status: updatedProduct.status,
+    starRating: updatedProduct.starRating || 0,
+    hsCode: updatedProduct.hsCode,
+    cartonDimension: updatedProduct.cartonDimension,
+    cartonWidth: updatedProduct.cartonWidth,
+    cartonLength: updatedProduct.cartonLength,
+    cartonHeight: updatedProduct.cartonHeight,
+    cbm: updatedProduct.cbm,
+    cartonQuantity: updatedProduct.cartonQuantity,
+    remark: updatedProduct.remark,
+    variants: updatedProduct.variants.map((v) => ({
+      id: v.id,
+      productId: v.productId,
+      sku: v.sku,
+      fullName: v.fullName,
+      thaiName: v.thaiName,
+      formula: v.formula,
+      imageUrl: v.imageUrl,
+      price: v.price,
+      productCost: v.productCost,
+      priceCondition: v.priceCondition,
+      netWeight: v.netWeight,
+      cartonGrossWeight: v.cartonGrossWeight,
+      status: v.status || ProductStatus.AVAILABLE,
+      isDefault: v.isDefault,
+      order: v.order ?? 0,
+      customPrices: v.customPrices.map((cp) => ({
+        id: cp.id,
+        companyId: cp.companyId,
+        companyName: cp.company.displayName || cp.company.name,
+        price: cp.price,
+      })),
+    })),
+    createdAt: updatedProduct.createdAt.toISOString(),
+    updatedAt: updatedProduct.updatedAt.toISOString(),
+  };
+
+  return {
+    success: true,
+    product: mapProductToListItemDTO(updatedProduct),
+    overview,
+  };
 }
 
 // Taxonomy Management Actions (Manage Categories & Brands)

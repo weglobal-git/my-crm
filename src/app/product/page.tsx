@@ -20,18 +20,20 @@ export default async function ProductPage() {
 
   const { id: userId, role } = session.user as { id: string; role: string };
 
-  if (role !== "ADMIN") {
-    const visibleKeys = await getUserVisibleMenuKeys(userId);
-    if (!visibleKeys.includes("product") && !visibleKeys.includes("pipeline.information")) {
-      redirect("/");
-    }
-  }
-
-  // Preload taxonomy to check for configured default Category or Brand
-  const [categories, brands] = await Promise.all([
+  // Run permission check and taxonomy preload in parallel to eliminate server waterfall
+  const [visibleKeys, categories, brands] = await Promise.all([
+    role !== "ADMIN" ? getUserVisibleMenuKeys(userId) : Promise.resolve(null),
     getProductCategories(),
     getProductBrands(),
   ]);
+
+  if (
+    visibleKeys &&
+    !visibleKeys.includes("product") &&
+    !visibleKeys.includes("pipeline.information")
+  ) {
+    redirect("/");
+  }
 
   const defaultCategories = categories.filter((c) => c.isDefault).map((c) => c.category);
   const defaultBrands = brands.filter((b) => b.isDefault).map((b) => b.brand);

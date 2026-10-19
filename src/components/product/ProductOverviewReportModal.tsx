@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import {
   X,
@@ -23,9 +23,10 @@ import {
 import { getBatchProductOverviews } from "@/lib/actions/product";
 import {
   CommercialRates,
-  DEFAULT_COMMERCIAL_RATES,
 } from "./ExportPricingSimulation";
 import { useCompanyCostOverhead } from "@/lib/product/use-company-cost-overhead";
+
+const emptySubscribe = () => () => {};
 
 interface ProductOverviewReportModalProps {
   isOpen: boolean;
@@ -181,26 +182,25 @@ function calcScenarioMetrics(
     exportPrice > 0 ? (genProfitBest / exportPrice) * 100 : 0;
 
   // Model B: Exclusive Distributor (3 Cumulative Steps)
-  // Step 1: After Distribution Fee
-  const exclDistFee = (exportPrice * vRates.distFeeRate) / 100;
-  const exclQuotation = exportPrice - exclDistFee;
+  // Step 1: After Distribution Fee (Deducted directly on Customer Invoice)
+  const exclQuotation = calculateTierPrice(exportPrice, vRates.distFeeRate);
   const exclStep1Profit = exclQuotation - effectiveCost;
   const exclStep1Pct =
-    exportPrice > 0 ? (exclStep1Profit / exportPrice) * 100 : 0;
+    exclQuotation > 0 ? (exclStep1Profit / exclQuotation) * 100 : 0;
 
-  // Step 2: After Distribution Fee + MKT Support
+  // Step 2: After Distribution Fee + MKT Support (Post-invoice claim based on Customer Net Invoice Price)
   const exclMkt = (exclQuotation * vRates.mktSupportRate) / 100;
   const exclAfterMkt = exclQuotation - exclMkt;
   const exclStep2Profit = exclAfterMkt - effectiveCost;
   const exclStep2Pct =
-    exportPrice > 0 ? (exclStep2Profit / exportPrice) * 100 : 0;
+    exclQuotation > 0 ? (exclStep2Profit / exclQuotation) * 100 : 0;
 
-  // Step 3: After Distribution Fee + MKT Support + Rebate
+  // Step 3: After Distribution Fee + MKT Support + Rebate (Post-invoice claim based on Customer Net Invoice Price)
   const exclRebate = (exclQuotation * vRates.rebateRate) / 100;
   const exclNetRev = exclQuotation - exclMkt - exclRebate;
   const exclStep3Profit = exclNetRev - effectiveCost;
   const exclStep3Pct =
-    exportPrice > 0 ? (exclStep3Profit / exportPrice) * 100 : 0;
+    exclQuotation > 0 ? (exclStep3Profit / exclQuotation) * 100 : 0;
 
   // Domestic Mode: No Rebate & + Rebate
   const domRebate = (exportPrice * vRates.rebateRate) / 100;
@@ -291,7 +291,11 @@ export function ProductOverviewReportModal({
   onClose,
   selectedProducts,
 }: ProductOverviewReportModalProps) {
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
   const [lang, setLang] = useState<Lang>("th");
   const [minimizeMode, setMinimizeMode] = useState<MinimizeMode>("normal");
   const [isMinimizeDropdownOpen, setIsMinimizeDropdownOpen] = useState(false);
@@ -304,7 +308,6 @@ export function ProductOverviewReportModal({
   const [detailsCache, setDetailsCache] = useState<
     Record<string, ProductOverviewDTO>
   >({});
-  const [isLoading, setIsLoading] = useState(false);
 
   const isMinimized = minimizeMode !== "normal";
 
@@ -314,10 +317,6 @@ export function ProductOverviewReportModal({
     commercialRates,
     calculateEffectiveCost,
   } = useCompanyCostOverhead();
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -360,7 +359,6 @@ export function ProductOverviewReportModal({
     if (missingIds.length === 0) return;
 
     let active = true;
-    setIsLoading(true);
 
     getBatchProductOverviews(missingIds)
       .then((res) => {
@@ -376,9 +374,6 @@ export function ProductOverviewReportModal({
       })
       .catch((err) => {
         console.error("Failed to fetch product overviews for report:", err);
-      })
-      .finally(() => {
-        if (active) setIsLoading(false);
       });
 
     return () => {
@@ -1491,10 +1486,8 @@ export function ProductOverviewReportModal({
               </div>
             )}
 
-            {/* Loading / Empty / Main Table */}
-            {(isLoading ||
-              (selectedProducts.length > 0 &&
-                selectedProducts.some((p) => !detailsCache[p.id]))) &&
+            {selectedProducts.length > 0 &&
+            selectedProducts.some((p) => !detailsCache[p.id]) &&
             productGroups.length === 0 ? (
               <div className="flex-1 min-h-[420px] flex flex-col items-center justify-center gap-3 text-slate-700">
                 <Loader2 className="w-7 h-7 animate-spin text-slate-900" />
