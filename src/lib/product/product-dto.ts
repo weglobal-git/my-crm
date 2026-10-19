@@ -11,6 +11,9 @@ export interface ProductListItemDTO {
   hsCode: string | null;
   cbm: number | null;
   cartonDimension: string | null;
+  cartonWidth?: number | null;
+  cartonLength?: number | null;
+  cartonHeight?: number | null;
   cartonQuantity: number | null;
   cartonGrossWeight?: number | null;
   minGrossWeight?: number | null;
@@ -171,6 +174,117 @@ export interface PriceStepTier {
   discountPercent: number; // Discount percentage (0 - 100)
 }
 
+export function parseLegacyPriceConditionText(raw: string | null | undefined): PriceStepTier[] {
+  if (!raw || !raw.trim()) return [];
+  let text = raw.replace(/^"+|"+$/g, "").replace(/\r\n/g, "\n").trim();
+
+  // Fix known Excel auto-fill typo on Hair Treatment Wax (500ml) (x2 Units): "13..26 โหล ลด 3% , 24 โหล ลด 5%"
+  if (/^\d+\s*โหล\s*ลด\s*3%\s*,\s*24\s*โหล\s*ลด\s*5%$/.test(text)) {
+    text = "12 โหล ลด 3% , 24 โหล ลด 5%";
+  }
+
+  // Fix known typo on Bleaching Powder (300g): "2.ซื้อ 3 โหล ลดท้ายบิล 3%\n3.ซื้อ 3 โหล ลดท้ายบิล 5%"
+  text = text.replace(
+    /2\.ซื้อ\s*3\s*โหล\s*ลดท้ายบิล\s*3%\s*\n\s*3\.ซื้อ\s*3\s*โหล\s*ลดท้ายบิล\s*5%/,
+    "2.ซื้อ 3 โหล ลดท้ายบิล 3%\n3.ซื้อ 6 โหล ลดท้ายบิล 5%"
+  );
+
+  // Strip 3-month cumulative cash coupon remarks
+  const beforeAccum =
+    text.split(/(?:รายการสะสม(?!สั่งซื้อบิลเดียว)|สะสม\s*3\s*เดือน)/)[0] || text;
+
+  const rawClauses = beforeAccum
+    .split(/\n|\/|,(?!\d)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // Merge split lines where line i has quantity (โหล/แกลลอน/ถุง) without % and line i+1 has % without quantity
+  const clauses: string[] = [];
+  for (let i = 0; i < rawClauses.length; i++) {
+    const cur = rawClauses[i];
+    const next = rawClauses[i + 1];
+    const hasUnit = /(\d+)\s*(?:โหล|แกลล?อน|ถุง|ฤง)/.test(cur);
+    const hasPct = /(\d+(?:\.\d+)?)\s*%/.test(cur);
+    const hasFree = /แถม\s*\d+/.test(cur);
+    const isNet = /NET|NTE|ไม่มีส่วนลด/i.test(cur);
+    if (
+      hasUnit &&
+      !hasPct &&
+      !hasFree &&
+      !isNet &&
+      next &&
+      /(\d+(?:\.\d+)?)\s*%/.test(next) &&
+      !/(\d+)\s*(?:โหล|แกลล?อน|ถุง|ฤง)/.test(next)
+    ) {
+      clauses.push(`${cur} ${next}`);
+      i++;
+    } else {
+      clauses.push(cur);
+    }
+  }
+
+  const extracted: { qty: number; pct: number }[] = [];
+
+  for (const clause of clauses) {
+    if (/NET|NTE|ไม่มีส่วนลด/i.test(clause) && !/(\d+(?:\.\d+)?)\s*%/.test(clause)) {
+      continue;
+    }
+
+    // Handle "X โหล แถม Y โหล"
+    const freeMatch = clause.match(/(\d+)\s*โหล\s*แถม\s*(\d+)\s*โหล/);
+    if (freeMatch) {
+      const buyQty = parseInt(freeMatch[1], 10);
+      const freeQty = parseInt(freeMatch[2], 10);
+      if (buyQty > 0 && freeQty > 0) {
+        const eqPct = Number(((freeQty / buyQty) * 100).toFixed(2));
+        extracted.push({ qty: buyQty, pct: eqPct });
+      }
+      continue;
+    }
+
+    const qtyMatch = clause.match(/(?:^\d+\.\s*)?.*?(\d+)\s*(?:โหล|แกลล?อน|ถุง|ฤง)/);
+    if (!qtyMatch) continue;
+    const qty = parseInt(qtyMatch[1], 10);
+    if (!qty || qty <= 0) continue;
+
+    const pctMatches = Array.from(clause.matchAll(/(\d+(?:\.\d+)?)\s*%/g)).map((m) =>
+      parseFloat(m[1])
+    );
+    if (pctMatches.length > 0) {
+      // Compound sequential discounts if multiple % on the same tier (e.g., ลด 20% ลดท้ายบิลเพิ่ม 10% -> 28%)
+      let remaining = 1;
+      for (const p of pctMatches) {
+        remaining *= 1 - p / 100;
+      }
+      const compoundPct = Number(((1 - remaining) * 100).toFixed(2));
+      if (compoundPct > 0) {
+        extracted.push({ qty, pct: compoundPct });
+      }
+    }
+  }
+
+  if (extracted.length === 0) return [];
+
+  extracted.sort((a, b) => a.qty - b.qty || a.pct - b.pct);
+  const deduped: { qty: number; pct: number }[] = [];
+  for (const item of extracted) {
+    if (deduped.length > 0 && deduped[deduped.length - 1].qty === item.qty) {
+      deduped[deduped.length - 1].pct = Math.max(deduped[deduped.length - 1].pct, item.pct);
+    } else {
+      deduped.push({ ...item });
+    }
+  }
+
+  return deduped.map((item, idx) => {
+    const next = deduped[idx + 1];
+    return {
+      minQuantity: item.qty,
+      maxQuantity: next ? next.qty - 1 : null,
+      discountPercent: item.pct,
+    };
+  });
+}
+
 export function parsePriceConditions(raw: string | null | undefined): PriceStepTier[] {
   if (!raw || !raw.trim()) return [];
   try {
@@ -190,12 +304,12 @@ export function parsePriceConditions(raw: string | null | undefined): PriceStepT
       if (validItems.length === 0) return [];
 
       // Dynamically chain consecutive tier carton ranges:
-      // Row 0 always starts at 1.
+      // Row 0 starts from validItems[0].minQuantity (at least 1).
       // Each intermediate row i has maxQuantity > currentMin.
       // Next row i+1 minQuantity is row[i].maxQuantity + 1.
       // Last row always has maxQuantity = null ("or more").
       const result: PriceStepTier[] = [];
-      let currentMin = 1;
+      let currentMin = Math.max(1, validItems[0]?.minQuantity || 1);
 
       for (let i = 0; i < validItems.length; i++) {
         const item = validItems[i];
@@ -208,12 +322,7 @@ export function parsePriceConditions(raw: string | null | undefined): PriceStepT
           if (item.maxQuantity && item.maxQuantity > currentMin) {
             maxQty = item.maxQuantity;
           } else {
-            const nextItem = validItems[i + 1];
-            if (nextItem && nextItem.minQuantity > currentMin) {
-              maxQty = nextItem.minQuantity - 1;
-            } else {
-              maxQty = currentMin + 19;
-            }
+            maxQty = null;
           }
         }
 
@@ -225,13 +334,21 @@ export function parsePriceConditions(raw: string | null | undefined): PriceStepT
 
         if (maxQty !== null) {
           currentMin = maxQty + 1;
+        } else {
+          const nextItem = validItems[i + 1];
+          if (nextItem && nextItem.minQuantity > currentMin) {
+            currentMin = nextItem.minQuantity;
+          } else {
+            currentMin = currentMin + 1;
+          }
         }
       }
 
       return result;
     }
   } catch {
-    // If not JSON, ignore legacy string
+    // Fallback to legacy Thai text condition parser
+    return parseLegacyPriceConditionText(raw);
   }
   return [];
 }

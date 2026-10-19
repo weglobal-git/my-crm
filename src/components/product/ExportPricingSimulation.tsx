@@ -1,134 +1,40 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { PriceStepTier, calculateTierPrice } from "@/lib/product/product-dto";
-import { SlidersHorizontal, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  CommercialRates,
+  DEFAULT_COMMERCIAL_RATES,
+  useCompanyCostOverhead,
+} from "@/lib/product/use-company-cost-overhead";
 
-export interface CommercialRates {
-  commissionRate: number; // default 5
-  distFeeRate: number; // default 5
-  mktSupportRate: number; // default 2
-  rebateRate: number; // default 3
-}
-
-export const DEFAULT_COMMERCIAL_RATES: CommercialRates = {
-  commissionRate: 5,
-  distFeeRate: 5,
-  mktSupportRate: 2,
-  rebateRate: 3,
-};
+export { type CommercialRates, DEFAULT_COMMERCIAL_RATES };
 
 interface ExportPricingSimulationProps {
   basePrice: number;
   productCost: number | null;
+  baseProductCost?: number | null;
+  overheadPercent?: number;
   tiers: PriceStepTier[];
   rates?: CommercialRates;
   onRatesChange?: (rates: CommercialRates) => void;
 }
 
-function RateNumberInput({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (val: number) => void;
-}) {
-  const [localVal, setLocalVal] = useState(String(value));
-  const [isFocused, setIsFocused] = useState(false);
-
-  useEffect(() => {
-    if (!isFocused) {
-      setLocalVal(String(value));
-    }
-  }, [value, isFocused]);
-
-  return (
-    <div>
-      <label className="text-[10px] text-slate-400 block mb-0.5 font-medium">
-        {label}
-      </label>
-      <input
-        type="number"
-        step="0.5"
-        min="0"
-        max="100"
-        value={localVal}
-        placeholder="0"
-        onFocus={() => setIsFocused(true)}
-        onChange={(e) => {
-          const raw = e.target.value;
-          setLocalVal(raw);
-          if (raw !== "") {
-            const num = parseFloat(raw);
-            if (!isNaN(num)) onChange(num);
-          } else {
-            onChange(0);
-          }
-        }}
-        onBlur={() => {
-          setIsFocused(false);
-          if (localVal === "" || isNaN(parseFloat(localVal))) {
-            setLocalVal("0");
-            onChange(0);
-          } else {
-            const num = parseFloat(localVal);
-            setLocalVal(String(num));
-            onChange(num);
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        className="w-full bg-[#121213] border border-[#3E4042] rounded px-2.5 py-1 text-slate-200 text-xs outline-none focus:border-[#C7F33C] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-      />
-    </div>
-  );
-}
-
 export function ExportPricingSimulation({
   basePrice,
   productCost,
+  baseProductCost,
+  overheadPercent,
   tiers,
   rates,
-  onRatesChange,
 }: ExportPricingSimulationProps) {
-  const [localRates, setLocalRates] = useState<CommercialRates>(DEFAULT_COMMERCIAL_RATES);
-  const effectiveRates = rates ?? localRates;
+  const { commercialRates } = useCompanyCostOverhead();
+  const effectiveRates = rates ?? commercialRates ?? DEFAULT_COMMERCIAL_RATES;
 
   const commissionRate = effectiveRates.commissionRate;
   const distFeeRate = effectiveRates.distFeeRate;
   const mktSupportRate = effectiveRates.mktSupportRate;
   const rebateRate = effectiveRates.rebateRate;
-
-  const updateCommissionRate = (val: number) => {
-    const next = { ...effectiveRates, commissionRate: val };
-    if (onRatesChange) onRatesChange(next);
-    else setLocalRates(next);
-  };
-
-  const updateDistFeeRate = (val: number) => {
-    const next = { ...effectiveRates, distFeeRate: val };
-    if (onRatesChange) onRatesChange(next);
-    else setLocalRates(next);
-  };
-
-  const updateMktSupportRate = (val: number) => {
-    const next = { ...effectiveRates, mktSupportRate: val };
-    if (onRatesChange) onRatesChange(next);
-    else setLocalRates(next);
-  };
-
-  const updateRebateRate = (val: number) => {
-    const next = { ...effectiveRates, rebateRate: val };
-    if (onRatesChange) onRatesChange(next);
-    else setLocalRates(next);
-  };
-
-  const [showConfig, setShowConfig] = useState(false);
 
   // Selected tier for Step Price: defaults to T3 (index 2) if at least 3 tiers exist, or highest available tier
   const getDefaultTierIdx = (tList: PriceStepTier[]) => {
@@ -218,7 +124,7 @@ export function ExportPricingSimulation({
 
   return (
     <div className="space-y-3 pt-3 border-t border-[#3E4042]/50">
-      {/* Simulation Header & Rate Customizer Toggle */}
+      {/* Simulation Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-slate-200">
@@ -244,48 +150,7 @@ export function ExportPricingSimulation({
             </div>
           )}
         </div>
-
-        <button
-          type="button"
-          onClick={() => setShowConfig((prev) => !prev)}
-          className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-[#C7F33C] transition-colors cursor-pointer"
-          title="Adjust deduction rates"
-        >
-          <SlidersHorizontal className="w-3 h-3" />
-          <span>Rates</span>
-          {showConfig ? (
-            <ChevronUp className="w-3 h-3" />
-          ) : (
-            <ChevronDown className="w-3 h-3" />
-          )}
-        </button>
       </div>
-
-      {/* Optional Rate Configuration Drawer */}
-      {showConfig && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-[#1C1D1E] p-3 rounded-xl border border-[#4E4F50]/60 text-xs">
-          <RateNumberInput
-            label="Sales Comm %"
-            value={commissionRate}
-            onChange={updateCommissionRate}
-          />
-          <RateNumberInput
-            label="Dist Fee %"
-            value={distFeeRate}
-            onChange={updateDistFeeRate}
-          />
-          <RateNumberInput
-            label="MKT Support %"
-            value={mktSupportRate}
-            onChange={updateMktSupportRate}
-          />
-          <RateNumberInput
-            label="Target Rebate %"
-            value={rebateRate}
-            onChange={updateRebateRate}
-          />
-        </div>
-      )}
 
       {/* Stacked Tables: Top & Bottom (General Export Price on top, Exclusive Distributor below) */}
       <div className="flex flex-col gap-3">
@@ -322,14 +187,16 @@ export function ExportPricingSimulation({
               </div>
             </div>
 
-            {/* Sales Commission */}
-            <div className="flex items-center justify-between text-slate-400 pt-1">
-              <span>Sales Commission ({commissionRate}%)</span>
-              <div className="flex items-center tabular-nums text-rose-300/80">
-                <span className="w-20 text-right">-฿{fmt(genCommissionBase, 2)}</span>
-                <span className="w-20 text-right">-฿{fmt(genCommissionStep, 2)}</span>
+            {/* Rec Com */}
+            {commissionRate > 0 && (
+              <div className="flex items-center justify-between text-slate-400 pt-1">
+                <span>Rec Com ({commissionRate}%)</span>
+                <div className="flex items-center tabular-nums text-rose-300/80">
+                  <span className="w-20 text-right">-฿{fmt(genCommissionBase, 2)}</span>
+                  <span className="w-20 text-right">-฿{fmt(genCommissionStep, 2)}</span>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Net Revenue */}
             <div className="flex items-center justify-between pt-1 border-t border-[#2F3032] text-slate-200 font-semibold">
@@ -342,7 +209,17 @@ export function ExportPricingSimulation({
 
             {/* Product Cost */}
             <div className="flex items-center justify-between text-slate-400">
-              <span>Product Cost</span>
+              <div className="flex items-center gap-1.5">
+                <span>Product Cost</span>
+                {overheadPercent !== undefined && overheadPercent > 0 && (
+                  <span
+                    className="text-[10px] font-semibold text-[#C7F33C] bg-[#252728] px-1.5 py-0.5 rounded border border-[#4E4F50]/60 tabular-nums cursor-help"
+                    title={`Base Cost: ฿${fmt(baseProductCost ?? 0, 2)} + ${overheadPercent}% Company Standard Cost Overhead`}
+                  >
+                    +{overheadPercent}%
+                  </span>
+                )}
+              </div>
               <div className="flex items-center tabular-nums text-slate-300">
                 <span className="w-20 text-right">{cost > 0 ? `฿${fmt(cost, 2)}` : "-"}</span>
                 <span className="w-20 text-right">{cost > 0 ? `฿${fmt(cost, 2)}` : "-"}</span>
@@ -401,13 +278,15 @@ export function ExportPricingSimulation({
             </div>
 
             {/* Distribution Fee */}
-            <div className="flex items-center justify-between text-slate-400">
-              <span>Distribution Fee ({distFeeRate}%)</span>
-              <div className="flex items-center tabular-nums text-rose-300/80">
-                <span className="w-20 text-right">-฿{fmt(exclDistFeeBase, 2)}</span>
-                <span className="w-20 text-right">-฿{fmt(exclDistFeeStep, 2)}</span>
+            {distFeeRate > 0 && (
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Distribution Fee ({distFeeRate}%)</span>
+                <div className="flex items-center tabular-nums text-rose-300/80">
+                  <span className="w-20 text-right">-฿{fmt(exclDistFeeBase, 2)}</span>
+                  <span className="w-20 text-right">-฿{fmt(exclDistFeeStep, 2)}</span>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Quotation Price */}
             <div className="flex items-center justify-between pt-1 border-t border-[#2F3032] font-semibold">
@@ -419,22 +298,26 @@ export function ExportPricingSimulation({
             </div>
 
             {/* MKT Support */}
-            <div className="flex items-center justify-between text-slate-400 pt-1">
-              <span>Marketing Support ({mktSupportRate}%)</span>
-              <div className="flex items-center tabular-nums text-rose-300/80">
-                <span className="w-20 text-right">-฿{fmt(exclMktBase, 2)}</span>
-                <span className="w-20 text-right">-฿{fmt(exclMktStep, 2)}</span>
+            {mktSupportRate > 0 && (
+              <div className="flex items-center justify-between text-slate-400 pt-1">
+                <span>Marketing Support ({mktSupportRate}%)</span>
+                <div className="flex items-center tabular-nums text-rose-300/80">
+                  <span className="w-20 text-right">-฿{fmt(exclMktBase, 2)}</span>
+                  <span className="w-20 text-right">-฿{fmt(exclMktStep, 2)}</span>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Target Rebate */}
-            <div className="flex items-center justify-between text-slate-400">
-              <span>Annual Rebate ({rebateRate}%)</span>
-              <div className="flex items-center tabular-nums text-rose-300/80">
-                <span className="w-20 text-right">-฿{fmt(exclRebateBase, 2)}</span>
-                <span className="w-20 text-right">-฿{fmt(exclRebateStep, 2)}</span>
+            {rebateRate > 0 && (
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Annual Rebate ({rebateRate}%)</span>
+                <div className="flex items-center tabular-nums text-rose-300/80">
+                  <span className="w-20 text-right">-฿{fmt(exclRebateBase, 2)}</span>
+                  <span className="w-20 text-right">-฿{fmt(exclRebateStep, 2)}</span>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Net Revenue */}
             <div className="flex items-center justify-between pt-1 border-t border-[#2F3032] text-slate-200 font-semibold">
@@ -447,7 +330,17 @@ export function ExportPricingSimulation({
 
             {/* Product Cost */}
             <div className="flex items-center justify-between text-slate-400">
-              <span>Product Cost</span>
+              <div className="flex items-center gap-1.5">
+                <span>Product Cost</span>
+                {overheadPercent !== undefined && overheadPercent > 0 && (
+                  <span
+                    className="text-[10px] font-semibold text-[#C7F33C] bg-[#252728] px-1.5 py-0.5 rounded border border-[#4E4F50]/60 tabular-nums cursor-help"
+                    title={`Base Cost: ฿${fmt(baseProductCost ?? 0, 2)} + ${overheadPercent}% Company Standard Cost Overhead`}
+                  >
+                    +{overheadPercent}%
+                  </span>
+                )}
+              </div>
               <div className="flex items-center tabular-nums text-slate-300">
                 <span className="w-20 text-right">{cost > 0 ? `฿${fmt(cost, 2)}` : "-"}</span>
                 <span className="w-20 text-right">{cost > 0 ? `฿${fmt(cost, 2)}` : "-"}</span>

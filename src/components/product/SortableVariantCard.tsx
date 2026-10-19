@@ -27,6 +27,63 @@ import {
   CommercialRates,
   DEFAULT_COMMERCIAL_RATES,
 } from "./ExportPricingSimulation";
+import { useCompanyCostOverhead } from "@/lib/product/use-company-cost-overhead";
+
+// Dedicated carton min quantity input for the first tier
+interface CartonMinInputProps {
+  value: number | null | undefined;
+  onChange: (val: number) => void;
+}
+
+function CartonMinInput({ value, onChange }: CartonMinInputProps) {
+  const [draft, setDraft] = useState<string>(value != null && value > 0 ? String(value) : "1");
+
+  useEffect(() => {
+    setDraft(value != null && value > 0 ? String(value) : "1");
+  }, [value]);
+
+  const commitValue = () => {
+    if (draft.trim() === "") {
+      setDraft(value ? String(value) : "1");
+      return;
+    }
+    const parsed = parseInt(draft, 10);
+    if (isNaN(parsed) || parsed < 1) {
+      setDraft(value ? String(value) : "1");
+    } else {
+      setDraft(String(parsed));
+      if (parsed !== value) {
+        onChange(parsed);
+      }
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      min={1}
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        if (e.target.value !== "") {
+          const parsed = parseInt(e.target.value, 10);
+          if (!isNaN(parsed) && parsed >= 1) {
+            onChange(parsed);
+          }
+        }
+      }}
+      onBlur={commitValue}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      placeholder="1"
+      title="Enter starting volume in cartons (minimum: 1)"
+      className="w-12 h-7 bg-[#252728] border border-[#4E4F50] hover:border-slate-300 focus:border-[#C7F33C] focus:bg-[#202122] rounded-lg px-1 text-xs text-center font-semibold text-slate-100 outline-none transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+    />
+  );
+}
 
 // Dedicated carton max quantity input allowing smooth deleting and empty state
 interface CartonMaxInputProps {
@@ -97,10 +154,12 @@ interface TierDiscountInputProps {
 }
 
 function TierDiscountInput({ value, minAllowed, onChange }: TierDiscountInputProps) {
-  const [draft, setDraft] = useState<string>(value != null && value > 0 ? String(value) : "");
+  const [draft, setDraft] = useState<string>(
+    value != null && !isNaN(value) ? String(value) : ""
+  );
 
   useEffect(() => {
-    setDraft(value != null && value > 0 ? String(value) : "");
+    setDraft(value != null && !isNaN(value) ? String(value) : "");
   }, [value]);
 
   const commitValue = () => {
@@ -110,11 +169,11 @@ function TierDiscountInput({ value, minAllowed, onChange }: TierDiscountInputPro
       return;
     }
     const parsed = parseFloat(draft);
-    if (isNaN(parsed) || parsed <= 0) {
+    if (isNaN(parsed) || parsed < 0) {
       setDraft("");
       onChange(null);
     } else {
-      const finalVal = Math.min(100, parsed);
+      const finalVal = Math.min(100, Math.max(0, parsed));
       setDraft(String(finalVal));
       if (finalVal !== value) {
         onChange(finalVal);
@@ -126,7 +185,7 @@ function TierDiscountInput({ value, minAllowed, onChange }: TierDiscountInputPro
     <input
       type="number"
       step="0.1"
-      min={minAllowed}
+      min={Math.max(0, minAllowed)}
       max="100"
       value={draft}
       onChange={(e) => {
@@ -146,7 +205,7 @@ function TierDiscountInput({ value, minAllowed, onChange }: TierDiscountInputPro
           (e.target as HTMLInputElement).blur();
         }
       }}
-      placeholder={minAllowed > 0 ? `>${minAllowed}%` : "%"}
+      placeholder={minAllowed > 0 ? `>${minAllowed}%` : "0%"}
       title={`Enter discount %${minAllowed > 0 ? ` (must be greater than ${minAllowed}%)` : ""}`}
       className="w-14 h-7 bg-[#252728] border border-[#4E4F50] hover:border-slate-300 focus:border-[#C7F33C] focus:bg-[#202122] rounded-lg px-1 text-xs text-center font-semibold text-slate-100 outline-none transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
     />
@@ -315,7 +374,11 @@ export interface SortableVariantCardProps {
   onPriceChange: (val: number) => void;
   onCostChange: (val: number | null) => void;
   onAddTier: () => void;
-  onUpdateTier: (tierIndex: number, field: "maxQuantity" | "discountPercent", val: any) => void;
+  onUpdateTier: (
+    tierIndex: number,
+    field: "minQuantity" | "maxQuantity" | "discountPercent",
+    val: any
+  ) => void;
   onRemoveTier: (tierIndex: number) => void;
   onApplyToAll: () => void;
   onRatesChange: (newRates: CommercialRates) => void;
@@ -364,6 +427,12 @@ export function SortableVariantCard({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const tiers = parsePriceConditions(currentEdit.priceCondition);
+  const {
+    totalPercent: companyCostOverheadPercent,
+    commercialRates,
+    calculateEffectiveCost,
+  } = useCompanyCostOverhead();
+  const effectiveCost = calculateEffectiveCost(currentEdit.productCost);
 
   return (
     <div
@@ -605,9 +674,19 @@ export function SortableVariantCard({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-300">
-                Cost (THB)
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300">
+                  Cost (THB)
+                </label>
+                {currentEdit.productCost && currentEdit.productCost > 0 && companyCostOverheadPercent > 0 && (
+                  <span
+                    className="text-[11px] font-semibold text-[#C7F33C] tabular-nums"
+                    title={`Base Cost ฿${Number(currentEdit.productCost).toFixed(2)} + ${companyCostOverheadPercent}% Company Standard Cost Overhead`}
+                  >
+                    ต้นทุนจริง (+{companyCostOverheadPercent}%): ฿{effectiveCost.toFixed(2)}
+                  </span>
+                )}
+              </div>
               <CostNumberInput
                 value={currentEdit.productCost}
                 onChange={onCostChange}
@@ -662,12 +741,21 @@ export function SortableVariantCard({
                     >
                       {/* Col 1: Consecutive Carton Quantity Range */}
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <span
-                          className="w-10 h-7 flex items-center justify-center rounded-lg bg-[#18191A] text-xs font-semibold text-slate-400 tabular-nums border border-[#3A3B3C]/70 shrink-0 cursor-not-allowed select-none"
-                          title="Auto-calculated starting volume (non-editable)"
-                        >
-                          {tier.minQuantity}
-                        </span>
+                        {tIdx === 0 ? (
+                          <CartonMinInput
+                            value={tier.minQuantity}
+                            onChange={(val) =>
+                              onUpdateTier(0, "minQuantity", val)
+                            }
+                          />
+                        ) : (
+                          <span
+                            className="w-10 h-7 flex items-center justify-center rounded-lg bg-[#18191A] text-xs font-semibold text-slate-400 tabular-nums border border-[#3A3B3C]/70 shrink-0 cursor-not-allowed select-none"
+                            title="Auto-calculated starting volume (non-editable)"
+                          >
+                            {tier.minQuantity}
+                          </span>
+                        )}
 
                         <span className="w-3 text-center text-slate-400 text-xs font-semibold shrink-0 select-none">
                           -
@@ -701,8 +789,8 @@ export function SortableVariantCard({
                           value={tier.discountPercent}
                           minAllowed={
                             tIdx > 0
-                              ? (tiers[tIdx - 1]?.discountPercent || 0) + 0.1
-                              : 0.1
+                              ? (tiers[tIdx - 1]?.discountPercent || 0)
+                              : 0
                           }
                           onChange={(val) =>
                             onUpdateTier(tIdx, "discountPercent", val)
@@ -741,10 +829,11 @@ export function SortableVariantCard({
             {currentEdit.productCost && currentEdit.productCost > 0 ? (
               <ExportPricingSimulation
                 basePrice={currentEdit.price}
-                productCost={currentEdit.productCost}
+                productCost={effectiveCost}
+                baseProductCost={currentEdit.productCost}
+                overheadPercent={companyCostOverheadPercent}
                 tiers={tiers}
-                rates={variantRates || DEFAULT_COMMERCIAL_RATES}
-                onRatesChange={onRatesChange}
+                rates={commercialRates}
               />
             ) : (
               <div className="p-3 bg-[#252728] rounded-xl border border-dashed border-[#4E4F50]/50 text-center">

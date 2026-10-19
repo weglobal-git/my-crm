@@ -3,6 +3,10 @@
 import React, { memo } from "react";
 import { Check, Package, Flame } from "lucide-react";
 import { ProductListItemDTO } from "@/lib/product/product-dto";
+import {
+  calculateContainerCartonRange,
+  formatContainerRangeLabel,
+} from "@/lib/product/container-loading";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 
 interface ProductCardRowProps {
@@ -78,14 +82,12 @@ export const ProductCardRow = memo(function ProductCardRow({
     return "GW: —";
   })();
 
-  // Containers Calculation (20ft & 40ft - บนล่าง)
-  const cartons20ft = numericCbm > 0 ? Math.floor(28 / numericCbm) : 0;
-  const cartons40ft = numericCbm > 0 ? Math.floor(58 / numericCbm) : 0;
+  // Containers Calculation (20ft & 40ft - บนล่าง) from Plan A / Plan B + Tilted Gap Fill, capped by Max GW & Max CBM
+  const range20ft = calculateContainerCartonRange(product, "20ft");
+  const range40ft = calculateContainerCartonRange(product, "40ft");
 
-  const container20ftText =
-    numericCbm > 0 ? `${cartons20ft.toLocaleString()} (20ft)` : "— (20ft)";
-  const container40ftText =
-    numericCbm > 0 ? `${cartons40ft.toLocaleString()} (40ft)` : "— (40ft)";
+  const container20ftText = formatContainerRangeLabel("20ft", range20ft);
+  const container40ftText = formatContainerRangeLabel("40ft", range40ft);
 
   return (
     <div
@@ -103,8 +105,8 @@ export const ProductCardRow = memo(function ProductCardRow({
           : "text-slate-200 hover:bg-[#3A3B3C]/60"
       }`}
     >
-      {/* Desktop Grid Layout: Checkbox (20px), Image (44px), Full Product Name (1fr), CBM/GW (110px), 20ft/40ft (110px), General Export Price (120px) */}
-      <div className="hidden sm:grid grid-cols-[20px_44px_minmax(0,1fr)_110px_110px_120px] gap-3 items-center w-full">
+      {/* Desktop Grid Layout: Checkbox (20px), Image (44px), Full Product Name (1fr), CBM/GW (115px), 20ft/40ft (150px), General Export Price (120px) */}
+      <div className="hidden sm:grid grid-cols-[20px_44px_minmax(0,1fr)_115px_150px_120px] gap-3 items-center w-full">
         {/* Col 0: Checkbox for Batch Print Selection */}
         <div
           role="checkbox"

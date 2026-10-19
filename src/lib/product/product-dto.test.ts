@@ -188,5 +188,48 @@ describe('Product DTO & Filter Matching', () => {
     const serialized = serializePriceConditions(tiers);
     assert.equal(serialized, raw);
   });
+
+  it('correctly handles volume tiers starting at custom volumes like 60 cartons', () => {
+    const raw = JSON.stringify([
+      { minQuantity: 60, maxQuantity: 99, discountPercent: 3 },
+      { minQuantity: 100, maxQuantity: null, discountPercent: 5 },
+    ]);
+    const tiers = parsePriceConditions(raw);
+    assert.equal(tiers.length, 2);
+    assert.equal(tiers[0].minQuantity, 60);
+    assert.equal(tiers[0].maxQuantity, 99);
+    assert.equal(tiers[0].discountPercent, 3);
+
+    assert.equal(tiers[1].minQuantity, 100);
+    assert.equal(tiers[1].maxQuantity, null);
+    assert.equal(tiers[1].discountPercent, 5);
+
+    // 98 THB base price, 3% discount -> 95.06 THB
+    const price3 = calculateTierPrice(98, 3);
+    assert.equal(price3, 95.06);
+
+    // 98 THB base price, 5% discount -> 93.10 THB
+    const price5 = calculateTierPrice(98, 5);
+    assert.equal(price5, 93.10);
+
+    const serialized = serializePriceConditions(tiers);
+    assert.equal(serialized, raw);
+  });
+
+  it('keeps intermediate maxQuantity null when unfilled instead of inventing a clamped number', () => {
+    const raw = JSON.stringify([
+      { minQuantity: 60, maxQuantity: null, discountPercent: 3 },
+      { minQuantity: 61, maxQuantity: null, discountPercent: 5 },
+    ]);
+    const tiers = parsePriceConditions(raw);
+    assert.equal(tiers.length, 2);
+    assert.equal(tiers[0].minQuantity, 60);
+    assert.equal(tiers[0].maxQuantity, null);
+    assert.equal(tiers[0].discountPercent, 3);
+
+    assert.equal(tiers[1].minQuantity, 61);
+    assert.equal(tiers[1].maxQuantity, null);
+    assert.equal(tiers[1].discountPercent, 5);
+  });
 });
 

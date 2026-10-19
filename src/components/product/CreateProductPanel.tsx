@@ -7,6 +7,7 @@ import { SearchableSelect } from "@/components/ui/SearchableSelect";
 import { createProduct, getProductCategories, getProductBrands } from "@/lib/actions/product";
 import { ProductListItemDTO } from "@/lib/product/product-dto";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
+import { useCompanyCostOverhead } from "@/lib/product/use-company-cost-overhead";
 
 interface CreateProductPanelProps {
   isOpen: boolean;
@@ -62,6 +63,9 @@ export function CreateProductPanel({
   const [price, setPrice] = useState<number | string>("");
   const [productCost, setProductCost] = useState<number | string>("");
   const [priceCondition, setPriceCondition] = useState("");
+  const { totalPercent: companyCostOverheadPercent, calculateEffectiveCost } = useCompanyCostOverhead();
+  const parsedCost = typeof productCost === "number" ? productCost : parseFloat(String(productCost)) || 0;
+  const effectiveCost = calculateEffectiveCost(parsedCost);
   const [cbm, setCbm] = useState<number | string>("");
   const [cartonQuantity, setCartonQuantity] = useState<number | string>("");
   const [remark, setRemark] = useState("");
@@ -367,7 +371,17 @@ export function CreateProductPanel({
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-300">Cost (THB)</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300">Cost (THB)</label>
+                {parsedCost > 0 && companyCostOverheadPercent > 0 && (
+                  <span
+                    className="text-[11px] font-semibold text-[#C7F33C] tabular-nums"
+                    title={`Base Cost ฿${parsedCost.toFixed(2)} + ${companyCostOverheadPercent}% Company Standard Cost Overhead`}
+                  >
+                    ต้นทุนจริง (+{companyCostOverheadPercent}%): ฿{effectiveCost.toFixed(2)}
+                  </span>
+                )}
+              </div>
               <input
                 type="number"
                 step="0.01"

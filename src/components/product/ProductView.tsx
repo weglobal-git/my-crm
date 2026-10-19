@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import dynamic from "next/dynamic";
 import { ProductStatus } from "@prisma/client";
 import { preload } from "swr";
-import { FolderTree, Plus, Printer, SlidersHorizontal, Eye } from "lucide-react";
+import { FolderTree, Plus, Printer, SlidersHorizontal, Eye, TrendingUp } from "lucide-react";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
 import { useSidebar } from "@/components/layout/SidebarContext";
 import {
@@ -29,6 +29,10 @@ import { ProductFiltersDrawer, ProductFilterContent } from "./ProductFiltersDraw
 const loadProductCatalogPrintModal = () =>
   import("./ProductCatalogPrintModal").then((mod) => mod.ProductCatalogPrintModal);
 const ProductCatalogPrintModal = dynamic(loadProductCatalogPrintModal, { ssr: false });
+
+const loadProductOverviewReportModal = () =>
+  import("./ProductOverviewReportModal").then((mod) => mod.ProductOverviewReportModal);
+const ProductOverviewReportModal = dynamic(loadProductOverviewReportModal, { ssr: false });
 
 const loadEditProductPanel = () =>
   import("./EditProductPanel").then((mod) => mod.EditProductPanel);
@@ -109,8 +113,9 @@ export function ProductView({
     initialProducts[0]?.id || null
   );
 
-  // Print modal state
+  // Print & Overview Report modal state
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isOverviewReportOpen, setIsOverviewReportOpen] = useState(false);
   const [selectedForPrintIds, setSelectedForPrintIds] = useState<Set<string>>(new Set());
   const [viewOnlySelected, setViewOnlySelected] = useState(false);
 
@@ -155,7 +160,24 @@ export function ProductView({
 
   const printTargetProducts = useMemo(() => {
     if (selectedForPrintIds.size === 0) return products;
-    return products.filter((p) => selectedForPrintIds.has(p.id));
+    const result: ProductListItemDTO[] = [];
+    const seen = new Set<string>();
+    for (const p of products) {
+      if (selectedForPrintIds.has(p.id)) {
+        result.push(p);
+        seen.add(p.id);
+      }
+    }
+    for (const id of selectedForPrintIds) {
+      if (!seen.has(id)) {
+        const known = knownProductsMapRef.current.get(id);
+        if (known) {
+          result.push(known);
+          seen.add(id);
+        }
+      }
+    }
+    return result;
   }, [products, selectedForPrintIds]);
 
   // Count of selected products for the active tab (On vs Off)
@@ -782,11 +804,37 @@ export function ProductView({
                       setIsManageOpen(true);
                     }}
                     className="hidden md:flex w-8 h-8 rounded-full items-center justify-center border border-[#3A3B3C] bg-[#252728] text-slate-300 hover:text-white hover:bg-[#3A3B3C] transition-all cursor-pointer shrink-0"
-                    title="Manage Categories & Brands"
+                    title="Manage Categories, Brands & Settings"
                   >
                     <FolderTree className="w-3.5 h-3.5" />
                   </button>
 
+
+                  {/* Overview Report Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void loadProductOverviewReportModal();
+                      setIsOverviewReportOpen(true);
+                    }}
+                    className={`hidden md:flex w-8 h-8 rounded-full items-center justify-center border transition-all cursor-pointer relative shrink-0 ${
+                      selectedForPrintIds.size > 0
+                        ? "bg-[#C7F33C]/10 border-[#C7F33C] text-[#C7F33C] hover:bg-[#C7F33C]/20"
+                        : "bg-[#252728] border-[#3A3B3C] text-slate-300 hover:text-white hover:bg-[#3A3B3C]"
+                    }`}
+                    title={
+                      selectedForPrintIds.size > 0
+                        ? `Overview Report (${selectedForPrintIds.size} selected)`
+                        : "Overview Report"
+                    }
+                  >
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    {selectedForPrintIds.size > 0 && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#C7F33C] text-black text-[10px] font-bold flex items-center justify-center">
+                        {selectedForPrintIds.size}
+                      </span>
+                    )}
+                  </button>
 
                   {/* Print / Export Catalog Button */}
                   <button
@@ -808,7 +856,7 @@ export function ProductView({
                   >
                     <Printer className="w-3.5 h-3.5" />
                     {selectedForPrintIds.size > 0 && (
-                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#C7F33C] text-black text-[10px] font-bold flex items-center justify-center shadow-xs">
+                      <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#C7F33C] text-black text-[10px] font-bold flex items-center justify-center">
                         {selectedForPrintIds.size}
                       </span>
                     )}
@@ -822,7 +870,7 @@ export function ProductView({
                       setIsCreateProductOpen(true);
                     }}
                     onPointerEnter={handleCreatePanelIntent}
-                    className="w-8 h-8 rounded-full bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center justify-center shrink-0 cursor-pointer shadow-none"
+                    className="w-8 h-8 rounded-full bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center justify-center shrink-0 cursor-pointer"
                     title="Add Product"
                   >
                     <Plus className="w-4 h-4 text-black stroke-[2.5]" />
@@ -955,6 +1003,15 @@ export function ProductView({
         />
       )}
 
+      {/* Product Overview Report Modal */}
+      {isOverviewReportOpen && (
+        <ProductOverviewReportModal
+          isOpen={isOverviewReportOpen}
+          onClose={() => setIsOverviewReportOpen(false)}
+          selectedProducts={printTargetProducts}
+          isExplicitSelection={selectedForPrintIds.size > 0}
+        />
+      )}
 
     </WorkspaceLayout>
   );

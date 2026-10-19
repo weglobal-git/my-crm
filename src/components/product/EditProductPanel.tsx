@@ -68,7 +68,8 @@ import { getOptimizedCloudinaryUrl } from "@/lib/utils";
 import {
   CommercialRates,
   DEFAULT_COMMERCIAL_RATES,
-} from "./ExportPricingSimulation";
+  useCompanyCostOverhead,
+} from "@/lib/product/use-company-cost-overhead";
 import { ProductCommercialReportModal } from "./ProductCommercialReportModal";
 import { SortableVariantCard } from "./SortableVariantCard";
 import { ProductLogisticsModal } from "./ProductLogisticsModal";
@@ -96,6 +97,7 @@ export function EditProductPanel({
   availableCategories = [],
   availableBrands = [],
 }: EditProductPanelProps) {
+  const { commercialRates } = useCompanyCostOverhead();
   const [activeTab, setActiveTab] = useState("details");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -451,6 +453,55 @@ export function EditProductPanel({
     }));
   };
 
+  const handleUpdateTierMin = (variantId: string, index: number, newMin: number) => {
+    const currentTiers = parsePriceConditions(variantEdits[variantId]?.priceCondition);
+    if (!currentTiers[index]) return;
+
+    const safeMin = Math.max(1, newMin);
+    const updated = [...currentTiers];
+
+    if (index === 0) {
+      let maxQty = updated[0].maxQuantity;
+      if (maxQty != null && maxQty <= safeMin) {
+        maxQty = null;
+      }
+      updated[0] = {
+        ...updated[0],
+        minQuantity: safeMin,
+        maxQuantity: maxQty,
+      };
+
+      let nextMin = maxQty ? maxQty + 1 : safeMin + 1;
+      for (let k = 1; k < updated.length; k++) {
+        const isLast = k === updated.length - 1;
+        const prevItemMax = updated[k].maxQuantity;
+
+        let newTierMax: number | null = null;
+        if (isLast) {
+          newTierMax = null;
+        } else if (prevItemMax && prevItemMax > nextMin) {
+          newTierMax = prevItemMax;
+        }
+
+        updated[k] = {
+          ...updated[k],
+          minQuantity: nextMin,
+          maxQuantity: newTierMax,
+        };
+
+        nextMin = newTierMax ? newTierMax + 1 : nextMin + 1;
+      }
+
+      setVariantEdits((prev) => ({
+        ...prev,
+        [variantId]: {
+          ...(prev[variantId] || { price: 0, productCost: null, priceCondition: "" }),
+          priceCondition: serializePriceConditions(updated),
+        },
+      }));
+    }
+  };
+
   const handleUpdateTierMax = (variantId: string, index: number, newMax: number | null) => {
     const currentTiers = parsePriceConditions(variantEdits[variantId]?.priceCondition);
     if (!currentTiers[index]) return;
@@ -575,7 +626,7 @@ export function EditProductPanel({
     }
 
     const reChained: PriceStepTier[] = [];
-    let currentMin = 1;
+    let currentMin = Math.max(1, filtered[0]?.minQuantity || 1);
 
     for (let i = 0; i < filtered.length; i++) {
       const isLast = i === filtered.length - 1;
@@ -754,7 +805,7 @@ export function EditProductPanel({
           }
         });
 
-        const vRate = variantRates[v.id] || DEFAULT_COMMERCIAL_RATES;
+        const vRate = commercialRates || DEFAULT_COMMERCIAL_RATES;
         const genDeductionRate = vRate.commissionRate;
 
         for (const p of pricesToCheck) {
@@ -853,6 +904,10 @@ export function EditProductPanel({
         starRating,
         primaryImageUrl: displayImage || null,
         cbm: autoComputedCbm,
+        cartonWidth: wVal || null,
+        cartonLength: lVal || null,
+        cartonHeight: hVal || null,
+        cartonDimension: cartonDimension || null,
         cartonQuantity: typeof cartonQuantity === "number" ? cartonQuantity : parseInt(cartonQuantity as string, 10) || null,
       });
 
@@ -1313,6 +1368,7 @@ export function EditProductPanel({
                           onAddTier={() => handleAddPriceTier(v.id)}
                           onUpdateTier={(tIdx, field, val) => {
                             if (field === "maxQuantity") handleUpdateTierMax(v.id, tIdx, val);
+                            else if (field === "minQuantity") handleUpdateTierMin(v.id, tIdx, val);
                             else handleUpdateTierDiscount(v.id, tIdx, val);
                           }}
                           onRemoveTier={(tIdx) => handleRemovePriceTier(v.id, tIdx)}

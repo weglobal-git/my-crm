@@ -104,12 +104,39 @@ export interface HybridPackingPlan {
   gainPercent: number;
 }
 
+const DEFAULT_CARTON_TOLERANCE_MM = 1.8;
+
+function countBestUniformFit(
+  boxW: number,
+  boxL: number,
+  boxH: number,
+  perms: [number, number, number][],
+  toleranceCm: number
+): number {
+  if (boxW < 1 || boxL < 1 || boxH < 1) return 0;
+  let maxFit = 0;
+  for (const [pw, pl, ph] of perms) {
+    const ew = Math.max(1, pw - toleranceCm);
+    const el = Math.max(1, pl - toleranceCm);
+    const eh = Math.max(1, ph - toleranceCm);
+    if (ew <= boxW + 0.05 && el <= boxL + 0.05 && eh <= boxH + 0.05) {
+      const kw = Math.floor((boxW + 0.05) / ew);
+      const kl = Math.floor((boxL + 0.05) / el);
+      const kh = Math.floor((boxH + 0.05) / eh);
+      const total = kw * kl * kh;
+      if (total > maxFit) maxFit = total;
+    }
+  }
+  return maxFit;
+}
+
 function fitTiltedCartonsInBox(
   boxW: number,
   boxL: number,
   boxH: number,
   carton: { w: number; l: number; h: number },
-  zoneType: "side" | "door" | "overhead"
+  zoneType: "side" | "door" | "overhead",
+  toleranceCm = 0
 ): {
   count: number;
   orientation: { w: number; l: number; h: number } | null;
@@ -141,19 +168,40 @@ function fitTiltedCartonsInBox(
   ];
 
   let bestCount = 0;
+  let bestSubCount = 0;
   let bestOrient: [number, number, number] | null = null;
   let bestWc = 0;
   let bestLc = 0;
   let bestHc = 0;
 
   for (const [pw, pl, ph] of perms) {
-    if (pw <= boxW + 0.05 && pl <= boxL + 0.05 && ph <= boxH + 0.05) {
-      const kw = Math.floor((boxW + 0.05) / pw);
-      const kl = Math.floor((boxL + 0.05) / pl);
-      const kh = Math.floor((boxH + 0.05) / ph);
-      const total = kw * kl * kh;
-      if (total > bestCount) {
+    const ew = Math.max(1, pw - toleranceCm);
+    const el = Math.max(1, pl - toleranceCm);
+    const eh = Math.max(1, ph - toleranceCm);
+    if (ew <= boxW + 0.05 && el <= boxL + 0.05 && eh <= boxH + 0.05) {
+      const kw = Math.floor((boxW + 0.05) / ew);
+      const kl = Math.floor((boxL + 0.05) / el);
+      const kh = Math.floor((boxH + 0.05) / eh);
+      const primaryTotal = kw * kl * kh;
+      if (primaryTotal <= 0) continue;
+
+      const usedW = Math.min(boxW, kw * ew);
+      const usedL = Math.min(boxL, kl * el);
+      const usedH = Math.min(boxH, kh * eh);
+
+      const remH = Math.max(0, boxH - usedH);
+      const remW = Math.max(0, boxW - usedW);
+      const remL = Math.max(0, boxL - usedL);
+
+      const subTop = countBestUniformFit(boxW, boxL, remH, perms, toleranceCm);
+      const subSide = countBestUniformFit(remW, boxL, usedH, perms, toleranceCm);
+      const subDepth = countBestUniformFit(usedW, remL, usedH, perms, toleranceCm);
+      const subTotal = subTop + subSide + subDepth;
+      const total = primaryTotal + subTotal;
+
+      if (total > bestCount || (total === bestCount && primaryTotal > bestWc * bestLc * bestHc)) {
         bestCount = total;
+        bestSubCount = subTotal;
         bestOrient = [pw, pl, ph];
         bestWc = kw;
         bestLc = kl;
@@ -175,13 +223,14 @@ function fitTiltedCartonsInBox(
   }
 
   const [ow, ol, oh] = bestOrient;
+  const subSuffix = bestSubCount > 0 ? ` (+สอดช่องว่างย่อย ${bestSubCount} ลัง)` : "";
   let tiltDesc = "";
   if (zoneType === "side") {
-    tiltDesc = `ตะแคงด้าน ${ow} cm ขนานผนัง (${ow}×${ol}×${oh} cm) วางได้ ${bestWc} ลังขวาง × ${bestLc} แถวลึก × ${bestHc} ชั้น`;
+    tiltDesc = `ตะแคงด้าน ${ow} cm ขนานผนัง (${ow}×${ol}×${oh} cm) วางได้ ${bestWc} ลังขวาง × ${bestLc} แถวลึก × ${bestHc} ชั้น${subSuffix}`;
   } else if (zoneType === "door") {
-    tiltDesc = `ตะแคงด้าน ${ol} cm ขนานประตู (${ow}×${ol}×${oh} cm) วางได้ ${bestWc} ลังหน้า × ${bestLc} แถวลึก × ${bestHc} ชั้น`;
+    tiltDesc = `ตะแคงด้าน ${ol} cm ขนานประตู (${ow}×${ol}×${oh} cm) วางได้ ${bestWc} ลังหน้า × ${bestLc} แถวลึก × ${bestHc} ชั้น${subSuffix}`;
   } else {
-    tiltDesc = `ตะแคงนอนราบด้าน ${oh} cm ตั้งขึ้น (${ow}×${ol}×${oh} cm) วางได้ ${bestWc} ลังขวาง × ${bestLc} แถวลึก × ${bestHc} ชั้น`;
+    tiltDesc = `ตะแคงนอนราบด้าน ${oh} cm ตั้งขึ้น (${ow}×${ol}×${oh} cm) วางได้ ${bestWc} ลังขวาง × ${bestLc} แถวลึก × ${bestHc} ชั้น${subSuffix}`;
   }
 
   return {
@@ -196,7 +245,14 @@ function fitTiltedCartonsInBox(
 
 function calculateTiltedGapOptimization(
   container: ContainerTypeSpec,
-  carton: { w: number; l: number; h: number; cbmPerCtn: number },
+  carton: {
+    w: number;
+    l: number;
+    h: number;
+    cbmPerCtn: number;
+    gwPerCtn?: number;
+    toleranceCm?: number;
+  },
   activePlan: {
     widthCount: number;
     lengthCount: number;
@@ -210,43 +266,120 @@ function calculateTiltedGapOptimization(
   const cW = container.widthCm;
   const cL = container.lengthCm;
   const cH = container.heightCm;
+  const toleranceCm = carton.toleranceCm ?? 0;
 
   const wCount = activePlan.widthCount;
   const lCount = activePlan.lengthCount;
   const hCount = activePlan.heightCount;
 
-  const greenCartons = wCount * lCount * hCount;
-  const greenUsedW = Number((wCount * activePlan.cartonUsedW).toFixed(1));
-  const greenUsedL = Number((lCount * activePlan.cartonUsedL).toFixed(1));
-  const greenUsedH = Number((hCount * carton.h).toFixed(1));
+  const exactCbmPerCtn =
+    carton.w > 0 && carton.l > 0 && carton.h > 0
+      ? (carton.w * carton.l * carton.h) / 1_000_000
+      : carton.cbmPerCtn;
 
-  const sideGapCm = Number((cW - greenUsedW).toFixed(1));
-  const doorGapCm = Number((cL - greenUsedL).toFixed(1));
-  const heightGapCm = Number((cH - greenUsedH).toFixed(1));
+  const maxByGw =
+    carton.gwPerCtn && carton.gwPerCtn > 0 && container.maxPayloadKg > 0
+      ? Math.floor(container.maxPayloadKg / carton.gwPerCtn)
+      : Infinity;
+  const maxByCbm =
+    exactCbmPerCtn > 0 && container.nominalCbm > 0
+      ? Math.floor(container.nominalCbm / exactCbmPerCtn)
+      : Infinity;
+  const maxAllowedCartons = Math.max(0, Math.min(maxByGw, maxByCbm));
 
-  // Strategy 1: Side along green length, Door across full container width, Overhead across full container
-  const s1Side = fitTiltedCartonsInBox(sideGapCm, greenUsedL, greenUsedH, carton, "side");
-  const s1Door = fitTiltedCartonsInBox(cW, doorGapCm, greenUsedH, carton, "door");
-  const s1Over = fitTiltedCartonsInBox(cW, cL, heightGapCm, carton, "overhead");
-  const sum1 = s1Side.count + s1Door.count + s1Over.count;
+  const rawGreenCartons = wCount * lCount * hCount;
+  const greenCartons = Math.min(rawGreenCartons, maxAllowedCartons);
+  const greenUsedW = Math.min(cW, Number((wCount * activePlan.cartonUsedW).toFixed(1)));
+  const greenUsedL = Math.min(cL, Number((lCount * activePlan.cartonUsedL).toFixed(1)));
+  const greenUsedH = Math.min(cH, Number((hCount * carton.h).toFixed(1)));
 
-  // Strategy 2: Side along full container length, Door across green width, Overhead across full container
-  const s2Side = fitTiltedCartonsInBox(sideGapCm, cL, greenUsedH, carton, "side");
-  const s2Door = fitTiltedCartonsInBox(greenUsedW, doorGapCm, greenUsedH, carton, "door");
-  const s2Over = fitTiltedCartonsInBox(cW, cL, heightGapCm, carton, "overhead");
-  const sum2 = s2Side.count + s2Door.count + s2Over.count;
+  const sideGapCm = Math.max(0, Number((cW - greenUsedW).toFixed(1)));
+  const doorGapCm = Math.max(0, Number((cL - greenUsedL).toFixed(1)));
+  const heightGapCm = Math.max(0, Number((cH - greenUsedH).toFixed(1)));
 
-  const useS1 = sum1 >= sum2;
-  const chosenSide = useS1 ? s1Side : s2Side;
-  const chosenDoor = useS1 ? s1Door : s2Door;
-  const chosenOver = useS1 ? s1Over : s2Over;
+  // Evaluate 4 non-overlapping 3D gap partitions:
+  const candidates = [
+    {
+      sideBox: { w: sideGapCm, l: greenUsedL, h: greenUsedH },
+      doorBox: { w: cW, l: doorGapCm, h: greenUsedH },
+      overBox: { w: cW, l: cL, h: heightGapCm },
+      side: fitTiltedCartonsInBox(sideGapCm, greenUsedL, greenUsedH, carton, "side", toleranceCm),
+      door: fitTiltedCartonsInBox(cW, doorGapCm, greenUsedH, carton, "door", toleranceCm),
+      over: fitTiltedCartonsInBox(cW, cL, heightGapCm, carton, "overhead", toleranceCm),
+    },
+    {
+      sideBox: { w: sideGapCm, l: cL, h: greenUsedH },
+      doorBox: { w: greenUsedW, l: doorGapCm, h: greenUsedH },
+      overBox: { w: cW, l: cL, h: heightGapCm },
+      side: fitTiltedCartonsInBox(sideGapCm, cL, greenUsedH, carton, "side", toleranceCm),
+      door: fitTiltedCartonsInBox(greenUsedW, doorGapCm, greenUsedH, carton, "door", toleranceCm),
+      over: fitTiltedCartonsInBox(cW, cL, heightGapCm, carton, "overhead", toleranceCm),
+    },
+    {
+      sideBox: { w: sideGapCm, l: greenUsedL, h: cH },
+      doorBox: { w: cW, l: doorGapCm, h: cH },
+      overBox: { w: greenUsedW, l: greenUsedL, h: heightGapCm },
+      side: fitTiltedCartonsInBox(sideGapCm, greenUsedL, cH, carton, "side", toleranceCm),
+      door: fitTiltedCartonsInBox(cW, doorGapCm, cH, carton, "door", toleranceCm),
+      over: fitTiltedCartonsInBox(greenUsedW, greenUsedL, heightGapCm, carton, "overhead", toleranceCm),
+    },
+    {
+      sideBox: { w: sideGapCm, l: cL, h: cH },
+      doorBox: { w: greenUsedW, l: doorGapCm, h: cH },
+      overBox: { w: greenUsedW, l: greenUsedL, h: heightGapCm },
+      side: fitTiltedCartonsInBox(sideGapCm, cL, cH, carton, "side", toleranceCm),
+      door: fitTiltedCartonsInBox(greenUsedW, doorGapCm, cH, carton, "door", toleranceCm),
+      over: fitTiltedCartonsInBox(greenUsedW, greenUsedL, heightGapCm, carton, "overhead", toleranceCm),
+    },
+  ];
 
-  const totalOrangeCartons = chosenSide.count + chosenDoor.count + chosenOver.count;
+  let bestCandidate = candidates[2];
+  let bestSum = -1;
+  for (const cand of candidates) {
+    const sum = cand.side.count + cand.door.count + cand.over.count;
+    if (sum > bestSum) {
+      bestSum = sum;
+      bestCandidate = cand;
+    }
+  }
+
+  const chosenSide = bestCandidate.side;
+  const chosenDoor = bestCandidate.door;
+  const chosenOver = bestCandidate.over;
+
+  // Cap tilted gap cartons by remaining weight/volume capacity
+  const remForOrange = Math.max(0, maxAllowedCartons - greenCartons);
+  const cappedSideCount = Math.min(chosenSide.count, remForOrange);
+  const remAfterSide = Math.max(0, remForOrange - cappedSideCount);
+  const cappedDoorCount = Math.min(chosenDoor.count, remAfterSide);
+  const remAfterDoor = Math.max(0, remAfterSide - cappedDoorCount);
+  const cappedOverCount = Math.min(chosenOver.count, remAfterDoor);
+
+  const sideEffectiveLCount =
+    cappedSideCount <= 0
+      ? 0
+      : chosenSide.wCount * chosenSide.hCount > 0
+      ? Math.min(chosenSide.lCount, Math.ceil(cappedSideCount / (chosenSide.wCount * chosenSide.hCount)))
+      : chosenSide.lCount;
+  const doorEffectiveWCount =
+    cappedDoorCount <= 0
+      ? 0
+      : chosenDoor.lCount * chosenDoor.hCount > 0
+      ? Math.min(chosenDoor.wCount, Math.ceil(cappedDoorCount / (chosenDoor.lCount * chosenDoor.hCount)))
+      : chosenDoor.wCount;
+  const overEffectiveLCount =
+    cappedOverCount <= 0
+      ? 0
+      : chosenOver.wCount * chosenOver.hCount > 0
+      ? Math.min(chosenOver.lCount, Math.ceil(cappedOverCount / (chosenOver.wCount * chosenOver.hCount)))
+      : chosenOver.lCount;
+
+  const totalOrangeCartons = cappedSideCount + cappedDoorCount + cappedOverCount;
   const totalHybridCartons = greenCartons + totalOrangeCartons;
 
-  const greenCbm = Number((greenCartons * carton.cbmPerCtn).toFixed(3));
-  const totalOrangeCbm = Number((totalOrangeCartons * carton.cbmPerCtn).toFixed(3));
-  const totalHybridCbm = Number((totalHybridCartons * carton.cbmPerCtn).toFixed(3));
+  const greenCbm = Number((greenCartons * exactCbmPerCtn).toFixed(3));
+  const totalOrangeCbm = Number((totalOrangeCartons * exactCbmPerCtn).toFixed(3));
+  const totalHybridCbm = Number((totalHybridCartons * exactCbmPerCtn).toFixed(3));
 
   const greenUtilization =
     container.nominalCbm > 0 ? Math.min(100, (greenCbm / container.nominalCbm) * 100) : 0;
@@ -275,28 +408,28 @@ function calculateTiltedGapOptimization(
     sideTilted: {
       zoneId: "side",
       nameTh: "ช่องว่างข้างตู้ (Side Gap)",
-      boxDimsCm: { w: sideGapCm, l: useS1 ? greenUsedL : cL, h: greenUsedH },
+      boxDimsCm: bestCandidate.sideBox,
       cartonOrientation: chosenSide.orientation,
-      counts: { wCount: chosenSide.wCount, lCount: chosenSide.lCount, hCount: chosenSide.hCount },
-      totalCartons: chosenSide.count,
+      counts: { wCount: chosenSide.wCount, lCount: sideEffectiveLCount, hCount: chosenSide.hCount },
+      totalCartons: cappedSideCount,
       descTh: chosenSide.descTh,
     },
     doorTilted: {
       zoneId: "door",
       nameTh: "ช่องว่างท้ายตู้ (Door Gap)",
-      boxDimsCm: { w: useS1 ? cW : greenUsedW, l: doorGapCm, h: greenUsedH },
+      boxDimsCm: bestCandidate.doorBox,
       cartonOrientation: chosenDoor.orientation,
-      counts: { wCount: chosenDoor.wCount, lCount: chosenDoor.lCount, hCount: chosenDoor.hCount },
-      totalCartons: chosenDoor.count,
+      counts: { wCount: doorEffectiveWCount, lCount: chosenDoor.lCount, hCount: chosenDoor.hCount },
+      totalCartons: cappedDoorCount,
       descTh: chosenDoor.descTh,
     },
     overheadTilted: {
       zoneId: "overhead",
       nameTh: "ช่องว่างเพดาน (Overhead Gap)",
-      boxDimsCm: { w: cW, l: cL, h: heightGapCm },
+      boxDimsCm: bestCandidate.overBox,
       cartonOrientation: chosenOver.orientation,
-      counts: { wCount: chosenOver.wCount, lCount: chosenOver.lCount, hCount: chosenOver.hCount },
-      totalCartons: chosenOver.count,
+      counts: { wCount: chosenOver.wCount, lCount: overEffectiveLCount, hCount: chosenOver.hCount },
+      totalCartons: cappedOverCount,
       descTh: chosenOver.descTh,
     },
     totalOrangeCartons,
@@ -345,6 +478,7 @@ export function ProductLogisticsModal({
     ...CONTAINER_SPECS,
   }));
   const [settingsContainerId, setSettingsContainerId] = useState<"20ft" | "40ft" | "40ftHq">("20ft");
+  const [cartonToleranceMm, setCartonToleranceMm] = useState<number>(DEFAULT_CARTON_TOLERANCE_MM);
 
   const handleUpdateSpec = (
     cId: "20ft" | "40ft" | "40ftHq",
@@ -368,6 +502,7 @@ export function ProductLogisticsModal({
       }));
     } else {
       setCustomContainerSpecs({ ...CONTAINER_SPECS });
+      setCartonToleranceMm(DEFAULT_CARTON_TOLERANCE_MM);
     }
   };
 
@@ -447,13 +582,26 @@ export function ProductLogisticsModal({
 
   // Resolve packing specs: prioritize detailed overview, fallback to list item
   const resolvedSpecs = useMemo(() => {
-    let cartonW = productOverview?.cartonWidth || 0;
-    let cartonL = productOverview?.cartonLength || 0;
-    let cartonH = productOverview?.cartonHeight || 0;
+    let cartonW = productOverview?.cartonWidth || activeListItem?.cartonWidth || 0;
+    let cartonL = productOverview?.cartonLength || activeListItem?.cartonLength || 0;
+    let cartonH = productOverview?.cartonHeight || activeListItem?.cartonHeight || 0;
     const cartonQty = productOverview?.cartonQuantity || activeListItem?.cartonQuantity || 1;
+
+    // Pricing & Step tiers
+    const primaryVariant =
+      productOverview?.variants?.find((v) => v.isDefault) ||
+      productOverview?.variants?.[0] ||
+      null;
+
     let cartonGw =
-      productOverview?.variants?.[0]?.cartonGrossWeight ||
+      (primaryVariant?.cartonGrossWeight && primaryVariant.cartonGrossWeight > 0
+        ? primaryVariant.cartonGrossWeight
+        : 0) ||
+      productOverview?.variants?.find((v) => v.cartonGrossWeight && v.cartonGrossWeight > 0)
+        ?.cartonGrossWeight ||
       activeListItem?.cartonGrossWeight ||
+      activeListItem?.maxGrossWeight ||
+      activeListItem?.minGrossWeight ||
       0;
 
     // Parse dimension string if W/L/H are not set numerically
@@ -473,13 +621,8 @@ export function ProductLogisticsModal({
     if (cartonH <= 0) cartonH = 12.3;
     if (cartonGw <= 0) cartonGw = 6.6;
 
-    const cbmPerCtn = Number(((cartonW * cartonL * cartonH) / 1_000_000).toFixed(4));
-
-    // Pricing & Step tiers
-    const primaryVariant =
-      productOverview?.variants?.find((v) => v.isDefault) ||
-      productOverview?.variants?.[0] ||
-      null;
+    const exactCbmPerCtn = (cartonW * cartonL * cartonH) / 1_000_000;
+    const cbmPerCtn = Number(exactCbmPerCtn.toFixed(4));
 
     const baseUnitPrice = primaryVariant?.price || activeListItem?.minPrice || 0;
     const tiers: PriceStepTier[] = primaryVariant?.priceCondition
@@ -493,6 +636,7 @@ export function ProductLogisticsModal({
       cartonQty,
       cartonGw,
       cbmPerCtn,
+      exactCbmPerCtn,
       baseUnitPrice,
       tiers,
       primaryVariant,
@@ -533,7 +677,7 @@ export function ProductLogisticsModal({
 
   // Derived financial & physical metrics
   const totalUnits = cartons * resolvedSpecs.cartonQty;
-  const totalCbm = cartons * resolvedSpecs.cbmPerCtn;
+  const totalCbm = cartons * resolvedSpecs.exactCbmPerCtn;
   const totalGw = cartons * resolvedSpecs.cartonGw;
   const totalAmount = totalUnits * appliedUnitPrice;
   const totalUndiscounted = totalUnits * effectiveBasePrice;
@@ -542,25 +686,51 @@ export function ProductLogisticsModal({
   // Container Packing Optimization
   const currentContainer = customContainerSpecs[selectedContainer] || CONTAINER_SPECS[selectedContainer];
 
+  // Payload & Usable Volume Hard Ceiling (Max Gross Weight & Max Usable CBM)
+  const payloadVolumeConstraints = useMemo(() => {
+    const maxByGw =
+      resolvedSpecs.cartonGw > 0 && currentContainer.maxPayloadKg > 0
+        ? Math.floor(currentContainer.maxPayloadKg / resolvedSpecs.cartonGw)
+        : Infinity;
+    const maxByCbm =
+      resolvedSpecs.exactCbmPerCtn > 0 && currentContainer.nominalCbm > 0
+        ? Math.floor(currentContainer.nominalCbm / resolvedSpecs.exactCbmPerCtn)
+        : Infinity;
+    const limit = Math.max(0, Math.min(maxByGw, maxByCbm));
+    return {
+      maxByGw,
+      maxByCbm,
+      limit,
+    };
+  }, [resolvedSpecs.cartonGw, resolvedSpecs.exactCbmPerCtn, currentContainer.maxPayloadKg, currentContainer.nominalCbm]);
+
+  const payloadVolumeLimit = payloadVolumeConstraints.limit;
+
   // Detailed Orientation Comparative Analysis (Standard Logistics & Cargo Optimization)
   const orientationAnalysis = useMemo(() => {
     const { cartonW, cartonL, cartonH } = resolvedSpecs;
+    const toleranceCm = Math.max(0, cartonToleranceMm / 10);
+    const effW = Math.max(1, cartonW - toleranceCm);
+    const effL = Math.max(1, cartonL - toleranceCm);
+    const effH = Math.max(1, cartonH - toleranceCm);
 
     // Plan A: Width across container, Length along depth
-    const wA = Math.max(1, Math.floor(currentContainer.widthCm / cartonW));
-    const lA = Math.max(1, Math.floor(currentContainer.lengthCm / cartonL));
-    const hA = Math.max(1, Math.floor(currentContainer.heightCm / cartonH));
-    const totalA = wA * lA * hA;
-    const sideGapA = Number((currentContainer.widthCm - wA * cartonW).toFixed(1));
-    const doorGapA = Number((currentContainer.lengthCm - lA * cartonL).toFixed(1));
+    const wA = Math.max(1, Math.floor(currentContainer.widthCm / effW));
+    const lA = Math.max(1, Math.floor(currentContainer.lengthCm / effL));
+    const hA = Math.max(1, Math.floor(currentContainer.heightCm / effH));
+    const rawTotalA = wA * lA * hA;
+    const totalA = Math.min(rawTotalA, payloadVolumeLimit);
+    const sideGapA = Math.max(0, Number((currentContainer.widthCm - wA * cartonW).toFixed(1)));
+    const doorGapA = Math.max(0, Number((currentContainer.lengthCm - lA * cartonL).toFixed(1)));
 
     // Plan B: Length across container, Width along depth (Rotated 90°)
-    const wB = Math.max(1, Math.floor(currentContainer.widthCm / cartonL));
-    const lB = Math.max(1, Math.floor(currentContainer.lengthCm / cartonW));
-    const hB = Math.max(1, Math.floor(currentContainer.heightCm / cartonH));
-    const totalB = wB * lB * hB;
-    const sideGapB = Number((currentContainer.widthCm - wB * cartonL).toFixed(1));
-    const doorGapB = Number((currentContainer.lengthCm - lB * cartonW).toFixed(1));
+    const wB = Math.max(1, Math.floor(currentContainer.widthCm / effL));
+    const lB = Math.max(1, Math.floor(currentContainer.lengthCm / effW));
+    const hB = Math.max(1, Math.floor(currentContainer.heightCm / effH));
+    const rawTotalB = wB * lB * hB;
+    const totalB = Math.min(rawTotalB, payloadVolumeLimit);
+    const sideGapB = Math.max(0, Number((currentContainer.widthCm - wB * cartonL).toFixed(1)));
+    const doorGapB = Math.max(0, Number((currentContainer.lengthCm - lB * cartonW).toFixed(1)));
 
     const bestIsA = totalA >= totalB;
 
@@ -573,6 +743,7 @@ export function ProductLogisticsModal({
         lengthCount: lA,
         heightCount: hA,
         totalCartons: totalA,
+        rawCartons: rawTotalA,
         cartonUsedW: cartonW,
         cartonUsedL: cartonL,
         sideGap: sideGapA,
@@ -587,6 +758,7 @@ export function ProductLogisticsModal({
         lengthCount: lB,
         heightCount: hB,
         totalCartons: totalB,
+        rawCartons: rawTotalB,
         cartonUsedW: cartonL,
         cartonUsedL: cartonW,
         sideGap: sideGapB,
@@ -596,12 +768,13 @@ export function ProductLogisticsModal({
       diff: Math.abs(totalA - totalB),
       bestIsA,
     };
-  }, [resolvedSpecs, currentContainer]);
+  }, [resolvedSpecs, currentContainer, payloadVolumeLimit, cartonToleranceMm]);
 
-  // Best Fit Calculation: Compares Plan A vs Plan B (orthogonal + tilted gap fill) to find maximum possible cartons
+  // Best Fit Calculation: Compares Plan A vs Plan B (orthogonal + tilted gap fill) under Max GW & Max CBM limits
   const bestFitResult = useMemo(() => {
-    const { cartonW, cartonL, cartonH, cbmPerCtn } = resolvedSpecs;
-    const cartonObj = { w: cartonW, l: cartonL, h: cartonH, cbmPerCtn };
+    const { cartonW, cartonL, cartonH, cbmPerCtn, cartonGw } = resolvedSpecs;
+    const toleranceCm = Math.max(0, cartonToleranceMm / 10);
+    const cartonObj = { w: cartonW, l: cartonL, h: cartonH, cbmPerCtn, gwPerCtn: cartonGw, toleranceCm };
 
     const planAHybrid = calculateTiltedGapOptimization(currentContainer, cartonObj, orientationAnalysis.planA);
     const planBHybrid = calculateTiltedGapOptimization(currentContainer, cartonObj, orientationAnalysis.planB);
@@ -609,7 +782,10 @@ export function ProductLogisticsModal({
     const totalA = planAHybrid.totalHybridCartons;
     const totalB = planBHybrid.totalHybridCartons;
 
-    const bestIsA = totalA >= totalB;
+    // Prefer Plan with higher total; if tied (e.g. both hit Max GW ceiling), prefer Plan with more orthogonal green cartons (fewer tilted cartons needed)
+    const bestIsA =
+      totalA > totalB ||
+      (totalA === totalB && planAHybrid.greenCartons >= planBHybrid.greenCartons);
     const bestPlan = bestIsA ? ("A" as const) : ("B" as const);
     const bestTotal = bestIsA ? totalA : totalB;
     const bestHybrid = bestIsA ? planAHybrid : planBHybrid;
@@ -621,11 +797,11 @@ export function ProductLogisticsModal({
       greenCartons: bestHybrid.greenCartons,
       orangeCartons: bestHybrid.totalOrangeCartons,
     };
-  }, [currentContainer, resolvedSpecs, orientationAnalysis]);
+  }, [currentContainer, resolvedSpecs, orientationAnalysis, cartonToleranceMm]);
 
   const handleCalculateBestFit = () => {
     setOrientationMode(bestFitResult.bestPlan);
-    setShowTiltedCartons(true);
+    setShowTiltedCartons(bestFitResult.hasTilted);
     setCartons(bestFitResult.bestTotal);
   };
 
@@ -636,7 +812,7 @@ export function ProductLogisticsModal({
   }, [orientationMode, orientationAnalysis]);
 
   const packingPlan = useMemo(() => {
-    const { cartonH, cbmPerCtn } = resolvedSpecs;
+    const { cartonH, cbmPerCtn, exactCbmPerCtn, cartonGw } = resolvedSpecs;
     const {
       widthCount,
       lengthCount,
@@ -647,6 +823,7 @@ export function ProductLogisticsModal({
       sideGap,
       doorGap,
     } = activePlan;
+    const toleranceCm = Math.max(0, cartonToleranceMm / 10);
 
     const hybridPlan = calculateTiltedGapOptimization(
       currentContainer,
@@ -655,15 +832,21 @@ export function ProductLogisticsModal({
         l: resolvedSpecs.cartonL,
         h: cartonH,
         cbmPerCtn,
+        gwPerCtn: cartonGw,
+        toleranceCm,
       },
       activePlan
     );
 
     const widthGapCm = sideGap;
     const lengthGapCm = doorGap;
-    const heightGapCm = Number((currentContainer.heightCm - heightCount * cartonH).toFixed(1));
+    const heightGapCm = Math.max(0, Number((currentContainer.heightCm - heightCount * cartonH).toFixed(1)));
 
-    const totalCargoCbm = totalCartons * cbmPerCtn;
+    const effectiveCartonUsedW = widthCount > 0 ? Math.min(cartonUsedW, currentContainer.widthCm / widthCount) : cartonUsedW;
+    const effectiveCartonUsedL = lengthCount > 0 ? Math.min(cartonUsedL, currentContainer.lengthCm / lengthCount) : cartonUsedL;
+    const effectiveCartonUsedH = heightCount > 0 ? Math.min(cartonH, currentContainer.heightCm / heightCount) : cartonH;
+
+    const totalCargoCbm = totalCartons * exactCbmPerCtn;
     const spaceUtilization =
       currentContainer.nominalCbm > 0
         ? Math.min(100, (totalCargoCbm / currentContainer.nominalCbm) * 100)
@@ -688,8 +871,9 @@ export function ProductLogisticsModal({
       widthGapCm,
       lengthGapCm,
       heightGapCm,
-      cartonUsedW,
-      cartonUsedL,
+      cartonUsedW: effectiveCartonUsedW,
+      cartonUsedL: effectiveCartonUsedL,
+      cartonUsedH: effectiveCartonUsedH,
       totalCargoCbm,
       spaceUtilization,
       hybridPlan,
@@ -700,7 +884,7 @@ export function ProductLogisticsModal({
       doorTilted: hybridPlan.doorTilted,
       overheadTilted: hybridPlan.overheadTilted,
     };
-  }, [resolvedSpecs, currentContainer, activePlan, cartons]);
+  }, [resolvedSpecs, currentContainer, activePlan, cartons, cartonToleranceMm]);
 
   // Container capacity limits: Never allow cartons to exceed container capacity
   const containerMaxCapacity = showTiltedCartons && packingPlan.orangeCartons > 0
@@ -797,7 +981,10 @@ export function ProductLogisticsModal({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setSidebarTab("settings")}
+                      onClick={() => {
+                        setSettingsContainerId(selectedContainer);
+                        setSidebarTab("settings");
+                      }}
                       className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer ${
                         sidebarTab === "settings"
                           ? "bg-[#282A2E] text-white shadow-xs border border-[#3A3D42]"
@@ -830,7 +1017,7 @@ export function ProductLogisticsModal({
                         type="button"
                         onClick={handleCalculateBestFit}
                         className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-[#C7F33C] via-[#B8F024] to-[#A3E635] hover:brightness-105 active:scale-[0.99] text-black font-bold text-xs flex items-center justify-between gap-2 shadow-md shadow-[#C7F33C]/10 border border-[#C7F33C]/40 transition-all cursor-pointer group"
-                        title="จัดเรียงลังสินค้าให้ได้จำนวนมากที่สุดเต็มตู้คอนเทนเนอร์ (Best Fit Optimization)"
+                        title="จัดเรียงลังสินค้าให้ได้จำนวนมากที่สุดเต็มตู้คอนเทนเนอร์ภายใต้ข้อกำหนด Max GW และ Max CBM (Best Fit Optimization)"
                       >
                         <div className="flex items-center gap-2">
                           <div className="w-5 h-5 rounded-lg bg-black/15 flex items-center justify-center">
@@ -852,7 +1039,10 @@ export function ProductLogisticsModal({
                         <span className="text-slate-400">Container Type</span>
                         <button
                           type="button"
-                          onClick={() => setSidebarTab("settings")}
+                          onClick={() => {
+                            setSettingsContainerId(selectedContainer);
+                            setSidebarTab("settings");
+                          }}
                           className="text-slate-400 hover:text-white underline cursor-pointer text-[9.5px]"
                         >
                           Specs & Settings
@@ -865,7 +1055,10 @@ export function ProductLogisticsModal({
                             <button
                               key={cId}
                               type="button"
-                              onClick={() => setSelectedContainer(cId)}
+                              onClick={() => {
+                                setSelectedContainer(cId);
+                                setSettingsContainerId(cId);
+                              }}
                               className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold cursor-pointer transition-colors text-center ${
                                 isSel
                                   ? "bg-[#282A2E] text-white border border-[#3E4249]"
@@ -1117,7 +1310,9 @@ export function ProductLogisticsModal({
                       <span className="text-slate-400">Total Volume (CBM)</span>
                       <div className="text-right">
                         <span className="font-bold text-white tabular-nums">{totalCbm.toFixed(3)} m³</span>
-                        <span className="text-[10px] text-slate-400 ml-1.5 font-mono">({pctContainerFill.toFixed(0)}% FCL)</span>
+                        <span className="text-[10px] text-slate-400 ml-1.5 font-mono">
+                          (max {currentContainer.nominalCbm} m³)
+                        </span>
                       </div>
                     </div>
 
@@ -1125,7 +1320,9 @@ export function ProductLogisticsModal({
                       <span className="text-slate-400">Gross Weight</span>
                       <div className="text-right">
                         <span className="font-bold text-white tabular-nums">{fmt(totalGw)} kg</span>
-                        <span className="text-[10px] text-slate-400 ml-1.5 font-mono">({(totalGw / 1000).toFixed(2)} tons)</span>
+                        <span className="text-[10px] text-slate-400 ml-1.5 font-mono">
+                          (max {(currentContainer.maxPayloadKg / 1000).toFixed(1)}t)
+                        </span>
                       </div>
                     </div>
 
@@ -1157,6 +1354,16 @@ export function ProductLogisticsModal({
                         <span className="text-[10px] text-slate-400 ml-1.5 font-mono">({packingPlan.hybridPlan.hybridUtilization.toFixed(1)}%)</span>
                       </div>
                     </div>
+
+                    {/* Payload / Volume Cap Indicator when active */}
+                    {(payloadVolumeConstraints.maxByGw < Infinity || payloadVolumeConstraints.maxByCbm < Infinity) && (
+                      <div className="py-1.5 flex items-center justify-between text-[10.5px] font-mono">
+                        <span className="text-slate-400">Constraint Ceiling</span>
+                        <span className="text-slate-300">
+                          GW ≤ {payloadVolumeConstraints.maxByGw.toLocaleString()} · CBM ≤ {payloadVolumeConstraints.maxByCbm.toLocaleString()} ctns
+                        </span>
+                      </div>
+                    )}
 
                     {/* Standard Orthogonal Grid */}
                     <div className="py-2 space-y-1">
@@ -1245,7 +1452,10 @@ export function ProductLogisticsModal({
                         <button
                           key={cId}
                           type="button"
-                          onClick={() => setSettingsContainerId(cId)}
+                          onClick={() => {
+                            setSettingsContainerId(cId);
+                            setSelectedContainer(cId);
+                          }}
                           className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-semibold cursor-pointer transition-colors text-center ${
                             isSel
                               ? "bg-[#282A2E] text-white border border-[#3E4249]"
@@ -1379,6 +1589,32 @@ export function ProductLogisticsModal({
                         className="w-full bg-transparent text-xs font-bold text-white outline-none tabular-nums"
                       />
                       <span className="text-[10px] text-slate-400 font-mono ml-1">m³</span>
+                    </div>
+                  </div>
+
+                  {/* Corrugated Carton Compression / Stuffing Tolerance */}
+                  <div className="space-y-1 pt-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span>Carton Compression Tolerance</span>
+                      <span className="font-mono text-slate-500">Std: 1.8 mm</span>
+                    </div>
+                    <div className="flex items-center bg-[#18191B] border border-[#2B2D31] rounded-lg px-2.5 py-1.5 focus-within:border-slate-400">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="5"
+                        value={cartonToleranceMm}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setCartonToleranceMm(isNaN(val) ? 0 : Math.max(0, Math.min(5, val)));
+                        }}
+                        className="w-full bg-transparent text-xs font-bold text-white outline-none tabular-nums"
+                      />
+                      <span className="text-[10px] text-slate-400 font-mono ml-1">mm</span>
+                    </div>
+                    <div className="text-[9.5px] text-slate-500 leading-tight">
+                      Accounts for corrugated board settling &amp; tight floor-loading compression (0 mm = strict rigid box).
                     </div>
                   </div>
                 </div>
@@ -1568,7 +1804,7 @@ export function ProductLogisticsModal({
                       const Nslice = Wc * Hc;
                       const cartonUsedW = packingPlan.cartonUsedW;
                       const cartonUsedL = packingPlan.cartonUsedL;
-                      const cartonH = resolvedSpecs.cartonH;
+                      const cartonH = packingPlan.cartonUsedH;
 
                       const doorL = currentContainer.lengthCm;
                       const contW = currentContainer.widthCm;
@@ -1758,15 +1994,15 @@ export function ProductLogisticsModal({
                         }
                       }
 
-                      // Render Tilted Orange Cartons in Overhead Gap & Side Gap (if enabled, cartons > 0, and space fits)
-                      if (cartons > 0 && showTiltedCartons && packingPlan.overheadTilted.totalCartons > 0 && packingPlan.overheadTilted.cartonOrientation) {
+                      // Render Tilted Orange Cartons in Overhead Gap & Side Gap (if enabled, cartons > greenCartons, and space fits)
+                      if (cartons > packingPlan.greenCartons && showTiltedCartons && packingPlan.overheadTilted.totalCartons > 0 && packingPlan.overheadTilted.cartonOrientation) {
                         const ohOri = packingPlan.overheadTilted.cartonOrientation;
                         const ohCounts = packingPlan.overheadTilted.counts;
                         const oh_w0 = 0;
                         const oh_w1 = Math.min(contW, ohCounts.wCount * ohOri.w);
                         const oh_l0 = 0;
                         const rawL = fullRowCount > 0 ? (fullRowCount + (remCartonsInActiveRow > 0 ? 1 : 0)) * cartonUsedL : doorL;
-                        const oh_l1 = Math.min(doorL, rawL > 0 ? rawL : doorL);
+                        const oh_l1 = Math.min(doorL, rawL > 0 ? rawL : doorL, ohCounts.lCount * ohOri.l);
                         const oh_h0 = Hc * cartonH;
                         const oh_h1 = Math.min(contH, oh_h0 + ohCounts.hCount * ohOri.h);
                         const nl = Math.min(ohCounts.lCount, Math.floor(oh_l1 / ohOri.l) || 1);
@@ -1904,17 +2140,17 @@ export function ProductLogisticsModal({
                         }
                       }
 
-                      // Render Tilted Orange Cartons in Side Gap (if enabled, cartons > 0, and side gap has tilted capacity)
-                      if (cartons > 0 && showTiltedCartons && packingPlan.sideTilted.totalCartons > 0 && packingPlan.sideTilted.cartonOrientation) {
+                      // Render Tilted Orange Cartons in Side Gap (if enabled, cartons > greenCartons, and side gap has tilted capacity)
+                      if (cartons > packingPlan.greenCartons && showTiltedCartons && packingPlan.sideTilted.totalCartons > 0 && packingPlan.sideTilted.cartonOrientation) {
                         const sideOri = packingPlan.sideTilted.cartonOrientation;
                         const sideCounts = packingPlan.sideTilted.counts;
                         const w0 = Wc * cartonUsedW;
                         const w1 = Math.min(contW, w0 + sideCounts.wCount * sideOri.w);
                         const l0 = 0;
                         const rawL = fullRowCount > 0 ? (fullRowCount + (remCartonsInActiveRow > 0 ? 1 : 0)) * cartonUsedL : doorL;
-                        const l1 = Math.min(doorL, rawL > 0 ? rawL : doorL);
+                        const l1 = Math.min(doorL, rawL > 0 ? rawL : doorL, sideCounts.lCount * sideOri.l);
                         const h0 = 0;
-                        const h1 = Math.min(Hc * cartonH, sideCounts.hCount * sideOri.h);
+                        const h1 = Math.min(contH, sideCounts.hCount * sideOri.h);
                         const nl = Math.min(sideCounts.lCount, Math.floor(l1 / sideOri.l) || 1);
 
                         if (l1 > 0 && w1 > w0 && h1 > 0) {
@@ -2050,8 +2286,8 @@ export function ProductLogisticsModal({
                         }
                       }
 
-                      // Render Tilted Orange Cartons in Door Gap (if enabled, cartons > 0, and door gap has tilted capacity)
-                      if (cartons > 0 && showTiltedCartons && packingPlan.doorTilted.totalCartons > 0 && packingPlan.doorTilted.cartonOrientation) {
+                      // Render Tilted Orange Cartons in Door Gap (if enabled, cartons > greenCartons, and door gap has tilted capacity)
+                      if (cartons > packingPlan.greenCartons && showTiltedCartons && packingPlan.doorTilted.totalCartons > 0 && packingPlan.doorTilted.cartonOrientation) {
                         const doorOri = packingPlan.doorTilted.cartonOrientation;
                         const doorCounts = packingPlan.doorTilted.counts;
                         const greenUsedL = Lc * cartonUsedL;
@@ -2629,7 +2865,7 @@ export function ProductLogisticsModal({
                       const hqRoofY = floorY - maxContH * scale;
 
                       const ctnW_px = packingPlan.cartonUsedW * scale;
-                      const ctnH_px = resolvedSpecs.cartonH * scale;
+                      const ctnH_px = packingPlan.cartonUsedH * scale;
                       const Wc = packingPlan.widthCount;
                       const Hc = packingPlan.heightCount;
 
@@ -3929,7 +4165,7 @@ export function ProductLogisticsModal({
                       const doorX = originX + contL_px;
 
                       const ctnL_px = packingPlan.cartonUsedL * scale;
-                      const ctnH_px = resolvedSpecs.cartonH * scale;
+                      const ctnH_px = packingPlan.cartonUsedH * scale;
                       const Lc = packingPlan.lengthCount;
                       const Hc = packingPlan.heightCount;
                       const Wc = packingPlan.widthCount;
