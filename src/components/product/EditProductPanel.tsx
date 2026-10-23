@@ -17,6 +17,8 @@ import {
   ChevronUp,
   AlertCircle,
   Calculator,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { ProductStatus } from "@prisma/client";
 import {
@@ -46,12 +48,18 @@ import {
   getProductCategories,
   getProductBrands,
   reorderProductVariants,
+  createProductVariant,
+  deleteProductVariant,
 } from "@/lib/actions/product";
 import {
   ProductListItemDTO,
+  ProductOverviewDTO,
   ProductVariantDTO,
   parsePriceConditions,
   serializePriceConditions,
+  calculateTierPrice,
+  resolveUnifiedPrice,
+  resolveProductAverageBaseCost,
   PriceStepTier,
 } from "@/lib/product/product-dto";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
@@ -60,7 +68,14 @@ import {
   DEFAULT_COMMERCIAL_RATES,
   useCompanyCostOverhead,
 } from "@/lib/product/use-company-cost-overhead";
-import { SortableVariantCard } from "./SortableVariantCard";
+import { ExportPricingSimulation } from "./ExportPricingSimulation";
+import {
+  SortableVariantCard,
+  CartonMinInput,
+  CartonMaxInput,
+  TierDiscountInput,
+  PriceNumberInput,
+} from "./SortableVariantCard";
 
 const ProductCommercialReportModal = dynamic(
   () => import("./ProductCommercialReportModal").then((mod) => mod.ProductCommercialReportModal),
@@ -80,9 +95,12 @@ const CustomerPriceComparisonTab = dynamic(
 interface EditProductPanelProps {
   productId: string | null;
   initialProduct?: ProductListItemDTO | null;
+  initialTab?: "details" | "pricing" | "customer_prices";
   isOpen: boolean;
   onClose: () => void;
   onProductUpdated?: (updated: Partial<ProductListItemDTO>) => void;
+  onOverviewUpdated?: (overview: ProductOverviewDTO) => void;
+  zIndexLevel?: "default" | "modal-overlay";
   availableCategories?: { category: string; count: number }[];
   availableBrands?: { brand: string; count: number }[];
 }
@@ -96,9 +114,12 @@ const TABS: SlideOverTab[] = [
 export function EditProductPanel({
   productId,
   initialProduct,
+  initialTab = "details",
   isOpen,
   onClose,
   onProductUpdated,
+  onOverviewUpdated,
+  zIndexLevel = "default",
   availableCategories = [],
   availableBrands = [],
 }: EditProductPanelProps) {
@@ -107,8 +128,10 @@ export function EditProductPanel({
     totalPercent: companyCostOverheadPercent,
     calculateEffectiveCost,
   } = useCompanyCostOverhead();
-  const [activeTab, setActiveTab] = useState("details");
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCreatingVariant, setIsCreatingVariant] = useState(false);
+  const [deletingVariantId, setDeletingVariantId] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const userEditedDetailsRef = useRef(false);
@@ -156,6 +179,9 @@ export function EditProductPanel({
   const [cartonQuantity, setCartonQuantity] = useState<number | string>(
     () => initialProduct?.cartonQuantity ?? ""
   );
+  const [cartonGrossWeight, setCartonGrossWeight] = useState<number | string>(
+    () => initialProduct?.cartonGrossWeight ?? ""
+  );
   const [cartonWidth, setCartonWidth] = useState<number | string>(
     () => initialProduct?.cartonWidth ?? ""
   );
@@ -174,6 +200,8 @@ export function EditProductPanel({
     Record<
       string,
       {
+        formula?: string | null;
+        sku?: string | null;
         price: number;
         productCost: number | null;
         priceCondition: string;
@@ -188,13 +216,37 @@ export function EditProductPanel({
   >({});
   const handleCustomerPriceChange = useCallback(
     (variantId: string, companyId: string, price: number) => {
-      setCustomerPriceEdits((prev) => ({
-        ...prev,
-        [variantId]: {
-          ...(prev[variantId] || {}),
-          [companyId]: price,
-        },
-      }));
+      setCustomerPriceEdits((prev) => {
+        const next = { ...prev };
+        const vIds = Object.keys(next);
+        if (vIds.length === 0) {
+          next[variantId] = { ...(next[variantId] || {}), [companyId]: price };
+          return next;
+        }
+        for (const vId of vIds) {
+          next[vId] = {
+            ...(next[vId] || {}),
+            [companyId]: price,
+          };
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleProductCustomerPriceChange = useCallback(
+    (companyId: string, price: number) => {
+      setCustomerPriceEdits((prev) => {
+        const next = { ...prev };
+        for (const vId of Object.keys(next)) {
+          next[vId] = {
+            ...(next[vId] || {}),
+            [companyId]: price,
+          };
+        }
+        return next;
+      });
     },
     []
   );
@@ -299,6 +351,14 @@ export function EditProductPanel({
   useEffect(() => {
     if (overview) {
       React.startTransition(() => {
+        const primaryV = overview.variants.find((v) => v.isDefault) || overview.variants[0];
+        const anyGwV = overview.variants.find((v) => v.cartonGrossWeight && v.cartonGrossWeight > 0);
+        const resolvedOvGw =
+          overview.cartonGrossWeight ??
+          primaryV?.cartonGrossWeight ??
+          anyGwV?.cartonGrossWeight ??
+          "";
+
         if (!userEditedDetailsRef.current) {
           setName(overview.name || "");
           setBrand(overview.brand || "");
@@ -310,6 +370,7 @@ export function EditProductPanel({
           setStarRating(overview.starRating || 0);
           setCbm(overview.cbm ?? "");
           setCartonQuantity(overview.cartonQuantity ?? "");
+          setCartonGrossWeight(resolvedOvGw);
           setCartonWidth(overview.cartonWidth ?? "");
           setCartonLength(overview.cartonLength ?? "");
           setCartonHeight(overview.cartonHeight ?? "");
@@ -319,7 +380,6 @@ export function EditProductPanel({
         }
 
         // Default variant
-        const primaryV = overview.variants.find((v) => v.isDefault) || overview.variants[0];
         if (primaryV) {
           setPrimaryVariantId((prev) => prev || primaryV.id);
           if (primaryV.imageUrl && !userEditedDetailsRef.current) {
@@ -327,10 +387,36 @@ export function EditProductPanel({
           }
         }
 
-        // Initialize variant pricing edits
+        // Initialize variant pricing edits with unified Product-level Export Price & Step Condition
+        const unifiedProductPrice = resolveUnifiedPrice(
+          overview.variants.map((v) => v.price)
+        );
+        const unifiedPriceCondition =
+          primaryV?.priceCondition ||
+          overview.variants.find((v) => v.priceCondition)?.priceCondition ||
+          "";
+
+        // Resolve unified customer prices per company across all variants (Mode / highest price)
+        const companyPricesGrouped = new Map<string, number[]>();
+        overview.variants.forEach((v) => {
+          v.customPrices.forEach((cp) => {
+            if (cp.price > 0) {
+              const arr = companyPricesGrouped.get(cp.companyId) || [];
+              arr.push(cp.price);
+              companyPricesGrouped.set(cp.companyId, arr);
+            }
+          });
+        });
+        const unifiedCompanyPrices: Record<string, number> = {};
+        for (const [compId, prices] of companyPricesGrouped.entries()) {
+          unifiedCompanyPrices[compId] = resolveUnifiedPrice(prices);
+        }
+
         const vMap: Record<
           string,
           {
+            formula?: string | null;
+            sku?: string | null;
             price: number;
             productCost: number | null;
             priceCondition: string;
@@ -342,23 +428,26 @@ export function EditProductPanel({
 
         overview.variants.forEach((v) => {
           vMap[v.id] = {
-            price: v.price,
+            formula: v.formula || "Standard",
+            sku: v.sku || "",
+            price: unifiedProductPrice,
             productCost: v.productCost,
-            priceCondition: v.priceCondition || "",
+            priceCondition: unifiedPriceCondition,
             imageUrl: v.imageUrl,
             status: v.status || ProductStatus.AVAILABLE,
           };
 
-          cpMap[v.id] = {};
-          v.customPrices.forEach((cp) => {
-            cpMap[v.id][cp.companyId] = cp.price;
-          });
+          cpMap[v.id] = { ...unifiedCompanyPrices };
         });
 
         setVariantEdits(vMap);
         setCustomerPriceEdits(cpMap);
         setOrderedVariants(overview.variants || []);
-        setExpandedVariantIds({});
+        setExpandedVariantIds((prev) => {
+          // If only 1 newly created variant exists or prev had expanded items, preserve them
+          if (Object.keys(prev).length > 0) return prev;
+          return {};
+        });
       });
     }
   }, [overview]);
@@ -449,7 +538,27 @@ export function EditProductPanel({
     }
   };
 
-  // Step Price Tier Handlers: do not auto-fill arbitrary numbers; let user input cleanly
+  // Helper to apply unified product-level price / priceCondition to all variants in state
+  const applyProductPriceAndCondition = useCallback(
+    (patch: { price?: number; priceCondition?: string }) => {
+      setVariantEdits((prev) => {
+        const next = { ...prev };
+        for (const vId of Object.keys(next)) {
+          next[vId] = {
+            ...next[vId],
+            ...(patch.price !== undefined ? { price: patch.price } : {}),
+            ...(patch.priceCondition !== undefined
+              ? { priceCondition: patch.priceCondition }
+              : {}),
+          };
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  // Step Price Tier Handlers (applied uniformly to all variants of the product)
   const handleAddPriceTier = (variantId: string) => {
     const currentTiers = parsePriceConditions(variantEdits[variantId]?.priceCondition);
     let updated: PriceStepTier[] = [];
@@ -464,13 +573,11 @@ export function EditProductPanel({
       const prevMin = lastTier.minQuantity;
 
       const modifiedCurrent = [...currentTiers];
-      // Keep previous tier max as-is, leaving blank if not yet filled
       modifiedCurrent[modifiedCurrent.length - 1] = {
         ...lastTier,
         maxQuantity: lastTier.maxQuantity || null,
       };
 
-      // Next tier min starts from previous max + 1 if available, otherwise prevMin + 1
       const nextMin = lastTier.maxQuantity && lastTier.maxQuantity >= prevMin
         ? lastTier.maxQuantity + 1
         : prevMin + 1;
@@ -478,19 +585,15 @@ export function EditProductPanel({
       const newLastTier: PriceStepTier = {
         minQuantity: nextMin,
         maxQuantity: null,
-        discountPercent: 0, // Blank discount %
+        discountPercent: 0,
       };
 
       updated = [...modifiedCurrent, newLastTier];
     }
 
-    setVariantEdits((prev) => ({
-      ...prev,
-      [variantId]: {
-        ...(prev[variantId] || { price: 0, productCost: null, priceCondition: "" }),
-        priceCondition: serializePriceConditions(updated),
-      },
-    }));
+    applyProductPriceAndCondition({
+      priceCondition: serializePriceConditions(updated),
+    });
   };
 
   const handleUpdateTierMin = (variantId: string, index: number, newMin: number) => {
@@ -532,13 +635,9 @@ export function EditProductPanel({
         nextMin = newTierMax ? newTierMax + 1 : nextMin + 1;
       }
 
-      setVariantEdits((prev) => ({
-        ...prev,
-        [variantId]: {
-          ...(prev[variantId] || { price: 0, productCost: null, priceCondition: "" }),
-          priceCondition: serializePriceConditions(updated),
-        },
-      }));
+      applyProductPriceAndCondition({
+        priceCondition: serializePriceConditions(updated),
+      });
     }
   };
 
@@ -572,13 +671,9 @@ export function EditProductPanel({
       nextMin = newTierMax ? newTierMax + 1 : nextMin + 1;
     }
 
-    setVariantEdits((prev) => ({
-      ...prev,
-      [variantId]: {
-        ...(prev[variantId] || { price: 0, productCost: null, priceCondition: "" }),
-        priceCondition: serializePriceConditions(updated),
-      },
-    }));
+    applyProductPriceAndCondition({
+      priceCondition: serializePriceConditions(updated),
+    });
   };
 
   const handleUpdateTierDiscount = (variantId: string, index: number, discountPercent: number | null) => {
@@ -593,13 +688,9 @@ export function EditProductPanel({
       discountPercent: val,
     };
 
-    setVariantEdits((prev) => ({
-      ...prev,
-      [variantId]: {
-        ...(prev[variantId] || { price: 0, productCost: null, priceCondition: "" }),
-        priceCondition: serializePriceConditions(updated),
-      },
-    }));
+    applyProductPriceAndCondition({
+      priceCondition: serializePriceConditions(updated),
+    });
   };
 
   const handleApplyStepPriceToAll = (sourceVariantId: string) => {
@@ -608,40 +699,14 @@ export function EditProductPanel({
     const sourceEdit = variantEdits[sourceVariantId];
 
     const sourcePrice = sourceEdit?.price ?? sourceV?.price ?? 0;
-    const sourceCost = sourceEdit?.productCost ?? sourceV?.productCost ?? null;
     const sourcePriceCondition =
       sourceEdit?.priceCondition ??
       sourceV?.priceCondition ??
       "";
 
-    const sourceRates = variantRates[sourceVariantId] || { ...DEFAULT_COMMERCIAL_RATES };
-
-    setVariantEdits((prev) => {
-      const next = { ...prev };
-      variants.forEach((v) => {
-        const current = next[v.id] || {
-          price: v.price,
-          productCost: v.productCost,
-          priceCondition: v.priceCondition || "",
-          imageUrl: v.imageUrl,
-          status: v.status || ProductStatus.AVAILABLE,
-        };
-        next[v.id] = {
-          ...current,
-          price: sourcePrice,
-          productCost: sourceCost,
-          priceCondition: sourcePriceCondition,
-        };
-      });
-      return next;
-    });
-
-    setVariantRates((prev) => {
-      const next = { ...prev };
-      variants.forEach((v) => {
-        next[v.id] = { ...sourceRates };
-      });
-      return next;
+    applyProductPriceAndCondition({
+      price: sourcePrice,
+      priceCondition: sourcePriceCondition,
     });
 
     setAppliedVariantId(sourceVariantId);
@@ -655,13 +720,7 @@ export function EditProductPanel({
     const filtered = currentTiers.filter((_, idx) => idx !== index);
 
     if (filtered.length === 0) {
-      setVariantEdits((prev) => ({
-        ...prev,
-        [variantId]: {
-          ...(prev[variantId] || { price: 0, productCost: null, priceCondition: "" }),
-          priceCondition: "",
-        },
-      }));
+      applyProductPriceAndCondition({ priceCondition: "" });
       return;
     }
 
@@ -690,13 +749,9 @@ export function EditProductPanel({
       }
     }
 
-    setVariantEdits((prev) => ({
-      ...prev,
-      [variantId]: {
-        ...(prev[variantId] || { price: 0, productCost: null, priceCondition: "" }),
-        priceCondition: serializePriceConditions(reChained),
-      },
-    }));
+    applyProductPriceAndCondition({
+      priceCondition: serializePriceConditions(reChained),
+    });
   };
 
   const handleToggleVariantStatus = async (variantId: string) => {
@@ -778,6 +833,126 @@ export function EditProductPanel({
     }
   };
 
+  // Create a new variant and auto-expand it
+  const handleCreateVariant = async () => {
+    if (!productId || isCreatingVariant) return;
+    setIsCreatingVariant(true);
+    setSaveError(null);
+    try {
+      const currentList = overview ? orderedVariants : [];
+      const nextFormula =
+        currentList.length === 0 ? "Standard" : `Formula ${currentList.length + 1}`;
+      const res = await createProductVariant(productId, {
+        formula: nextFormula,
+      });
+      if (res.success && res.variant) {
+        const createdV = res.variant;
+        const nextList = [...currentList, createdV];
+        setOrderedVariants(nextList);
+        setVariantEdits((prev) => {
+          const firstKey = Object.keys(prev)[0];
+          const livePrice = firstKey ? prev[firstKey].price : createdV.price;
+          const liveCond = firstKey
+            ? prev[firstKey].priceCondition
+            : createdV.priceCondition || "";
+          return {
+            ...prev,
+            [createdV.id]: {
+              formula: createdV.formula || "Standard",
+              sku: createdV.sku || "",
+              price: livePrice,
+              productCost: createdV.productCost,
+              priceCondition: liveCond,
+              imageUrl: createdV.imageUrl,
+              status: createdV.status || ProductStatus.AVAILABLE,
+            },
+          };
+        });
+        setCustomerPriceEdits((prev) => {
+          const firstKey = Object.keys(prev)[0];
+          const liveCp = firstKey ? { ...prev[firstKey] } : {};
+          return {
+            ...prev,
+            [createdV.id]: liveCp,
+          };
+        });
+        if (createdV.isDefault || !primaryVariantId) {
+          setPrimaryVariantId(createdV.id);
+        }
+        setExpandedVariantIds((prev) => ({
+          ...prev,
+          [createdV.id]: true,
+        }));
+        setStatus(res.product.status);
+        onProductUpdated?.(res.product);
+        void mutate(
+          (prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: res.product.status,
+                  variants: nextList,
+                }
+              : prev,
+          false
+        );
+      }
+    } catch (err) {
+      console.error("Failed to create variant:", err);
+      setSaveError("ไม่สามารถสร้าง Variant ใหม่ได้ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setIsCreatingVariant(false);
+    }
+  };
+
+  // Delete an existing variant
+  const handleDeleteVariant = async (variantId: string) => {
+    if (!productId || deletingVariantId) return;
+    setDeletingVariantId(variantId);
+    setSaveError(null);
+    try {
+      const res = await deleteProductVariant(variantId);
+      if (res.success) {
+        const nextList = orderedVariants.filter((v) => v.id !== variantId).map((v) => ({
+          ...v,
+          isDefault: v.id === res.newPrimaryVariantId,
+        }));
+        setOrderedVariants(nextList);
+        setVariantEdits((prev) => {
+          const next = { ...prev };
+          delete next[variantId];
+          return next;
+        });
+        setExpandedVariantIds((prev) => {
+          const next = { ...prev };
+          delete next[variantId];
+          return next;
+        });
+        if (primaryVariantId === variantId) {
+          setPrimaryVariantId(res.newPrimaryVariantId);
+        }
+        setStatus(res.product.status);
+        onProductUpdated?.(res.product);
+        void mutate(
+          (prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: res.product.status,
+                  variants: nextList,
+                }
+              : prev,
+          false
+        );
+      }
+    } catch (err) {
+      console.error("Failed to delete variant:", err);
+      setSaveError("ไม่สามารถลบ Variant ได้ กรุณาลองใหม่อีกครั้ง");
+    } finally {
+      setDeletingVariantId(null);
+    }
+  };
+
   // Save changes
   const handleSaveAll = async () => {
     if (!productId) return;
@@ -786,11 +961,11 @@ export function EditProductPanel({
     setSaveSuccess(false);
 
     // 0. Validate Variants Data before saving
-    const variantsList = orderedVariants.length > 0 ? orderedVariants : overview?.variants || [];
+    const variantsList = overview ? orderedVariants : [];
     for (const v of variantsList) {
       const vData = variantEdits[v.id];
       if (!vData) continue;
-      const formulaName = v.formula || "Standard";
+      const formulaName = (vData.formula ?? v.formula)?.trim() || "Standard";
 
       // 0a. Validate Volume Tier Discounts completeness
       const tiers = parsePriceConditions(vData.priceCondition);
@@ -849,6 +1024,14 @@ export function EditProductPanel({
         typeof cartonQuantity === "number"
           ? cartonQuantity
           : parseInt(cartonQuantity as string, 10) || null;
+      const parsedCartonGrossWeight =
+        typeof cartonGrossWeight === "number"
+          ? cartonGrossWeight
+          : parseFloat(String(cartonGrossWeight)) || null;
+      const computedDimStr =
+        wVal > 0 && lVal > 0 && hVal > 0
+          ? `${wVal}x${lVal}x${hVal} cm`
+          : cartonDimension || null;
 
       // Dirty check variants: only send variants that actually changed
       const origVariantsMap = new Map(
@@ -856,6 +1039,8 @@ export function EditProductPanel({
       );
       const dirtyVariants: Array<{
         id: string;
+        formula?: string | null;
+        sku?: string | null;
         price?: number;
         productCost?: number | null;
         priceCondition?: string | null;
@@ -867,8 +1052,14 @@ export function EditProductPanel({
         const origV = origVariantsMap.get(vId);
         const nextCond = vData.priceCondition || null;
         const origCond = origV?.priceCondition || null;
+        const nextFormula = vData.formula?.trim() || "Standard";
+        const origFormula = origV?.formula?.trim() || "Standard";
+        const nextSku = vData.sku?.trim() || null;
+        const origSku = origV?.sku?.trim() || null;
         if (
           !origV ||
+          nextFormula !== origFormula ||
+          nextSku !== origSku ||
           vData.price !== origV.price ||
           vData.productCost !== origV.productCost ||
           nextCond !== origCond ||
@@ -877,6 +1068,8 @@ export function EditProductPanel({
         ) {
           dirtyVariants.push({
             id: vId,
+            formula: nextFormula,
+            sku: nextSku,
             price: vData.price,
             productCost: vData.productCost,
             priceCondition: nextCond,
@@ -929,10 +1122,11 @@ export function EditProductPanel({
           starRating,
           cbm: autoComputedCbm,
           cartonQuantity: parsedCartonQuantity,
+          cartonGrossWeight: parsedCartonGrossWeight,
           cartonWidth: wVal || null,
           cartonLength: lVal || null,
           cartonHeight: hVal || null,
-          cartonDimension: cartonDimension || null,
+          cartonDimension: computedDimStr,
         },
         variants: dirtyVariants,
         primaryVariantId: dirtyPrimaryVariantId,
@@ -944,6 +1138,7 @@ export function EditProductPanel({
       setTimeout(() => setSaveSuccess(false), 2500);
 
       onProductUpdated?.(res.product);
+      onOverviewUpdated?.(res.overview);
       void mutate(res.overview, false);
     } catch (err: unknown) {
       console.error("Failed to save product:", err);
@@ -962,19 +1157,6 @@ export function EditProductPanel({
     numericW > 0 && numericL > 0 && numericH > 0
       ? Number(((numericW * numericL * numericH) / 1_000_000).toFixed(4))
       : 0;
-
-  const derivedGrossWeight = useMemo(() => {
-    const list = orderedVariants.length > 0 ? orderedVariants : overview?.variants || [];
-    const pv =
-      list.find((v) => (primaryVariantId ? v.id === primaryVariantId : v.isDefault)) ||
-      list[0];
-    if (pv?.cartonGrossWeight && pv.cartonGrossWeight > 0) {
-      return pv.cartonGrossWeight;
-    }
-    const anyGw = list.find((v) => (v.cartonGrossWeight ?? 0) > 0);
-    if (anyGw?.cartonGrossWeight) return anyGw.cartonGrossWeight;
-    return initialProduct?.cartonGrossWeight || 0;
-  }, [orderedVariants, overview?.variants, primaryVariantId, initialProduct?.cartonGrossWeight]);
 
   const categoryOptions = useMemo(() => {
     const opts = effectiveCategoriesList.map((c) => ({
@@ -1001,7 +1183,7 @@ export function EditProductPanel({
   }, [effectiveBrandsList, brand]);
 
   const headerVariantCount = overview
-    ? overview.variants.length
+    ? orderedVariants.length
     : initialProduct?.variantCount ?? 0;
 
   return (
@@ -1009,6 +1191,7 @@ export function EditProductPanel({
       <SlideOverPanel
       isOpen={isOpen && !!productId}
       onClose={onClose}
+      zIndexLevel={zIndexLevel}
       title={
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-10 h-10 rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] overflow-hidden flex items-center justify-center shrink-0 shadow-sm">
@@ -1105,11 +1288,7 @@ export function EditProductPanel({
       tabs={TABS}
       activeTab={activeTab}
       onTabChange={setActiveTab}
-      widthClass={
-        activeTab === "customer_prices"
-          ? "w-[960px] max-w-[96vw]"
-          : "w-[650px]"
-      }
+      widthClass="w-[650px]"
     >
       {isLoading && !overview && (!initialProduct || activeTab !== "details") ? (
         <div className="flex items-center justify-center h-64">
@@ -1283,11 +1462,15 @@ export function EditProductPanel({
                       Carton GW (kg)
                     </label>
                     <input
-                      type="text"
-                      readOnly
-                      value={derivedGrossWeight > 0 ? `${Number(derivedGrossWeight.toFixed(2))} kg` : "—"}
-                      className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-400 outline-none cursor-not-allowed"
-                      title="Gross weight derived from variant packaging"
+                      type="number"
+                      step="0.01"
+                      value={cartonGrossWeight}
+                      onChange={(e) => {
+                        userEditedDetailsRef.current = true;
+                        setCartonGrossWeight(e.target.value);
+                      }}
+                      className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-100 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      placeholder="e.g. 12.5"
                     />
                   </div>
                 </div>
@@ -1342,112 +1525,419 @@ export function EditProductPanel({
           )}
 
           {/* TAB 2: PRICING & VARIANTS */}
-          {activeTab === "pricing" && (
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Formula Variants ({(orderedVariants.length > 0 ? orderedVariants : overview?.variants || []).length})
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleToggleAllVariants}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#252728] hover:bg-[#2F3031] text-slate-300 hover:text-white text-xs font-semibold border border-[#3E4042] transition-colors cursor-pointer"
-                  >
-                    {allExpanded ? (
-                      <>
-                        <ChevronUp className="w-3.5 h-3.5" />
-                        <span>Collapse All</span>
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="w-3.5 h-3.5" />
-                        <span>Expand All</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
+          {activeTab === "pricing" && (() => {
+            const activeVariants = overview ? orderedVariants : [];
+            const repVariant =
+              activeVariants.find((v) => v.id === primaryVariantId) ||
+              activeVariants.find((v) => v.isDefault) ||
+              activeVariants[0];
+            const repEdit = repVariant
+              ? variantEdits[repVariant.id] || {
+                  formula: repVariant.formula || "Standard",
+                  sku: repVariant.sku || "",
+                  price: repVariant.price,
+                  productCost: repVariant.productCost,
+                  priceCondition: repVariant.priceCondition || "",
+                  imageUrl: repVariant.imageUrl,
+                  status: repVariant.status || ProductStatus.AVAILABLE,
+                }
+              : null;
 
-              <DndContext
-                sensors={sensors}
-                collisionDetection={closestCenter}
-                onDragEnd={handleVariantDragEnd}
-              >
-                <SortableContext
-                  items={(orderedVariants.length > 0 ? orderedVariants : overview?.variants || []).map((v) => v.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  <div className="space-y-4">
-                    {(orderedVariants.length > 0 ? orderedVariants : overview?.variants || []).map((v, idx) => {
-                      const currentEdit = variantEdits[v.id] || {
-                        price: v.price,
-                        productCost: v.productCost,
-                        priceCondition: v.priceCondition || "",
-                        imageUrl: v.imageUrl,
-                        status: v.status || ProductStatus.AVAILABLE,
-                      };
-                      const isThisPrimary =
-                        primaryVariantId === v.id || (!primaryVariantId && v.isDefault);
-                      const isExpanded = !!expandedVariantIds[v.id];
-                      const totalVariants = (orderedVariants.length > 0 ? orderedVariants : overview?.variants || []).length;
+            const unifiedPrice = repEdit?.price ?? 0;
+            const unifiedTiers = parsePriceConditions(repEdit?.priceCondition);
+            const costStats = resolveProductAverageBaseCost(
+              activeVariants.map(
+                (v) => variantEdits[v.id]?.productCost ?? v.productCost
+              )
+            );
+            const avgEffectiveCost =
+              costStats.avgCost > 0
+                ? calculateEffectiveCost(costStats.avgCost)
+                : 0;
 
-                      return (
-                        <SortableVariantCard
-                          key={v.id}
-                          v={v}
-                          idx={idx}
-                          total={totalVariants}
-                          currentEdit={currentEdit}
-                          isThisPrimary={isThisPrimary}
-                          isExpanded={isExpanded}
-                          productName={overview?.name || name}
-                          uploadingVariantId={uploadingVariantId}
-                          variantRates={variantRates[v.id] || DEFAULT_COMMERCIAL_RATES}
-                          appliedVariantId={appliedVariantId}
-                          companyCostOverheadPercent={companyCostOverheadPercent}
-                          commercialRates={commercialRates}
-                          calculateEffectiveCost={calculateEffectiveCost}
-                          onToggleExpand={() => toggleVariantExpanded(v.id, isExpanded)}
-                          onMove={handleMoveVariant}
-                          onImageUpload={(file) => void handleVariantImageUpload(v.id, file)}
-                          onRemoveImage={() => handleRemoveVariantImage(v.id)}
-                          onSetPrimary={() => void handleSetPrimaryVariant(v.id)}
-                          onToggleStatus={() => handleToggleVariantStatus(v.id)}
-                          onPriceChange={(val) => {
-                            setVariantEdits((prev) => ({
-                              ...prev,
-                              [v.id]: { ...currentEdit, price: val },
-                            }));
-                          }}
-                          onCostChange={(val) => {
-                            setVariantEdits((prev) => ({
-                              ...prev,
-                              [v.id]: { ...currentEdit, productCost: val },
-                            }));
-                          }}
-                          onAddTier={() => handleAddPriceTier(v.id)}
-                          onUpdateTier={(tIdx, field, val) => {
-                            if (field === "maxQuantity") handleUpdateTierMax(v.id, tIdx, val);
-                            else if (field === "minQuantity") handleUpdateTierMin(v.id, tIdx, val);
-                            else handleUpdateTierDiscount(v.id, tIdx, val);
-                          }}
-                          onRemoveTier={(tIdx) => handleRemovePriceTier(v.id, tIdx)}
-                          onApplyToAll={() => handleApplyStepPriceToAll(v.id)}
-                          onRatesChange={(newRates) => {
-                            setVariantRates((prev) => ({
-                              ...prev,
-                              [v.id]: newRates,
-                            }));
-                          }}
+            return (
+              <div className="flex flex-col gap-5">
+                {/* Product-Level Unified Export Price, Average Cost & Volume Tiers */}
+                {activeVariants.length > 0 && repVariant && (
+                  <div className="bg-[#3A3B3C] rounded-2xl p-5 space-y-4 border-0">
+                    <div className="flex items-center justify-between border-b border-[#252728] pb-3">
+                      <div className="flex items-center gap-2">
+                        <Tag className="w-4 h-4 text-[#C7F33C]" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                          Product Selling Price & Volume Tiers
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-medium text-slate-400">
+                        Shared across all {activeVariants.length} {activeVariants.length === 1 ? "variant" : "variants"}
+                      </span>
+                    </div>
+
+                    {/* Unified Export Price + Average Cost Summary */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-300">
+                          Export Price (THB) <span className="text-[#C7F33C]">*</span>
+                        </label>
+                        <PriceNumberInput
+                          value={unifiedPrice}
+                          onChange={(val) =>
+                            applyProductPriceAndCondition({ price: val })
+                          }
+                          placeholder="0.00"
                         />
-                      );
-                    })}
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-slate-300">
+                            Average Cost ({costStats.count}/{activeVariants.length} formulas)
+                          </label>
+                          {costStats.avgCost > 0 && companyCostOverheadPercent > 0 && (
+                            <span className="text-[11px] font-semibold text-[#C7F33C] tabular-nums">
+                              +{companyCostOverheadPercent}%: ฿{avgEffectiveCost.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="w-full bg-[#252728] rounded-xl px-3.5 py-2 text-xs text-slate-200 flex items-center justify-between tabular-nums">
+                          {costStats.avgCost > 0 ? (
+                            <>
+                              <span className="font-bold text-slate-100">
+                                ฿{costStats.avgCost.toFixed(2)}
+                              </span>
+                              <span className="text-[11px] text-slate-400">
+                                {costStats.minCost !== costStats.maxCost
+                                  ? `Range: ฿${costStats.minCost.toFixed(2)} – ฿${costStats.maxCost.toFixed(2)}`
+                                  : "Uniform cost across formulas"}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-slate-500">
+                              Enter formula costs below to calculate average cost
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Dynamic Step Price (Volume Tier Discounts) for the Product */}
+                    <div className="flex flex-col gap-2 pt-2 border-t border-[#252728]">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-bold text-slate-200">
+                            Volume Tier Discounts
+                          </label>
+                          <span className="text-[10px] text-slate-400 bg-[#252728] px-1.5 py-0.5 rounded border border-[#4E4F50]/50 font-medium">
+                            Step Price
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleAddPriceTier(repVariant.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-[#252728] hover:bg-[#C7F33C] text-slate-300 hover:text-black transition-colors cursor-pointer border border-[#4E4F50] hover:border-[#C7F33C]"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add Tier</span>
+                        </button>
+                      </div>
+
+                      {unifiedTiers.length > 0 && (
+                        <div className="bg-[#252728] rounded-xl p-3 space-y-2 border border-[#4E4F50]/60">
+                          <div className="grid grid-cols-[175px_1fr_1.1fr_32px] gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2">
+                            <span>Cartons (Volume)</span>
+                            <span>Discount</span>
+                            <span>Net Price</span>
+                            <span></span>
+                          </div>
+
+                          {unifiedTiers.map((tier, tIdx) => {
+                            const isLast = tIdx === unifiedTiers.length - 1;
+                            const calculatedRate = calculateTierPrice(
+                              unifiedPrice,
+                              tier.discountPercent
+                            );
+
+                            return (
+                              <div
+                                key={tIdx}
+                                className="grid grid-cols-[175px_1fr_1.1fr_32px] gap-2 items-center bg-[#3A3B3C] px-2.5 py-2 rounded-xl border border-[#4E4F50]/40"
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {tIdx === 0 ? (
+                                    <CartonMinInput
+                                      value={tier.minQuantity}
+                                      onChange={(val) =>
+                                        handleUpdateTierMin(repVariant.id, 0, val)
+                                      }
+                                    />
+                                  ) : (
+                                    <span
+                                      className="w-10 h-7 flex items-center justify-center rounded-lg bg-[#18191A] text-xs font-semibold text-slate-400 tabular-nums border border-[#3A3B3C]/70 shrink-0 cursor-not-allowed select-none"
+                                      title="Auto-calculated starting volume"
+                                    >
+                                      {tier.minQuantity}
+                                    </span>
+                                  )}
+
+                                  <span className="w-3 text-center text-slate-400 text-xs font-semibold shrink-0 select-none">
+                                    -
+                                  </span>
+
+                                  {isLast ? (
+                                    <span
+                                      className="h-7 px-2.5 flex items-center justify-center rounded-lg bg-[#252728] border border-[#C7F33C]/40 text-[#C7F33C] text-xs font-semibold select-none"
+                                      title="Upper tier threshold is open-ended"
+                                    >
+                                      + more
+                                    </span>
+                                  ) : (
+                                    <CartonMaxInput
+                                      value={tier.maxQuantity}
+                                      min={tier.minQuantity}
+                                      onChange={(val) =>
+                                        handleUpdateTierMax(repVariant.id, tIdx, val)
+                                      }
+                                    />
+                                  )}
+
+                                  <span className="text-[11px] text-slate-400 shrink-0 select-none">
+                                    ctns
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 justify-start">
+                                  <TierDiscountInput
+                                    value={tier.discountPercent}
+                                    minAllowed={
+                                      tIdx > 0
+                                        ? unifiedTiers[tIdx - 1]?.discountPercent || 0
+                                        : 0
+                                    }
+                                    onChange={(val) =>
+                                      handleUpdateTierDiscount(repVariant.id, tIdx, val)
+                                    }
+                                  />
+                                  <span className="text-xs text-slate-400 font-semibold">
+                                    %
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-start">
+                                  <span className="font-mono text-xs font-bold text-[#C7F33C] bg-[#18191A] px-2.5 py-1 rounded-lg border border-[#3E4042] tracking-wide tabular-nums">
+                                    ฿{calculatedRate.toFixed(2)}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleRemovePriceTier(repVariant.id, tIdx)
+                                    }
+                                    className="p-1 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                                    title="Remove Tier"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Export Pricing & Margin Analysis based on Average Cost */}
+                    <div className="pt-2">
+                      {costStats.avgCost > 0 ? (
+                        <ExportPricingSimulation
+                          basePrice={unifiedPrice}
+                          productCost={avgEffectiveCost}
+                          baseProductCost={costStats.avgCost}
+                          overheadPercent={companyCostOverheadPercent}
+                          tiers={unifiedTiers}
+                          rates={commercialRates}
+                        />
+                      ) : (
+                        <div className="p-3 bg-[#252728] rounded-xl border border-dashed border-[#4E4F50]/50 text-center">
+                          <p className="text-xs text-slate-400">
+                            Fill <span className="text-slate-200 font-semibold">Cost (THB)</span> in your Formula Variants below to show Export Pricing & Margin Analysis (based on Average Cost)
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </SortableContext>
-              </DndContext>
-            </div>
-          )}
+                )}
+
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Formula Variants & Costs ({activeVariants.length})
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {activeVariants.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleToggleAllVariants}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#252728] hover:bg-[#2F3031] text-slate-300 hover:text-white text-xs font-semibold border border-[#3E4042] transition-colors cursor-pointer"
+                      >
+                        {allExpanded ? (
+                          <>
+                            <ChevronUp className="w-3.5 h-3.5" />
+                            <span>Collapse All</span>
+                          </>
+                        ) : (
+                          <>
+                            <ChevronDown className="w-3.5 h-3.5" />
+                            <span>Expand All</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={isCreatingVariant}
+                      onClick={() => void handleCreateVariant()}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#C7F33C] text-black hover:bg-[#b5dc35] text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {isCreatingVariant ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                      )}
+                      <span>Add Variant</span>
+                    </button>
+                  </div>
+                </div>
+
+                {activeVariants.length === 0 ? (
+                  <div className="bg-[#3A3B3C] rounded-2xl p-8 flex flex-col items-center justify-center text-center gap-3">
+                    <div className="w-11 h-11 rounded-full bg-[#252728] flex items-center justify-center text-[#C7F33C]">
+                      <Tag className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1 max-w-sm">
+                      <h4 className="text-xs font-bold text-slate-100">
+                        No Variants Configured Yet
+                      </h4>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Add a formula or variant to set export prices, cost, images, and volume tier discounts for this product.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isCreatingVariant}
+                      onClick={() => void handleCreateVariant()}
+                      className="mt-1 inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#C7F33C] text-black hover:bg-[#b5dc35] text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {isCreatingVariant ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Adding Variant...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Add First Variant</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleVariantDragEnd}
+                  >
+                    <SortableContext
+                      items={activeVariants.map((v) => v.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-4">
+                        {activeVariants.map((v, idx) => {
+                          const currentEdit = variantEdits[v.id] || {
+                            formula: v.formula || "Standard",
+                            sku: v.sku || "",
+                            price: v.price,
+                            productCost: v.productCost,
+                            priceCondition: v.priceCondition || "",
+                            imageUrl: v.imageUrl,
+                            status: v.status || ProductStatus.AVAILABLE,
+                          };
+                          const isThisPrimary =
+                            primaryVariantId === v.id || (!primaryVariantId && v.isDefault);
+                          const isExpanded = !!expandedVariantIds[v.id];
+                          const totalVariants = activeVariants.length;
+
+                          return (
+                            <SortableVariantCard
+                              key={v.id}
+                              v={v}
+                              idx={idx}
+                              total={totalVariants}
+                              currentEdit={currentEdit}
+                              isThisPrimary={isThisPrimary}
+                              isExpanded={isExpanded}
+                              productName={overview?.name || name}
+                              uploadingVariantId={uploadingVariantId}
+                              deletingVariantId={deletingVariantId}
+                              variantRates={variantRates[v.id] || DEFAULT_COMMERCIAL_RATES}
+                              appliedVariantId={appliedVariantId}
+                              companyCostOverheadPercent={companyCostOverheadPercent}
+                              commercialRates={commercialRates}
+                              calculateEffectiveCost={calculateEffectiveCost}
+                              onToggleExpand={() => toggleVariantExpanded(v.id, isExpanded)}
+                              onMove={handleMoveVariant}
+                              onImageUpload={(file) => void handleVariantImageUpload(v.id, file)}
+                              onRemoveImage={() => handleRemoveVariantImage(v.id)}
+                              onSetPrimary={() => void handleSetPrimaryVariant(v.id)}
+                              onToggleStatus={() => handleToggleVariantStatus(v.id)}
+                              onFormulaChange={(val) => {
+                                setVariantEdits((prev) => ({
+                                  ...prev,
+                                  [v.id]: { ...currentEdit, formula: val },
+                                }));
+                              }}
+                              onSkuChange={(val) => {
+                                setVariantEdits((prev) => ({
+                                  ...prev,
+                                  [v.id]: { ...currentEdit, sku: val },
+                                }));
+                              }}
+                              onDeleteVariant={() => void handleDeleteVariant(v.id)}
+                              onPriceChange={(val) => {
+                                setVariantEdits((prev) => ({
+                                  ...prev,
+                                  [v.id]: { ...currentEdit, price: val },
+                                }));
+                              }}
+                              onCostChange={(val) => {
+                                setVariantEdits((prev) => ({
+                                  ...prev,
+                                  [v.id]: { ...currentEdit, productCost: val },
+                                }));
+                              }}
+                              onAddTier={() => handleAddPriceTier(v.id)}
+                              onUpdateTier={(tIdx, field, val) => {
+                                if (field === "maxQuantity") handleUpdateTierMax(v.id, tIdx, val);
+                                else if (field === "minQuantity") handleUpdateTierMin(v.id, tIdx, val);
+                                else handleUpdateTierDiscount(v.id, tIdx, val);
+                              }}
+                              onRemoveTier={(tIdx) => handleRemovePriceTier(v.id, tIdx)}
+                              onApplyToAll={() => handleApplyStepPriceToAll(v.id)}
+                              onRatesChange={(newRates) => {
+                                setVariantRates((prev) => ({
+                                  ...prev,
+                                  [v.id]: newRates,
+                                }));
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                )}
+              </div>
+            );
+          })()}
 
           {/* TAB 3: CUSTOMER PRICES & PROFITABILITY COMPARISON */}
           {activeTab === "customer_prices" && (
@@ -1460,6 +1950,7 @@ export function EditProductPanel({
               variantEdits={variantEdits}
               customerPriceEdits={customerPriceEdits}
               onCustomerPriceChange={handleCustomerPriceChange}
+              onProductCustomerPriceChange={handleProductCustomerPriceChange}
               commercialRates={commercialRates}
               companyCostOverheadPercent={companyCostOverheadPercent}
               calculateEffectiveCost={calculateEffectiveCost}

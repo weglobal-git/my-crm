@@ -100,6 +100,7 @@ export function ProductView({
   const [isManageOpen, setIsManageOpen] = useState(false);
   const [isCreateProductOpen, setIsCreateProductOpen] = useState(false);
   const [isEditProductOpen, setIsEditProductOpen] = useState(false);
+  const [editInitialTab, setEditInitialTab] = useState<"details" | "pricing" | "customer_prices">("details");
   const [selectedProductId, setSelectedProductId] = useState<string | null>(
     initialProducts[0]?.id || null
   );
@@ -579,6 +580,7 @@ export function ProductView({
       clearTimeout(intentTimerRef.current);
       intentTimerRef.current = null;
     }
+    setEditInitialTab("details");
     setSelectedProductId(id);
     void loadEditProductPanel();
     setIsEditProductOpen(true);
@@ -932,6 +934,10 @@ export function ProductView({
                 totalCount: prev.totalCount + 1,
               }));
               setTotalProducts((prev) => prev + 1);
+              setEditInitialTab("pricing");
+              setSelectedProductId(newProduct.id);
+              void loadEditProductPanel();
+              setIsEditProductOpen(true);
             }
           }}
         />
@@ -940,9 +946,10 @@ export function ProductView({
       {/* Edit Product Slide-over Panel */}
       {isEditProductOpen && selectedProductId && (
         <EditProductPanel
-          key={selectedProductId}
+          key={`${selectedProductId}-${editInitialTab}`}
           isOpen={isEditProductOpen}
           productId={selectedProductId}
+          initialTab={editInitialTab}
           initialProduct={
             knownProductsMap.get(selectedProductId) ||
             products.find((p) => p.id === selectedProductId) ||
@@ -1015,6 +1022,7 @@ export function ProductView({
           isOpen={isOverviewReportOpen}
           onClose={() => setIsOverviewReportOpen(false)}
           selectedProducts={printTargetProducts}
+          availableCategories={availableCategories}
           isExplicitSelection={selectedForPrintIds.size > 0}
         />
       )}

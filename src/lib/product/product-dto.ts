@@ -69,10 +69,31 @@ export interface ProductOverviewDTO {
   cartonHeight: number | null;
   cbm: number | null;
   cartonQuantity: number | null;
+  cartonGrossWeight?: number | null;
   remark: string | null;
   variants: ProductVariantDTO[];
   createdAt: string;
   updatedAt: string;
+}
+
+export function extractFallbackGrossWeight(websiteUrl?: string | null): number | null {
+  if (!websiteUrl) return null;
+  const match = websiteUrl.match(/(?:^|#|\?)gw=(\d+(?:\.\d+)?)/i);
+  if (!match) return null;
+  const parsed = parseFloat(match[1]);
+  return !isNaN(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function encodeFallbackGrossWeight(
+  websiteUrl: string | null | undefined,
+  gw: number | null | undefined
+): string | null {
+  const base = (websiteUrl || "").replace(/(?:^|#|\?)gw=\d+(?:\.\d+)?/gi, "").trim();
+  const validGw = typeof gw === "number" && !isNaN(gw) && gw > 0 ? Number(gw.toFixed(4)) : null;
+  if (!validGw) {
+    return base || null;
+  }
+  return base ? `${base}#gw=${validGw}` : `#gw=${validGw}`;
 }
 
 export interface ProductFilterParams {
@@ -368,3 +389,156 @@ export function calculateTierPrice(basePrice: number, discountPercent: number): 
   const discounted = basePrice * (1 - discountPercent / 100);
   return Math.round(discounted * 100) / 100;
 }
+
+/**
+ * Resolves a single unified product selling price from an array of variant prices:
+ * - Filters out non-positive values (<= 0)
+ * - Picks the Mode (most frequently occurring price)
+ * - Breaks ties by picking the highest price (guards against accidental low typos like 7.00 instead of 70.00)
+ */
+export function resolveUnifiedPrice(
+  prices: Array<number | null | undefined>
+): number {
+  const valid = prices
+    .filter((p): p is number => typeof p === "number" && !Number.isNaN(p) && p > 0)
+    .map((p) => Number(p.toFixed(2)));
+
+  if (valid.length === 0) return 0;
+
+  const freqMap = new Map<number, number>();
+  for (const p of valid) {
+    freqMap.set(p, (freqMap.get(p) || 0) + 1);
+  }
+
+  let bestPrice = valid[0];
+  let bestCount = 0;
+
+  for (const [price, count] of freqMap.entries()) {
+    if (count > bestCount || (count === bestCount && price > bestPrice)) {
+      bestCount = count;
+      bestPrice = price;
+    }
+  }
+
+  return bestPrice;
+}
+
+/**
+ * Computes the Average Base Cost (plus Min/Max/Count) across all variants of a product
+ * that have a positive cost (> 0).
+ */
+export function resolveProductAverageBaseCost(
+  costs: Array<number | null | undefined>
+): {
+  avgCost: number;
+  minCost: number;
+  maxCost: number;
+  count: number;
+} {
+  const valid = costs.filter(
+    (c): c is number => typeof c === "number" && !Number.isNaN(c) && c > 0
+  );
+
+  if (valid.length === 0) {
+    return { avgCost: 0, minCost: 0, maxCost: 0, count: 0 };
+  }
+
+  const sum = valid.reduce((acc, c) => acc + c, 0);
+  return {
+    avgCost: Number((sum / valid.length).toFixed(2)),
+    minCost: Math.min(...valid),
+    maxCost: Math.max(...valid),
+    count: valid.length,
+  };
+}
+
+export type CustomerPricingCurrency = "THB" | "USD";
+
+export const DEFAULT_USD_THB_RATE = 34.0;
+
+/**
+ * Automatically detects whether a customer's saved unit price is denominated in USD or THB
+ * by comparing it against the product's THB Base Cost (or THB Standard Export Price).
+ *
+ * Since 1 USD ≈ 30–38 THB, a USD unit price is ~3% of the THB price/cost (e.g., $3.00 vs ฿70.31 cost),
+ * whereas a THB unit price is typically 50%–250% of the THB cost.
+ * Any positive price below 25% of the THB reference benchmark is classified as USD.
+ */
+export function detectCustomerPriceCurrency(
+  savedPrice: number | null | undefined,
+  baseCostThb: number | null | undefined,
+  exportPriceThb: number | null | undefined = 0
+): CustomerPricingCurrency {
+  if (typeof savedPrice !== "number" || Number.isNaN(savedPrice) || savedPrice <= 0) {
+    return "THB";
+  }
+
+  const costRef =
+    typeof baseCostThb === "number" && !Number.isNaN(baseCostThb) && baseCostThb > 0
+      ? baseCostThb
+      : 0;
+  const exportRef =
+    typeof exportPriceThb === "number" && !Number.isNaN(exportPriceThb) && exportPriceThb > 0
+      ? exportPriceThb
+      : 0;
+  const benchmarkThb = costRef > 0 ? costRef : exportRef;
+
+  if (benchmarkThb > 0) {
+    return savedPrice < benchmarkThb * 0.25 ? "USD" : "THB";
+  }
+
+  return savedPrice < 8 ? "USD" : "THB";
+}
+
+/**
+ * Automatically determines a Customer Account's pricing currency (THB or USD)
+ * across all of their priced products using majority vote.
+ */
+export function detectAccountCurrency(
+  samples: Array<{
+    price: number;
+    baseCostThb: number;
+    exportPriceThb?: number;
+  }>
+): CustomerPricingCurrency {
+  const valid = samples.filter(
+    (s) => typeof s.price === "number" && !Number.isNaN(s.price) && s.price > 0
+  );
+  if (valid.length === 0) return "THB";
+
+  let usdCount = 0;
+  for (const s of valid) {
+    if (
+      detectCustomerPriceCurrency(s.price, s.baseCostThb, s.exportPriceThb ?? 0) ===
+      "USD"
+    ) {
+      usdCount += 1;
+    }
+  }
+
+  return usdCount >= Math.ceil(valid.length / 2) ? "USD" : "THB";
+}
+
+/**
+ * Converts a customer's unit selling price into THB for margin & break-even evaluation.
+ */
+export function convertCustomerPriceToThb(
+  price: number | null | undefined,
+  currency: CustomerPricingCurrency,
+  usdToThbRate: number = DEFAULT_USD_THB_RATE
+): number {
+  if (typeof price !== "number" || Number.isNaN(price) || price <= 0) {
+    return 0;
+  }
+  const safeRate =
+    typeof usdToThbRate === "number" && !Number.isNaN(usdToThbRate) && usdToThbRate > 0
+      ? usdToThbRate
+      : DEFAULT_USD_THB_RATE;
+
+  if (currency === "USD") {
+    return Number((price * safeRate).toFixed(2));
+  }
+  return Number(price.toFixed(2));
+}
+
+

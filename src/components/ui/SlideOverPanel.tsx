@@ -22,6 +22,7 @@ export interface SlideOverPanelProps {
   activeTab?: string;
   onTabChange?: (tabKey: string) => void;
   widthClass?: string; // default "w-[750px]"
+  zIndexLevel?: "default" | "modal-overlay";
   children: React.ReactNode;
 }
 
@@ -36,6 +37,7 @@ export function SlideOverPanel({
   activeTab,
   onTabChange,
   widthClass = "w-[750px]",
+  zIndexLevel = "default",
   children,
 }: SlideOverPanelProps) {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
@@ -83,11 +85,16 @@ export function SlideOverPanel({
 
   if (!isOpen && !mounted) return null;
 
+  const backdropZClass =
+    zIndexLevel === "modal-overlay" ? "z-[250]" : "z-[100]";
+  const panelZClass =
+    zIndexLevel === "modal-overlay" ? "z-[251]" : "z-[101]";
+
   return (
     <>
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] transition-opacity duration-300 ${
+        className={`fixed inset-0 bg-black/50 backdrop-blur-sm ${backdropZClass} transition-opacity duration-300 ${
           internalIsOpen && !isDismissed ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         style={
@@ -125,7 +132,7 @@ export function SlideOverPanel({
               }
             : undefined
         }
-        className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full ${responsiveWidth} md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${
+        className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full ${responsiveWidth} md:max-w-[calc(100vw-32px)] ${panelZClass} flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${
           internalIsOpen && !isDismissed
             ? "opacity-100 translate-y-0 md:translate-x-0 scale-100"
             : "opacity-0 translate-y-4 md:translate-y-0 md:translate-x-8 scale-[0.97] pointer-events-none"

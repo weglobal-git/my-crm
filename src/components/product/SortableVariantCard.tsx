@@ -34,7 +34,7 @@ interface CartonMinInputProps {
   onChange: (val: number) => void;
 }
 
-function CartonMinInput({ value, onChange }: CartonMinInputProps) {
+export function CartonMinInput({ value, onChange }: CartonMinInputProps) {
   const [draft, setDraft] = useState<string>(value != null && value > 0 ? String(value) : "1");
 
   useEffect(() => {
@@ -91,7 +91,7 @@ interface CartonMaxInputProps {
   onChange: (val: number | null) => void;
 }
 
-function CartonMaxInput({ value, min, onChange }: CartonMaxInputProps) {
+export function CartonMaxInput({ value, min, onChange }: CartonMaxInputProps) {
   const [draft, setDraft] = useState<string>(value != null && value > 0 ? String(value) : "");
 
   useEffect(() => {
@@ -152,7 +152,7 @@ interface TierDiscountInputProps {
   onChange: (val: number | null) => void;
 }
 
-function TierDiscountInput({ value, minAllowed, onChange }: TierDiscountInputProps) {
+export function TierDiscountInput({ value, minAllowed, onChange }: TierDiscountInputProps) {
   const [draft, setDraft] = useState<string>(
     value != null && !isNaN(value) ? String(value) : ""
   );
@@ -217,7 +217,7 @@ interface PriceNumberInputProps {
   placeholder?: string;
 }
 
-function PriceNumberInput({ value, onChange, placeholder = "0.00" }: PriceNumberInputProps) {
+export function PriceNumberInput({ value, onChange, placeholder = "0.00" }: PriceNumberInputProps) {
   const [draft, setDraft] = useState<string>(
     value !== undefined && value !== null && !isNaN(value) ? String(value) : ""
   );
@@ -352,6 +352,8 @@ export interface SortableVariantCardProps {
   idx: number;
   total: number;
   currentEdit: {
+    formula?: string | null;
+    sku?: string | null;
     price: number;
     productCost: number | null;
     priceCondition: string;
@@ -362,6 +364,7 @@ export interface SortableVariantCardProps {
   isExpanded: boolean;
   productName?: string;
   uploadingVariantId: string | null;
+  deletingVariantId?: string | null;
   variantRates: CommercialRates;
   appliedVariantId: string | null;
   companyCostOverheadPercent?: number;
@@ -373,6 +376,9 @@ export interface SortableVariantCardProps {
   onRemoveImage: () => void;
   onSetPrimary: () => void;
   onToggleStatus: () => void;
+  onFormulaChange?: (val: string) => void;
+  onSkuChange?: (val: string) => void;
+  onDeleteVariant?: () => void;
   onPriceChange: (val: number) => void;
   onCostChange: (val: number | null) => void;
   onAddTier: () => void;
@@ -395,6 +401,7 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
   isExpanded,
   productName: _productName,
   uploadingVariantId,
+  deletingVariantId,
   variantRates: _variantRates,
   appliedVariantId,
   companyCostOverheadPercent: propOverheadPercent,
@@ -406,6 +413,9 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
   onRemoveImage,
   onSetPrimary,
   onToggleStatus,
+  onFormulaChange,
+  onSkuChange,
+  onDeleteVariant,
   onPriceChange,
   onCostChange,
   onAddTier,
@@ -414,6 +424,7 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
   onApplyToAll,
   onRatesChange: _onRatesChange,
 }: SortableVariantCardProps) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const {
     attributes,
     listeners,
@@ -535,7 +546,7 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-semibold text-[#C7F33C] bg-[#252728] px-2 py-0.5 rounded border border-[#4E4F50]/40">
-              {v.formula || "Standard"}
+              {(currentEdit.formula ?? v.formula)?.trim() || "Standard"}
             </span>
             {isThisPrimary && (
               <span
@@ -546,35 +557,31 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
                 <span>Primary</span>
               </span>
             )}
-            {v.sku && (
+            {(currentEdit.sku ?? v.sku) && (
               <span className="text-[11px] text-slate-400 font-mono">
-                SKU: {v.sku}
+                SKU: {currentEdit.sku ?? v.sku}
               </span>
             )}
             {!isExpanded && (() => {
-              const basePrice = Number(currentEdit.price || 0);
-              const prices = [basePrice];
-              tiers.forEach((t) => {
-                if (t.discountPercent > 0) {
-                  prices.push(calculateTierPrice(basePrice, t.discountPercent));
-                }
-              });
-              const minPrice = Math.min(...prices);
-              const maxPrice = Math.max(...prices);
-              const hasRange = tiers.length > 0 && minPrice < maxPrice;
+              const baseCost = Number(currentEdit.productCost || 0);
+              const hasCost = baseCost > 0;
 
               return (
                 <span
-                  className="text-xs font-bold text-slate-200 bg-[#252728] px-2.5 py-0.5 rounded-md border border-[#4E4F50]/50 ml-auto tabular-nums"
+                  className={`text-xs font-bold px-2.5 py-0.5 rounded-md border ml-auto tabular-nums ${
+                    hasCost
+                      ? "text-slate-200 bg-[#252728] border-[#4E4F50]/50"
+                      : "text-slate-500 bg-[#252728]/60 border-[#4E4F50]/30 font-medium"
+                  }`}
                   title={
-                    hasRange
-                      ? `Step Price Range: ฿${minPrice.toFixed(2)} - ฿${maxPrice.toFixed(2)}`
-                      : `Export Price: ฿${basePrice.toFixed(2)}`
+                    hasCost
+                      ? `Base Cost: ฿${baseCost.toFixed(2)} | Effective Cost (+${companyCostOverheadPercent}%): ฿${effectiveCost.toFixed(2)}`
+                      : "No Cost Set for this variant"
                   }
                 >
-                  {hasRange
-                    ? `฿${minPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} - ฿${maxPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : `฿${basePrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  {hasCost
+                    ? `ทุน: ฿${baseCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (จริง: ฿${effectiveCost.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                    : "ยังไม่ระบุต้นทุน"}
                 </span>
               );
             })()}
@@ -585,7 +592,7 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
       {/* COLLAPSIBLE BODY CONTENT */}
       {isExpanded && (
         <div className="space-y-4 pt-1">
-          {/* Variant Action Toolbar: Set as Primary + Apply to All + In Stock Switch */}
+          {/* Variant Action Toolbar: Set as Primary + In Stock Switch */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {/* Primary Variant Button */}
@@ -594,7 +601,7 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
                 onClick={onSetPrimary}
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   isThisPrimary
-                    ? "bg-[#252728] text-[#C7F33C] border border-[#C7F33C]/40 shadow-xs"
+                    ? "bg-[#252728] text-[#C7F33C] border border-[#C7F33C]/40"
                     : "bg-[#252728] text-slate-400 hover:text-white border border-[#3E4042] hover:border-slate-400"
                 }`}
                 title={isThisPrimary ? "Primary Variant (Main Image)" : "Click to set as Primary Variant"}
@@ -602,252 +609,133 @@ export const SortableVariantCard = React.memo(function SortableVariantCard({
                 <Star className={`w-3.5 h-3.5 ${isThisPrimary ? "fill-[#C7F33C] text-[#C7F33C]" : "text-slate-400"}`} />
                 <span>{isThisPrimary ? "Primary Variant" : "Set as Primary"}</span>
               </button>
-
-              {/* Apply to All Button */}
-              {isThisPrimary && (
-                <button
-                  type="button"
-                  onClick={onApplyToAll}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-[#252728] hover:bg-[#C7F33C] text-slate-300 hover:text-black transition-colors cursor-pointer border border-[#3E4042] hover:border-[#C7F33C] shadow-xs"
-                  title="Apply Export Price, Cost & Step Tiers to all variants"
-                >
-                  {appliedVariantId === v.id ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-[#C7F33C]" />
-                      <span className="text-[#C7F33C]">Applied to All!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Apply to All</span>
-                    </>
-                  )}
-                </button>
-              )}
             </div>
 
-            {/* In Stock Toggle */}
-            <div className="flex items-center gap-2">
-              <span
-                className={`text-xs font-semibold transition-colors select-none ${
-                  (currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
-                    ? "text-[#C7F33C]"
-                    : "text-slate-400"
-                }`}
-              >
-                {(currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
-                  ? "In Stock"
-                  : "Out of Stock"}
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={(currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE}
-                onClick={onToggleStatus}
-                className={`w-7 h-4 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer focus:outline-none ${
-                  (currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
-                    ? "bg-[#C7F33C]"
-                    : "bg-[#18191A]"
-                }`}
-                title={
-                  (currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
-                    ? "Variant is In Stock"
-                    : "Variant is Out of Stock / Discontinued"
-                }
-              >
-                <div
-                  className={`w-3 h-3 rounded-full transition-transform ${
+            {/* In Stock Toggle & Delete Variant */}
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-xs font-semibold transition-colors select-none ${
                     (currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
-                      ? "translate-x-3 bg-black"
-                      : "translate-x-0 bg-slate-400"
+                      ? "text-[#C7F33C]"
+                      : "text-slate-400"
                   }`}
-                />
-              </button>
+                >
+                  {(currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
+                    ? "In Stock"
+                    : "Out of Stock"}
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={(currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE}
+                  onClick={onToggleStatus}
+                  className={`w-7 h-4 rounded-full transition-colors relative flex items-center p-0.5 cursor-pointer focus:outline-none ${
+                    (currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
+                      ? "bg-[#C7F33C]"
+                      : "bg-[#18191A]"
+                  }`}
+                  title={
+                    (currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
+                      ? "Variant is In Stock"
+                      : "Variant is Out of Stock / Discontinued"
+                  }
+                >
+                  <div
+                    className={`w-3 h-3 rounded-full transition-transform ${
+                      (currentEdit.status ?? v.status ?? ProductStatus.AVAILABLE) === ProductStatus.AVAILABLE
+                        ? "translate-x-3 bg-black"
+                        : "translate-x-0 bg-slate-400"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {onDeleteVariant && (
+                confirmDelete ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={deletingVariantId === v.id}
+                      onClick={() => {
+                        setConfirmDelete(false);
+                        onDeleteVariant();
+                      }}
+                      className="px-2 py-1 rounded-lg bg-red-900/40 text-red-300 border border-red-900/60 hover:bg-red-900/60 text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {deletingVariantId === v.id ? "Deleting..." : "Confirm"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDelete(false)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-[#252728] transition-colors cursor-pointer"
+                      title="Cancel delete"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(true)}
+                    className="p-1.5 rounded-lg bg-[#252728] text-slate-400 hover:text-red-400 hover:bg-red-900/30 border border-[#3E4042] hover:border-red-900/50 transition-colors cursor-pointer"
+                    title="Delete Variant"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )
+              )}
             </div>
           </div>
 
-          {/* Regular Pricing Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Variant Identity & Formula Cost Grid: Formula Name, SKU, Cost (THB) */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-slate-300">
-                Export Price (THB) <span className="text-[#C7F33C]">*</span>
+                Formula / Variant Name <span className="text-[#C7F33C]">*</span>
               </label>
-              <PriceNumberInput
-                value={currentEdit.price}
-                onChange={onPriceChange}
-                placeholder="0.00"
+              <input
+                type="text"
+                value={currentEdit.formula ?? v.formula ?? ""}
+                onChange={(e) => onFormulaChange?.(e.target.value)}
+                placeholder="e.g. Standard, Vitamin E, Coconut..."
+                className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C]"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-300">
+                SKU
+              </label>
+              <input
+                type="text"
+                value={currentEdit.sku ?? v.sku ?? ""}
+                onChange={(e) => onSkuChange?.(e.target.value)}
+                placeholder="Optional SKU..."
+                className="w-full bg-[#252728] border border-transparent rounded-xl px-3.5 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] font-mono"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-1">
                 <label className="text-xs font-semibold text-slate-300">
                   Cost (THB)
                 </label>
                 {currentEdit.productCost && currentEdit.productCost > 0 && companyCostOverheadPercent > 0 && (
                   <span
-                    className="text-[11px] font-semibold text-[#C7F33C] tabular-nums"
+                    className="text-[10.5px] font-semibold text-[#C7F33C] tabular-nums truncate"
                     title={`Base Cost ฿${Number(currentEdit.productCost).toFixed(2)} + ${companyCostOverheadPercent}% Company Standard Cost Overhead`}
                   >
-                    ต้นทุนจริง (+{companyCostOverheadPercent}%): ฿{effectiveCost.toFixed(2)}
+                    +{companyCostOverheadPercent}%: ฿{effectiveCost.toFixed(2)}
                   </span>
                 )}
               </div>
               <CostNumberInput
                 value={currentEdit.productCost}
                 onChange={onCostChange}
-                placeholder="Optional cost..."
+                placeholder="Base cost for this formula..."
               />
             </div>
-          </div>
-
-          {/* Dynamic Step Price (Volume Tier Discounts) */}
-          <div className="flex flex-col gap-2 pt-2 border-t border-[#252728]">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-bold text-slate-200">
-                  Volume Tier Discounts
-                </label>
-                <span className="text-[10px] text-slate-400 bg-[#252728] px-1.5 py-0.5 rounded border border-[#4E4F50]/50 font-medium">
-                  Step Price
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={onAddTier}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-[#252728] hover:bg-[#C7F33C] text-slate-300 hover:text-black transition-colors cursor-pointer border border-[#4E4F50] hover:border-[#C7F33C]"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Tier</span>
-              </button>
-            </div>
-
-            {tiers.length > 0 && (
-              <div className="bg-[#252728] rounded-xl p-3 space-y-2 border border-[#4E4F50]/60">
-                {/* Compact Table Header */}
-                <div className="grid grid-cols-[175px_1fr_1.1fr_32px] gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 px-2">
-                  <span>Cartons (Volume)</span>
-                  <span>Discount</span>
-                  <span>Net Price</span>
-                  <span></span>
-                </div>
-
-                {/* Tiers List */}
-                {tiers.map((tier, tIdx) => {
-                  const isLast = tIdx === tiers.length - 1;
-                  const calculatedRate = calculateTierPrice(
-                    currentEdit.price,
-                    tier.discountPercent
-                  );
-
-                  return (
-                    <div
-                      key={tIdx}
-                      className="grid grid-cols-[175px_1fr_1.1fr_32px] gap-2 items-center bg-[#3A3B3C] px-2.5 py-2 rounded-xl border border-[#4E4F50]/40"
-                    >
-                      {/* Col 1: Consecutive Carton Quantity Range */}
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {tIdx === 0 ? (
-                          <CartonMinInput
-                            value={tier.minQuantity}
-                            onChange={(val) =>
-                              onUpdateTier(0, "minQuantity", val)
-                            }
-                          />
-                        ) : (
-                          <span
-                            className="w-10 h-7 flex items-center justify-center rounded-lg bg-[#18191A] text-xs font-semibold text-slate-400 tabular-nums border border-[#3A3B3C]/70 shrink-0 cursor-not-allowed select-none"
-                            title="Auto-calculated starting volume (non-editable)"
-                          >
-                            {tier.minQuantity}
-                          </span>
-                        )}
-
-                        <span className="w-3 text-center text-slate-400 text-xs font-semibold shrink-0 select-none">
-                          -
-                        </span>
-
-                        {isLast ? (
-                          <span
-                            className="h-7 px-2.5 flex items-center justify-center rounded-lg bg-[#252728] border border-[#C7F33C]/40 text-[#C7F33C] text-xs font-semibold select-none shadow-xs"
-                            title="Upper tier threshold is open-ended"
-                          >
-                            + more
-                          </span>
-                        ) : (
-                          <CartonMaxInput
-                            value={tier.maxQuantity}
-                            min={tier.minQuantity}
-                            onChange={(val) =>
-                              onUpdateTier(tIdx, "maxQuantity", val)
-                            }
-                          />
-                        )}
-
-                        <span className="text-[11px] text-slate-400 shrink-0 select-none">
-                          ctns
-                        </span>
-                      </div>
-
-                      {/* Col 2: Discount Percent Input */}
-                      <div className="flex items-center gap-1.5 justify-start">
-                        <TierDiscountInput
-                          value={tier.discountPercent}
-                          minAllowed={
-                            tIdx > 0
-                              ? (tiers[tIdx - 1]?.discountPercent || 0)
-                              : 0
-                          }
-                          onChange={(val) =>
-                            onUpdateTier(tIdx, "discountPercent", val)
-                          }
-                        />
-                        <span className="text-xs text-slate-400 font-semibold">%</span>
-                      </div>
-
-                      {/* Col 3: Calculated Net Price */}
-                      <div className="flex items-center justify-start">
-                        <span className="font-mono text-xs font-bold text-[#C7F33C] bg-[#18191A] px-2.5 py-1 rounded-lg border border-[#3E4042] tracking-wide tabular-nums">
-                          ฿{calculatedRate.toFixed(2)}
-                        </span>
-                      </div>
-
-                      {/* Col 4: Delete Action */}
-                      <div className="flex items-center justify-end">
-                        <button
-                          type="button"
-                          onClick={() => onRemoveTier(tIdx)}
-                          className="p-1 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                          title="Remove Tier"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Export Pricing & Margin Analysis */}
-          <div className="pt-2">
-            {currentEdit.productCost && currentEdit.productCost > 0 ? (
-              <ExportPricingSimulation
-                basePrice={currentEdit.price}
-                productCost={effectiveCost}
-                baseProductCost={currentEdit.productCost}
-                overheadPercent={companyCostOverheadPercent}
-                tiers={tiers}
-                rates={commercialRates}
-              />
-            ) : (
-              <div className="p-3 bg-[#252728] rounded-xl border border-dashed border-[#4E4F50]/50 text-center">
-                <p className="text-xs text-slate-400">
-                  Fill <span className="text-slate-200 font-semibold">Cost (THB)</span> to show Export Pricing & Margin Analysis
-                </p>
-              </div>
-            )}
           </div>
         </div>
       )}

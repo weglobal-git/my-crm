@@ -9,6 +9,9 @@ import {
   ProductOverviewDTO,
   ProductVariantDTO,
   ProductFilterParams,
+  extractFallbackGrossWeight,
+  encodeFallbackGrossWeight,
+  resolveUnifiedPrice,
 } from "@/lib/product/product-dto";
 
 export async function getProductCategories(): Promise<{ id?: string; category: string; count: number; order?: number; isDefault?: boolean }[]> {
@@ -152,12 +155,14 @@ function mapProductToListItemDTO(
     .map((v) => v.formula)
     .filter((f): f is string => Boolean(f && f.trim() !== ""));
 
+  const fallbackGw = extractFallbackGrossWeight(p.websiteUrl);
   const grossWeights = variants
     .map((v) => v.cartonGrossWeight)
     .filter((w): w is number => typeof w === "number" && w > 0);
-  const minGrossWeight = grossWeights.length > 0 ? Math.min(...grossWeights) : null;
-  const maxGrossWeight = grossWeights.length > 0 ? Math.max(...grossWeights) : null;
-  const cartonGrossWeight = defaultVariant?.cartonGrossWeight ?? (grossWeights[0] ?? null);
+  const minGrossWeight = grossWeights.length > 0 ? Math.min(...grossWeights) : fallbackGw;
+  const maxGrossWeight = grossWeights.length > 0 ? Math.max(...grossWeights) : fallbackGw;
+  const cartonGrossWeight =
+    defaultVariant?.cartonGrossWeight ?? (grossWeights[0] ?? fallbackGw);
 
   return {
     id: p.id,
@@ -408,6 +413,13 @@ export async function getProductOverview(productId: string): Promise<ProductOver
     })),
   }));
 
+  const defaultVariant = variants.find((v) => v.isDefault) || variants[0];
+  const anyGwVariant = variants.find((v) => v.cartonGrossWeight && v.cartonGrossWeight > 0);
+  const cartonGrossWeight =
+    (defaultVariant?.cartonGrossWeight && defaultVariant.cartonGrossWeight > 0
+      ? defaultVariant.cartonGrossWeight
+      : anyGwVariant?.cartonGrossWeight) ?? extractFallbackGrossWeight(product.websiteUrl);
+
   return {
     id: product.id,
     name: product.name,
@@ -424,6 +436,7 @@ export async function getProductOverview(productId: string): Promise<ProductOver
     cartonHeight: product.cartonHeight,
     cbm: product.cbm,
     cartonQuantity: product.cartonQuantity,
+    cartonGrossWeight,
     remark: product.remark,
     variants,
     createdAt: product.createdAt.toISOString(),
@@ -684,14 +697,15 @@ export async function createProduct(data: {
   brand?: string | null;
   category?: string | null;
   description?: string | null;
-  imageUrl?: string | null;
-  price?: number;
-  productCost?: number | null;
-  priceCondition?: string | null;
+  hsCode?: string | null;
+  cartonDimension?: string | null;
+  cartonWidth?: number | null;
+  cartonLength?: number | null;
+  cartonHeight?: number | null;
   cbm?: number | null;
   cartonQuantity?: number | null;
+  cartonGrossWeight?: number | null;
   remark?: string | null;
-  starRating?: number;
 }): Promise<{ success: boolean; product: ProductListItemDTO }> {
   const session = await getServerSession(authOptions);
   if (!session?.user) throw new Error("Unauthorized");
@@ -702,22 +716,17 @@ export async function createProduct(data: {
       brand: data.brand?.trim() || null,
       category: data.category?.trim() || null,
       description: data.description?.trim() || null,
+      websiteUrl: encodeFallbackGrossWeight(null, data.cartonGrossWeight),
+      hsCode: data.hsCode?.trim() || null,
+      cartonDimension: data.cartonDimension?.trim() || null,
+      cartonWidth: data.cartonWidth ?? null,
+      cartonLength: data.cartonLength ?? null,
+      cartonHeight: data.cartonHeight ?? null,
       cbm: data.cbm ?? null,
       cartonQuantity: data.cartonQuantity ?? null,
       remark: data.remark?.trim() || null,
-      starRating: data.starRating ?? 0,
+      starRating: 0,
       status: ProductStatus.AVAILABLE,
-      variants: {
-        create: {
-          fullName: data.name.trim(),
-          formula: "Standard",
-          imageUrl: data.imageUrl?.trim() || null,
-          price: data.price ?? 0,
-          productCost: data.productCost ?? null,
-          priceCondition: data.priceCondition?.trim() || null,
-          isDefault: true,
-        },
-      },
     },
     include: {
       variants: {
@@ -737,6 +746,274 @@ export async function createProduct(data: {
   return {
     success: true,
     product: mapProductToListItemDTO(created),
+  };
+}
+
+export async function createProductVariant(
+  productId: string,
+  data?: {
+    formula?: string | null;
+    sku?: string | null;
+    price?: number;
+    productCost?: number | null;
+    priceCondition?: string | null;
+    imageUrl?: string | null;
+  }
+): Promise<{
+  success: boolean;
+  variant: ProductVariantDTO;
+  product: ProductListItemDTO;
+}> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) throw new Error("Unauthorized");
+
+  const parentProduct = await prisma.product.findUnique({
+    where: { id: productId },
+    include: {
+      variants: {
+        include: {
+          customPrices: {
+            include: {
+              company: {
+                select: {
+                  id: true,
+                  name: true,
+                  displayName: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      },
+    },
+  });
+  if (!parentProduct) throw new Error("Product not found");
+
+  const existingVariants = parentProduct.variants || [];
+  const isFirst = existingVariants.length === 0;
+  const nextOrder =
+    existingVariants.length > 0
+      ? Math.max(...existingVariants.map((v) => v.order ?? 0)) + 1
+      : 0;
+
+  const trimmedFormula =
+    data?.formula?.trim() ||
+    (isFirst ? "Standard" : `Formula ${existingVariants.length + 1}`);
+  const trimmedSku = data?.sku?.trim() || null;
+  const fullName =
+    trimmedFormula === "Standard"
+      ? parentProduct.name
+      : `${parentProduct.name} - ${trimmedFormula}`;
+
+  const inheritedGw =
+    existingVariants.find((v) => v.cartonGrossWeight && v.cartonGrossWeight > 0)
+      ?.cartonGrossWeight ?? extractFallbackGrossWeight(parentProduct.websiteUrl);
+
+  const inheritedPrice =
+    data?.price !== undefined
+      ? data.price
+      : resolveUnifiedPrice(existingVariants.map((v) => v.price));
+
+  const inheritedPriceCondition =
+    data?.priceCondition !== undefined
+      ? data.priceCondition?.trim() || null
+      : existingVariants.find((v) => v.isDefault && v.priceCondition)
+          ?.priceCondition ||
+        existingVariants.find((v) => v.priceCondition)?.priceCondition ||
+        null;
+
+  // Inherit unified customer prices from sibling variants of the same product
+  const companyPricesMap = new Map<
+    string,
+    { companyName: string; prices: number[] }
+  >();
+  for (const v of existingVariants) {
+    for (const cp of v.customPrices || []) {
+      if (cp.price > 0) {
+        const entry = companyPricesMap.get(cp.companyId) || {
+          companyName: cp.company?.displayName || cp.company?.name || "Customer",
+          prices: [],
+        };
+        entry.prices.push(cp.price);
+        companyPricesMap.set(cp.companyId, entry);
+      }
+    }
+  }
+
+  const createdVariant = await prisma.productVariant.create({
+    data: {
+      productId,
+      sku: trimmedSku,
+      fullName,
+      thaiName: parentProduct.description || null,
+      formula: trimmedFormula,
+      imageUrl: data?.imageUrl?.trim() || null,
+      price: inheritedPrice,
+      productCost: data?.productCost ?? null,
+      priceCondition: inheritedPriceCondition,
+      cartonGrossWeight: inheritedGw,
+      status: ProductStatus.AVAILABLE,
+      isDefault: isFirst,
+      order: nextOrder,
+      ...(companyPricesMap.size > 0
+        ? {
+            customPrices: {
+              create: Array.from(companyPricesMap.entries()).map(
+                ([companyId, info]) => ({
+                  companyId,
+                  price: resolveUnifiedPrice(info.prices),
+                })
+              ),
+            },
+          }
+        : {}),
+    },
+    include: {
+      customPrices: {
+        include: {
+          company: {
+            select: {
+              id: true,
+              name: true,
+              displayName: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const updatedParent = await prisma.product.update({
+    where: { id: productId },
+    data: {
+      status: ProductStatus.AVAILABLE,
+      updatedAt: new Date(),
+    },
+    include: {
+      variants: {
+        select: {
+          id: true,
+          price: true,
+          productCost: true,
+          formula: true,
+          imageUrl: true,
+          isDefault: true,
+          cartonGrossWeight: true,
+        },
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      },
+    },
+  });
+
+  return {
+    success: true,
+    variant: {
+      id: createdVariant.id,
+      productId: createdVariant.productId,
+      sku: createdVariant.sku,
+      fullName: createdVariant.fullName,
+      thaiName: createdVariant.thaiName,
+      formula: createdVariant.formula,
+      imageUrl: createdVariant.imageUrl,
+      price: createdVariant.price,
+      productCost: createdVariant.productCost,
+      priceCondition: createdVariant.priceCondition,
+      netWeight: createdVariant.netWeight,
+      cartonGrossWeight: createdVariant.cartonGrossWeight,
+      status: createdVariant.status || ProductStatus.AVAILABLE,
+      isDefault: createdVariant.isDefault,
+      order: createdVariant.order ?? 0,
+      customPrices: (createdVariant.customPrices || []).map((cp) => ({
+        id: cp.id,
+        companyId: cp.companyId,
+        companyName: cp.company.displayName || cp.company.name,
+        price: cp.price,
+      })),
+    },
+    product: mapProductToListItemDTO(updatedParent),
+  };
+}
+
+export async function deleteProductVariant(
+  variantId: string
+): Promise<{
+  success: boolean;
+  productId: string;
+  deletedVariantId: string;
+  newPrimaryVariantId: string | null;
+  product: ProductListItemDTO;
+}> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) throw new Error("Unauthorized");
+
+  const existing = await prisma.productVariant.findUnique({
+    where: { id: variantId },
+    select: { id: true, productId: true, isDefault: true },
+  });
+  if (!existing) throw new Error("Variant not found");
+
+  await prisma.productVariant.delete({
+    where: { id: variantId },
+  });
+
+  const remaining = await prisma.productVariant.findMany({
+    where: { productId: existing.productId },
+    orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+  });
+
+  let newPrimaryVariantId: string | null = null;
+  if (remaining.length > 0) {
+    const currentDefault = remaining.find((v) => v.isDefault);
+    if (!currentDefault) {
+      await prisma.productVariant.update({
+        where: { id: remaining[0].id },
+        data: { isDefault: true },
+      });
+      newPrimaryVariantId = remaining[0].id;
+    } else {
+      newPrimaryVariantId = currentDefault.id;
+    }
+  }
+
+  const hasAvailable =
+    remaining.length === 0 ||
+    remaining.some((v) => v.status === ProductStatus.AVAILABLE);
+
+  const updatedParent = await prisma.product.update({
+    where: { id: existing.productId },
+    data: {
+      ...(remaining.length > 0
+        ? {
+            status: hasAvailable
+              ? ProductStatus.AVAILABLE
+              : ProductStatus.UNAVAILABLE,
+          }
+        : {}),
+      updatedAt: new Date(),
+    },
+    include: {
+      variants: {
+        select: {
+          id: true,
+          price: true,
+          productCost: true,
+          formula: true,
+          imageUrl: true,
+          isDefault: true,
+          cartonGrossWeight: true,
+        },
+        orderBy: [{ order: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+      },
+    },
+  });
+
+  return {
+    success: true,
+    productId: existing.productId,
+    deletedVariantId: variantId,
+    newPrimaryVariantId,
+    product: mapProductToListItemDTO(updatedParent),
   };
 }
 
@@ -768,6 +1045,127 @@ export async function upsertCompanyPrice(
   return { success: true };
 }
 
+export async function batchUpsertCompanyPrices(
+  entries: Array<{
+    variantId: string;
+    companyId: string;
+    price: number;
+  }>
+): Promise<{ success: boolean; count: number }> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) throw new Error("Unauthorized");
+  if (!entries || entries.length === 0) return { success: true, count: 0 };
+
+  const ops = entries.map((item) => {
+    if (item.price > 0) {
+      return prisma.companyPrice.upsert({
+        where: {
+          variantId_companyId: {
+            variantId: item.variantId,
+            companyId: item.companyId,
+          },
+        },
+        create: {
+          variantId: item.variantId,
+          companyId: item.companyId,
+          price: item.price,
+        },
+        update: {
+          price: item.price,
+        },
+      });
+    } else {
+      return prisma.companyPrice.deleteMany({
+        where: {
+          variantId: item.variantId,
+          companyId: item.companyId,
+        },
+      });
+    }
+  });
+
+  await prisma.$transaction(ops);
+  return { success: true, count: entries.length };
+}
+
+export async function batchUpdateProductBasePrices(
+  entries: Array<{
+    productId: string;
+    price: number;
+  }>
+): Promise<{ success: boolean; count: number }> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) throw new Error("Unauthorized");
+  if (!entries || entries.length === 0) return { success: true, count: 0 };
+
+  const ops = entries.flatMap((item) => [
+    prisma.productVariant.updateMany({
+      where: { productId: item.productId },
+      data: { price: Math.max(0, item.price) },
+    }),
+    prisma.product.update({
+      where: { id: item.productId },
+      data: { updatedAt: new Date() },
+    }),
+  ]);
+
+  await prisma.$transaction(ops);
+  return { success: true, count: entries.length };
+}
+
+let cachedUsdThbRate: { rate: number; fetchedAt: number } | null = null;
+const USD_RATE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+export async function getLiveUsdThbRate(): Promise<number | null> {
+  if (
+    cachedUsdThbRate &&
+    Date.now() - cachedUsdThbRate.fetchedAt < USD_RATE_CACHE_TTL_MS
+  ) {
+    return cachedUsdThbRate.rate;
+  }
+
+  try {
+    const res = await fetch("https://open.er-api.com/v6/latest/USD", {
+      signal: AbortSignal.timeout(3500),
+      next: { revalidate: 3600 },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const thbRate = data?.rates?.THB;
+      if (typeof thbRate === "number" && thbRate > 20 && thbRate < 60) {
+        const rounded = Number(thbRate.toFixed(2));
+        cachedUsdThbRate = { rate: rounded, fetchedAt: Date.now() };
+        return rounded;
+      }
+    }
+  } catch {
+    // Fallback to secondary provider
+  }
+
+  try {
+    const fallbackRes = await fetch(
+      "https://api.frankfurter.app/latest?from=USD&to=THB",
+      {
+        signal: AbortSignal.timeout(3500),
+        next: { revalidate: 3600 },
+      }
+    );
+    if (fallbackRes.ok) {
+      const fallbackData = await fallbackRes.json();
+      const thbRate = fallbackData?.rates?.THB;
+      if (typeof thbRate === "number" && thbRate > 20 && thbRate < 60) {
+        const rounded = Number(thbRate.toFixed(2));
+        cachedUsdThbRate = { rate: rounded, fetchedAt: Date.now() };
+        return rounded;
+      }
+    }
+  } catch {
+    // Offline or blocked; return null so client keeps cached/default rate
+  }
+
+  return cachedUsdThbRate?.rate ?? null;
+}
+
 export async function saveProductAll(
   productId: string,
   payload: {
@@ -785,11 +1183,14 @@ export async function saveProductAll(
       cartonHeight?: number | null;
       cbm?: number | null;
       cartonQuantity?: number | null;
+      cartonGrossWeight?: number | null;
       remark?: string | null;
       starRating?: number;
     };
     variants?: Array<{
       id: string;
+      formula?: string | null;
+      sku?: string | null;
       price?: number;
       productCost?: number | null;
       priceCondition?: string | null;
@@ -814,6 +1215,24 @@ export async function saveProductAll(
   const { details, variants = [], primaryVariantId, customerPrices = [] } = payload;
   const ops: Prisma.PrismaPromise<any>[] = [];
 
+  let nextWebsiteUrl = details.websiteUrl;
+  if (details.cartonGrossWeight !== undefined) {
+    const existingProd = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { websiteUrl: true },
+    });
+    nextWebsiteUrl = encodeFallbackGrossWeight(
+      details.websiteUrl !== undefined ? details.websiteUrl : existingProd?.websiteUrl,
+      details.cartonGrossWeight
+    );
+    ops.push(
+      prisma.productVariant.updateMany({
+        where: { productId },
+        data: { cartonGrossWeight: details.cartonGrossWeight },
+      })
+    );
+  }
+
   if (primaryVariantId) {
     ops.push(
       prisma.productVariant.updateMany({
@@ -824,12 +1243,29 @@ export async function saveProductAll(
   }
 
   const updatedVariantIds = new Set<string>();
+  const resolvedProductName = details.name?.trim();
   for (const v of variants) {
     updatedVariantIds.add(v.id);
+    const trimmedFormula = v.formula !== undefined ? (v.formula?.trim() || "Standard") : undefined;
+    const trimmedSku = v.sku !== undefined ? (v.sku?.trim() || null) : undefined;
     ops.push(
       prisma.productVariant.update({
         where: { id: v.id },
         data: {
+          ...(trimmedFormula !== undefined
+            ? {
+                formula: trimmedFormula,
+                ...(resolvedProductName
+                  ? {
+                      fullName:
+                        trimmedFormula === "Standard"
+                          ? resolvedProductName
+                          : `${resolvedProductName} - ${trimmedFormula}`,
+                    }
+                  : {}),
+              }
+            : {}),
+          ...(trimmedSku !== undefined ? { sku: trimmedSku } : {}),
           ...(v.price !== undefined ? { price: v.price } : {}),
           ...(v.productCost !== undefined ? { productCost: v.productCost } : {}),
           ...(v.priceCondition !== undefined ? { priceCondition: v.priceCondition } : {}),
@@ -873,6 +1309,15 @@ export async function saveProductAll(
           },
         })
       );
+    } else {
+      ops.push(
+        prisma.companyPrice.deleteMany({
+          where: {
+            variantId: cp.variantId,
+            companyId: cp.companyId,
+          },
+        })
+      );
     }
   }
 
@@ -883,7 +1328,7 @@ export async function saveProductAll(
       ...(details.brand !== undefined ? { brand: details.brand } : {}),
       ...(details.category !== undefined ? { category: details.category } : {}),
       ...(details.description !== undefined ? { description: details.description } : {}),
-      ...(details.websiteUrl !== undefined ? { websiteUrl: details.websiteUrl } : {}),
+      ...(nextWebsiteUrl !== undefined ? { websiteUrl: nextWebsiteUrl } : {}),
       ...(details.hsCode !== undefined ? { hsCode: details.hsCode } : {}),
       ...(details.cartonDimension !== undefined ? { cartonDimension: details.cartonDimension } : {}),
       ...(details.cartonWidth !== undefined ? { cartonWidth: details.cartonWidth } : {}),
@@ -956,6 +1401,17 @@ export async function saveProductAll(
     }
   }
 
+  const defaultVariant =
+    updatedProduct.variants.find((v) => v.isDefault) || updatedProduct.variants[0];
+  const anyGwVariant = updatedProduct.variants.find(
+    (v) => v.cartonGrossWeight && v.cartonGrossWeight > 0
+  );
+  const resolvedGw =
+    (defaultVariant?.cartonGrossWeight && defaultVariant.cartonGrossWeight > 0
+      ? defaultVariant.cartonGrossWeight
+      : anyGwVariant?.cartonGrossWeight) ??
+    extractFallbackGrossWeight(updatedProduct.websiteUrl);
+
   const overview: ProductOverviewDTO = {
     id: updatedProduct.id,
     name: updatedProduct.name,
@@ -972,6 +1428,7 @@ export async function saveProductAll(
     cartonHeight: updatedProduct.cartonHeight,
     cbm: updatedProduct.cbm,
     cartonQuantity: updatedProduct.cartonQuantity,
+    cartonGrossWeight: resolvedGw,
     remark: updatedProduct.remark,
     variants: updatedProduct.variants.map((v) => ({
       id: v.id,
@@ -1287,48 +1744,62 @@ export async function getBatchProductOverviews(
     },
   });
 
-  return rawProducts.map((product) => ({
-    id: product.id,
-    name: product.name,
-    brand: product.brand,
-    category: product.category,
-    description: product.description,
-    websiteUrl: product.websiteUrl,
-    status: product.status,
-    starRating: product.starRating || 0,
-    hsCode: product.hsCode,
-    cartonDimension: product.cartonDimension,
-    cartonWidth: product.cartonWidth,
-    cartonLength: product.cartonLength,
-    cartonHeight: product.cartonHeight,
-    cbm: product.cbm,
-    cartonQuantity: product.cartonQuantity,
-    remark: product.remark,
-    variants: product.variants.map((v) => ({
-      id: v.id,
-      productId: v.productId,
-      sku: v.sku,
-      fullName: v.fullName,
-      thaiName: v.thaiName,
-      formula: v.formula,
-      imageUrl: v.imageUrl,
-      price: v.price,
-      productCost: v.productCost,
-      priceCondition: v.priceCondition,
-      netWeight: v.netWeight,
-      cartonGrossWeight: v.cartonGrossWeight,
-      status: v.status || ProductStatus.AVAILABLE,
-      isDefault: v.isDefault,
-      order: v.order ?? 0,
-      customPrices: (v.customPrices || []).map((cp) => ({
-        id: cp.id,
-        companyId: cp.companyId,
-        companyName: cp.company?.displayName || cp.company?.name || "Unknown",
-        price: cp.price,
+  return rawProducts.map((product) => {
+    const defaultVariant =
+      product.variants.find((v) => v.isDefault) || product.variants[0];
+    const anyGwVariant = product.variants.find(
+      (v) => v.cartonGrossWeight && v.cartonGrossWeight > 0
+    );
+    const resolvedGw =
+      (defaultVariant?.cartonGrossWeight && defaultVariant.cartonGrossWeight > 0
+        ? defaultVariant.cartonGrossWeight
+        : anyGwVariant?.cartonGrossWeight) ??
+      extractFallbackGrossWeight(product.websiteUrl);
+
+    return {
+      id: product.id,
+      name: product.name,
+      brand: product.brand,
+      category: product.category,
+      description: product.description,
+      websiteUrl: product.websiteUrl,
+      status: product.status,
+      starRating: product.starRating || 0,
+      hsCode: product.hsCode,
+      cartonDimension: product.cartonDimension,
+      cartonWidth: product.cartonWidth,
+      cartonLength: product.cartonLength,
+      cartonHeight: product.cartonHeight,
+      cbm: product.cbm,
+      cartonQuantity: product.cartonQuantity,
+      cartonGrossWeight: resolvedGw,
+      remark: product.remark,
+      variants: product.variants.map((v) => ({
+        id: v.id,
+        productId: v.productId,
+        sku: v.sku,
+        fullName: v.fullName,
+        thaiName: v.thaiName,
+        formula: v.formula,
+        imageUrl: v.imageUrl,
+        price: v.price,
+        productCost: v.productCost,
+        priceCondition: v.priceCondition,
+        netWeight: v.netWeight,
+        cartonGrossWeight: v.cartonGrossWeight,
+        status: v.status || ProductStatus.AVAILABLE,
+        isDefault: v.isDefault,
+        order: v.order ?? 0,
+        customPrices: (v.customPrices || []).map((cp) => ({
+          id: cp.id,
+          companyId: cp.companyId,
+          companyName: cp.company?.displayName || cp.company?.name || "Unknown",
+          price: cp.price,
+        })),
       })),
-    })),
-    createdAt: product.createdAt.toISOString(),
-    updatedAt: product.updatedAt.toISOString(),
-  }));
+      createdAt: product.createdAt.toISOString(),
+      updatedAt: product.updatedAt.toISOString(),
+    };
+  });
 }
 

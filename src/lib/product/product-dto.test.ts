@@ -9,6 +9,13 @@ import {
   parsePriceConditions,
   serializePriceConditions,
   calculateTierPrice,
+  extractFallbackGrossWeight,
+  encodeFallbackGrossWeight,
+  resolveUnifiedPrice,
+  resolveProductAverageBaseCost,
+  detectCustomerPriceCurrency,
+  detectAccountCurrency,
+  convertCustomerPriceToThb,
 } from './product-dto';
 
 const sampleProduct: ProductListItemDTO = {
@@ -230,6 +237,64 @@ describe('Product DTO & Filter Matching', () => {
     assert.equal(tiers[1].minQuantity, 61);
     assert.equal(tiers[1].maxQuantity, null);
     assert.equal(tiers[1].discountPercent, 5);
+  });
+
+  it('encodes and extracts fallback carton gross weight cleanly', () => {
+    const encoded = encodeFallbackGrossWeight(null, 12.5);
+    assert.equal(encoded, '#gw=12.5');
+    assert.equal(extractFallbackGrossWeight(encoded), 12.5);
+
+    const withUrl = encodeFallbackGrossWeight('https://example.com/item', 14.25);
+    assert.equal(withUrl, 'https://example.com/item#gw=14.25');
+    assert.equal(extractFallbackGrossWeight(withUrl), 14.25);
+
+    const cleared = encodeFallbackGrossWeight(withUrl, null);
+    assert.equal(cleared, 'https://example.com/item');
+    assert.equal(extractFallbackGrossWeight(cleared), null);
+  });
+
+  it('resolves unified product price using Mode and breaks ties with highest price', () => {
+    // Mode wins when one price appears more frequently
+    assert.equal(resolveUnifiedPrice([70, 70, 72, 7]), 70);
+    // Tie-breaker picks highest price (guards against low typos like 7.00 vs 72.00)
+    assert.equal(resolveUnifiedPrice([72, 70, 69.98, 7]), 72);
+    // Ignores 0 / negative / null / undefined
+    assert.equal(resolveUnifiedPrice([0, null, undefined, -5, 45.5]), 45.5);
+    assert.equal(resolveUnifiedPrice([0, null, undefined]), 0);
+  });
+
+  it('calculates product average base cost across positive variant costs', () => {
+    const res = resolveProductAverageBaseCost([20, 25, 30, 0, null]);
+    assert.equal(res.avgCost, 25);
+    assert.equal(res.minCost, 20);
+    assert.equal(res.maxCost, 30);
+    assert.equal(res.count, 3);
+
+    const empty = resolveProductAverageBaseCost([0, null, undefined]);
+    assert.equal(empty.avgCost, 0);
+    assert.equal(empty.count, 0);
+  });
+
+  it('auto-detects USD vs THB customer pricing and converts USD to THB accurately', () => {
+    // Sabaya example: $3.00 USD vs ฿70.31 base cost (฿104.50 export price)
+    assert.equal(detectCustomerPriceCurrency(3.0, 70.31, 104.5), 'USD');
+    // Sabaya example: $7.76 USD vs ฿187.92 base cost (฿330.00 export price)
+    assert.equal(detectCustomerPriceCurrency(7.76, 187.92, 330.0), 'USD');
+    // THB customer example: ฿72.00 THB vs ฿58.00 base cost (฿95.00 export price)
+    assert.equal(detectCustomerPriceCurrency(72.0, 58.0, 95.0), 'THB');
+
+    // Account-level majority vote
+    const sabayaCurrency = detectAccountCurrency([
+      { price: 3.0, baseCostThb: 70.31, exportPriceThb: 104.5 },
+      { price: 7.76, baseCostThb: 187.92, exportPriceThb: 330.0 },
+      { price: 2.17, baseCostThb: 31.5, exportPriceThb: 71.0 },
+    ]);
+    assert.equal(sabayaCurrency, 'USD');
+
+    // Convert $3.00 USD at 34.00 THB/USD -> ฿102.00 THB
+    assert.equal(convertCustomerPriceToThb(3.0, 'USD', 34.0), 102.0);
+    // Keep THB price unchanged
+    assert.equal(convertCustomerPriceToThb(72.0, 'THB', 34.0), 72.0);
   });
 });
 
