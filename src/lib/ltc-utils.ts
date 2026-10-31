@@ -128,17 +128,18 @@ export interface DailyLtcRecord {
 export interface MonthlyLtcSummary {
   totalWorkingDays: number;
   cleanLtcDaysCount: number;
-  teamLtcXp: number; // Max 20 XP
+  teamLtcXp: number; // Legacy Max 5 XP (+0.25 XP/day up to 20 clean days)
+  teamZeroBonusXp: number; // v2.2 Max 2 XP (+0.1 XP/day when 0 LTC at 17:00)
   currentLtcCount: number;
   dailyRecords: DailyLtcRecord[];
 }
 
 /**
  * Calculates daily LTC metrics across the month.
- * - Team metric: 1 XP per day when all LTC accounts are cleared (0 LTC at 17:00 end of workday).
+ * - Team metric: +0.25 XP per day when all LTC accounts are cleared (0 LTC at 17:00 end of workday).
  * - Cutoff: 17:00 Bangkok time (end of working day 08:00–17:00).
  * - Sundays and Company Holidays are auto-paused (like Clean Bonus).
- * - Max cap: 20 XP.
+ * - Max cap: 5 XP (20 clean workdays).
  */
 export function calculateDailyLtcForMonth(params: {
   companies: DailyLtcCompanyDTO[];
@@ -283,7 +284,8 @@ export function calculateDailyLtcForMonth(params: {
     });
   }
 
-  const teamLtcXp = Math.min(20, cleanLtcDaysCount);
+  const teamLtcXp = Math.min(5, Math.round(cleanLtcDaysCount * 0.25 * 100) / 100);
+  const teamZeroBonusXp = Math.min(2, Math.round(cleanLtcDaysCount * 0.1 * 100) / 100);
   const latestWorkRecord = [...dailyRecords].reverse().find((r) => !r.isOffDay);
   const currentLtcCount = latestWorkRecord ? latestWorkRecord.ltcCount : 0;
 
@@ -291,6 +293,7 @@ export function calculateDailyLtcForMonth(params: {
     totalWorkingDays,
     cleanLtcDaysCount,
     teamLtcXp,
+    teamZeroBonusXp,
     currentLtcCount,
     dailyRecords,
   };

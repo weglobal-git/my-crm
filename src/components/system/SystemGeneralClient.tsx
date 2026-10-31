@@ -12,7 +12,7 @@ import {
   updateUserDetails
 } from "@/lib/actions/user";
 import { SettingsLayout, SettingsSidebar, SettingsSidebarItem, SettingsContent, SettingsGroup, SettingsRow } from '@/components/layout/SettingsLayout';
-import { HardDrive, Cloud, Link2, Archive, Activity, CheckCircle2, Edit2, Shield, User as UserIcon, Briefcase, Plus, Check, X, Trash2, BrainCircuit } from 'lucide-react';
+import { HardDrive, Cloud, Link2, Archive, Activity, CheckCircle2, Edit2, Shield, User as UserIcon, Briefcase, Plus, Check, X, Trash2, BrainCircuit, Loader2 } from 'lucide-react';
 import { useDialog } from '@/providers/DialogProvider';
 import Image from "next/image";
 import { getSystemAiStats, updateAiBudgetLimit } from "@/lib/actions/ai-admin";
@@ -40,6 +40,7 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [connectedGoogleEmail, setConnectedGoogleEmail] = useState<string | null>(null);
   const [isLoadingGDrive, setIsLoadingGDrive] = useState(true);
+  const [isRunningArchive, setIsRunningArchive] = useState(false);
 
   // AI Stats State
   const [aiStats, setAiStats] = useState<{ monthlyCost: number; monthlyCostThb?: number; totalTokens?: number; totalCalls?: number; budgetLimit: number } | null>(null);
@@ -293,6 +294,57 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
       }
     } catch {
       toast({ title: 'Error', description: 'An error occurred.', type: 'error' });
+    }
+  };
+
+  const handleRunArchiveNow = async () => {
+    if (!isAdmin || isRunningArchive) return;
+    setIsRunningArchive(true);
+    try {
+      const res = await fetch('/api/cron/archive', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        toast({
+          title: 'Archive Completed',
+          description: data.message || `Archived ${data.archivedCount ?? 0} file(s) to Google Drive.`,
+          type: 'success',
+        });
+        // Refresh storage metrics if on dashboard
+        const fmt = (bytes: number) => {
+          if (bytes === 0) return '0 B';
+          const k = 1024;
+          const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        };
+        fetch('/api/system/storage')
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.success) {
+              setCloudinaryStorage({ percent: d.storage.used_percent, usageStr: fmt(d.storage.usage), limitStr: fmt(d.storage.limit) });
+              setCloudinaryBandwidth({ percent: d.bandwidth.used_percent, usageStr: fmt(d.bandwidth.usage), limitStr: fmt(d.bandwidth.limit) });
+            }
+          })
+          .catch(() => {});
+        fetch('/api/system/google/status')
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.success && d.quota) {
+              setGdriveUsage({ percent: d.quota.used_percent, usageStr: fmt(d.quota.usage), limitStr: fmt(d.quota.limit) });
+            }
+          })
+          .catch(() => {});
+      } else {
+        toast({
+          title: 'Archive Failed',
+          description: data.error || 'Could not run Cold Storage archive.',
+          type: 'error',
+        });
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Network error while running archive.', type: 'error' });
+    } finally {
+      setIsRunningArchive(false);
     }
   };
 
@@ -574,8 +626,35 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                       <div className="h-full w-1/3 bg-[#3A3B3C] animate-pulse rounded-full" />
                     </div>
                   ) : isGoogleConnected ? (
-                    <div className="w-full h-2 bg-[#1C1C1D] rounded-full overflow-hidden border border-[#4E4F50]/60">
-                      <div className="h-full bg-yellow-500 rounded-full transition-all duration-500" style={{ width: `${Math.min(gdriveUsage.percent, 100)}%` }} />
+                    <div className="flex flex-col gap-2.5">
+                      <div className="w-full h-2 bg-[#1C1C1D] rounded-full overflow-hidden border border-[#4E4F50]/60">
+                        <div className="h-full bg-yellow-500 rounded-full transition-all duration-500" style={{ width: `${Math.min(gdriveUsage.percent, 100)}%` }} />
+                      </div>
+                      {isAdmin && (
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="text-xs text-slate-400">
+                            Moves closed (&gt;30d) &amp; old LTC (&gt;120d) files to <code className="text-slate-300">CRM_Archive</code>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleRunArchiveNow}
+                            disabled={isRunningArchive}
+                            className="px-3 py-1.5 rounded-lg bg-[#3A3B3C] border border-[#4E4F50] hover:border-[#C7F33C] text-xs font-semibold text-slate-200 hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          >
+                            {isRunningArchive ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#C7F33C]" />
+                                <span>Archiving...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Archive className="w-3.5 h-3.5 text-[#C7F33C]" />
+                                <span>Archive Eligible Files Now</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="text-xs text-amber-500 bg-amber-500/10 p-3 rounded-lg border border-amber-500/20">
@@ -719,10 +798,32 @@ export default function SystemGeneralClient({ initialUsers = [], initialDepartme
                     </label>
                   </div>
 
-                  <div className="bg-[#1C1C1D] border border-[#3A3B3C] rounded-lg p-4 mt-2">
-                    <p className="text-xs text-slate-300">
-                      <strong>Policy:</strong> Move images and files to Google Drive, then permanently delete them from Cloudinary if the Opportunity is marked as WON or LOST and has been inactive for more than <strong className="text-white">30 days</strong>.
+                  <div className="bg-[#1C1C1D] border border-[#3A3B3C] rounded-lg p-4 mt-2 flex flex-col gap-3">
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      <strong>Policy:</strong> Uploads compress raster images to lightweight <strong className="text-white">WebP</strong> on the browser before upload. Files on <strong className="text-white">WON / LOST / COMPLETED</strong> cards closed over <strong className="text-white">30 days</strong> ago (plus <strong className="text-white">LTC</strong> attachments older than <strong className="text-white">120 days</strong>) are moved into Google Drive (<code className="text-slate-200">CRM_Archive</code>), purged from Cloudinary, and streamed seamlessly inside CRM chat &amp; Shared Media.
                     </p>
+                    {isAdmin && (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={handleRunArchiveNow}
+                          disabled={isRunningArchive}
+                          className="px-3.5 py-2 rounded-lg bg-[#C7F33C] text-black hover:bg-[#b5dc35] text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          {isRunningArchive ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Archiving Batch...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Archive className="w-3.5 h-3.5" />
+                              <span>Run Archive Batch Now</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </SettingsRow>

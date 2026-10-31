@@ -112,7 +112,7 @@ test('leaderboard-daily-sampling: correctly samples daily health and aggregates 
   assert.equal(cleanSummary.totalRedHours, 0);
   assert.equal(cleanSummary.avgMonthlyRedRate, 0);
   assert.equal(cleanSummary.avgMonthlyHealthRate, 100);
-  assert.equal(cleanSummary.totalCardHealthXp, 50); // 0% red rate = 50 XP
+  assert.equal(cleanSummary.totalCardHealthXp, 30); // 0% red rate = 30 XP (v2.2 continuous curve)
   assert.equal(cleanSummary.cleanDaysCount, cleanSummary.totalWorkingDays);
   assert.equal(cleanSummary.redDaysCount, 0);
 
@@ -502,6 +502,192 @@ test('leaderboard-daily-sampling: historical due date is reconstructed from logs
   assert.equal(oct8Record.redCardsCount, 0, 'Oct 8 is clean because updated at 10:21');
   assert.equal(oct8Record.cleanCardsCount, 1);
 });
+
+test('leaderboard-daily-sampling Regression: closing all open cards after clean working days retains 50 XP Card Health', () => {
+  const users = [{ id: 'user-closer', name: 'Top Closer' }];
+  // Rep held 1 active deal cleanly on Oct 1 and Oct 2 (past 23:00 cutoff), then closed (WON) it on Oct 3 morning.
+  // On Oct 5 (Monday), activeCardsCount is 0, while totalCardHours across Oct 1-2 is 18h with 0% Red Rate!
+  const closedWonDeal: KanbanCardDTO = {
+    id: 'deal-won',
+    topic: 'Closed Won Deal',
+    type: 'SALES_DEAL',
+    status: 'WON',
+    value: 500000,
+    currency: 'THB',
+    dueDate: null,
+    goodsReadyDate: null,
+    goodsLoadingDate: null,
+    pipelineStageId: 'stage-won',
+    ownerId: 'user-closer',
+    closedAt: createBangkokDate(2026, 9, 3, 10, 0, 0),
+    oemProgress: null,
+    lossReason: null,
+    reserveId: null,
+    invoiceId: null,
+    isPinned: false,
+    hotNote: null,
+    createdAt: createBangkokDate(2026, 8, 28, 10, 0, 0),
+    updatedAt: createBangkokDate(2026, 9, 2, 18, 0, 0),
+    company: { id: 'comp-won', name: 'Winner Co', displayName: 'Winner Co' },
+    owner: { id: 'user-closer', name: 'Top Closer', email: null, image: null, departments: [] },
+    teamMembers: [],
+    activityLogs: [
+      {
+        id: 'log-won-update',
+        content: 'Confirmed PO and signed contract',
+        type: 'COMMENT',
+        createdAt: createBangkokDate(2026, 9, 1, 10, 0, 0),
+        user: { name: 'Top Closer', image: null },
+      },
+    ],
+  };
+
+  const sampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals: [closedWonDeal],
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(['2026-10-03']),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 5, 15, 0, 0),
+  });
+
+  const summary = sampling.get('user-closer')!;
+  assert.ok(summary);
+  assert.equal(summary.currentActiveCards, 0, 'Currently has 0 open cards on Oct 5');
+  assert.equal(summary.totalCardHours, 18, 'Worked 2 clean days (18 card-hours) earlier in the month');
+  assert.equal(summary.avgMonthlyRedRate, 0);
+  assert.equal(summary.totalCardHealthXp, 30, 'Must retain 30 XP instead of dropping to 0 XP when closing last deal');
+  assert.equal(summary.kpiStatus, 'Perfect');
+});
+
+test('leaderboard-daily-sampling v2: [TIER:0H] notes do not reset timer and 2-Stage Due Date stays clean until 17:00', () => {
+  const users = [{ id: 'user-rep', name: 'Rep' }];
+
+  const dealDueToday: KanbanCardDTO = {
+    id: 'deal-due-today',
+    topic: '2-Stage Due Date Deal',
+    type: 'SALES_DEAL',
+    status: 'OPEN',
+    value: 80000,
+    currency: 'THB',
+    dueDate: createBangkokDate(2026, 9, 5), // Due Oct 5, 2026
+    goodsReadyDate: null,
+    goodsLoadingDate: null,
+    pipelineStageId: 'stage-1',
+    ownerId: 'user-rep',
+    closedAt: null,
+    oemProgress: null,
+    lossReason: null,
+    reserveId: null,
+    invoiceId: null,
+    isPinned: false,
+    hotNote: null,
+    createdAt: createBangkokDate(2026, 8, 25),
+    updatedAt: createBangkokDate(2026, 9, 5, 11, 0),
+    company: { id: 'comp-due', name: 'Due Co', displayName: 'Due Co' },
+    owner: { id: 'user-rep', name: 'Rep', email: null, image: null, departments: [] },
+    teamMembers: [],
+    activityLogs: [
+      // Shallow [TIER:0H] note posted on Oct 5 at 11:00 must NOT clear Due Date!
+      {
+        id: 'log-0h',
+        content: '[TIER:0H] ok',
+        type: 'COMMENT',
+        createdAt: createBangkokDate(2026, 9, 5, 11, 0),
+        user: { name: 'Rep', image: null },
+      },
+      {
+        id: 'log-due',
+        content: '[DUE DATE: 05 Oct 2026]\nReason: Customer promised PO on Monday',
+        type: 'COMMENT',
+        createdAt: createBangkokDate(2026, 9, 1, 10, 0),
+        user: { name: 'Rep', image: null },
+      },
+    ],
+  };
+
+  // 1. Sampled at 14:00 on Oct 5 (Due Today Amber window before 17:00) -> Clean (0 Red Cards)!
+  const afternoonSampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals: [dealDueToday],
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(['2026-10-03']),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 5, 14, 0, 0),
+  });
+  const afternoonRec = afternoonSampling
+    .get('user-rep')!
+    .dailyRecords.find((r) => r.dateKey === '2026-10-05')!;
+  assert.equal(afternoonRec.redCardsCount, 0, 'Must be Amber Due Today (0 Red) before 17:00');
+
+  // 2. Sampled at 23:00 on Oct 5 (past 17:00 without a real >= +9h/+27h update) -> Red (9h missed workday)!
+  const nightSampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals: [dealDueToday],
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(['2026-10-03']),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 5, 23, 0, 0),
+  });
+  const nightRec = nightSampling
+    .get('user-rep')!
+    .dailyRecords.find((r) => r.dateKey === '2026-10-05')!;
+  assert.equal(nightRec.redCardsCount, 1, '[TIER:0H] note must NOT clear Due Date; turns Red past 17:00');
+  assert.equal(nightRec.redHours, 9);
+});
+
+test('leaderboard-daily-sampling v2.2: Heavy-Load Shield records graceDaysCount when holding >= 15 active cards with only 1 red card', () => {
+  const users = [{ id: 'user-heavy', name: 'YUI' }];
+  const deals: KanbanCardDTO[] = Array.from({ length: 16 }, (_, idx) => ({
+    id: `deal-heavy-${idx + 1}`,
+    topic: `Export Deal #${idx + 1}`,
+    type: 'SALES_DEAL',
+    status: 'OPEN',
+    value: 100_000,
+    currency: 'THB',
+    // Card #1 expired yesterday -> 1 Red Card; Cards #2-#16 have future due dates -> 15 Clean Cards
+    dueDate: idx === 0 ? createBangkokDate(2026, 8, 30) : createBangkokDate(2026, 9, 20),
+    goodsReadyDate: null,
+    goodsLoadingDate: null,
+    pipelineStageId: 'stage-1',
+    ownerId: 'user-heavy',
+    closedAt: null,
+    oemProgress: null,
+    lossReason: null,
+    reserveId: null,
+    invoiceId: null,
+    isPinned: false,
+    hotNote: null,
+    createdAt: createBangkokDate(2026, 8, 20),
+    updatedAt: createBangkokDate(2026, 8, 30),
+    company: { id: `comp-${idx}`, name: `Co ${idx}`, displayName: `Co ${idx}` },
+    owner: { id: 'user-heavy', name: 'YUI', email: null, image: null, departments: [] },
+    teamMembers: [],
+    activityLogs: [],
+  }));
+
+  const sampling = calculateDailySamplingForMonth({
+    departmentUsers: users,
+    deals,
+    month: 10,
+    year: 2026,
+    companyHolidays: new Set(),
+    leavesByUser: new Map(),
+    asOfDate: createBangkokDate(2026, 9, 1, 23, 0, 0),
+  });
+
+  const heavySummary = sampling.get('user-heavy')!;
+  assert.equal(heavySummary.currentActiveCards, 16);
+  assert.equal(heavySummary.currentRedCards, 1);
+  assert.equal(heavySummary.cleanDaysCount, 0);
+  assert.equal(heavySummary.graceDaysCount, 1);
+  assert.equal(heavySummary.dailyRecords[0].isGraceShieldDay, true);
+});
+
+
 
 
 

@@ -8,7 +8,7 @@ import { useState } from "react";
 interface DashboardPodiumProps {
   overallItems: LeaderboardItem[];
   categories: LeaderboardCategoryData[];
-  onSelectUser?: (item: LeaderboardItem) => void;
+  onSelectUser?: (item: LeaderboardItem, metricId?: string) => void;
 }
 
 function getInitials(name: string): string {
@@ -70,14 +70,14 @@ export function DashboardPodium({ overallItems, categories, onSelectUser }: Dash
       <div className="flex items-end justify-center w-full max-w-lg mx-auto pt-2 pb-2">
         {/* === RANK #2 (LEFT - TUCKED BEHIND RANK 1) === */}
         <div 
-          onClick={() => rank2 && onSelectUser?.(rank2)}
+          onClick={() => rank2 && onSelectUser?.(rank2, selectedMetricId)}
           className={`flex flex-col items-center z-10 w-28 sm:w-36 shrink-0 ${rank2 ? 'cursor-pointer group' : ''}`}
           title={rank2?.breakdown ? "View score breakdown" : undefined}
         >
           {rank2 ? (
             <>
               <div className="relative mb-2 transition-transform group-hover:scale-105">
-                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-[#38BDF8] bg-[#1E293B] overflow-hidden flex items-center justify-center shadow-lg">
+                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-[#38BDF8] bg-[#1E293B] overflow-hidden flex items-center justify-center">
                   {rank2.image ? (
                     <img
                       src={rank2.image}
@@ -91,7 +91,7 @@ export function DashboardPodium({ overallItems, categories, onSelectUser }: Dash
                   )}
                 </div>
                 {/* Rank Badge #2 */}
-                <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#E2E8F0] text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center ring-4 ring-[#3A3B3C] shadow-md">
+                <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#E2E8F0] text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center ring-4 ring-[#3A3B3C]">
                   2
                 </span>
               </div>
@@ -118,7 +118,7 @@ export function DashboardPodium({ overallItems, categories, onSelectUser }: Dash
 
         {/* === RANK #1 (CENTER - ELEVATED & OVERLAPPING) === */}
         <div 
-          onClick={() => rank1 && onSelectUser?.(rank1)}
+          onClick={() => rank1 && onSelectUser?.(rank1, selectedMetricId)}
           className={`flex flex-col items-center z-20 w-36 sm:w-44 shrink-0 -mx-5 sm:-mx-8 -translate-y-5 sm:-translate-y-7 ${rank1 ? 'cursor-pointer group' : ''}`}
           title={rank1?.breakdown ? "View score breakdown" : undefined}
         >
@@ -130,7 +130,7 @@ export function DashboardPodium({ overallItems, categories, onSelectUser }: Dash
               </div>
 
               <div className="relative mb-2 transition-transform group-hover:scale-105">
-                <div className="w-32 h-32 sm:w-38 sm:h-38 rounded-full border-4 border-[#FACC15] bg-[#292524] overflow-hidden flex items-center justify-center shadow-2xl">
+                <div className="w-32 h-32 sm:w-38 sm:h-38 rounded-full border-4 border-[#FACC15] bg-[#292524] overflow-hidden flex items-center justify-center">
                   {rank1.image ? (
                     <img
                       src={rank1.image}
@@ -144,7 +144,7 @@ export function DashboardPodium({ overallItems, categories, onSelectUser }: Dash
                   )}
                 </div>
                 {/* Rank Badge #1 */}
-                <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#FACC15] text-slate-950 font-black text-sm sm:text-base flex items-center justify-center ring-4 ring-[#3A3B3C] shadow-lg">
+                <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#FACC15] text-slate-950 font-black text-sm sm:text-base flex items-center justify-center ring-4 ring-[#3A3B3C]">
                   1
                 </span>
               </div>
@@ -171,14 +171,14 @@ export function DashboardPodium({ overallItems, categories, onSelectUser }: Dash
 
         {/* === RANK #3 (RIGHT - TUCKED BEHIND RANK 1) === */}
         <div 
-          onClick={() => rank3 && onSelectUser?.(rank3)}
+          onClick={() => rank3 && onSelectUser?.(rank3, selectedMetricId)}
           className={`flex flex-col items-center z-10 w-28 sm:w-36 shrink-0 ${rank3 ? 'cursor-pointer group' : ''}`}
           title={rank3?.breakdown ? "View score breakdown" : undefined}
         >
           {rank3 ? (
             <>
               <div className="relative mb-2 transition-transform group-hover:scale-105">
-                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-[#FB923C] bg-[#2A1E17] overflow-hidden flex items-center justify-center shadow-lg">
+                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-[#FB923C] bg-[#2A1E17] overflow-hidden flex items-center justify-center">
                   {rank3.image ? (
                     <img
                       src={rank3.image}
@@ -192,7 +192,7 @@ export function DashboardPodium({ overallItems, categories, onSelectUser }: Dash
                   )}
                 </div>
                 {/* Rank Badge #3 */}
-                <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#EA580C] text-white font-black text-xs sm:text-sm flex items-center justify-center ring-4 ring-[#3A3B3C] shadow-md">
+                <span className="absolute -bottom-2.5 left-1/2 -translate-x-1/2 w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#EA580C] text-white font-black text-xs sm:text-sm flex items-center justify-center ring-4 ring-[#3A3B3C]">
                   3
                 </span>
               </div>

@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 
 export interface ActivityDraft {
   text: string;
+  updateIntent?: 'FOLLOWUP' | 'PROGRESS';
   pendingDueDate?: Date | 'REMOVE' | null;
   pendingAttachments?: File[];
   isManagerCallMode?: boolean;
@@ -112,10 +113,34 @@ export function useDealDraft(dealId: string, tabId: string = 'activity') {
     [dealId, tabId]
   );
 
+  /**
+   * Synchronously persists transient draft fields (e.g. per-keystroke text) to in-memory storage
+   * WITHOUT triggering a second React state re-render on the active tab.
+   */
+  const syncDraftSilent = useCallback(
+    (patch: Partial<ActivityDraft>) => {
+      const existing = getDealDraft<ActivityDraft>(dealId, tabId) || {
+        text: '',
+        updateIntent: 'FOLLOWUP',
+        pendingDueDate: null,
+        pendingAttachments: [],
+        isManagerCallMode: false,
+        replies: {},
+      };
+      setDealDraft(dealId, tabId, {
+        ...existing,
+        ...patch,
+        lastUpdated: Date.now(),
+      });
+    },
+    [dealId, tabId]
+  );
+
   const clearCurrentDraft = useCallback(() => {
     clearDealDraft(dealId, tabId);
     setDraftState({
       text: '',
+      updateIntent: 'FOLLOWUP',
       pendingDueDate: null,
       pendingAttachments: [],
       isManagerCallMode: false,
@@ -126,6 +151,7 @@ export function useDealDraft(dealId: string, tabId: string = 'activity') {
   return {
     draft,
     updateDraft,
+    syncDraftSilent,
     clearCurrentDraft,
   };
 }

@@ -26,10 +26,17 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     // Delete from Cloudinary if it exists there
     if (attachment.cloudinaryPublicId) {
       try {
-        const resourceType = attachment.fileType.startsWith("image/") ? "image" : "raw";
-        await cloudinary.uploader.destroy(attachment.cloudinaryPublicId, {
-          resource_type: resourceType
+        const primaryType = attachment.cloudinaryUrl?.includes("/raw/upload/") ? "raw" : "image";
+        const destroyRes = await cloudinary.uploader.destroy(attachment.cloudinaryPublicId, {
+          resource_type: primaryType,
+          invalidate: true,
         });
+        if (destroyRes?.result === "not found" && primaryType === "image") {
+          await cloudinary.uploader.destroy(attachment.cloudinaryPublicId, {
+            resource_type: "raw",
+            invalidate: true,
+          });
+        }
       } catch (err) {
         console.error("Cloudinary delete error:", err);
       }

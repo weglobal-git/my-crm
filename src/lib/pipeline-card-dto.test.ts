@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import {
   pipelineCardSelect,
   checkIsRedCard,
+  checkIsDueToday,
+  evaluateCardTimingState,
   getRedThreshold,
   sortDeals,
   type KanbanCardDTO,
 } from './pipeline-card-dto';
+import { createBangkokDate } from './business-days';
 
 test('pipelineCardSelect: enforces minimal payload configuration', () => {
   // 1. Essential card fields must be selected
@@ -166,4 +169,118 @@ test('KanbanCardDTO: sortDeals correctly prioritizes Urgent, Red, and Normal DTO
   assert.equal(sorted[1].id, 'deal-urgent', 'Urgent/Manager call deal must be sorted second');
   assert.equal(sorted[2].id, 'deal-red', 'Red card deal must be sorted third');
   assert.equal(sorted[3].id, 'deal-normal', 'Normal card deal must be sorted fourth');
+});
+
+test('2-Stage Due Date: Due Today before 17:00 is Amber (not Red); >= 17:00 becomes Red Card', () => {
+  const dueDay = createBangkokDate(2026, 9, 12, 0, 0, 0); // Mon Oct 12, 2026
+  const at1400 = createBangkokDate(2026, 9, 12, 14, 0, 0);
+  const at1700 = createBangkokDate(2026, 9, 12, 17, 0, 0);
+
+  const deal: KanbanCardDTO = {
+    id: 'deal-due-today',
+    topic: 'Follow-up Proposal',
+    type: 'SALES_DEAL',
+    status: 'OPEN',
+    value: 100000,
+    currency: 'THB',
+    dueDate: dueDay,
+    goodsReadyDate: null,
+    goodsLoadingDate: null,
+    pipelineStageId: 'stage-1',
+    ownerId: 'user-1',
+    closedAt: null,
+    oemProgress: null,
+    lossReason: null,
+    reserveId: null,
+    invoiceId: null,
+    isPinned: false,
+    hotNote: null,
+    createdAt: createBangkokDate(2026, 9, 5, 10, 0, 0),
+    updatedAt: createBangkokDate(2026, 9, 5, 10, 0, 0),
+    company: null,
+    owner: { id: 'user-1', name: 'Alice', email: 'alice@example.com', image: null, departments: [] },
+    teamMembers: [],
+    activityLogs: [],
+  };
+
+  assert.equal(checkIsDueToday(deal, at1400), true);
+  assert.equal(checkIsRedCard(deal, new Set(), new Map(), at1400), false, 'Before 17:00 on Due Date must NOT be Red');
+
+  assert.equal(checkIsDueToday(deal, at1700), false);
+  assert.equal(checkIsRedCard(deal, new Set(), new Map(), at1700), true, 'At 17:00 on Due Date must become Red');
+});
+
+test('Tiered comment windows: [TIER:9H] grants 9h, [TIER:9H:22] preserves 22h ceiling, and [DUE DATE: Removed] gives 9h floor', () => {
+  const mon0800 = createBangkokDate(2026, 9, 12, 8, 0, 0); // Mon Oct 12 08:00
+  const mon1700 = createBangkokDate(2026, 9, 12, 17, 0, 0); // +9h
+  const tue1200 = createBangkokDate(2026, 9, 13, 12, 0, 0); // +13h
+
+  const baseDeal: KanbanCardDTO = {
+    id: 'deal-9h',
+    topic: 'Tiered Window Check',
+    type: 'INTERNAL_TASK',
+    status: 'OPEN',
+    value: 0,
+    currency: 'THB',
+    dueDate: null,
+    goodsReadyDate: null,
+    goodsLoadingDate: null,
+    pipelineStageId: 'stage-1',
+    ownerId: 'user-1',
+    closedAt: null,
+    oemProgress: null,
+    lossReason: null,
+    reserveId: null,
+    invoiceId: null,
+    isPinned: false,
+    hotNote: null,
+    createdAt: createBangkokDate(2026, 9, 1, 9, 0, 0),
+    updatedAt: mon0800,
+    company: null,
+    owner: { id: 'user-1', name: 'Alice', email: 'alice@example.com', image: null, departments: [] },
+    teamMembers: [],
+    activityLogs: [
+      {
+        id: 'log-9h',
+        content: '[TIER:9H]Called supplier to check box dimensions.',
+        type: 'COMMENT',
+        createdAt: mon0800,
+        user: { name: 'Alice', image: null },
+      },
+    ],
+  };
+
+  assert.equal(evaluateCardTimingState(baseDeal, new Set(), new Map(), createBangkokDate(2026, 9, 12, 16, 0, 0)).isRed, false);
+  assert.equal(evaluateCardTimingState(baseDeal, new Set(), new Map(), mon1700).isRed, true, '[TIER:9H] expires after 9 working hours');
+
+  // Preserved ceiling [TIER:9H:22] stays clean past 13h
+  const preservedDeal: KanbanCardDTO = {
+    ...baseDeal,
+    activityLogs: [
+      {
+        id: 'log-9h-22',
+        content: '[TIER:9H:22]Quick follow-up on fresh card.',
+        type: 'COMMENT',
+        createdAt: mon0800,
+        user: { name: 'Alice', image: null },
+      },
+    ],
+  };
+  assert.equal(evaluateCardTimingState(preservedDeal, new Set(), new Map(), tue1200).isRed, false);
+
+  // [DUE DATE: Removed] grants 9h grace floor (prevents instant evasion to 27h while preventing instant unfair Red)
+  const removedDueDeal: KanbanCardDTO = {
+    ...baseDeal,
+    activityLogs: [
+      {
+        id: 'log-removed',
+        content: '[DUE DATE: Removed]',
+        type: 'COMMENT',
+        createdAt: mon0800,
+        user: { name: 'Alice', image: null },
+      },
+    ],
+  };
+  assert.equal(evaluateCardTimingState(removedDueDeal, new Set(), new Map(), createBangkokDate(2026, 9, 12, 16, 30, 0)).isRed, false);
+  assert.equal(evaluateCardTimingState(removedDueDeal, new Set(), new Map(), mon1700).isRed, true);
 });

@@ -1,17 +1,45 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Trophy, X, ChevronDown, ShieldCheck, AlertCircle, SlidersHorizontal } from "lucide-react";
+import {
+  Trophy,
+  X,
+  ChevronDown,
+  ShieldCheck,
+  AlertCircle,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
 import type {
   DepartmentLeaderboardData,
   LeaderboardItem,
 } from "@/lib/dashboard/leaderboard-types";
 import { DashboardCategoryColumns } from "@/components/dashboard/DashboardCategoryColumns";
-import { ScoreBreakdownModal } from "@/components/dashboard/ScoreBreakdownModal";
+import {
+  ScoreBreakdownModal,
+  type DrilldownCategoryId,
+} from "@/components/dashboard/ScoreBreakdownModal";
 import { DailyCardHealthDrawer } from "@/components/dashboard/DailyCardHealthDrawer";
-import { DailyLtcDrawer } from "@/components/dashboard/DailyLtcDrawer";
+import {
+  DailyLtcDrawer,
+  type DisciplineDrawerTab,
+} from "@/components/dashboard/DailyLtcDrawer";
+import { CategoryDetailDrawer } from "@/components/dashboard/CategoryDetailDrawer";
 import { Crown2DIcon } from "@/components/dashboard/Crown2DIcon";
 import { LeaderboardPeriodModal } from "@/components/dashboard/LeaderboardPeriodModal";
+import {
+  LeaderboardAnalyseModal,
+  type AnalyseViewMode,
+} from "@/components/dashboard/LeaderboardAnalyseModal";
+import { canUserInspectAnalyseTarget } from "@/lib/dashboard/leaderboard-score-analysis";
+
+type SubDrawerEntry =
+  | { kind: "breakdown"; item: LeaderboardItem }
+  | { kind: "health"; item: LeaderboardItem }
+  | { kind: "discipline"; item: LeaderboardItem; initialTab: DisciplineDrawerTab }
+  | { kind: "velocity"; item: LeaderboardItem }
+  | { kind: "outcome"; item: LeaderboardItem }
+  | { kind: "analyse"; mode: AnalyseViewMode; userId: string | null };
 
 export interface LeaderboardDrawerProps {
   isOpen: boolean;
@@ -72,25 +100,41 @@ export function LeaderboardDrawer({
     data?.categories?.[0] ||
     null;
 
-  // Sub-modal states
-  const [breakdownItem, setBreakdownItem] = useState<LeaderboardItem | null>(null);
-  const [healthDrawerItem, setHealthDrawerItem] = useState<LeaderboardItem | null>(null);
-  const [ltcDrawerItem, setLtcDrawerItem] = useState<LeaderboardItem | null>(null);
+  // Navigation stack for newly opened sub-windows ("Back" pops to previous view)
+  const [subDrawerStack, setSubDrawerStack] = useState<SubDrawerEntry[]>([]);
+  const activeSubDrawer =
+    subDrawerStack.length > 0 ? subDrawerStack[subDrawerStack.length - 1] : null;
+  const hasActiveSubDrawer = activeSubDrawer !== null;
 
-  // Close on Escape or click outside
+  const pushSubDrawer = (entry: SubDrawerEntry) => {
+    setSubDrawerStack((prev) => [...prev, entry]);
+  };
+
+  const popSubDrawer = () => {
+    setSubDrawerStack((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+  };
+
+  useEffect(() => {
+    if (!isOpen) {
+      setSubDrawerStack([]);
+    }
+  }, [isOpen]);
+
+  // Close on Escape or click outside (only when no sub-drawer is open)
   useEffect(() => {
     if (!isOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
-      // Don't close if a sub-modal or sub-drawer is open
-      if (breakdownItem || healthDrawerItem || ltcDrawerItem || isPeriodModalOpen) return;
+      if (hasActiveSubDrawer || isPeriodModalOpen) {
+        return;
+      }
       if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !breakdownItem && !healthDrawerItem && !ltcDrawerItem && !isPeriodModalOpen) {
+      if (e.key === "Escape" && !hasActiveSubDrawer && !isPeriodModalOpen) {
         onClose();
       }
     };
@@ -101,7 +145,7 @@ export function LeaderboardDrawer({
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, breakdownItem, healthDrawerItem, ltcDrawerItem, isPeriodModalOpen]);
+  }, [isOpen, onClose, hasActiveSubDrawer, isPeriodModalOpen]);
 
   // Close department dropdown on outside click
   useEffect(() => {
@@ -122,6 +166,55 @@ export function LeaderboardDrawer({
 
   const availableDepts = data?.availableDepartments || [];
   const currentDeptName = data?.departmentName || "Department";
+  const overallItems = data?.overallXpItems || [];
+  const canAnalyseAll = Boolean(data?.canAnalyseDepartment);
+  const selfItem = overallItems.find((i) => i.isCurrentUser) || null;
+  const canShowTopAnalyseButton = canAnalyseAll
+    ? overallItems.length > 0
+    : Boolean(selfItem);
+
+  const resolveFullItem = (target: LeaderboardItem): LeaderboardItem => {
+    const overallMatch = overallItems.find((i) => i.userId === target.userId);
+    const ltcCat = data?.categories?.find(
+      (c) => c.id === "clean_ltc" || c.id === "ltc"
+    );
+    const fallbackLtcSummary =
+      ltcCat?.items?.find((i) => i.dailyLtcSummary)?.dailyLtcSummary;
+
+    return {
+      ...overallMatch,
+      ...target,
+      breakdown: target.breakdown ?? overallMatch?.breakdown,
+      dailyHealthSummary:
+        target.dailyHealthSummary ?? overallMatch?.dailyHealthSummary,
+      dailyLtcSummary:
+        target.dailyLtcSummary ??
+        overallMatch?.dailyLtcSummary ??
+        fallbackLtcSummary,
+      categoryDetails: target.categoryDetails ?? overallMatch?.categoryDetails,
+    };
+  };
+
+  const handleOpenCategoryDetail = (
+    categoryId: DrilldownCategoryId,
+    target: LeaderboardItem,
+    initialDisciplineTab: DisciplineDrawerTab = "discipline"
+  ) => {
+    const enriched = resolveFullItem(target);
+    if (categoryId === "card_health") {
+      pushSubDrawer({ kind: "health", item: enriched });
+    } else if (categoryId === "clean_ltc") {
+      pushSubDrawer({
+        kind: "discipline",
+        item: enriched,
+        initialTab: initialDisciplineTab,
+      });
+    } else if (categoryId === "velocity") {
+      pushSubDrawer({ kind: "velocity", item: enriched });
+    } else {
+      pushSubDrawer({ kind: "outcome", item: enriched });
+    }
+  };
 
   return (
     <>
@@ -133,7 +226,7 @@ export function LeaderboardDrawer({
         onClick={onClose}
       />
 
-      {/* Floating Right Side Drawer */}
+      {/* Floating Right Side Drawer (Flat UI - zero shadows) */}
       <div
         className={`fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[500px] md:max-w-[calc(100vw-32px)] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right ${
           isOpen
@@ -143,7 +236,7 @@ export function LeaderboardDrawer({
       >
         <div
           ref={drawerRef}
-          className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden shadow-2xl"
+          className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#1C1C1D] shrink-0 bg-[#252728] relative">
@@ -174,7 +267,7 @@ export function LeaderboardDrawer({
                       </button>
 
                       {isDeptDropdownOpen && (
-                        <div className="absolute top-full left-0 mt-1.5 w-48 rounded-xl bg-[#252728] border border-[#4E4F50] shadow-xl py-1 z-50">
+                        <div className="absolute top-full left-0 mt-1.5 w-48 rounded-xl bg-[#252728] border border-[#4E4F50] py-1 z-50">
                           {availableDepts.map((d) => (
                             <button
                               key={d.id}
@@ -221,7 +314,11 @@ export function LeaderboardDrawer({
           </div>
 
           {/* Scrollable Body */}
-          <div className={`flex-1 overflow-y-auto hide-scrollbar p-4 space-y-6 transition-opacity duration-200 ${isLoading && data ? 'opacity-60' : 'opacity-100'}`}>
+          <div
+            className={`flex-1 overflow-y-auto hide-scrollbar p-4 space-y-6 transition-opacity duration-200 ${
+              isLoading && data ? "opacity-60" : "opacity-100"
+            }`}
+          >
             {error ? (
               <div className="p-6 text-center space-y-2 rounded-2xl bg-[#1C1C1D] border border-[#3A3B3C]">
                 <AlertCircle className="w-6 h-6 text-rose-400 mx-auto" />
@@ -241,38 +338,79 @@ export function LeaderboardDrawer({
               <>
                 {/* SECTION 1: TOP 3 MVP (Overlapping Circles - Full Width) */}
                 <section className="rounded-2xl w-full flex flex-col items-center">
-                  {/* Period & Filter Button placed at top-right of podium section */}
-                  <div className="w-full flex justify-end px-1 pt-1 pb-1">
+                  {/* Analyse & Period Filter Buttons placed at top-right of podium section */}
+                  <div className="w-full flex items-center justify-end gap-2 px-1 pt-1 pb-1">
+                    {canShowTopAnalyseButton && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          pushSubDrawer(
+                            canAnalyseAll
+                              ? {
+                                  kind: "analyse",
+                                  mode: "team",
+                                  userId:
+                                    selfItem?.userId ??
+                                    overallItems[0]?.userId ??
+                                    null,
+                                }
+                              : {
+                                  kind: "analyse",
+                                  mode: "individual",
+                                  userId: selfItem?.userId ?? null,
+                                }
+                          )
+                        }
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#C7F33C]/15 border border-[#C7F33C]/45 text-[#C7F33C] hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer"
+                        title={
+                          canAnalyseAll
+                            ? "Analyse department team summary & member scores in Thai"
+                            : "Explain your score and formula in Thai"
+                        }
+                      >
+                        <Sparkles className="w-3 h-3" />
+                        <span>Analyse</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => setIsPeriodModalOpen(true)}
                       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${
                         isCustomPeriod
-                          ? "bg-[#C7F33C]/15 border-[#C7F33C] text-[#C7F33C] shadow-sm"
+                          ? "bg-[#C7F33C]/15 border-[#C7F33C] text-[#C7F33C]"
                           : "bg-[#3A3B3C] border-[#4E4F50] text-slate-300 hover:text-white hover:border-slate-400"
                       }`}
                       title="Filter Month & Year: Click to view past performance"
                     >
                       <SlidersHorizontal className="w-3 h-3 text-[#C7F33C]" />
-                      <span>{MONTH_NAMES[activeMonth - 1]} {activeYear}</span>
+                      <span>
+                        {MONTH_NAMES[activeMonth - 1]} {activeYear}
+                      </span>
                       <ChevronDown className="w-3 h-3 text-slate-400" />
                     </button>
                   </div>
 
-                  {/* 3-Circle Overlapping Podium matching Reference Image */}
+                  {/* 3-Circle Overlapping Podium */}
                   <div className="flex items-end justify-center w-full pt-4 pb-2">
                     {/* Rank #2 (Left - tucked behind Rank 1) */}
                     <div
-                      onClick={() => rank2 && setBreakdownItem(rank2)}
+                      onClick={() =>
+                        rank2 &&
+                        pushSubDrawer({
+                          kind: "breakdown",
+                          item: resolveFullItem(rank2),
+                        })
+                      }
                       className={`flex flex-col items-center z-10 w-28 sm:w-32 shrink-0 ${
                         rank2 ? "cursor-pointer group" : "opacity-40"
                       }`}
-                      title={rank2 ? `${rank2.name} - View score breakdown` : undefined}
+                      title={rank2 ? `${rank2.name} - View 4-category score breakdown` : undefined}
                     >
                       {rank2 ? (
                         <>
                           <div className="relative mb-2 transition-transform group-hover:scale-105">
-                            <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border-4 border-[#4E4F50] bg-[#252728] overflow-hidden flex items-center justify-center shadow-lg">
+                            <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border-4 border-[#4E4F50] bg-[#252728] overflow-hidden flex items-center justify-center">
                               {rank2.image ? (
                                 <img
                                   src={rank2.image}
@@ -305,16 +443,22 @@ export function LeaderboardDrawer({
 
                     {/* Rank #1 (Center - Elevated, overlapping, larger with 2D Crown) */}
                     <div
-                      onClick={() => rank1 && setBreakdownItem(rank1)}
+                      onClick={() =>
+                        rank1 &&
+                        pushSubDrawer({
+                          kind: "breakdown",
+                          item: resolveFullItem(rank1),
+                        })
+                      }
                       className={`flex flex-col items-center z-20 w-36 sm:w-40 shrink-0 -mx-7 sm:-mx-9 -translate-y-5 sm:-translate-y-6 ${
                         rank1 ? "cursor-pointer group" : "opacity-40"
                       }`}
-                      title={rank1 ? `${rank1.name} - View score breakdown` : undefined}
+                      title={rank1 ? `${rank1.name} - View 4-category score breakdown` : undefined}
                     >
                       {rank1 ? (
                         <>
-                          <div className=" select-none">
-                            <Crown2DIcon className="w-9 h-9 sm:w-10 sm:h-10 drop-shadow-[0_2px_10px_rgba(245,158,11,0.5)]" />
+                          <div className="select-none">
+                            <Crown2DIcon className="w-9 h-9 sm:w-10 sm:h-10" />
                           </div>
                           <div className="relative mb-2 transition-transform group-hover:scale-105">
                             <div className="w-36 h-36 sm:w-40 sm:h-40 rounded-full border-4 border-[#C7F33C] bg-[#252728] overflow-hidden flex items-center justify-center">
@@ -355,16 +499,22 @@ export function LeaderboardDrawer({
 
                     {/* Rank #3 (Right - tucked behind Rank 1) */}
                     <div
-                      onClick={() => rank3 && setBreakdownItem(rank3)}
+                      onClick={() =>
+                        rank3 &&
+                        pushSubDrawer({
+                          kind: "breakdown",
+                          item: resolveFullItem(rank3),
+                        })
+                      }
                       className={`flex flex-col items-center z-10 w-28 sm:w-32 shrink-0 ${
                         rank3 ? "cursor-pointer group" : "opacity-40"
                       }`}
-                      title={rank3 ? `${rank3.name} - View score breakdown` : undefined}
+                      title={rank3 ? `${rank3.name} - View 4-category score breakdown` : undefined}
                     >
                       {rank3 ? (
                         <>
                           <div className="relative mb-2 transition-transform group-hover:scale-105">
-                            <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border-4 border-[#4E4F50] bg-[#252728] overflow-hidden flex items-center justify-center shadow-lg">
+                            <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full border-4 border-[#4E4F50] bg-[#252728] overflow-hidden flex items-center justify-center">
                               {rank3.image ? (
                                 <img
                                   src={rank3.image}
@@ -397,7 +547,7 @@ export function LeaderboardDrawer({
                   </div>
                 </section>
 
-                {/* SECTION 2: 4 CATEGORY TABS (Health / Clean / LTC / Quote) */}
+                {/* SECTION 2: 4 CATEGORY TABS (Health / Discipline / Velocity / Outcome) */}
                 <section className="space-y-3">
                   <div className="flex items-center justify-between px-1">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
@@ -417,19 +567,32 @@ export function LeaderboardDrawer({
                       layout="tabs"
                       activeTab={activeCategoryTab}
                       onTabChange={setActiveCategoryTab}
-                      onSelectUser={(item) => setBreakdownItem(item)}
-                      onSelectHealthUser={(item) => setHealthDrawerItem(item)}
-                      onSelectLtcUser={(item) => {
-                        const ltcCat = data?.categories?.find((c) => c.id === "ltc");
-                        const fallbackSummary =
-                          ltcCat?.items?.find((i) => i.dailyLtcSummary)?.dailyLtcSummary;
-                        const itemWithSummary = item.dailyLtcSummary
-                          ? item
-                          : fallbackSummary
-                          ? { ...item, dailyLtcSummary: fallbackSummary }
-                          : item;
-                        setLtcDrawerItem(itemWithSummary);
-                      }}
+                      canAnalyseAll={canAnalyseAll}
+                      onAnalyseUser={(item) =>
+                        pushSubDrawer({
+                          kind: "analyse",
+                          mode: "individual",
+                          userId: item.userId,
+                        })
+                      }
+                      onSelectUser={(item) =>
+                        pushSubDrawer({
+                          kind: "breakdown",
+                          item: resolveFullItem(item),
+                        })
+                      }
+                      onSelectHealthUser={(item) =>
+                        handleOpenCategoryDetail("card_health", item)
+                      }
+                      onSelectDisciplineUser={(item, tab) =>
+                        handleOpenCategoryDetail("clean_ltc", item, tab ?? "discipline")
+                      }
+                      onSelectVelocityUser={(item) =>
+                        handleOpenCategoryDetail("velocity", item)
+                      }
+                      onSelectOutcomeUser={(item) =>
+                        handleOpenCategoryDetail("outcome", item)
+                      }
                     />
                   ) : (
                     <div className="p-8 text-center text-xs text-slate-400 rounded-2xl bg-[#1C1C1D] border border-[#3A3B3C]">
@@ -443,22 +606,103 @@ export function LeaderboardDrawer({
         </div>
       </div>
 
-      {/* Sub-modals & Drawer */}
-      <ScoreBreakdownModal
-        item={breakdownItem}
-        onClose={() => setBreakdownItem(null)}
-      />
+      {/* Active Sub-Window (Only top of stack renders; "Back" returns to previous view) */}
+      {activeSubDrawer?.kind === "breakdown" && (
+        <ScoreBreakdownModal
+          item={activeSubDrawer.item}
+          onClose={popSubDrawer}
+          onSelectCategory={(categoryId, target) =>
+            handleOpenCategoryDetail(categoryId, target)
+          }
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
 
-      <DailyCardHealthDrawer
-        item={healthDrawerItem}
-        period={{ month: activeMonth, year: activeYear }}
-        onClose={() => setHealthDrawerItem(null)}
-      />
+      {activeSubDrawer?.kind === "health" && (
+        <DailyCardHealthDrawer
+          item={activeSubDrawer.item}
+          period={{ month: activeMonth, year: activeYear }}
+          onClose={popSubDrawer}
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
 
-      <DailyLtcDrawer
-        item={ltcDrawerItem}
-        period={{ month: activeMonth, year: activeYear }}
-        onClose={() => setLtcDrawerItem(null)}
+      {activeSubDrawer?.kind === "discipline" && (
+        <DailyLtcDrawer
+          item={activeSubDrawer.item}
+          period={{ month: activeMonth, year: activeYear }}
+          initialTab={activeSubDrawer.initialTab}
+          onClose={popSubDrawer}
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
+
+      {(activeSubDrawer?.kind === "velocity" ||
+        activeSubDrawer?.kind === "outcome") && (
+        <CategoryDetailDrawer
+          item={activeSubDrawer.item}
+          mode={activeSubDrawer.kind}
+          period={{ month: activeMonth, year: activeYear }}
+          onClose={popSubDrawer}
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
+
+      <LeaderboardAnalyseModal
+        isOpen={activeSubDrawer?.kind === "analyse"}
+        onClose={popSubDrawer}
+        items={overallItems}
+        initialUserId={
+          activeSubDrawer?.kind === "analyse" ? activeSubDrawer.userId : null
+        }
+        initialMode={
+          activeSubDrawer?.kind === "analyse"
+            ? activeSubDrawer.mode
+            : "individual"
+        }
+        canAnalyseAll={canAnalyseAll}
+        hasSalesAccess={data?.hasSalesAccess}
+        month={activeMonth}
+        year={activeYear}
+        currentMonth={currentMonth}
+        currentYear={currentYear}
+        departmentName={data?.departmentName}
       />
 
       {/* Period & Filters Modal */}

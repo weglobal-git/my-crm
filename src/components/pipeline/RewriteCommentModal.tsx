@@ -14,6 +14,7 @@ import {
   DEFAULT_REWRITE_JSON_SCHEMA,
 } from "@/lib/constants/ai-rewrite";
 import { addActivityLog } from "@/lib/actions/opportunity";
+import type { ActivityLogWithRelations } from "@/lib/pipeline-activity-cache";
 import { useDialog } from "@/providers/DialogProvider";
 
 interface RewriteCommentModalProps {
@@ -22,7 +23,7 @@ interface RewriteCommentModalProps {
   dealId: string;
   dealTopic?: string;
   isAdmin?: boolean;
-  onPostSuccess?: () => void;
+  onPostSuccess?: (persistedLog?: ActivityLogWithRelations) => void;
 }
 
 export function RewriteCommentModal({
@@ -180,7 +181,7 @@ export function RewriteCommentModal({
 
     setIsPosting(true);
     try {
-      await addActivityLog(dealId, content);
+      const persistedLog = (await addActivityLog(dealId, content)) as ActivityLogWithRelations;
       toast({
         title: "Posted to Activity",
         description: "Your update has been recorded to the deal timeline.",
@@ -188,7 +189,7 @@ export function RewriteCommentModal({
       });
       setRawText("");
       setRewrittenText("");
-      onPostSuccess?.();
+      onPostSuccess?.(persistedLog);
       onClose();
     } catch (err: unknown) {
       console.error("[RewriteCommentModal] Failed to post activity:", err);

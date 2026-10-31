@@ -2,9 +2,10 @@ import { redirect } from "next/navigation";
 import { PipelineView } from "@/components/pipeline/PipelineView";
 import type { OpportunityWithRelations } from "@/components/pipeline/KanbanCard";
 import { requirePipelineActor } from '@/lib/pipeline-security';
-import { getPipelineOpportunitiesForActor } from '@/lib/pipeline-opportunities';
+import { getPipelineOpportunitiesListForActor } from '@/lib/pipeline-opportunities';
 import { getPipelineStageTitleContext, getCachedPipelineStages } from '@/lib/pipeline-stage-titles';
 import { getStoredPinnedDealIdsServer } from "@/lib/user-pinned-deals";
+import { getCompanyHolidaysAction, getUserLeavesAction } from "@/lib/actions/holiday";
 
 export const dynamic = 'force-dynamic';
 
@@ -23,17 +24,18 @@ export default async function PipelinePage({
     throw error;
   });
 
-  // Fetch the first board snapshot on the server so the Kanban does not wait
-  // for hydration before starting its most important query.
-  // Secondary accelerator badges and deal summary indicators are fetched
-  // on-demand client-side via SWR to eliminate the blocking SSR waterfall.
-  const [stages, serializedOpportunities, stageTitleContext, userPinnedSet] = await Promise.all([
+  // Fetch the first board snapshot + cached holidays/leaves on the server in parallel
+  // so KanbanBoard renders accurate Red/Due Today state at 0ms without 2 extra mount Server Actions
+  // or redundant JSON.stringify -> JSON.parse CPU overhead.
+  const [stages, opportunitiesResult, stageTitleContext, userPinnedSet, initialHolidays, initialLeaves] = await Promise.all([
     getCachedPipelineStages(),
-    getPipelineOpportunitiesForActor(actor, tab, search || undefined),
+    getPipelineOpportunitiesListForActor(actor, tab, search || undefined),
     getPipelineStageTitleContext(actor),
     getStoredPinnedDealIdsServer(actor.id),
+    getCompanyHolidaysAction(),
+    getUserLeavesAction(),
   ]);
-  const rawOpportunities = JSON.parse(serializedOpportunities) as OpportunityWithRelations[];
+  const rawOpportunities = opportunitiesResult.data as OpportunityWithRelations[];
   const initialOpportunities = rawOpportunities.map((opp) => ({
     ...opp,
     isPinned: userPinnedSet.has(opp.id),
@@ -46,6 +48,8 @@ export default async function PipelinePage({
       stages={stages}
       initialOpportunities={initialOpportunities}
       initialPinnedDealIds={Array.from(userPinnedSet)}
+      initialHolidays={initialHolidays}
+      initialLeaves={initialLeaves}
       stageTitleDepartments={stageTitleContext.departments}
       initialStageTitlesByDepartment={stageTitleContext.titlesByDepartment}
       canEditStageTitles={stageTitleContext.canEdit}

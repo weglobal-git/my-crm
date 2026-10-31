@@ -36,7 +36,30 @@ import {
   addActivityLogForActor,
   addSystemLogForActor,
   deleteActivityLogForActor,
+  syncOpportunityDueDateWithTimeline,
 } from '@/lib/pipeline-activity-service';
+import {
+  classifyUpdateQuality,
+  DUPLICATE_LOOKBACK_LIMIT,
+  encodeTierPrefix,
+  MIN_CHARS_FOR_27H,
+  parseTierPrefix,
+  resolveEditedCommentGrade,
+  type UpdateIntent,
+} from '@/lib/pipeline-update-quality';
+import {
+  gradeActivityCommentWithAi,
+  gradeDueDateReasonWithAi,
+} from '@/lib/actions/ai-accelerator';
+import {
+  createBangkokDate,
+  formatBangkokDueDateDisplay,
+  MAX_DUE_DATE_HORIZON_DAYS,
+  MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS,
+  MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH,
+  toBangkokDateParts,
+} from '@/lib/business-days';
+import { getCachedPipelineStages } from '@/lib/pipeline-stage-titles';
 import { withSerializableRetry } from '@/lib/serializable-transaction';
 
 function runBackgroundJob(task: () => Promise<void> | void) {
@@ -157,12 +180,31 @@ export async function moveOpportunity(
   newStatus: OpportunityStatus = "OPEN",
   lossReason?: string | null
 ) {
-  const { actor } = await requireOpportunityAccess(opportunityId, { capability: 'deal:move_stage' });
-  // Fetch the opportunity to check current state
-  const opportunity = await prisma.opportunity.findUnique({
-    where: { id: opportunityId },
-    include: { teamMembers: { select: { id: true } } }
-  });
+  // Parallelize access check, lean opportunity snapshot, cached stages, and optional todo count
+  const [{ actor }, opportunity, cachedStages, incompleteTodosCount] = await Promise.all([
+    requireOpportunityAccess(opportunityId, { capability: 'deal:move_stage' }),
+    prisma.opportunity.findUnique({
+      where: { id: opportunityId },
+      select: {
+        id: true,
+        topic: true,
+        type: true,
+        status: true,
+        value: true,
+        currency: true,
+        companyId: true,
+        ownerId: true,
+        goodsLoadingDate: true,
+        invoiceId: true,
+        lossReason: true,
+        teamMembers: { select: { id: true } },
+      },
+    }),
+    newStageId ? getCachedPipelineStages() : Promise.resolve([]),
+    newStatus === "WON"
+      ? prisma.note.count({ where: { opportunityId, isCompleted: false } })
+      : Promise.resolve(0),
+  ]);
 
   if (!opportunity) {
     throw new Error("Opportunity not found");
@@ -170,9 +212,9 @@ export async function moveOpportunity(
 
   // 1. Moving to a specific stage in the board
   if (newStageId) {
-    const stage = await prisma.pipelineStage.findUnique({
-      where: { id: newStageId }
-    });
+    const stage =
+      cachedStages.find((s) => s.id === newStageId) ??
+      (await prisma.pipelineStage.findUnique({ where: { id: newStageId } }));
 
     if (stage) {
       // Business Rule: Cannot move to Following or Quoted without specifying a value
@@ -186,13 +228,6 @@ export async function moveOpportunity(
 
   // 2. Moving to End (e.g. WON, LOST)
   if (newStatus === "WON") {
-    const incompleteTodosCount = await prisma.note.count({
-      where: {
-        opportunityId,
-        isCompleted: false,
-      },
-    });
-
     if (incompleteTodosCount > 0) {
       throw new Error(
         `Cannot mark as Won with ${incompleteTodosCount} incomplete to-do task(s). Complete or delete all tasks first.`
@@ -231,67 +266,66 @@ export async function moveOpportunity(
 
   invalidateOpportunityReadAccess(opportunityId);
 
-  // Record a system audit log if status changed
-  if (newStatus !== opportunity.status) {
-    const systemMessage = newStatus === "WON"
-      ? (opportunity.type === "SALES_DEAL" 
-          ? `Deal marked as Won.`
-          : `Task completed successfully (Won).`)
-      : (newStatus === "LOST"
-          ? `Deal marked as Lost. Reason: ${effectiveLossReason || 'Not specified'}.`
-          : `Deal reopened and moved back to active pipeline.`);
+  const revision = fullDeal?.updatedAt ? new Date(fullDeal.updatedAt).getTime() : Date.now();
+  runBackgroundJob(async () => {
+    // Record system audit log & closing notifications asynchronously without blocking UI drag/close
+    if (newStatus !== opportunity.status) {
+      const systemMessage = newStatus === "WON"
+        ? (opportunity.type === "SALES_DEAL" 
+            ? `Deal marked as Won.`
+            : `Task completed successfully (Won).`)
+        : (newStatus === "LOST"
+            ? `Deal marked as Lost. Reason: ${effectiveLossReason || 'Not specified'}.`
+            : `Deal reopened and moved back to active pipeline.`);
 
-    await prisma.activityLog.create({
-      data: {
-        opportunityId,
-        userId: actor.id,
-        type: "SYSTEM_UPDATE",
-        content: systemMessage,
-      }
-    });
+      await prisma.activityLog.create({
+        data: {
+          opportunityId,
+          userId: actor.id,
+          type: "SYSTEM_UPDATE",
+          content: systemMessage,
+        }
+      }).catch((err) => console.warn('[moveOpportunity] Failed to create system log:', err));
 
-    // Notify team members and owner about deal closing
-    if (isClosing) {
-      const recipients = [
-        opportunity.ownerId,
-        ...(opportunity.teamMembers?.map(m => m.id) || []),
-      ].filter(uid => uid && uid !== actor.id);
+      if (isClosing) {
+        const recipients = [
+          opportunity.ownerId,
+          ...(opportunity.teamMembers?.map(m => m.id) || []),
+        ].filter(uid => uid && uid !== actor.id);
 
-      const uniqueRecipients = [...new Set(recipients)];
-      if (uniqueRecipients.length > 0) {
-        try {
-          const notifTitle = newStatus === 'WON' ? 'Deal Won' : 'Deal Lost';
-          const notifMsg = newStatus === 'WON'
-            ? `Deal "${opportunity.topic}" has been marked as Won.`
-            : `Deal "${opportunity.topic}" has been marked as Lost.`;
+        const uniqueRecipients = [...new Set(recipients)];
+        if (uniqueRecipients.length > 0) {
+          try {
+            const notifTitle = newStatus === 'WON' ? 'Deal Won' : 'Deal Lost';
+            const notifMsg = newStatus === 'WON'
+              ? `Deal "${opportunity.topic}" has been marked as Won.`
+              : `Deal "${opportunity.topic}" has been marked as Lost.`;
 
-          const notifications = await prisma.$transaction(
-            uniqueRecipients.map(recipientId =>
-              prisma.notification.create({
-                data: {
-                  type: 'SYSTEM_ALERT',
-                  senderId: actor.id,
-                  recipientId,
-                  referenceId: opportunityId,
-                  title: notifTitle,
-                  message: notifMsg,
-                },
-                include: { sender: true }
-              })
-            )
-          );
-          notifications.forEach(n => {
-            void dispatchNotification(n.recipientId, n);
-          });
-        } catch (err) {
-          console.warn('[moveOpportunity] Failed to send notifications:', err);
+            const notifications = await Promise.all(
+              uniqueRecipients.map(recipientId =>
+                prisma.notification.create({
+                  data: {
+                    type: 'SYSTEM_ALERT',
+                    senderId: actor.id,
+                    recipientId,
+                    referenceId: opportunityId,
+                    title: notifTitle,
+                    message: notifMsg,
+                  },
+                  include: { sender: true }
+                })
+              )
+            );
+            notifications.forEach(n => {
+              void dispatchNotification(n.recipientId, n);
+            });
+          } catch (err) {
+            console.warn('[moveOpportunity] Failed to send notifications:', err);
+          }
         }
       }
     }
-  }
 
-  const revision = fullDeal?.updatedAt ? new Date(fullDeal.updatedAt).getTime() : Date.now();
-  runBackgroundJob(async () => {
     await notifyPrivatePipelineUpdate(opportunityId, {
       action: 'OPPORTUNITY_UPDATED',
       deal: fullDeal,
@@ -556,8 +590,58 @@ export async function getOpportunitySharedMedia(dealId: string): Promise<Opportu
 }
 
 export async function updateDueDateWithLog(opportunityId: string, dueDate: Date | null, reason: string, mutationId?: string, expectedRevision?: number) {
-  if (!reason.trim()) throw new Error('Reason is required');
-  const { actor } = await requireOpportunityDateEdit(opportunityId, 'dueDate');
+  const sanitizedReason = reason
+    .replace(/^\[(?:STALLING_ONLY|OUTREACH_ONLY|PROGRESS_VERIFIED)\]\s*/i, '')
+    .trim();
+  if (!sanitizedReason) throw new Error('Reason is required');
+  const [{ actor }, existingDates] = await Promise.all([
+    requireOpportunityDateEdit(opportunityId, 'dueDate'),
+    dueDate
+      ? prisma.opportunity.findUnique({
+          where: { id: opportunityId },
+          select: { goodsReadyDate: true, goodsLoadingDate: true },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  const compactReasonLen = sanitizedReason
+    .replace(/\[ATTACHMENT:[^\]]+\]/gi, '')
+    .replace(/[\s\p{P}]+/gu, '').length;
+
+  if (dueDate) {
+    const nowParts = toBangkokDateParts(new Date());
+    const todayMidnightMs = createBangkokDate(nowParts.year, nowParts.month, nowParts.date, 0, 0, 0).getTime();
+    const standardHorizonMs = todayMidnightMs + (MAX_DUE_DATE_HORIZON_DAYS + 1) * 24 * 3600 * 1000 - 1;
+    const longLeadHorizonMs = todayMidnightMs + (MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS + 1) * 24 * 3600 * 1000 - 1;
+
+    const anchorCandidates = [
+      existingDates?.goodsReadyDate ? new Date(existingDates.goodsReadyDate).getTime() : 0,
+      existingDates?.goodsLoadingDate ? new Date(existingDates.goodsLoadingDate).getTime() : 0,
+    ];
+    const furthestShippingAnchorMs = Math.max(0, ...anchorCandidates);
+    const shippingExtendedMaxMs =
+      furthestShippingAnchorMs > 0 ? furthestShippingAnchorMs + 7 * 24 * 3600 * 1000 : 0;
+
+    const targetMs = new Date(dueDate).getTime();
+    const effectiveStandardMaxMs = Math.max(standardHorizonMs, shippingExtendedMaxMs);
+
+    if (targetMs > effectiveStandardMaxMs) {
+      const effectiveLongLeadMaxMs = Math.max(longLeadHorizonMs, shippingExtendedMaxMs);
+
+      if (targetMs > effectiveLongLeadMaxMs) {
+        throw new Error(
+          `Due Date cannot be set more than ${MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS} days ahead unless Goods Ready / Loading Date is scheduled further out.`
+        );
+      }
+
+      if (compactReasonLen < MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH) {
+        throw new Error(
+          `Due Dates more than ${MAX_DUE_DATE_HORIZON_DAYS} days ahead require a clear long-lead reason (at least ${MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH} characters, e.g. Trademark, Booth installment, Staggered shipment, or Client hold).`
+        );
+      }
+    }
+  }
+
   const { fullDeal, activityLog, systemLog } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     let opp;
     if (expectedRevision === undefined) {
@@ -579,12 +663,7 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     }
     let formattedDate = 'Removed';
     if (dueDate) {
-      formattedDate = new Intl.DateTimeFormat('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        timeZone: 'Asia/Bangkok',
-      }).format(dueDate);
+      formattedDate = formatBangkokDueDateDisplay(dueDate);
     }
 
     const logInclude = {
@@ -595,7 +674,7 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     // 1. Log to Activity (with special format for pill badge)
     const createdActivityLog = await tx.activityLog.create({
       data: {
-        content: `[DUE DATE: ${formattedDate}]\nReason: ${reason}`,
+        content: `[DUE DATE: ${formattedDate}]\nReason: ${sanitizedReason}`,
         type: "COMMENT",
         opportunityId,
         userId: actor.id,
@@ -606,7 +685,7 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
     // 2. Log to System (text only)
     const createdSystemLog = await tx.activityLog.create({
       data: {
-        content: `Due Date changed to ${formattedDate}. Reason: ${reason}`,
+        content: `Due Date changed to ${formattedDate}. Reason: ${sanitizedReason}`,
         type: "SYSTEM_UPDATE",
         opportunityId,
         userId: actor.id,
@@ -637,6 +716,18 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
         })
       )
     );
+    void dispatchDashboardInvalidation({
+      resources: ['leaderboard'],
+      mutationId,
+      revision,
+    });
+    if (dueDate && compactReasonLen >= MIN_CHARS_FOR_27H) {
+      await gradeDueDateReasonWithAi({
+        dealId: opportunityId,
+        logId: activityLog.id,
+        rawContent: activityLog.content,
+      });
+    }
   });
 
   return { opp: fullDeal, activityLog, revision, mutationId };
@@ -676,12 +767,13 @@ export async function getOpportunityActivityLogs(opportunityId: string, limit = 
 export async function addActivityLog(
   opportunityId: string,
   content: string,
-  parentId?: string
+  parentId?: string,
+  updateIntent: UpdateIntent | undefined = undefined
 ) {
   const { actor } = await requireOpportunityAccess(opportunityId, {
     capability: 'deal:comment',
   });
-  return addActivityLogForActor(actor, { opportunityId, content, parentId });
+  return addActivityLogForActor(actor, { opportunityId, content, parentId, updateIntent });
 }
 
 export async function addSystemLog(
@@ -714,20 +806,99 @@ export async function editActivityLog(logId: string, content: string) {
     commentAuthorId: log.userId,
   });
 
+  // Server-authoritative re-evaluation on edit (closes client [TIER:...] spoofing / post-send edit loophole)
+  const isRegularTopLevelComment =
+    log.type === 'COMMENT' &&
+    !log.parentId &&
+    !log.content.startsWith('[DUE DATE:') &&
+    !log.content.startsWith('[URGENT_') &&
+    !content.startsWith('[DUE DATE:') &&
+    !content.startsWith('[URGENT_');
+
+  let authoritativeContent = content;
+  let requiresAiRegrade = false;
+  let tierCrossedZeroBoundary = false;
+
+  if (isRegularTopLevelComment) {
+    const cleanEdited = parseTierPrefix(content).cleanContent;
+    const surroundingComments = await prisma.activityLog.findMany({
+      where: {
+        opportunityId: log.opportunityId,
+        parentId: null,
+        type: 'COMMENT',
+        id: { not: logId },
+        NOT: [
+          { content: { startsWith: '[URGENT_' } },
+          { content: { startsWith: '[DUE DATE:' } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: DUPLICATE_LOOKBACK_LIMIT,
+      select: { content: true, createdAt: true },
+    });
+
+    const editResolution = resolveEditedCommentGrade({
+      originalContent: log.content,
+      originalCreatedAt: log.createdAt,
+      editedCleanText: cleanEdited,
+      editedAt: new Date(),
+      previousCommentsWithMeta: surroundingComments.map((c) => ({
+        content: c.content,
+        createdAt: c.createdAt,
+      })),
+    });
+    requiresAiRegrade = editResolution.allowAiRegrade;
+    tierCrossedZeroBoundary = editResolution.tierCrossedZeroBoundary;
+    authoritativeContent = editResolution.authoritativeContent;
+  } else if (log.parentId) {
+    // Strip any spoofed tier tag on threaded replies
+    authoritativeContent = parseTierPrefix(content).cleanContent;
+  }
+
   const updatedLog = await prisma.activityLog.update({
     where: { id: logId },
     data: {
-      content,
+      content: authoritativeContent,
       isEdited: true
     },
     include: { user: true, replies: { include: { user: true }, orderBy: { createdAt: 'asc' } } }
   });
+
+  const touchedDueDateLog =
+    !log.parentId &&
+    log.type === 'COMMENT' &&
+    (log.content.startsWith('[DUE DATE:') || content.startsWith('[DUE DATE:'));
+  const reconciledDeal =
+    touchedDueDateLog || tierCrossedZeroBoundary
+      ? await syncOpportunityDueDateWithTimeline(log.opportunityId, {
+          hadDueDateLogMutation: touchedDueDateLog,
+        })
+      : null;
+
   runBackgroundJob(async () => {
+    if (reconciledDeal) {
+      await notifyPrivatePipelineUpdate(log.opportunityId, {
+        action: 'OPPORTUNITY_UPDATED',
+        deal: reconciledDeal,
+        dealId: log.opportunityId,
+      });
+    }
     await notifyPrivatePipelineUpdate(log.opportunityId, {
       action: 'ACTIVITY_UPDATED',
       dealId: log.opportunityId,
       activityLog: updatedLog,
     });
+    void dispatchDashboardInvalidation({
+      resources: ['leaderboard'],
+    });
+    if (isRegularTopLevelComment && requiresAiRegrade) {
+      await gradeActivityCommentWithAi({
+        dealId: log.opportunityId,
+        logId: updatedLog.id,
+        rawContent: authoritativeContent,
+        authorId: actor.id,
+      });
+    }
   });
   return updatedLog;
 }

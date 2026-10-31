@@ -1000,6 +1000,23 @@ export function ProductView({
               });
             }
           }}
+          onProductDeleted={(deletedId) => {
+            setProducts((prev) => prev.filter((p) => p.id !== deletedId));
+            setKnownProductsMap((prev) => {
+              const next = new Map(prev);
+              next.delete(deletedId);
+              return next;
+            });
+            setSelectedForPrintIds((prev) => {
+              if (!prev.has(deletedId)) return prev;
+              const next = new Set(prev);
+              next.delete(deletedId);
+              return next;
+            });
+            setSelectedProductId(null);
+            setIsEditProductOpen(false);
+            void fetchFilteredProducts();
+          }}
         />
       )}
 

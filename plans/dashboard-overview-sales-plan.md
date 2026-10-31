@@ -410,3 +410,5 @@ npm run verify:pipeline
 ## 12. Phase-next placeholder: Leaderboard
 
 ยังไม่ออกแบบคะแนนใน release นี้ เพื่อไม่ผูก gamification กับ metric ที่ยังไม่ได้ตกลง ใน Phase ถัดไปต้องกำหนดอย่างน้อย: scoring events, anti-gaming rules, role/data scope, time window, tie-break, audit/reversal เมื่อ deal ถูก reopen และ privacy ของรายบุคคล ก่อนเพิ่ม UI หรือ realtime event.
+
+> **อัปเดตเอกสารสเปกฉบับเต็ม (2026-10-30)**: รายละเอียดกติกานาฬิกาเวลาทำงาน, วันหยุดยาวบริษัท, ระบบ Due Date 2 ระยะ, คุณภาพการอัปเดต `+0h / +9h / +27h`, Real-time Coaching UX และสูตรคำนวณคะแนน **100 XP (Dynamic Card-Portfolio Weighting รองรับทั้ง `SALES_DEAL` และ `INTERNAL_TASK`)** ถูกสรุปไว้อย่างเป็นทางการแล้วที่ [`.agents/manual-book/08-pipeline-scoring-and-due-date-system.md`](../.agents/manual-book/08-pipeline-scoring-and-due-date-system.md)

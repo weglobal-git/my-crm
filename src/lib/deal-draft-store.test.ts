@@ -79,9 +79,11 @@ test('Draft Store: Closing deal panel clears all drafts for that deal to prevent
 });
 
 test('Draft Store: Multiple deals are completely isolated', () => {
-  setDealDraft('deal-alpha', 'activity', { text: 'Alpha text' });
-  setDealDraft('deal-beta', 'activity', { text: 'Beta text' });
+  setDealDraft('deal-alpha', 'activity', { text: 'Alpha text', updateIntent: 'PROGRESS' });
+  setDealDraft('deal-beta', 'activity', { text: 'Beta text', updateIntent: 'FOLLOWUP' });
 
   assert.equal(getDealDraft<ActivityDraft>('deal-alpha', 'activity')?.text, 'Alpha text');
+  assert.equal(getDealDraft<ActivityDraft>('deal-alpha', 'activity')?.updateIntent, 'PROGRESS');
   assert.equal(getDealDraft<ActivityDraft>('deal-beta', 'activity')?.text, 'Beta text');
+  assert.equal(getDealDraft<ActivityDraft>('deal-beta', 'activity')?.updateIntent, 'FOLLOWUP');
 });

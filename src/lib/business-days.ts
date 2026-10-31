@@ -16,8 +16,15 @@ export const WORK_HOURS_PER_DAY = 9;
 export const WORK_MS_PER_DAY = 9 * 3600 * 1000; // 32,400,000 ms
 export const RED_CARD_WORKING_HOURS_THRESHOLD = 27; // 3 working days = 27 working hours
 export const RED_CARD_WORKING_MS_THRESHOLD = 27 * 3600 * 1000; // 97,200,000 ms
+export const LONG_HOLIDAY_OFF_STREAK_DAYS = 3; // >= 3 consecutive off-days triggers Post-Holiday 9h Check-In Cap
+export const MAX_DUE_DATE_HORIZON_DAYS = 45; // Standard future Due Date horizon (covers 30d credit terms + billing cycle)
+export const MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS = 180; // Extended horizon for Trademark / Booth / Hold / Staggered Shipment with >= 20 chars reason
+export const MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH = 20;
 
 export const BANGKOK_OFFSET_MS = 7 * 3600 * 1000;
+const DAY_MS = 24 * 3600 * 1000;
+const WORK_START_OFFSET_MS = (WORK_DAY_START_HOUR * 60 + WORK_DAY_START_MINUTE) * 60 * 1000;
+const WORK_END_OFFSET_MS = (WORK_DAY_END_HOUR * 60 + WORK_DAY_END_MINUTE) * 60 * 1000;
 
 export interface BangkokDateParts {
   year: number;
@@ -123,62 +130,93 @@ export function countElapsedBusinessDays(
  * Pauses:
  * - Nights (17:00 to 08:00 next day)
  * - Sundays (day 0)
- * - Any date in holidays set (Company Dayoffs, Dayoff Saturdays, and User Leaves)
+ * - Short weekends / leaves (1–2 consecutive off-days: 100% paused, zero penalty)
+ * - Long holidays (>= 3 consecutive off-days): clamps remaining time at first workday 08:00
+ *   to at most 9 working hours (Post-Holiday Check-In Cap) when `ceilingMs > WORK_MS_PER_DAY`.
  */
 export function calculateElapsedWorkingMs(
   from: Date,
   to: Date = new Date(),
-  holidays: Set<string> = new Set()
+  holidays: Set<string> = new Set(),
+  options?: {
+    ceilingMs?: number;
+    stopAtMs?: number;
+    personalLeaves?: Set<string>;
+  }
 ): number {
-  if (from >= to) return 0;
+  const fromMs = from.getTime();
+  const toMs = to.getTime();
+  if (fromMs >= toMs) return 0;
+
+  const ceilingMs = options?.ceilingMs ?? RED_CARD_WORKING_MS_THRESHOLD;
+  const stopAtMs = options?.stopAtMs;
+  const personalLeaves = options?.personalLeaves;
+  const checkHolidayKeys = holidays.size > 0 || (personalLeaves !== undefined && personalLeaves.size > 0);
 
   let totalMs = 0;
   const fromParts = toBangkokDateParts(from);
   const toParts = toBangkokDateParts(to);
 
-  let curMidnight = createBangkokDate(fromParts.year, fromParts.month, fromParts.date, 0, 0, 0);
-  const endMidnight = createBangkokDate(toParts.year, toParts.month, toParts.date, 0, 0, 0);
-  const fromMidnightTime = curMidnight.getTime();
+  let curMidnightMs = createBangkokDate(fromParts.year, fromParts.month, fromParts.date, 0, 0, 0).getTime();
+  const endMidnightMs = createBangkokDate(toParts.year, toParts.month, toParts.date, 0, 0, 0).getTime();
+  const fromMidnightMs = curMidnightMs;
 
-  let currentOffStreak = 0;
-  let holidayPenaltyMs = 0;
+  let dayOfWeek = fromParts.day;
+  let companyOffStreak = 0;
 
-  while (curMidnight <= endMidnight) {
-    const curParts = toBangkokDateParts(curMidnight);
-    const dayOfWeek = curParts.day;
-    const dateKey = `${curParts.year}-${String(curParts.month + 1).padStart(2, '0')}-${String(curParts.date).padStart(2, '0')}`;
-
-    // Skip Sunday (0) and any holiday/leave
-    const isOff = dayOfWeek === 0 || holidays.has(dateKey);
-
-    if (isOff) {
-      // Off-days strictly after the update's calendar date accumulate into a consecutive off-day streak
-      if (curMidnight.getTime() > fromMidnightTime) {
-        currentOffStreak++;
+  while (curMidnightMs <= endMidnightMs) {
+    let isCompanyOff = dayOfWeek === 0;
+    let isPersonalLeave = false;
+    if (checkHolidayKeys) {
+      const bkk = new Date(curMidnightMs + BANGKOK_OFFSET_MS);
+      const dateKey = `${bkk.getUTCFullYear()}-${String(bkk.getUTCMonth() + 1).padStart(2, '0')}-${String(bkk.getUTCDate()).padStart(2, '0')}`;
+      if (!isCompanyOff && holidays.has(dateKey)) {
+        isCompanyOff = true;
       }
-    } else {
-      const workStart = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
-      const workEnd = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0);
-
-      // If we just completed a consecutive off-day streak >= 2, apply +9h fixed once for that streak
-      // Only active once the working window of this working day begins (to >= workStart)
-      if (currentOffStreak >= 2 && to.getTime() >= workStart.getTime()) {
-        holidayPenaltyMs += WORK_MS_PER_DAY;
-      }
-      currentOffStreak = 0;
-
-      const periodStart = Math.max(from.getTime(), workStart.getTime());
-      const periodEnd = Math.min(to.getTime(), workEnd.getTime());
-
-      if (periodEnd > periodStart) {
-        totalMs += (periodEnd - periodStart);
+      if (!isCompanyOff && personalLeaves?.has(dateKey)) {
+        isPersonalLeave = true;
       }
     }
 
-    curMidnight = new Date(curMidnight.getTime() + 24 * 3600 * 1000);
+    if (isCompanyOff || isPersonalLeave) {
+      if (isCompanyOff && curMidnightMs > fromMidnightMs) {
+        companyOffStreak++;
+      }
+    } else {
+      const workStartMs = curMidnightMs + WORK_START_OFFSET_MS;
+      const workEndMs = curMidnightMs + WORK_END_OFFSET_MS;
+
+      // Post-Holiday Check-In Cap: after >= 3 consecutive company off-days, clamp remaining window to <= 9h
+      // once the return workday's 08:00 begins (never turns a clean card Red at 08:00 AM, requires check-in by 17:00)
+      if (
+        companyOffStreak >= LONG_HOLIDAY_OFF_STREAK_DAYS &&
+        ceilingMs > WORK_MS_PER_DAY &&
+        toMs >= workStartMs
+      ) {
+        const minElapsedAfterLongBreak = ceilingMs - WORK_MS_PER_DAY;
+        if (totalMs < minElapsedAfterLongBreak) {
+          totalMs = minElapsedAfterLongBreak;
+        }
+      }
+      companyOffStreak = 0;
+
+      const periodStart = fromMs > workStartMs ? fromMs : workStartMs;
+      const periodEnd = toMs < workEndMs ? toMs : workEndMs;
+
+      if (periodEnd > periodStart) {
+        totalMs += periodEnd - periodStart;
+      }
+
+      if (stopAtMs !== undefined && totalMs >= stopAtMs) {
+        return totalMs;
+      }
+    }
+
+    curMidnightMs += DAY_MS;
+    dayOfWeek = (dayOfWeek + 1) % 7;
   }
 
-  return totalMs + holidayPenaltyMs;
+  return totalMs;
 }
 
 /**
@@ -195,78 +233,91 @@ export function calculateElapsedBusinessMs(
 /**
  * Adds working milliseconds to a starting date, skipping non-working hours,
  * Sundays, company holidays, and user leaves in Asia/Bangkok time.
- * If a consecutive off-day streak >= 2 is crossed, consumes +9h fixed once for that streak.
+ * Short off-day streaks (1–2 days) are 100% paused; long holiday streaks (>= 3 days)
+ * apply the Post-Holiday Check-In Cap (clamping remainingMs to <= 9h on return day).
  */
 export function addWorkingMs(
   startDate: Date,
   msToAdd: number,
-  holidays: Set<string> = new Set()
+  holidays: Set<string> = new Set(),
+  personalLeaves?: Set<string>
 ): Date {
   if (msToAdd <= 0) return new Date(startDate);
 
   let remainingMs = msToAdd;
-  let cur = new Date(startDate);
+  let curMs = startDate.getTime();
   const startParts = toBangkokDateParts(startDate);
-  const startMidnightTime = createBangkokDate(startParts.year, startParts.month, startParts.date, 0, 0, 0).getTime();
+  const startMidnightMs = createBangkokDate(startParts.year, startParts.month, startParts.date, 0, 0, 0).getTime();
+  const checkHolidayKeys = holidays.size > 0 || (personalLeaves !== undefined && personalLeaves.size > 0);
 
-  let currentOffStreak = 0;
+  let curMidnightMs = startMidnightMs;
+  let dayOfWeek = startParts.day;
+  let companyOffStreak = 0;
 
   while (remainingMs > 0) {
-    const curParts = toBangkokDateParts(cur);
-    const dayOfWeek = curParts.day;
-    const dateKey = `${curParts.year}-${String(curParts.month + 1).padStart(2, '0')}-${String(curParts.date).padStart(2, '0')}`;
-    const isOff = dayOfWeek === 0 || holidays.has(dateKey);
-
-    const curMidnightTime = createBangkokDate(curParts.year, curParts.month, curParts.date, 0, 0, 0).getTime();
-    const nextDayStart = createBangkokDate(curParts.year, curParts.month, curParts.date + 1, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
-
-    if (isOff) {
-      if (curMidnightTime > startMidnightTime) {
-        currentOffStreak++;
+    let isCompanyOff = dayOfWeek === 0;
+    let isPersonalLeave = false;
+    if (checkHolidayKeys) {
+      const bkk = new Date(curMidnightMs + BANGKOK_OFFSET_MS);
+      const dateKey = `${bkk.getUTCFullYear()}-${String(bkk.getUTCMonth() + 1).padStart(2, '0')}-${String(bkk.getUTCDate()).padStart(2, '0')}`;
+      if (!isCompanyOff && holidays.has(dateKey)) {
+        isCompanyOff = true;
       }
-      cur = nextDayStart;
+      if (!isCompanyOff && personalLeaves?.has(dateKey)) {
+        isPersonalLeave = true;
+      }
+    }
+
+    const nextMidnightMs = curMidnightMs + DAY_MS;
+    const nextDayStartMs = nextMidnightMs + WORK_START_OFFSET_MS;
+
+    if (isCompanyOff || isPersonalLeave) {
+      if (isCompanyOff && curMidnightMs > startMidnightMs) {
+        companyOffStreak++;
+      }
+      curMs = nextDayStartMs;
+      curMidnightMs = nextMidnightMs;
+      dayOfWeek = (dayOfWeek + 1) % 7;
       continue;
     }
 
-    // It's a working day!
-    // Check if we just completed a streak of >= 2 off-days
-    if (currentOffStreak >= 2) {
-      currentOffStreak = 0;
-      if (remainingMs <= WORK_MS_PER_DAY) {
-        // The holiday penalty completed the remaining threshold right at the start of this working day!
-        const workStart = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
-        return workStart;
+    // Working day: apply Post-Holiday Check-In Cap if returning from >= 3 consecutive company off-days
+    if (companyOffStreak >= LONG_HOLIDAY_OFF_STREAK_DAYS) {
+      if (remainingMs > WORK_MS_PER_DAY) {
+        remainingMs = WORK_MS_PER_DAY;
       }
-      remainingMs -= WORK_MS_PER_DAY;
-    } else {
-      currentOffStreak = 0;
+    }
+    companyOffStreak = 0;
+
+    const workStartMs = curMidnightMs + WORK_START_OFFSET_MS;
+    const workEndMs = curMidnightMs + WORK_END_OFFSET_MS;
+
+    if (curMs < workStartMs) {
+      curMs = workStartMs;
     }
 
-    const workStart = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0);
-    const workEnd = createBangkokDate(curParts.year, curParts.month, curParts.date, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 0);
-
-    if (cur < workStart) {
-      cur = workStart;
-    }
-
-    if (cur >= workEnd) {
-      cur = nextDayStart;
+    if (curMs >= workEndMs) {
+      curMs = nextDayStartMs;
+      curMidnightMs = nextMidnightMs;
+      dayOfWeek = (dayOfWeek + 1) % 7;
       continue;
     }
 
-    const availableMsToday = workEnd.getTime() - cur.getTime();
+    const availableMsToday = workEndMs - curMs;
 
     if (remainingMs <= availableMsToday) {
-      cur = new Date(cur.getTime() + remainingMs);
+      curMs += remainingMs;
       remainingMs = 0;
       break;
     } else {
       remainingMs -= availableMsToday;
-      cur = nextDayStart;
+      curMs = nextDayStartMs;
+      curMidnightMs = nextMidnightMs;
+      dayOfWeek = (dayOfWeek + 1) % 7;
     }
   }
 
-  return cur;
+  return new Date(curMs);
 }
 
 /**
@@ -292,4 +343,248 @@ export function formatLtcDuration(totalDays: number): string {
   const remainingMonths = Math.floor((totalDays % 365) / 30);
   if (remainingMonths === 0) return `${years}Y`;
   return `${years}Y${remainingMonths}M`;
+}
+
+const SHORT_MONTH_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const;
+
+const MONTH_NAME_MAP: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+/**
+ * Checks whether an activity comment fulfills an opportunity's due date in Asia/Bangkok time.
+ * Returns true if comment was posted on or after the due date's calendar day.
+ */
+export function isDueDateFulfilled(
+  dueDate: Date | string | null | undefined,
+  commentDate: Date | string | null | undefined
+): boolean {
+  if (!dueDate || !commentDate) return false;
+  const dObj = new Date(dueDate);
+  const cObj = new Date(commentDate);
+  if (isNaN(dObj.getTime()) || isNaN(cObj.getTime())) return false;
+
+  const dParts = toBangkokDateParts(dObj);
+  const cParts = toBangkokDateParts(cObj);
+
+  const dueMidnight = createBangkokDate(dParts.year, dParts.month, dParts.date, 0, 0, 0);
+  const commentMidnight = createBangkokDate(cParts.year, cParts.month, cParts.date, 0, 0, 0);
+  return commentMidnight.getTime() >= dueMidnight.getTime();
+}
+
+/**
+ * Checks whether two timestamps fall on the exact same calendar day in Asia/Bangkok.
+ */
+export function isSameBangkokCalendarDay(
+  dateA: Date | string | null | undefined,
+  dateB: Date | string | null | undefined
+): boolean {
+  if (!dateA || !dateB) return false;
+  const a = new Date(dateA);
+  const b = new Date(dateB);
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) return false;
+  const pa = toBangkokDateParts(a);
+  const pb = toBangkokDateParts(b);
+  return pa.year === pb.year && pa.month === pb.month && pa.date === pb.date;
+}
+
+/**
+ * Formats a Date into canonical "DD MMM YYYY" (e.g. "30 Oct 2026") in Asia/Bangkok timezone.
+ * Used for `[DUE DATE: DD MMM YYYY]` logs and preview banners so client and server never drift.
+ */
+export function formatBangkokDueDateDisplay(date: Date | string): string {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const parts = toBangkokDateParts(d);
+  const day = String(parts.date).padStart(2, '0');
+  const month = SHORT_MONTH_NAMES[parts.month] ?? '';
+  return `${day} ${month} ${parts.year}`;
+}
+
+/**
+ * Formats a Date into compact pill text in Asia/Bangkok timezone:
+ * - default (`includeYear: true, padDay: false`): "30Oct26" or "7Oct26" (ActivityFeedTab / ActivityCommentItem)
+ * - Kanban card (`includeYear: false, padDay: true`): "30Oct" or "07Oct"
+ */
+export function formatBangkokDueDateShort(
+  date: Date | string,
+  options?: { includeYear?: boolean; padDay?: boolean }
+): string {
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '';
+  const includeYear = options?.includeYear ?? true;
+  const padDay = options?.padDay ?? false;
+  const parts = toBangkokDateParts(d);
+  const day = padDay ? String(parts.date).padStart(2, '0') : String(parts.date);
+  const month = SHORT_MONTH_NAMES[parts.month] ?? '';
+  if (!includeYear) {
+    return `${day}${month}`;
+  }
+  const year = String(parts.year).slice(-2);
+  return `${day}${month}${year}`;
+}
+
+/**
+ * Parses a due date string from a `[DUE DATE: ...]` activity log into Bangkok midnight Date.
+ */
+export function parseDueDateString(raw: string): Date | null {
+  if (!raw) return null;
+  const cleaned = raw.replace(/,?\s*\d{1,2}[:.]\d{2}(?::\d{2})?/, '').trim();
+  const lower = cleaned.toLowerCase();
+  if (lower === 'removed' || lower === 'none' || lower === 'null') {
+    return null;
+  }
+
+  // 1. Try DD Month YYYY (e.g. "07 Oct 2026", "7 October 2026")
+  const enMatch = cleaned.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})$/);
+  if (enMatch) {
+    const day = parseInt(enMatch[1], 10);
+    const mStr = enMatch[2].toLowerCase().slice(0, 3);
+    const month = MONTH_NAME_MAP[mStr];
+    const year = parseInt(enMatch[3], 10);
+    if (month !== undefined) {
+      return createBangkokDate(year, month, day, 0, 0, 0);
+    }
+  }
+
+  // 2. Try DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmyMatch) {
+    const day = parseInt(dmyMatch[1], 10);
+    const month = parseInt(dmyMatch[2], 10) - 1;
+    const year = parseInt(dmyMatch[3], 10);
+    return createBangkokDate(year, month, day, 0, 0, 0);
+  }
+
+  // 3. Try ISO YYYY-MM-DD
+  const isoMatch = cleaned.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10) - 1;
+    const day = parseInt(isoMatch[3], 10);
+    return createBangkokDate(year, month, day, 0, 0, 0);
+  }
+
+  // 4. Fallback Date.parse
+  const parsedTimestamp = Date.parse(cleaned);
+  if (!isNaN(parsedTimestamp)) {
+    const p = toBangkokDateParts(new Date(parsedTimestamp));
+    return createBangkokDate(p.year, p.month, p.date, 0, 0, 0);
+  }
+
+  return null;
+}
+
+export interface TimelineDueDateLogEntry {
+  content: string;
+  type: string;
+  createdAt: Date | string;
+  parentId?: string | null;
+}
+
+/**
+ * Reconstructs the effective Due Date from a deal's top-level comment timeline up to `evalDate`.
+ * Shared between Leaderboard monthly sampling and server-side Admin log edit/delete reconciliation.
+ */
+export function resolveTimelineDueDate(params: {
+  logs: TimelineDueDateLogEntry[] | null | undefined;
+  fallbackDueDate?: Date | string | null;
+  dealCreatedAt?: Date | string | null;
+  evalDate?: Date;
+}): Date | null {
+  const { logs, fallbackDueDate, dealCreatedAt, evalDate = new Date() } = params;
+  const topLevelLogs = (logs ?? []).filter((l) => !l.parentId);
+
+  if (topLevelLogs.length === 0) {
+    if (fallbackDueDate && (!dealCreatedAt || new Date(dealCreatedAt) <= evalDate)) {
+      return new Date(fallbackDueDate);
+    }
+    return null;
+  }
+
+  const hasEverHadDueDateLogs = topLevelLogs.some((l) => l.content.startsWith('[DUE DATE:'));
+
+  let activeDueDate: Date | null = null;
+  if (!hasEverHadDueDateLogs && fallbackDueDate && (!dealCreatedAt || new Date(dealCreatedAt) <= evalDate)) {
+    activeDueDate = new Date(fallbackDueDate);
+  }
+
+  const relevantLogs = topLevelLogs
+    .filter((log) => new Date(log.createdAt).getTime() <= evalDate.getTime())
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  for (const log of relevantLogs) {
+    if (log.content.startsWith('[DUE DATE:')) {
+      const match = log.content.match(/\[DUE DATE:\s*([^\]\n]+)\]/i);
+      if (match) {
+        activeDueDate = parseDueDateString(match[1]);
+      }
+    } else if (
+      log.type === 'COMMENT' &&
+      !log.content.startsWith('[URGENT_') &&
+      !log.content.startsWith('[TIER:0H]') &&
+      activeDueDate
+    ) {
+      if (isDueDateFulfilled(activeDueDate, log.createdAt)) {
+        activeDueDate = null;
+      }
+    }
+  }
+
+  return activeDueDate;
+}
+
+/**
+ * Checks whether `evalDate` falls on the first working day (`00:00–16:59:59` Bangkok)
+ * immediately following a consecutive off-day streak of `>= LONG_HOLIDAY_OFF_STREAK_DAYS` (3+ days),
+ * and `baseDate` occurred strictly before that off-day streak.
+ */
+export function isPostHolidayCheckInDay(
+  baseDate: Date,
+  evalDate: Date = new Date(),
+  holidays: Set<string> = new Set(),
+  personalLeaves?: Set<string>
+): boolean {
+  const evalParts = toBangkokDateParts(evalDate);
+  // Only show Post-Holiday Check-in before 17:00 on an active working day
+  if (evalParts.day === 0) return false;
+  const evalDateKey = `${evalParts.year}-${String(evalParts.month + 1).padStart(2, '0')}-${String(evalParts.date).padStart(2, '0')}`;
+  if (holidays.has(evalDateKey) || personalLeaves?.has(evalDateKey)) return false;
+
+  const evalWorkEnd = createBangkokDate(
+    evalParts.year,
+    evalParts.month,
+    evalParts.date,
+    WORK_DAY_END_HOUR,
+    WORK_DAY_END_MINUTE,
+    0
+  );
+  if (evalDate.getTime() >= evalWorkEnd.getTime()) return false;
+
+  const evalMidnightMs = createBangkokDate(evalParts.year, evalParts.month, evalParts.date, 0, 0, 0).getTime();
+  const baseParts = toBangkokDateParts(baseDate);
+  const baseMidnightMs = createBangkokDate(baseParts.year, baseParts.month, baseParts.date, 0, 0, 0).getTime();
+  if (baseMidnightMs >= evalMidnightMs) return false;
+
+  // Count consecutive company off-days immediately preceding `evalDate` (skipping personal leave days cleanly)
+  let companyStreak = 0;
+  let cursorMidnightMs = evalMidnightMs - DAY_MS;
+  while (cursorMidnightMs > baseMidnightMs) {
+    const p = toBangkokDateParts(new Date(cursorMidnightMs));
+    const key = `${p.year}-${String(p.month + 1).padStart(2, '0')}-${String(p.date).padStart(2, '0')}`;
+    const isCompanyOff = p.day === 0 || holidays.has(key);
+    const isPersonal = !isCompanyOff && Boolean(personalLeaves?.has(key));
+    if (isCompanyOff) {
+      companyStreak += 1;
+    } else if (!isPersonal) {
+      break;
+    }
+    cursorMidnightMs -= DAY_MS;
+  }
+
+  return companyStreak >= LONG_HOLIDAY_OFF_STREAK_DAYS;
 }

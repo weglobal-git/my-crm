@@ -170,7 +170,12 @@ export function SharedMediaTab({
 
   const allImageUrls = useMemo(() => {
     return imagesAndVideos
-      .map(m => m.cloudinaryUrl)
+      .filter((m) => m.fileType?.startsWith("image/"))
+      .map(
+        (m) =>
+          m.cloudinaryUrl ||
+          (m.googleDriveFileId ? `/api/attachments/drive/${m.googleDriveFileId}` : null)
+      )
       .filter(Boolean) as string[];
   }, [imagesAndVideos]);
 
@@ -186,40 +191,31 @@ export function SharedMediaTab({
   // Render individual media item (Image/Video)
   const renderMediaItem = (media: AttachmentData) => {
     const isImage = media.fileType?.startsWith("image/");
-    const isArchivedInDrive = !media.cloudinaryUrl && Boolean(media.googleDriveFileId);
-    const driveUrl = media.googleDriveFileId
-      ? `https://drive.google.com/file/d/${media.googleDriveFileId}/view`
+    const driveProxyUrl = media.googleDriveFileId
+      ? `/api/attachments/drive/${media.googleDriveFileId}`
       : null;
+    const resolvedMediaUrl = media.cloudinaryUrl || driveProxyUrl;
 
-    if (isArchivedInDrive && driveUrl) {
-      return (
-        <a
-          key={media.id}
-          href={driveUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="aspect-square rounded-xl bg-[#1C1C1D] border border-[#3A3B3C] hover:border-[#C7F33C] p-2.5 flex flex-col items-center justify-center text-center group transition-colors cursor-pointer"
-          title={`Open in Google Drive: ${media.fileName || media.filename}`}
-        >
-          <Cloud className="w-7 h-7 text-sky-400 group-hover:scale-110 transition-transform mb-1.5" />
-          <span className="text-xs font-semibold text-slate-200 truncate w-full">
-            {media.fileName || media.filename}
-          </span>
-          <span className="text-[9px] text-sky-400/90 font-medium">Google Drive</span>
-        </a>
-      );
-    }
+    if (isImage && resolvedMediaUrl) {
+      const thumbSrc = media.cloudinaryUrl
+        ? getOptimizedCloudinaryUrl(media.cloudinaryUrl, 300)
+        : resolvedMediaUrl;
 
-    if (isImage && media.cloudinaryUrl) {
       return (
         <div
           key={media.id}
-          onClick={() => handleImageClick(media.cloudinaryUrl!)}
+          onClick={() => handleImageClick(resolvedMediaUrl)}
           className="cursor-pointer aspect-square rounded-xl overflow-hidden bg-[#1C1C1D] group relative border border-[#3A3B3C] hover:border-[#C7F33C] transition-colors block"
+          title={
+            media.googleDriveFileId
+              ? `${media.fileName || media.filename || "Photo"} (Archived in Google Drive)`
+              : media.fileName || media.filename || "Photo"
+          }
         >
           <img
-            src={getOptimizedCloudinaryUrl(media.cloudinaryUrl, 300)}
+            src={thumbSrc}
             alt={media.fileName || media.filename || "Photo"}
+            loading="lazy"
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
             onError={(e) => {
               e.currentTarget.onerror = null;
@@ -229,7 +225,10 @@ export function SharedMediaTab({
           />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
           {media.googleDriveFileId && (
-            <div className="absolute top-1.5 right-1.5 bg-black/60 rounded-md p-0.5 text-sky-400">
+            <div
+              className="absolute top-1.5 right-1.5 bg-black/70 border border-sky-400/30 rounded-md px-1 py-0.5 text-sky-400 flex items-center gap-0.5"
+              title="Archived in Google Drive Cold Storage"
+            >
               <Cloud className="w-3 h-3" />
             </div>
           )}
@@ -240,7 +239,7 @@ export function SharedMediaTab({
     return (
       <a
         key={media.id}
-        href={media.cloudinaryUrl || driveUrl || "#"}
+        href={resolvedMediaUrl || "#"}
         target="_blank"
         rel="noopener noreferrer"
         className="aspect-square rounded-xl overflow-hidden bg-[#1C1C1D] group relative border border-[#3A3B3C] hover:border-[#C7F33C] transition-colors block"
@@ -297,7 +296,7 @@ export function SharedMediaTab({
     const fileUrl =
       file.cloudinaryUrl ||
       (file.googleDriveFileId
-        ? `https://drive.google.com/file/d/${file.googleDriveFileId}/view`
+        ? `/api/attachments/drive/${file.googleDriveFileId}`
         : "#");
 
     return (
@@ -501,7 +500,7 @@ export function SharedMediaTab({
           </button>
           <img
             src={lightboxUrl}
-            className="max-w-full max-h-full object-contain rounded-xl shadow-2xl"
+            className="max-w-full max-h-full object-contain rounded-xl border border-[#3A3B3C]"
             onClick={(e) => e.stopPropagation()}
             alt="Preview"
           />

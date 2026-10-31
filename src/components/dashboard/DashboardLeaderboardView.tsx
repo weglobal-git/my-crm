@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
-import { Trophy, AlertCircle } from "lucide-react";
+import { Trophy, AlertCircle, Sparkles } from "lucide-react";
 import type { SalesOverviewSnapshot } from "@/lib/dashboard/sales-overview";
 import type { LeaderboardItem } from "@/lib/dashboard/leaderboard-types";
 import {
@@ -21,9 +21,29 @@ import { DepartmentSelector } from "./DepartmentSelector";
 import { DashboardPodium } from "./DashboardPodium";
 import { DashboardCategoryColumns } from "./DashboardCategoryColumns";
 import { ScoringRulesModal } from "./ScoringRulesModal";
-import { ScoreBreakdownModal } from "./ScoreBreakdownModal";
+import {
+  ScoreBreakdownModal,
+  type DrilldownCategoryId,
+} from "./ScoreBreakdownModal";
 import { DailyCardHealthDrawer } from "./DailyCardHealthDrawer";
-import { DailyLtcDrawer } from "./DailyLtcDrawer";
+import {
+  DailyLtcDrawer,
+  type DisciplineDrawerTab,
+} from "./DailyLtcDrawer";
+import { CategoryDetailDrawer } from "./CategoryDetailDrawer";
+import {
+  LeaderboardAnalyseModal,
+  type AnalyseViewMode,
+} from "./LeaderboardAnalyseModal";
+import { canUserInspectAnalyseTarget } from "@/lib/dashboard/leaderboard-score-analysis";
+
+type SubDrawerEntry =
+  | { kind: "breakdown"; item: LeaderboardItem }
+  | { kind: "health"; item: LeaderboardItem }
+  | { kind: "discipline"; item: LeaderboardItem; initialTab: DisciplineDrawerTab }
+  | { kind: "velocity"; item: LeaderboardItem }
+  | { kind: "outcome"; item: LeaderboardItem }
+  | { kind: "analyse"; mode: AnalyseViewMode; userId: string | null };
 
 interface DashboardLeaderboardViewProps {
   month: number;
@@ -55,9 +75,16 @@ export function DashboardLeaderboardView({
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   const [rulesCategory, setRulesCategory] = useState<string>("card_health");
-  const [breakdownItem, setBreakdownItem] = useState<LeaderboardItem | null>(null);
-  const [healthDrawerItem, setHealthDrawerItem] = useState<LeaderboardItem | null>(null);
-  const [ltcDrawerItem, setLtcDrawerItem] = useState<LeaderboardItem | null>(null);
+  const [subDrawerStack, setSubDrawerStack] = useState<SubDrawerEntry[]>([]);
+
+  const activeSubDrawer =
+    subDrawerStack.length > 0 ? subDrawerStack[subDrawerStack.length - 1] : null;
+  const pushSubDrawer = (entry: SubDrawerEntry) => {
+    setSubDrawerStack((prev) => [...prev, entry]);
+  };
+  const popSubDrawer = () => {
+    setSubDrawerStack((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+  };
 
   const leaderboardKey = useMemo(
     () =>
@@ -154,6 +181,58 @@ export function DashboardLeaderboardView({
 
   const currentMonthName = MONTH_NAMES[month - 1] || "";
   const isFetchingInitial = isLoading && !data;
+  const overallItems = data?.overallXpItems || [];
+  const canAnalyseAll = Boolean(
+    data?.canAnalyseDepartment ??
+      (resolvedActor.role === "ADMIN" || resolvedActor.role === "MANAGEMENT")
+  );
+  const selfItem = overallItems.find((i) => i.isCurrentUser) || null;
+  const canShowTopAnalyseButton = canAnalyseAll
+    ? overallItems.length > 0
+    : Boolean(selfItem);
+
+  const resolveFullItem = (target: LeaderboardItem): LeaderboardItem => {
+    const overallMatch = overallItems.find((i) => i.userId === target.userId);
+    const ltcCat = data?.categories?.find(
+      (c) => c.id === "clean_ltc" || c.id === "ltc"
+    );
+    const fallbackLtcSummary =
+      ltcCat?.items?.find((i) => i.dailyLtcSummary)?.dailyLtcSummary;
+
+    return {
+      ...overallMatch,
+      ...target,
+      breakdown: target.breakdown ?? overallMatch?.breakdown,
+      dailyHealthSummary:
+        target.dailyHealthSummary ?? overallMatch?.dailyHealthSummary,
+      dailyLtcSummary:
+        target.dailyLtcSummary ??
+        overallMatch?.dailyLtcSummary ??
+        fallbackLtcSummary,
+      categoryDetails: target.categoryDetails ?? overallMatch?.categoryDetails,
+    };
+  };
+
+  const handleOpenCategoryDetail = (
+    categoryId: DrilldownCategoryId,
+    target: LeaderboardItem,
+    initialDisciplineTab: DisciplineDrawerTab = "discipline"
+  ) => {
+    const enriched = resolveFullItem(target);
+    if (categoryId === "card_health") {
+      pushSubDrawer({ kind: "health", item: enriched });
+    } else if (categoryId === "clean_ltc") {
+      pushSubDrawer({
+        kind: "discipline",
+        item: enriched,
+        initialTab: initialDisciplineTab,
+      });
+    } else if (categoryId === "velocity") {
+      pushSubDrawer({ kind: "velocity", item: enriched });
+    } else {
+      pushSubDrawer({ kind: "outcome", item: enriched });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -173,8 +252,38 @@ export function DashboardLeaderboardView({
           </div>
         </div>
 
-        {/* Right Header: Department Switcher */}
+        {/* Right Header: Analyse Button & Department Switcher */}
         <div className="flex items-center gap-2.5">
+          {canShowTopAnalyseButton && (
+            <button
+              type="button"
+              onClick={() =>
+                pushSubDrawer(
+                  canAnalyseAll
+                    ? {
+                        kind: "analyse",
+                        mode: "team",
+                        userId:
+                          selfItem?.userId ?? overallItems[0]?.userId ?? null,
+                      }
+                    : {
+                        kind: "analyse",
+                        mode: "individual",
+                        userId: selfItem?.userId ?? null,
+                      }
+                )
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-[#C7F33C]/15 border border-[#C7F33C]/45 text-[#C7F33C] hover:bg-[#C7F33C] hover:text-black transition-all cursor-pointer"
+              title={
+                canAnalyseAll
+                  ? "Analyse department team summary & member scores in Thai"
+                  : "Explain your score and formula in Thai"
+              }
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Analyse</span>
+            </button>
+          )}
           {data?.availableDepartments && (
             <DepartmentSelector
               departments={data.availableDepartments}
@@ -205,25 +314,52 @@ export function DashboardLeaderboardView({
           <DashboardPodium
             overallItems={data.overallXpItems || []}
             categories={data.categories}
-            onSelectUser={(item) => setBreakdownItem(item)}
+            onSelectUser={(item, metricId) => {
+              if (
+                metricId === "card_health" ||
+                metricId === "clean_ltc" ||
+                metricId === "velocity" ||
+                metricId === "outcome"
+              ) {
+                handleOpenCategoryDetail(metricId, item);
+              } else {
+                pushSubDrawer({
+                  kind: "breakdown",
+                  item: resolveFullItem(item),
+                });
+              }
+            }}
           />
 
           {/* 4 Multi-Category Columns (Image 2 Style) */}
           <DashboardCategoryColumns 
-            categories={data.categories} 
-            onSelectUser={(item) => setBreakdownItem(item)}
-            onSelectHealthUser={(item) => setHealthDrawerItem(item)}
-            onSelectLtcUser={(item) => {
-              const ltcCat = data?.categories?.find((c) => c.id === "ltc");
-              const fallbackSummary =
-                ltcCat?.items?.find((i) => i.dailyLtcSummary)?.dailyLtcSummary;
-              const itemWithSummary = item.dailyLtcSummary
-                ? item
-                : fallbackSummary
-                ? { ...item, dailyLtcSummary: fallbackSummary }
-                : item;
-              setLtcDrawerItem(itemWithSummary);
-            }}
+            categories={data.categories}
+            canAnalyseAll={canAnalyseAll}
+            onAnalyseUser={(item) =>
+              pushSubDrawer({
+                kind: "analyse",
+                mode: "individual",
+                userId: item.userId,
+              })
+            }
+            onSelectUser={(item) =>
+              pushSubDrawer({
+                kind: "breakdown",
+                item: resolveFullItem(item),
+              })
+            }
+            onSelectHealthUser={(item) =>
+              handleOpenCategoryDetail("card_health", item)
+            }
+            onSelectDisciplineUser={(item, tab) =>
+              handleOpenCategoryDetail("clean_ltc", item, tab ?? "discipline")
+            }
+            onSelectVelocityUser={(item) =>
+              handleOpenCategoryDetail("velocity", item)
+            }
+            onSelectOutcomeUser={(item) =>
+              handleOpenCategoryDetail("outcome", item)
+            }
             onOpenCategoryRules={(categoryId) => {
               setRulesCategory(categoryId);
               setIsRulesModalOpen(true);
@@ -252,24 +388,101 @@ export function DashboardLeaderboardView({
         onClose={() => setIsRulesModalOpen(false)} 
       />
 
-      {/* Score Breakdown Modal */}
-      <ScoreBreakdownModal 
-        item={breakdownItem} 
-        onClose={() => setBreakdownItem(null)} 
-      />
+      {/* Active Sub-Window (Only top of stack renders; "Back" returns to previous view) */}
+      {activeSubDrawer?.kind === "breakdown" && (
+        <ScoreBreakdownModal
+          item={activeSubDrawer.item}
+          onClose={popSubDrawer}
+          onSelectCategory={(categoryId, target) =>
+            handleOpenCategoryDetail(categoryId, target)
+          }
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
 
-      {/* Daily Card Health Drawer */}
-      <DailyCardHealthDrawer
-        item={healthDrawerItem}
-        period={{ month, year }}
-        onClose={() => setHealthDrawerItem(null)}
-      />
+      {activeSubDrawer?.kind === "health" && (
+        <DailyCardHealthDrawer
+          item={activeSubDrawer.item}
+          period={{ month, year }}
+          onClose={popSubDrawer}
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
 
-      {/* Daily LTC Drawer */}
-      <DailyLtcDrawer
-        item={ltcDrawerItem}
-        period={{ month, year }}
-        onClose={() => setLtcDrawerItem(null)}
+      {activeSubDrawer?.kind === "discipline" && (
+        <DailyLtcDrawer
+          item={activeSubDrawer.item}
+          period={{ month, year }}
+          initialTab={activeSubDrawer.initialTab}
+          onClose={popSubDrawer}
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
+
+      {(activeSubDrawer?.kind === "velocity" ||
+        activeSubDrawer?.kind === "outcome") && (
+        <CategoryDetailDrawer
+          item={activeSubDrawer.item}
+          mode={activeSubDrawer.kind}
+          period={{ month, year }}
+          onClose={popSubDrawer}
+          onOpenAnalyse={
+            canUserInspectAnalyseTarget(activeSubDrawer.item, canAnalyseAll)
+              ? (target) =>
+                  pushSubDrawer({
+                    kind: "analyse",
+                    mode: "individual",
+                    userId: target.userId,
+                  })
+              : undefined
+          }
+        />
+      )}
+
+      <LeaderboardAnalyseModal
+        isOpen={activeSubDrawer?.kind === "analyse"}
+        onClose={popSubDrawer}
+        items={overallItems}
+        initialUserId={
+          activeSubDrawer?.kind === "analyse" ? activeSubDrawer.userId : null
+        }
+        initialMode={
+          activeSubDrawer?.kind === "analyse"
+            ? activeSubDrawer.mode
+            : "individual"
+        }
+        canAnalyseAll={canAnalyseAll}
+        hasSalesAccess={data?.hasSalesAccess}
+        month={month}
+        year={year}
+        departmentName={data?.departmentName}
       />
     </div>
   );

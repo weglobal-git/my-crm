@@ -1017,6 +1017,44 @@ export async function deleteProductVariant(
   };
 }
 
+export async function deleteProduct(
+  productId: string
+): Promise<{
+  success: boolean;
+  deletedProductId: string;
+}> {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) throw new Error("Unauthorized");
+
+  const existing = await prisma.product.findUnique({
+    where: { id: productId },
+    select: { id: true, name: true },
+  });
+  if (!existing) throw new Error("Product not found");
+
+  // Check if any variant of this product is referenced in QuotationItem
+  const quoteItemCount = await prisma.quotationItem.count({
+    where: {
+      variant: { productId },
+    },
+  });
+  if (quoteItemCount > 0) {
+    throw new Error(
+      `Cannot delete "${existing.name}" because it is referenced in ${quoteItemCount} quotation(s). Please switch its status to Unavailable instead.`
+    );
+  }
+
+  // Deleting product will cascade delete ProductVariant and CompanyPrice
+  await prisma.product.delete({
+    where: { id: productId },
+  });
+
+  return {
+    success: true,
+    deletedProductId: productId,
+  };
+}
+
 export async function upsertCompanyPrice(
   variantId: string,
   companyId: string,

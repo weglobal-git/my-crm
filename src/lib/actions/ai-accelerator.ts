@@ -7,6 +7,13 @@ import { GoogleGeminiAdapter } from "@/lib/ai/adapters/gemini";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { dispatchNotification } from "@/lib/notification-dispatcher";
+import { dispatchDashboardInvalidation } from "@/lib/dashboard/dashboard-realtime-server";
+import {
+  encodeTierPrefix,
+  hasVerifiableProofSignal,
+  parseTierPrefix,
+  type UpdateGrade,
+} from "@/lib/pipeline-update-quality";
 
 // Ensure Gemini adapter is registered
 aiGateway.registerAdapter("GOOGLE_GEMINI", new GoogleGeminiAdapter());
@@ -1042,4 +1049,326 @@ export async function getPendingAcceleratorsMap(
     console.error("[AI Accelerator] Failed to get pending map:", err);
     return {};
   }
+}
+
+const ACTIVITY_AUTO_GRADE_SCHEMA = {
+  type: "object",
+  properties: {
+    grade: {
+      type: "string",
+      enum: ["BRIEF_9H", "OUTREACH_27H", "PROGRESS_27H"],
+      description:
+        "BRIEF_9H = missed call / unanswered phone / vague claim without message text or outcome. OUTREACH_27H = real verbatim message sent to customer OR two-way contact where deal is waiting/blocked. PROGRESS_27H = concrete forward milestone, customer agreement/meeting, document/quote/sample/order completed.",
+    },
+    reason: {
+      type: "string",
+      description: "Concise 1-sentence English explanation of the assigned grade.",
+    },
+  },
+  required: ["grade", "reason"],
+};
+
+const DUE_DATE_REASON_GRADE_SCHEMA = {
+  type: "object",
+  properties: {
+    classification: {
+      type: "string",
+      enum: ["STALLING_ONLY", "OUTREACH_ONLY", "PROGRESS_VERIFIED"],
+      description:
+        "STALLING_ONLY = hollow verbose filler pushing date with zero real contact or action. OUTREACH_ONLY = real message sent or customer asked to hold/wait without advancing a milestone. PROGRESS_VERIFIED = concrete completed task/milestone reported alongside scheduling the next date.",
+    },
+  },
+  required: ["classification"],
+};
+
+async function generateStructuredWithRetry<T>(
+  run: () => Promise<{ data: T }>
+): Promise<{ data: T }> {
+  try {
+    return await run();
+  } catch (err) {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return await run().catch(() => {
+      throw err;
+    });
+  }
+}
+
+/**
+ * Asynchronous v2.2 Zero-Button AI Auto-Grader (`gemini-2.5-flash`).
+ * Runs strictly inside `after()` / background job — 0ms latency on chat submission.
+ * Evaluates every top-level update that passed deterministic Gate 1 (>= 12 chars, non-boilerplate, non-duplicate)
+ * and upgrades/downgrades its `[TIER:...]` tag in real time via Pusher without nagging notifications:
+ * - `BRIEF_9H` (`[TIER:9H]` / `[TIER:9H:XX]`): Unanswered phone call or vague unproven status claim (+9h, 0 Progress)
+ * - `OUTREACH_27H` (`[TIER:27H:OUTREACH]`): Real verbatim message sent to silent client OR two-way contact while blocked (+27h, 0 Progress)
+ * - `PROGRESS_27H` (`[TIER:27H:PROGRESS]`): Concrete forward deal/task milestone (+27h + Genuine Card Progress)
+ */
+export async function gradeActivityCommentWithAi(params: {
+  dealId: string;
+  logId: string;
+  rawContent: string;
+  authorId?: string;
+  priorCeilingHours?: number;
+}): Promise<void> {
+  const { dealId, logId, rawContent, priorCeilingHours } = params;
+  try {
+    const apiKey =
+      process.env.GOOGLE_GEMINI_API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY ||
+      "";
+    if (!apiKey.trim()) return;
+
+    const [deal, currentLog, recentLogs] = await Promise.all([
+      prisma.opportunity.findUnique({
+        where: { id: dealId },
+        select: {
+          id: true,
+          topic: true,
+          type: true,
+          stage: { select: { name: true } },
+        },
+      }),
+      prisma.activityLog.findUnique({
+        where: { id: logId },
+        select: { id: true, content: true },
+      }),
+      prisma.activityLog.findMany({
+        where: {
+          opportunityId: dealId,
+          parentId: null,
+          type: "COMMENT",
+          id: { not: logId },
+          NOT: [
+            { content: { startsWith: "[URGENT_" } },
+            { content: { startsWith: "[DUE DATE:" } },
+          ],
+        },
+        select: { content: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+        take: 3,
+      }),
+    ]);
+
+    if (
+      !deal ||
+      !currentLog ||
+      currentLog.content.startsWith("[TIER:0H]") ||
+      currentLog.content.startsWith("[DUE DATE:") ||
+      currentLog.content.startsWith("[URGENT_")
+    ) {
+      return;
+    }
+
+    const parsedCurrent = parseTierPrefix(currentLog.content);
+    const cleanSubmitted = parsedCurrent.cleanContent.trim();
+    if (!cleanSubmitted) return;
+
+    // Skip if comment was already edited to something different before this background job started
+    const expectedClean = parseTierPrefix(rawContent).cleanContent.trim();
+    if (expectedClean && cleanSubmitted !== expectedClean) {
+      return;
+    }
+
+    const hasProofSignal = hasVerifiableProofSignal(cleanSubmitted);
+    const recentHistory =
+      recentLogs.length === 0
+        ? "None"
+        : recentLogs
+            .map((l) => `- ${parseTierPrefix(l.content).cleanContent.trim().slice(0, 280)}`)
+            .join("\n");
+
+    const systemInstruction = `You are an objective, fair CRM Activity Auto-Grader classifying a Pipeline update into 1 of 3 grades (Sales Deal or Internal Task: ${deal.type}):
+1. BRIEF_9H (+9h timer, 0 Progress):
+   - Unanswered call / line busy / unreachable (e.g. "โทรหาไม่รับสาย พรุ่งนี้โทรใหม่", "Called buyer, no answer"), OR
+   - Vague unproven claim ("ทักไลน์ตามงานลูกค้าแล้ว รอตอบกลับ", "กำลังประสานงานอยู่ครับ") with NO actual message text, NO attachment/link/number, and NO customer reply or completed step.
+2. OUTREACH_27H (+27h full 3-workday timer, 0 Card Progress):
+   - REAL OUTBOUND MESSAGE TO SILENT CUSTOMER: The user pasted/quoted the actual substantive follow-up message or email sent (e.g. "09:01 สวัสดีครับคุณฝน เป็นอย่างไรบ้างครับ มีได้ลองใช้สินค้าดูบ้างมั้ยครับ", "Dear John, checking in on your sample feedback...") OR attached a file/chat screenshot with caption — grant OUTREACH_27H even if the customer has NOT replied yet so reps are never forced to pester silent B2B clients daily!
+   - TWO-WAY CONTACT / EXTERNAL HOLD: Spoke with customer/vendor and learned why the deal is waiting (e.g. "คุณฝนแจ้งว่าของตัวอย่างเพิ่งขึ้นตู้ต้นเดือน July", "ลูกค้าขอรอประชุมบอร์ดสัปดาห์หน้า"), without a new forward milestone yet.
+3. PROGRESS_27H (+27h full timer + Genuine Card Progress):
+   - Concrete forward milestone achieved: customer accepted/scheduled a meeting ("ลูกค้าตอบรับและนัดหมายเข้าพบวันศุกร์ บ่ายโมง"), confirmed specs/price/artwork/formula, requested or received quotation/sample/PI/PO/invoice, placed order, paid deposit, OR an internal task/admin/R&D/shipping step was completed.`;
+
+    const prompt = `Card: ${deal.topic} (${deal.type}, Stage: ${deal.stage?.name || "N/A"})
+ProofSignal: ${hasProofSignal}
+Prior 3 updates:
+${recentHistory}
+
+New update to grade:
+"${cleanSubmitted.slice(0, 1200)}"`;
+
+    const adapter = aiGateway.getAdapter("GOOGLE_GEMINI");
+    const aiResult = await generateStructuredWithRetry(() =>
+      adapter.generateStructured<{
+        grade: Exclude<UpdateGrade, "NOTE_0H">;
+        reason: string;
+      }>({
+        providerKey: "GOOGLE_GEMINI",
+        modelId: "gemini-2.5-flash",
+        secretKey: apiKey,
+        systemInstruction,
+        prompt,
+        schema: ACTIVITY_AUTO_GRADE_SCHEMA,
+        temperature: 0.1,
+        maxOutputTokens: 160,
+        timeoutMs: 12000,
+      })
+    );
+
+    const targetGrade = aiResult.data.grade;
+    if (
+      targetGrade !== "BRIEF_9H" &&
+      targetGrade !== "OUTREACH_27H" &&
+      targetGrade !== "PROGRESS_27H"
+    ) {
+      return;
+    }
+
+    const effectiveHoursFor9h =
+      targetGrade === "BRIEF_9H"
+        ? priorCeilingHours ??
+          (parsedCurrent.tier === "9H" ? parsedCurrent.effectiveHours : undefined)
+        : undefined;
+
+    const nextContent = encodeTierPrefix(cleanSubmitted, targetGrade, effectiveHoursFor9h);
+    if (nextContent === currentLog.content) {
+      return;
+    }
+
+    // Optimistic concurrency guard: only update if log content was not concurrently edited
+    const updateRes = await prisma.activityLog.updateMany({
+      where: { id: logId, content: currentLog.content },
+      data: { content: nextContent },
+    });
+    if (updateRes.count === 0) return;
+
+    const updatedLog = await prisma.activityLog.findUnique({
+      where: { id: logId },
+      include: {
+        user: true,
+        replies: { include: { user: true }, orderBy: { createdAt: "asc" } },
+      },
+    });
+
+    if (updatedLog) {
+      await notifyPrivatePipelineUpdate(dealId, {
+        action: "ACTIVITY_UPDATED",
+        dealId,
+        activityLog: updatedLog,
+      }).catch(() => {});
+    }
+
+    void dispatchDashboardInvalidation({
+      resources: ["leaderboard"],
+    }).catch(() => {});
+  } catch (err) {
+    console.warn("[AI Auto-Grader] Non-blocking background grade skipped:", err);
+  }
+}
+
+/**
+ * Asynchronous AI Audit for long Due Date `Reason:` logs (`>= 22` compact chars)
+ * so verbose stalling inside a Due Date change cannot farm Card Progress XP or bypass `Postponed x2+`.
+ */
+export async function gradeDueDateReasonWithAi(params: {
+  dealId: string;
+  logId: string;
+  rawContent: string;
+}): Promise<void> {
+  const { dealId, logId } = params;
+  try {
+    const apiKey =
+      process.env.GOOGLE_GEMINI_API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY ||
+      "";
+    if (!apiKey.trim()) return;
+
+    const [deal, currentLog] = await Promise.all([
+      prisma.opportunity.findUnique({
+        where: { id: dealId },
+        select: { id: true, topic: true, type: true },
+      }),
+      prisma.activityLog.findUnique({
+        where: { id: logId },
+        select: { id: true, content: true },
+      }),
+    ]);
+
+    if (!deal || !currentLog || !currentLog.content.startsWith("[DUE DATE:")) return;
+    const match = currentLog.content.match(/^(\[DUE DATE:\s*[^\]\n]+\]\s*\nReason:\s*)([\s\S]*)$/i);
+    if (!match) return;
+
+    const headerPrefix = match[1];
+    const cleanReason = (match[2] || "")
+      .replace(/^\[(?:STALLING_ONLY|OUTREACH_ONLY|PROGRESS_VERIFIED)\]\s*/i, "")
+      .trim();
+    if (!cleanReason) return;
+
+    const systemInstruction = `Classify a CRM Due Date scheduling reason into 1 of 3 categories (${deal.type}):
+- STALLING_ONLY: Verbose filler pushing the date forward with zero real customer message, zero external reason, and zero completed action (e.g. "ขอเลื่อนวันติดตามลูกค้าออกไปเป็นสัปดาห์หน้าเพื่อรอดำเนินการต่อ").
+- OUTREACH_ONLY: Legitimate customer/factory hold or real outbound follow-up message sent, but no forward milestone completed yet (e.g. "ทักคุณฝนแล้ว แจ้งว่าของตัวอย่างเพิ่งขึ้นตู้ ขอนัดตามต้นเดือนหน้า", "ติดขั้นตอนพิจารณาเครื่องหมายการค้า กรมทรัพย์สินทางปัญญา").
+- PROGRESS_VERIFIED: Reports a concrete completed step/deliverable/agreement AND schedules the next milestone (e.g. "ดึงใบเสร็จรอบ ต.ค. ส่งบัญชีครบแล้ว นัดรอบถัดไป พ.ย.", "ส่งตัวอย่างสูตร v2 ให้ลูกค้าแล้ว นัดฟังผลสัปดาห์หน้า").`;
+
+    const adapter = aiGateway.getAdapter("GOOGLE_GEMINI");
+    const aiResult = await generateStructuredWithRetry(() =>
+      adapter.generateStructured<{
+        classification: "STALLING_ONLY" | "OUTREACH_ONLY" | "PROGRESS_VERIFIED";
+      }>({
+        providerKey: "GOOGLE_GEMINI",
+        modelId: "gemini-2.5-flash",
+        secretKey: apiKey,
+        systemInstruction,
+        prompt: `Card: ${deal.topic}\nDue Date Reason: "${cleanReason.slice(0, 800)}"`,
+        schema: DUE_DATE_REASON_GRADE_SCHEMA,
+        temperature: 0.1,
+        maxOutputTokens: 80,
+        timeoutMs: 12000,
+      })
+    );
+
+    const tag = aiResult.data.classification;
+    if (tag !== "STALLING_ONLY" && tag !== "OUTREACH_ONLY" && tag !== "PROGRESS_VERIFIED") {
+      return;
+    }
+
+    const nextContent = `${headerPrefix}[${tag}] ${cleanReason}`;
+    if (nextContent === currentLog.content) return;
+
+    const updateRes = await prisma.activityLog.updateMany({
+      where: { id: logId, content: currentLog.content },
+      data: { content: nextContent },
+    });
+    if (updateRes.count === 0) return;
+
+    const updatedLog = await prisma.activityLog.findUnique({
+      where: { id: logId },
+      include: {
+        user: true,
+        replies: { include: { user: true }, orderBy: { createdAt: "asc" } },
+      },
+    });
+    if (updatedLog) {
+      await notifyPrivatePipelineUpdate(dealId, {
+        action: "ACTIVITY_UPDATED",
+        dealId,
+        activityLog: updatedLog,
+      }).catch(() => {});
+    }
+
+    void dispatchDashboardInvalidation({
+      resources: ["leaderboard"],
+    }).catch(() => {});
+  } catch (err) {
+    console.warn("[AI DueDate Grader] Non-blocking background check skipped:", err);
+  }
+}
+
+/** Backwards-compatible alias for `gradeActivityCommentWithAi` */
+export async function auditProgressCommentWithAi(params: {
+  dealId: string;
+  logId: string;
+  rawContent: string;
+  authorId: string;
+}): Promise<void> {
+  return gradeActivityCommentWithAi(params);
 }

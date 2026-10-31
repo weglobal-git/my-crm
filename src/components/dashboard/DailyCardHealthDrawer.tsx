@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  X,
+  ArrowLeft,
   ShieldCheck,
   Clock,
   Calendar,
@@ -13,6 +13,7 @@ import {
   Palmtree,
   Info,
   Layers,
+  Sparkles,
 } from "lucide-react";
 import type { LeaderboardItem } from "@/lib/dashboard/leaderboard-types";
 
@@ -20,6 +21,7 @@ interface DailyCardHealthDrawerProps {
   item: LeaderboardItem | null;
   period: { month: number; year: number };
   onClose: () => void;
+  onOpenAnalyse?: (item: LeaderboardItem) => void;
 }
 
 const MONTH_NAMES_EN = [
@@ -53,15 +55,6 @@ function DonutGauge({
       ? "#F59E0B"
       : "#F43F5E";
 
-  const glowColor =
-    rate === 0
-      ? "rgba(199, 243, 60, 0.3)"
-      : rate < 5
-      ? "rgba(16, 185, 129, 0.3)"
-      : rate < 10
-      ? "rgba(245, 158, 11, 0.3)"
-      : "rgba(244, 63, 94, 0.3)";
-
   return (
     <div
       className="relative flex items-center justify-center shrink-0"
@@ -73,12 +66,6 @@ function DonutGauge({
         viewBox={`0 0 ${size} ${size}`}
         className="transform -rotate-90"
       >
-        <defs>
-          <filter id={`donut-glow-${size}`} x="-20%" y="-20%" width="140%" height="140%">
-            <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor={glowColor} />
-          </filter>
-        </defs>
-
         {/* Background Track */}
         <circle
           cx={center}
@@ -101,7 +88,6 @@ function DonutGauge({
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
             strokeLinecap="round"
-            filter={`url(#donut-glow-${size})`}
             className="transition-all duration-700 ease-out"
           />
         )}
@@ -118,6 +104,7 @@ export function DailyCardHealthDrawer({
   item,
   period,
   onClose,
+  onOpenAnalyse,
 }: DailyCardHealthDrawerProps) {
   const drawerRef = useRef<HTMLDivElement>(null);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
@@ -142,8 +129,9 @@ export function DailyCardHealthDrawer({
   const monthName = MONTH_NAMES_EN[period.month - 1] || "";
   const sortedDailyRecords = [...summary.dailyRecords].reverse();
 
-  // Metrics
+  // Metrics (preserve monthly card exposure even if all open deals were closed today)
   const activeCards = summary.currentActiveCards;
+  const hasCardExposure = activeCards > 0 || summary.totalCardHours > 0;
   const avgMonthlyRedRate = summary.avgMonthlyRedRate ?? 0;
   const totalHealthXp = summary.totalCardHealthXp ?? item.score ?? 0;
 
@@ -153,61 +141,76 @@ export function DailyCardHealthDrawer({
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Dark Overlay over parent LeaderboardDrawer (z-[101]) */}
       <div
-        className="fixed inset-0 bg-black/40 backdrop-blur-xs z-[100] transition-opacity duration-300 opacity-100"
+        className="fixed inset-0 bg-black/70 backdrop-blur-xs z-[110] transition-opacity duration-200"
         onClick={onClose}
       />
 
-      {/* Floating Right Side Drawer (matches AccountFiltersDrawer / Pipeline style) */}
-      <div className="fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[500px] z-[101] flex transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] md:origin-right opacity-100 translate-y-0 md:translate-x-0 scale-100">
+      {/* Floating Right Side Drawer (Flat UI - zero shadows) */}
+      <div className="fixed inset-0 md:inset-y-4 md:right-4 md:left-auto md:mx-0 w-full md:w-[500px] md:max-w-[calc(100vw-32px)] z-[111] flex transition-all duration-200 ease-out">
         <div
           ref={drawerRef}
-          className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden shadow-2xl"
+          className="w-full bg-[#252728] border-0 md:border border-[#4E4F50] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden"
         >
-          {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-full bg-[#3A3B3C] border border-[#4E4F50] overflow-hidden flex items-center justify-center shrink-0">
+          {/* Header with Back Navigation */}
+          <div className="flex items-center justify-between gap-2 px-4 sm:px-5 py-3.5 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3A3B3C] border border-[#4E4F50] text-slate-200 hover:bg-[#C7F33C] hover:text-black hover:border-[#C7F33C] text-xs font-bold transition-colors cursor-pointer shrink-0"
+                title="Back to previous view"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back</span>
+              </button>
+
+              <div className="w-9 h-9 rounded-full bg-[#3A3B3C] border border-[#4E4F50] overflow-hidden flex items-center justify-center shrink-0">
                 {item.image ? (
                   <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                 ) : (
-                  <span className="text-sm font-black text-slate-200">
+                  <span className="text-xs font-black text-slate-200">
                     {item.name.slice(0, 2).toUpperCase()}
                   </span>
                 )}
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-slate-100 truncate">{item.name}</h2>
+                <div className="flex items-center gap-1.5">
+                  <h2 className="text-sm sm:text-base font-bold text-slate-100 truncate">{item.name}</h2>
                   {item.isCurrentUser && (
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#C7F33C] text-black shrink-0">
                       You
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
-                  <Calendar className="w-3.5 h-3.5 text-[#C7F33C]" />
-                  <span>
+                <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5 truncate">
+                  <Calendar className="w-3 h-3 text-[#C7F33C] shrink-0" />
+                  <span className="truncate">
                     Daily Card Health • {monthName} {period.year}
                   </span>
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-2 hover:bg-[#3A3B3C] rounded-full transition-colors text-slate-400 hover:text-slate-200 cursor-pointer"
-              aria-label="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onOpenAnalyse && (
+                <button
+                  type="button"
+                  onClick={() => onOpenAnalyse(item)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-[#C7F33C]/15 border border-[#C7F33C]/40 text-[#C7F33C] hover:bg-[#C7F33C] hover:text-black text-[11px] font-bold transition-all cursor-pointer"
+                  title="Explain score calculation in Thai"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>Analyse</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Scrollable Body */}
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-5 space-y-4">
             {/* Hero Card: Modern Donut Gauge & Hours Ratio */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-b from-[#202124] to-[#18191B] border border-[#2F3136] shadow-xl relative overflow-hidden">
+            <div className="p-4 sm:p-5 rounded-2xl bg-[#1C1C1D] border border-[#3A3B3C] relative overflow-hidden">
               {/* Subtle background glow */}
               <div
                 className="absolute -top-12 -right-12 w-44 h-44 rounded-full blur-3xl pointer-events-none opacity-20"
@@ -242,18 +245,16 @@ export function DailyCardHealthDrawer({
                   <div className="flex items-baseline gap-2">
                     <span
                       className={`text-3xl sm:text-4xl font-black font-mono tracking-tight ${
-                        activeCards === 0
+                        !hasCardExposure
                           ? "text-slate-400"
-                          : avgMonthlyRedRate === 0
+                          : avgMonthlyRedRate <= 5
                           ? "text-[#C7F33C]"
-                          : avgMonthlyRedRate < 5
-                          ? "text-[#C7F33C]"
-                          : avgMonthlyRedRate < 10
+                          : avgMonthlyRedRate < 15
                           ? "text-amber-400"
                           : "text-rose-400"
                       }`}
                     >
-                      {activeCards === 0
+                      {!hasCardExposure
                         ? "0%"
                         : avgMonthlyRedRate < 10
                         ? `${avgMonthlyRedRate.toFixed(avgMonthlyRedRate % 1 === 0 ? 0 : 2)}%`
@@ -265,7 +266,7 @@ export function DailyCardHealthDrawer({
                   <div className="text-base sm:text-lg font-mono font-bold text-slate-200 tracking-tight mt-1 flex items-baseline gap-1">
                     <span
                       className={
-                        summary.totalRedCardHours > 0 && avgMonthlyRedRate >= 5
+                        summary.totalRedCardHours > 0 && avgMonthlyRedRate > 5
                           ? "text-rose-400 font-extrabold"
                           : "text-slate-100"
                       }
@@ -286,22 +287,26 @@ export function DailyCardHealthDrawer({
                   <div className="flex items-center gap-2 mt-2.5">
                     <span
                       className={`text-[11px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1 ${
-                        activeCards === 0
+                        !hasCardExposure
                           ? "bg-slate-800 text-slate-400"
-                          : avgMonthlyRedRate < 5
+                          : avgMonthlyRedRate <= 5
                           ? "bg-emerald-500/15 text-[#C7F33C] border border-emerald-500/30"
+                          : avgMonthlyRedRate < 15
+                          ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
                           : "bg-rose-500/15 text-rose-400 border border-rose-500/30"
                       }`}
                     >
-                      {activeCards === 0
+                      {!hasCardExposure
                         ? "No Cards"
-                        : avgMonthlyRedRate < 5
-                        ? "Target Met"
-                        : "Failed (≥ 5%)"}
+                        : avgMonthlyRedRate <= 5
+                        ? "Target Met (≤ 5%)"
+                        : avgMonthlyRedRate < 15
+                        ? "Warning (< 15%)"
+                        : "Critical (≥ 15%)"}
                     </span>
 
                     <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded-md bg-[#252728] border border-[#3A3B3C] text-[#C7F33C]">
-                      {totalHealthXp} XP
+                      {totalHealthXp} / 30 XP
                     </span>
                   </div>
                 </div>
@@ -328,21 +333,21 @@ export function DailyCardHealthDrawer({
                   return (
                     <div
                       key={day.dateKey}
-                      className={`rounded-xl border transition-all ${
+                      className={`rounded-xl border transition-colors ${
                         day.isOffDay
-                          ? "bg-[#1C1C1D]/60 border-[#3A3B3C]/50 opacity-60"
+                          ? "bg-[#1C1C1D]/60 border-[#3A3B3C]/50 opacity-75 hover:opacity-100 hover:bg-[#252728] hover:border-[#4E4F50]"
                           : day.isNoCards
-                          ? "bg-[#1C1C1D]/60 border-[#3A3B3C]/60"
+                          ? "bg-[#1C1C1D]/60 border-[#3A3B3C]/60 hover:bg-[#252728] hover:border-[#4E4F50]"
                           : day.redCardsCount > 0
-                          ? "bg-rose-950/20 border-rose-500/30"
-                          : "bg-emerald-950/15 border-[#C7F33C]/50"
+                          ? "bg-rose-950/20 border-rose-500/30 hover:bg-rose-950/35 hover:border-rose-400/60"
+                          : "bg-emerald-950/15 border-[#C7F33C]/40 hover:bg-emerald-950/30 hover:border-[#C7F33C]"
                       }`}
                     >
                       {/* Compact Day Row */}
                       <div
                         onClick={() => hasRedDeals && toggleExpand(day.dateKey)}
-                        className={`flex items-center justify-between p-2.5 ${
-                          hasRedDeals ? "cursor-pointer hover:bg-white/5" : ""
+                        className={`flex items-center justify-between p-2.5 rounded-xl transition-colors ${
+                          hasRedDeals ? "cursor-pointer" : ""
                         }`}
                       >
                         {/* Left: Date Badge + Ratio / Off status */}
@@ -436,9 +441,19 @@ export function DailyCardHealthDrawer({
                               No Cards
                             </span>
                           ) : day.redCardsCount > 0 ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40">
-                              {day.dailyRedRate ?? (100 - day.healthRate)}% Red
-                            </span>
+                            <>
+                              {day.isGraceShieldDay && (
+                                <span
+                                  title="Heavy-Load Shield: ≥ 15 active cards with only 1 Red Card earns +0.25 XP half-credit"
+                                  className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/35"
+                                >
+                                  Shield +0.25
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                                {day.dailyRedRate ?? (100 - day.healthRate)}% Red
+                              </span>
+                            </>
                           ) : (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#C7F33C]/20 text-[#C7F33C] border border-[#C7F33C]/40">
                               0% Red
@@ -471,7 +486,7 @@ export function DailyCardHealthDrawer({
                             {day.redCardDetails.map((detail) => (
                               <div
                                 key={detail.dealId}
-                                className="flex items-center justify-between text-[11px] py-0.5 border-b border-rose-500/10 last:border-b-0"
+                                className="flex items-center justify-between text-[11px] py-1 px-2 -mx-2 rounded-lg hover:bg-rose-900/30 transition-colors border-b border-rose-500/10 last:border-b-0"
                               >
                                 <div className="min-w-0 pr-2">
                                   {detail.companyName && (

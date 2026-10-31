@@ -78,7 +78,7 @@ test('calculateDaysSinceContact uses calendar day boundaries without off-hours s
   assert.equal(calculateDaysSinceContact(contactSept7, oct6At21), 29);
 });
 
-test('calculateDailyLtcForMonth awards 1 XP per day when 0 LTC, with auto-pause on holidays and 20 XP cap', () => {
+test('calculateDailyLtcForMonth awards 0.25 XP per day when 0 LTC, with auto-pause on holidays and 5 XP cap', () => {
   // October 2026
   const month = 10;
   const year = 2026;
@@ -98,8 +98,9 @@ test('calculateDailyLtcForMonth awards 1 XP per day when 0 LTC, with auto-pause 
   // Working days in Oct 2026 (31 days - 4 Sundays - 1 holiday = 26 working days)
   assert.equal(cleanSummary.totalWorkingDays, 26);
   assert.equal(cleanSummary.cleanLtcDaysCount, 26);
-  // Capped at 20 XP
-  assert.equal(cleanSummary.teamLtcXp, 20);
+  // Capped at 5 XP legacy (20 clean days * 0.25 XP) and 2 XP v2.2 team bonus (20 clean days * 0.1 XP)
+  assert.equal(cleanSummary.teamLtcXp, 5);
+  assert.equal(cleanSummary.teamZeroBonusXp, 2);
 
   // Case B: Company has an open opportunity in pipeline -> Excluded from LTC (team keeps clean score)
   const companyWithOpenDeal: DailyLtcCompanyDTO[] = [
@@ -126,12 +127,12 @@ test('calculateDailyLtcForMonth awards 1 XP per day when 0 LTC, with auto-pause 
     asOfDate,
   });
   assert.equal(summaryWithOpenDeal.cleanLtcDaysCount, 26);
-  assert.equal(summaryWithOpenDeal.teamLtcXp, 20);
+  assert.equal(summaryWithOpenDeal.teamLtcXp, 5);
 
   // Case C: 1 company meets LTC threshold starting on Oct 10 and was NOT contacted
   // VIP Customer: 600,000 won -> Tier 1 (30 days threshold)
   // Last contacted: Sept 10, 2026.
-  // Oct 1 to Oct 9: < 30 days -> Clean (+9 clean days)
+  // Oct 1 to Oct 9: < 30 days -> Clean (+8 clean days)
   // Oct 10 to Oct 31: >= 30 days -> Dirty (0 XP for those days)
   const staleCompany: DailyLtcCompanyDTO[] = [
     {
@@ -157,7 +158,8 @@ test('calculateDailyLtcForMonth awards 1 XP per day when 0 LTC, with auto-pause 
     asOfDate,
   });
 
-  // Working days before Oct 10 (Oct 1 to 9): Oct 4 was Sunday, so 8 working days clean
+  // Working days before Oct 10 (Oct 1 to 9): Oct 4 was Sunday, so 8 working days clean -> 8 * 0.25 = 2 XP, 8 * 0.1 = 0.8 XP
   assert.equal(summaryWithStale.cleanLtcDaysCount, 8);
-  assert.equal(summaryWithStale.teamLtcXp, 8);
+  assert.equal(summaryWithStale.teamLtcXp, 2);
+  assert.equal(summaryWithStale.teamZeroBonusXp, 0.8);
 });

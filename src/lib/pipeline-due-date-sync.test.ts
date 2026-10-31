@@ -393,3 +393,240 @@ test('serializable transaction retry: retries P2034 conflicts and preserves non-
   );
   assert.equal(nonRetryAttempts, 1);
 });
+
+test('pipeline-due-date Regression: reply comments (parentId != null) must NOT clear Opportunity.dueDate', async () => {
+  const { addActivityLogForActor } = await import('@/lib/pipeline-activity-service');
+  const prisma = (await import('@/lib/prisma')).default;
+
+  const originalFindUnique = prisma.opportunity.findUnique;
+  const originalFindFirst = prisma.opportunity.findFirst;
+  const originalFindMany = prisma.activityLog.findMany;
+  const originalLogFindFirst = prisma.activityLog.findFirst;
+  const originalTransaction = prisma.$transaction;
+  const originalUserFindUnique = prisma.user.findUnique;
+  const originalUserFindMany = prisma.user.findMany;
+
+  let updateManyCalled = false;
+  const initialDueDate = new Date('2026-08-15T00:00:00.000Z');
+
+  try {
+    (prisma as unknown as { user: { findUnique: unknown; findMany: unknown } }).user.findUnique = async () => ({
+      id: 'admin-1',
+      name: 'Admin',
+      role: 'ADMIN',
+      departments: [],
+    });
+    (prisma as unknown as { user: { findMany: unknown } }).user.findMany = async () => [];
+    (prisma as unknown as { opportunity: { findFirst: unknown; findUnique: unknown } }).opportunity.findFirst = async () => ({
+      id: 'deal-1',
+      ownerId: 'admin-1',
+      type: 'SALES_DEAL',
+      status: 'OPEN',
+      updatedAt: new Date(),
+      owner: { id: 'admin-1', departments: [] },
+      teamMembers: [],
+    });
+    (prisma as unknown as { opportunity: { findUnique: unknown } }).opportunity.findUnique = async () => ({
+      id: 'deal-1',
+      ownerId: 'admin-1',
+      dueDate: initialDueDate,
+      teamMembers: [],
+    });
+    (prisma as unknown as { activityLog: { findMany: unknown; findFirst: unknown } }).activityLog.findMany = async () => [];
+    (prisma as unknown as { activityLog: { findFirst: unknown } }).activityLog.findFirst = async () => ({
+      id: 'parent-log-1',
+    });
+
+    (prisma as unknown as { $transaction: unknown }).$transaction = async (
+      callback: (tx: unknown) => Promise<unknown>
+    ) => {
+      const mockTx = {
+        activityLog: {
+          create: async (args: { data: { content: string; type?: string } }) => ({
+            id: 'reply-log-1',
+            content: args.data.content,
+            type: args.data.type || 'COMMENT',
+            parentId: 'parent-log-1',
+            createdAt: new Date('2026-08-15T10:00:00.000Z'),
+            user: { id: 'admin-1', name: 'Admin', role: 'ADMIN' },
+            replies: [],
+          }),
+        },
+        opportunity: {
+          findUnique: async () => ({
+            dueDate: initialDueDate,
+          }),
+          updateMany: async () => {
+            updateManyCalled = true;
+            return { count: 1 };
+          },
+        },
+      };
+      return callback(mockTx);
+    };
+
+    const mockActor = { id: 'admin-1', role: 'ADMIN' as const, departments: [] };
+    await addActivityLogForActor(
+      mockActor,
+      {
+        opportunityId: 'deal-1',
+        content: 'Replying inside thread on due date',
+        parentId: 'parent-log-1',
+      },
+      {
+        dispatchDashboardInvalidation: async () => {},
+        notifyPrivatePipelineUpdate: async () => {},
+        dispatchNotification: async () => {},
+      }
+    );
+
+    assert.equal(
+      updateManyCalled,
+      false,
+      'Threaded reply (parentId != null) must not wipe Opportunity.dueDate because board/leaderboard only track top-level comments'
+    );
+  } finally {
+    prisma.opportunity.findUnique = originalFindUnique;
+    prisma.opportunity.findFirst = originalFindFirst;
+    prisma.activityLog.findMany = originalFindMany;
+    prisma.activityLog.findFirst = originalLogFindFirst;
+    prisma.$transaction = originalTransaction;
+    prisma.user.findUnique = originalUserFindUnique;
+    prisma.user.findMany = originalUserFindMany;
+  }
+});
+
+test('pipeline-due-date Regression: Bangkok formatters and timeline reconciliation stay consistent across UTC boundaries', async () => {
+  const {
+    createBangkokDate,
+    formatBangkokDueDateDisplay,
+    formatBangkokDueDateShort,
+    isSameBangkokCalendarDay,
+    resolveTimelineDueDate,
+  } = await import('@/lib/business-days');
+
+  // 2026-10-30 00:00:00 Asia/Bangkok == 2026-10-29T17:00:00.000Z in UTC!
+  const bkkOct30 = createBangkokDate(2026, 9, 30, 0, 0, 0);
+  assert.equal(bkkOct30.toISOString(), '2026-10-29T17:00:00.000Z');
+  assert.equal(formatBangkokDueDateDisplay(bkkOct30), '30 Oct 2026');
+  assert.equal(formatBangkokDueDateShort(bkkOct30, { includeYear: true, padDay: false }), '30Oct26');
+  assert.equal(formatBangkokDueDateShort(bkkOct30, { includeYear: false, padDay: true }), '30Oct');
+  assert.equal(isSameBangkokCalendarDay(bkkOct30, '2026-10-30T05:00:00.000Z'), true);
+  assert.equal(isSameBangkokCalendarDay(bkkOct30, '2026-10-29T16:59:59.000Z'), false);
+
+  // Timeline reconciliation when Admin deletes the latest [DUE DATE: ...] log:
+  const evalNow = createBangkokDate(2026, 9, 20, 12, 0, 0);
+  const logsBeforeDelete = [
+    {
+      content: '[DUE DATE: 22 Oct 2026]\nReason: Initial follow up',
+      type: 'COMMENT',
+      createdAt: createBangkokDate(2026, 9, 10, 9, 0, 0),
+      parentId: null,
+    },
+    {
+      content: '[DUE DATE: 30 Oct 2026]\nReason: Rescheduled by client',
+      type: 'COMMENT',
+      createdAt: createBangkokDate(2026, 9, 15, 14, 0, 0),
+      parentId: null,
+    },
+  ];
+  const resolvedBefore = resolveTimelineDueDate({
+    logs: logsBeforeDelete,
+    fallbackDueDate: null,
+    evalDate: evalNow,
+  });
+  assert.ok(resolvedBefore && isSameBangkokCalendarDay(resolvedBefore, bkkOct30));
+
+  // After Admin deletes the second log, timeline falls back cleanly to 22 Oct 2026
+  const resolvedAfterDeleteSecond = resolveTimelineDueDate({
+    logs: [logsBeforeDelete[0]],
+    fallbackDueDate: null,
+    evalDate: evalNow,
+  });
+  assert.ok(
+    resolvedAfterDeleteSecond &&
+      formatBangkokDueDateDisplay(resolvedAfterDeleteSecond) === '22 Oct 2026'
+  );
+
+  // After Admin deletes all [DUE DATE: ...] logs with hadDueDateLogMutation (fallbackDueDate: null), dueDate becomes null
+  const resolvedAfterDeleteAll = resolveTimelineDueDate({
+    logs: [],
+    fallbackDueDate: null,
+    evalDate: evalNow,
+  });
+  assert.equal(resolvedAfterDeleteAll, null);
+});
+
+test('pipeline-due-date v2 Guardrail: low-signal [TIER:0H] comment (e.g. "ติดตามลูกค้าครับ") does NOT clear Opportunity.dueDate', async () => {
+  const { addActivityLogForActor } = await import('@/lib/pipeline-activity-service');
+  const prisma = (await import('@/lib/prisma')).default;
+
+  const originalFindUnique = prisma.opportunity.findUnique;
+  const originalFindMany = prisma.activityLog.findMany;
+  const originalTransaction = prisma.$transaction;
+
+  let updateManyCalled = false;
+  let storedContent = '';
+  const initialDueDate = new Date('2026-08-15T00:00:00.000Z');
+
+  try {
+    (prisma as unknown as { opportunity: { findUnique: unknown } }).opportunity.findUnique = async () => ({
+      id: 'deal-0h',
+      topic: 'Boilerplate Check',
+      ownerId: 'admin-1',
+      createdAt: new Date('2026-08-10T09:00:00.000Z'),
+      dueDate: initialDueDate,
+      teamMembers: [],
+    });
+    (prisma as unknown as { activityLog: { findMany: unknown } }).activityLog.findMany = async () => [];
+    (prisma as unknown as { $transaction: unknown }).$transaction = async (
+      callback: (tx: unknown) => Promise<unknown>
+    ) => {
+      const mockTx = {
+        activityLog: {
+          create: async (args: { data: { content: string; type?: string } }) => {
+            storedContent = args.data.content;
+            return {
+              id: 'log-0h-1',
+              content: args.data.content,
+              type: args.data.type || 'COMMENT',
+              createdAt: new Date('2026-08-15T10:00:00.000Z'),
+              user: { id: 'admin-1', name: 'Admin', role: 'ADMIN' },
+              replies: [],
+            };
+          },
+        },
+        opportunity: {
+          findUnique: async () => ({ dueDate: initialDueDate }),
+          updateMany: async () => {
+            updateManyCalled = true;
+            return { count: 1 };
+          },
+        },
+      };
+      return callback(mockTx);
+    };
+
+    const mockActor = { id: 'admin-1', role: 'ADMIN' as const, departments: [] };
+    await addActivityLogForActor(
+      mockActor,
+      {
+        opportunityId: 'deal-0h',
+        content: 'ติดตามลูกค้าครับ',
+        updateIntent: 'PROGRESS',
+      },
+      {
+        dispatchDashboardInvalidation: async () => {},
+        notifyPrivatePipelineUpdate: async () => {},
+        dispatchNotification: async () => {},
+      }
+    );
+
+    assert.ok(storedContent.startsWith('[TIER:0H]'), 'Boilerplate comment must be tagged [TIER:0H]');
+    assert.equal(updateManyCalled, false, '[TIER:0H] note must NOT clear Opportunity.dueDate');
+  } finally {
+    prisma.opportunity.findUnique = originalFindUnique;
+    prisma.activityLog.findMany = originalFindMany;
+    prisma.$transaction = originalTransaction;
+  }
+});

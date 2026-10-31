@@ -51,7 +51,7 @@ export function LtcDrawer({
     error,
     mutate: mutateLtc,
   } = useSWR<LtcSummaryResult>(
-    "ltc-accounts-data",
+    isOpen ? "ltc-accounts-data" : null,
     getLtcAccountsAction,
     {
       revalidateOnFocus: false,

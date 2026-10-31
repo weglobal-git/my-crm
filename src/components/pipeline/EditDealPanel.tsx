@@ -51,6 +51,7 @@ import { clearAllDraftsForDeal } from "@/lib/deal-draft-store";
 import { applyOptimisticTopicPatch, rollbackTopicPatch, shouldAcceptRevision, normalizeRevision } from "@/lib/deal-topic-sync";
 import { rollbackDeletedPageItem } from "@/lib/pipeline-delete-rollback";
 import { dealSummaryKey } from "@/lib/pipeline-activity-cache";
+import { isDueDateFulfilled } from "@/lib/business-days";
 import {
   isPendingAcceleratorsKey,
   decrementPendingBadge,
@@ -1755,9 +1756,31 @@ export function EditDealPanel({ deal, initialTab = 'activity', isOpen, onClose, 
         dealId={deal.id}
         dealTopic={deal.topic}
         isAdmin={isAdmin}
-        onPostSuccess={() => {
+        onPostSuccess={(persistedLog) => {
           setActiveTab('activity');
           void loadActivityLogs();
+          if (persistedLog) {
+            void mutate(
+              (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+              (currentData: OpportunityWithRelations[] | undefined) => {
+                if (!currentData) return currentData;
+                return currentData.map((opp) => {
+                  if (opp.id !== deal.id) return opp;
+                  const nextDueDate =
+                    opp.dueDate && isDueDateFulfilled(opp.dueDate, persistedLog.createdAt)
+                      ? null
+                      : opp.dueDate;
+                  return {
+                    ...opp,
+                    dueDate: nextDueDate,
+                    activityLogs: [persistedLog, ...(opp.activityLogs || [])],
+                  };
+                });
+              },
+              { revalidate: false }
+            );
+          }
+          void mutate((key) => Array.isArray(key) && key[0] === 'dashboard:leaderboard');
         }}
       />
     </>

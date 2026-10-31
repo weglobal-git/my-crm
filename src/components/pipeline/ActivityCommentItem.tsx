@@ -23,6 +23,18 @@ import {
   type ActivityLogWithRelations,
 } from '@/lib/pipeline-activity-cache';
 import { rollbackDeletedPageItem } from '@/lib/pipeline-delete-rollback';
+import {
+  formatBangkokDueDateShort,
+  isSameBangkokCalendarDay,
+  parseDueDateString,
+} from '@/lib/business-days';
+import {
+  classifyUpdateQuality,
+  computeCommentBubbleBadges,
+  parseTierPrefix,
+  resolveEditedCommentGrade,
+  type CommentBubbleScoreBadge,
+} from '@/lib/pipeline-update-quality';
 
 export const formatDateTime = (date: Date | string) => {
   return new Intl.DateTimeFormat('en-GB', {
@@ -31,16 +43,12 @@ export const formatDateTime = (date: Date | string) => {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Bangkok',
   }).format(new Date(date));
 };
 
 export const formatShortDueDate = (date: Date | string) => {
-  const d = new Date(date);
-  if (isNaN(d.getTime())) return '';
-  const day = d.getDate();
-  const month = d.toLocaleDateString('en-GB', { month: 'short' });
-  const year = String(d.getFullYear()).slice(-2);
-  return `${day}${month}${year}`;
+  return formatBangkokDueDateShort(date, { includeYear: true, padDay: false });
 };
 
 export const MIN_DUE_DATE_REASON_LENGTH = 10;
@@ -169,9 +177,15 @@ export interface ActivityCommentProps {
   onAnswerQuestion?: (questionId: string, answer: string) => Promise<void>;
   onDeleteQuestion?: (questionId: string) => Promise<void> | void;
   canUseManagerCall?: boolean;
+  activeDealDueDate?: Date | string | null;
+  isLatestDueDateLog?: boolean;
+  postponedCount?: number;
+  bubbleBadge?: CommentBubbleScoreBadge;
+  dealOwnerId?: string;
+  dealTopic?: string;
 }
 
-export function ActivityComment({
+function ActivityCommentImpl({
   log,
   dealId,
   currentUser,
@@ -184,10 +198,17 @@ export function ActivityComment({
   onAnswerQuestion,
   onDeleteQuestion,
   canUseManagerCall = false,
+  activeDealDueDate,
+  isLatestDueDateLog = true,
+  postponedCount = 0,
+  bubbleBadge,
+  dealOwnerId,
+  dealTopic,
 }: ActivityCommentProps) {
   const { mutate } = useSWRConfig();
+  const parsedTier = parseTierPrefix(log.content);
   const [isEditing, setIsEditing] = useState(false);
-  const [editContent, setEditContent] = useState(log.content);
+  const [editContent, setEditContent] = useState(parsedTier.cleanContent);
   const [isReplying, setIsReplying] = useState(false);
   const [replyContent, setReplyContent] = useState('');
   const [replyingToUsername, setReplyingToUsername] = useState<string | null>(null);
@@ -239,10 +260,20 @@ export function ActivityComment({
   }
 
   const handleEdit = async () => {
-    if (!editContent.trim()) return;
+    const trimmedEdit = editContent.trim();
+    if (!trimmedEdit) return;
+
+    const optimisticEditedContent = !log.parentId && !isDueDateLog
+      ? resolveEditedCommentGrade({
+          originalContent: log.content,
+          originalCreatedAt: log.createdAt,
+          editedCleanText: trimmedEdit,
+          editedAt: new Date(),
+        }).authoritativeContent
+      : trimmedEdit;
 
     // Optimistic Update
-    const tempUpdatedLog = { ...log, content: editContent, isEdited: true };
+    const tempUpdatedLog = { ...log, content: optimisticEditedContent, isEdited: true };
 
     if (mutateLogs) {
       mutateLogs(
@@ -284,11 +315,28 @@ export function ActivityComment({
     setIsEditing(false);
     setShowMenu(false);
     try {
-      const persistedLog = (await editActivityLog(log.id, editContent)) as ActivityLogWithRelations;
+      const persistedLog = (await editActivityLog(log.id, trimmedEdit)) as ActivityLogWithRelations;
       mutateLogs?.(
         (pages) => applyActivityEvent(pages, { action: 'ACTIVITY_UPDATED', activityLog: persistedLog }),
         { revalidate: false }
       );
+      mutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentData: OpportunityWithRelations[] | undefined) => {
+          if (!currentData) return currentData;
+          return currentData.map((opp: OpportunityWithRelations) => {
+            if (opp.id === dealId) {
+              const updatedLogs = opp.activityLogs.map((l) =>
+                l.id === log.id ? (persistedLog as unknown as typeof l) : l
+              );
+              return { ...opp, activityLogs: updatedLogs };
+            }
+            return opp;
+          });
+        },
+        { revalidate: false }
+      );
+      void mutate((key) => Array.isArray(key) && key[0] === 'dashboard:leaderboard');
     } catch {
       refresh();
     }
@@ -361,6 +409,7 @@ export function ActivityComment({
 
     try {
       await deleteActivityLog(log.id);
+      void mutate((key) => Array.isArray(key) && key[0] === 'dashboard:leaderboard');
     } catch {
       if (mutateLogs) {
         mutateLogs(
@@ -438,7 +487,7 @@ export function ActivityComment({
         <div className="flex flex-row-reverse gap-3 self-end w-full max-w-[95%] sm:max-w-[88%] ml-auto">
           {/* Avatar on Right */}
           <div
-            className={`w-10 h-10 rounded-full shrink-0 overflow-hidden relative flex items-center justify-center shadow-md ${
+            className={`w-10 h-10 rounded-full shrink-0 overflow-hidden relative flex items-center justify-center ${
               targetQ.source === 'AI'
                 ? 'bg-purple-500/20 border-2 border-purple-500'
                 : 'bg-amber-500/20 border-2 border-amber-500'
@@ -489,7 +538,7 @@ export function ActivityComment({
                     <span className="text-xs font-bold text-slate-200">{reply.user?.name || 'User'}</span>
                     <span className="text-xs text-slate-400">{formatDateTime(reply.createdAt)}</span>
                   </div>
-                  <p className="text-xs text-slate-100 leading-normal">{reply.content}</p>
+                  <p className="text-xs text-slate-100 leading-normal">{parseTierPrefix(reply.content).cleanContent}</p>
                 </div>
               </div>
             ))}
@@ -516,21 +565,100 @@ export function ActivityComment({
           {/* Main Comment Bubble */}
           <div className="flex items-center gap-2">
             <div className="bg-[#3A3B3C] rounded-2xl p-3 inline-block self-start relative w-full max-w-[85%] sm:max-w-md">
-              <div className="flex items-center gap-2 mb-1">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="text-xs font-bold text-slate-100">{log.user?.name || 'Unknown User'}</span>
+                {!isDueDateLog &&
+                  !log.parentId &&
+                  !log.content.startsWith('[URGENT_') &&
+                  (() => {
+                    const resolvedBadge =
+                      bubbleBadge ??
+                      computeCommentBubbleBadges(
+                        [
+                          {
+                            id: log.id,
+                            content: log.content,
+                            createdAt: log.createdAt,
+                            userId: log.userId,
+                          },
+                        ],
+                        { dealOwnerId, dealTopic }
+                      ).get(log.id);
+                    if (!resolvedBadge) return null;
+                    return (
+                      <span
+                        title={resolvedBadge.tooltip}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          resolvedBadge.tone === 'progress'
+                            ? 'bg-[#C7F33C]/15 text-[#C7F33C] border-[#C7F33C]/35'
+                            : resolvedBadge.tone === 'outreach'
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/35'
+                            : resolvedBadge.tone === 'followup'
+                            ? 'bg-sky-500/15 text-sky-300 border-sky-400/35'
+                            : 'bg-slate-700/60 text-slate-300 border-slate-500/50'
+                        }`}
+                      >
+                        {resolvedBadge.label}
+                      </span>
+                    );
+                  })()}
                 {dueDateMatch && (() => {
                   const rawDueDate = dueDateMatch[1];
                   const cleanDueDate = rawDueDate.replace(/,?\s*\d{1,2}[:.]\d{2}(?::\d{2})?/, '').trim();
+                  if (cleanDueDate === 'Removed') {
+                    return (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full border text-slate-300 bg-slate-600 border-slate-500">
+                        Due Date Removed
+                      </span>
+                    );
+                  }
+
+                  const parsedLogDate = parseDueDateString(cleanDueDate);
+                  const isCurrentlyActive =
+                    activeDealDueDate === undefined
+                      ? true
+                      : Boolean(
+                          isLatestDueDateLog &&
+                            activeDealDueDate &&
+                            parsedLogDate &&
+                            isSameBangkokCalendarDay(parsedLogDate, activeDealDueDate)
+                        );
+                  const isFulfilledOrCleared =
+                    activeDealDueDate !== undefined && isLatestDueDateLog && !activeDealDueDate;
+
                   return (
-                    <span
-                      className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
-                        cleanDueDate === 'Removed'
-                          ? 'text-slate-300 bg-slate-600 border-slate-500'
-                          : 'bg-[#C7F33C] text-black'
-                      }`}
-                    >
-                      {cleanDueDate === 'Removed' ? 'Due Date Removed' : `Due: ${cleanDueDate}`}
-                    </span>
+                    <>
+                      <span
+                        title={
+                          isCurrentlyActive
+                            ? `Active Due Date: ${cleanDueDate}`
+                            : isFulfilledOrCleared
+                            ? `Completed / Cleared Due Date: ${cleanDueDate}`
+                            : `Previous Due Date: ${cleanDueDate}`
+                        }
+                        className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                          isCurrentlyActive
+                            ? 'bg-[#C7F33C] text-black border-[#C7F33C]'
+                            : isFulfilledOrCleared
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            : 'bg-slate-700/60 text-slate-300 border-slate-500/60 line-through'
+                        }`}
+                      >
+                        {isCurrentlyActive
+                          ? `Due: ${cleanDueDate}`
+                          : isFulfilledOrCleared
+                          ? `Due: ${cleanDueDate} ✓`
+                          : `Due: ${cleanDueDate}`}
+                      </span>
+                      {postponedCount >= 2 && (
+                        <span
+                          title={`Due Date rescheduled ${postponedCount} times consecutively without a progress update`}
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-500/15 text-amber-300 border-amber-500/35"
+                        >
+                          Postponed x{postponedCount}
+                        </span>
+                      )}
+                    </>
                   );
                 })()}
               </div>
@@ -542,13 +670,39 @@ export function ActivityComment({
                     onChange={(e) => setEditContent(e.target.value)}
                     className="w-full bg-[#252728] text-[16px] border border-[#4E4F50] text-slate-100 rounded-lg p-2 text-xs min-h-[150px]"
                   />
+                  {!isDueDateLog && !log.parentId && (() => {
+                    const isSameDay = isSameBangkokCalendarDay(log.createdAt, new Date());
+                    if (isSameDay) {
+                      const liveEval = classifyUpdateQuality(editContent.trim());
+                      const previewText =
+                        liveEval.grade === 'PROGRESS_27H'
+                          ? 'Progress ★ • +27h (+1 XP)'
+                          : liveEval.grade === 'OUTREACH_27H'
+                          ? 'Outreach • +27h (0 XP)'
+                          : liveEval.grade === 'BRIEF_9H'
+                          ? 'Follow-up • +9h (0 XP)'
+                          : 'Note • +0h (0 XP)';
+                      return (
+                        <div className="px-2.5 py-1.5 rounded-lg bg-[#252728] border border-[#4E4F50] text-[11px] text-slate-300 leading-relaxed">
+                          <span className="text-[#C7F33C] font-semibold">Same-day edit:</span>{' '}
+                          Add concrete details to upgrade timer &amp; XP immediately • Live preview:{' '}
+                          <span className="font-bold text-slate-100">{previewText}</span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="px-2.5 py-1.5 rounded-lg bg-[#252728] border border-amber-500/30 text-[11px] text-amber-200/90 leading-relaxed">
+                        Past-day comment: Text edits are saved, but the original day&apos;s timer &amp; XP stay locked. Post a new update below for today&apos;s progress.
+                      </div>
+                    );
+                  })()}
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => setIsEditing(false)} className="text-xs text-slate-300 hover:underline">
                       Cancel
                     </button>
                     <button
                       onClick={handleEdit}
-                      className="flex items-center px-4 py-2 rounded-full font-semibold transition-all text-xs select-none bg-[#C7F33C] text-black hover:bg-[#b0d932] cursor-pointer shadow-sm"
+                      className="flex items-center px-4 py-2 rounded-full font-semibold transition-all text-xs select-none bg-[#C7F33C] text-black hover:bg-[#b0d932] cursor-pointer"
                     >
                       Save
                     </button>
@@ -557,7 +711,9 @@ export function ActivityComment({
               ) : (
                 <div className="flex flex-col w-full">
                   {(() => {
-                    const displayContent = dueDateMatch ? dueDateMatch[2] : log.content;
+                    const displayContent = dueDateMatch
+                      ? dueDateMatch[2].replace(/^\[(?:STALLING_ONLY|OUTREACH_ONLY|PROGRESS_VERIFIED)\]\s*/i, '')
+                      : parsedTier.cleanContent;
                     const images: { url: string; filename: string; type: string }[] = [];
                     const files: { url: string; filename: string; type: string }[] = [];
 
@@ -568,14 +724,21 @@ export function ActivityComment({
                           const cleanUrl = (url || '').trim();
                           const cleanFilename = (filename || '').trim();
                           const cleanType = (type || '').trim();
+                          const isExplicitNonImage =
+                            (cleanType.length > 0 &&
+                              !cleanType.startsWith('image/') &&
+                              !cleanType.startsWith('video/')) ||
+                            Boolean(cleanFilename.match(/\.(pdf|docx?|xlsx?|csv|zip|rar|pptx?)$/i)) ||
+                            Boolean(cleanUrl.match(/\.(pdf|docx?|xlsx?|csv|zip|rar|pptx?)(\?.*)?$/i));
                           const isImg =
-                            cleanType.startsWith('image/') ||
-                            cleanType.startsWith('video/') ||
-                            Boolean(cleanUrl.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)(\?.*)?$/i)) ||
-                            Boolean(cleanUrl.includes('/image/upload/')) ||
-                            cleanUrl.startsWith('blob:') ||
-                            cleanUrl.startsWith('data:') ||
-                            Boolean(cleanFilename.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)$/i));
+                            !isExplicitNonImage &&
+                            (cleanType.startsWith('image/') ||
+                              cleanType.startsWith('video/') ||
+                              Boolean(cleanUrl.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)(\?.*)?$/i)) ||
+                              Boolean(cleanUrl.includes('/image/upload/')) ||
+                              cleanUrl.startsWith('blob:') ||
+                              cleanUrl.startsWith('data:') ||
+                              Boolean(cleanFilename.match(/\.(jpeg|jpg|png|gif|webp|svg|bmp)$/i)));
                           if (isImg) {
                             images.push({ url: cleanUrl, filename: cleanFilename || 'Attachment', type: cleanType || 'image/jpeg' });
                           } else {
@@ -659,6 +822,7 @@ export function ActivityComment({
                   <div className="absolute top-full left-0 mt-1 bg-[#3A3B3C] border border-[#4E4F50] rounded-lg flex flex-col py-1 w-24 z-10">
                     <button
                       onClick={() => {
+                        setEditContent(parseTierPrefix(log.content).cleanContent);
                         setIsEditing(true);
                         setShowMenu(false);
                       }}
@@ -788,3 +952,5 @@ export function ActivityComment({
     </div>
   );
 }
+
+export const ActivityComment = React.memo(ActivityCommentImpl);

@@ -24,6 +24,64 @@ export interface LeaderboardScoreBreakdown {
   healthXp: number;
   volumeBonusXp: number;
   redHours?: number;
+  /** Unified v2.2 100 XP Portfolio fields (30 Health + 20 Discipline & LTC + 25 Velocity & Teamwork + 25 Outcome) */
+  disciplineTotalXp?: number;
+  graceDaysCount?: number;
+  individualLtcXp?: number;
+  individualLtcCardsCount?: number;
+  teamZeroLtcXp?: number;
+  velocityXp?: number;
+  outcomeXp?: number;
+  salesWeightPct?: number;
+  taskWeightPct?: number;
+  ownedSalesDeals?: number;
+  ownedInternalTasks?: number;
+  collaboratorDeals?: number;
+  salesVelocityRaw?: number;
+  taskVelocityRaw?: number;
+  salesOutcomeRaw?: number;
+  taskOutcomeRaw?: number;
+  completedInternalTasks?: number;
+  onTimeInternalTasks?: number;
+  healthyActiveProjectTasksCount?: number;
+  openTaskMilestoneCreditsCount?: number;
+  overdueOpenInternalTasksCount?: number;
+  collaboratorWonDealsCount?: number;
+  departmentTotalRevenue?: number;
+  multiStepProgressCardsCount?: number;
+  completedTodosCount?: number;
+  progress27hCount?: number;
+  verifiedProgressDaysCount?: number;
+  progressCardsCount?: number;
+  eligibleProgressCardsCount?: number;
+  progressCoveragePct?: number;
+  onTimeDueFulfillmentsCount?: number;
+  fastRepliesCount?: number;
+  readyCardsCount?: number;
+  velocityProgressXp?: number;
+  velocityVolumeXp?: number;
+  velocityCoverageXp?: number;
+  velocityTeamworkXp?: number;
+  velocityWorkloadXp?: number;
+  velocityExecutionXp?: number;
+  velocityTeamReadinessXp?: number;
+  workedActiveCardsCount?: number;
+  teammate27hAssistsCount?: number;
+  elapsedWorkingDays?: number;
+  progressWorkdaysCount?: number;
+  outreachWorkdaysCount?: number;
+  effectiveProgressDays?: number;
+  dailyProgressConsistencyPct?: number;
+  teammateAssistWorkdaysCount?: number;
+  avgDailyCleanCards?: number;
+  executionWorkdaysCount?: number;
+  missedOrStalledDueCount?: number;
+  onTimeExecutionRatePct?: number;
+  collaboratorAssistWinXp?: number;
+  isCollaboratorCardHealth?: boolean;
+  stageAdvancesCount?: number;
+  wonSalesDealsCount?: number;
+  hasSalesAccess?: boolean;
   totalXp: number;
 }
 
@@ -42,6 +100,8 @@ export interface DailyCardHealthRecord {
   isOffDay: boolean;
   offDayReason?: 'Sunday' | 'Dayoff' | 'Leave';
   isNoCards?: boolean;
+  /** True when user held >= 15 active cards and slipped on only 1 red card (earns +0.25 XP Heavy-Load Shield) */
+  isGraceShieldDay?: boolean;
   activeCardsCount: number;
   cleanCardsCount: number;
   redCardsCount: number;
@@ -57,6 +117,7 @@ export interface UserMonthlyCardHealthSummary {
   userId: string;
   totalWorkingDays: number;
   cleanDaysCount: number;
+  graceDaysCount?: number;
   redDaysCount: number;
   offDaysCount: number;
   totalRedHours: number;
@@ -78,6 +139,28 @@ export interface UserMonthlyCardHealthSummary {
 
 import type { MonthlyLtcSummary } from '@/lib/ltc-utils';
 
+export type CategoryCardHighlightTone = 'lime' | 'emerald' | 'sky' | 'amber' | 'rose';
+
+export interface CategoryCardHighlight {
+  dealId: string;
+  topic: string;
+  companyName?: string;
+  badgeText: string;
+  tone: CategoryCardHighlightTone;
+  value?: number;
+}
+
+export interface UserCategoryDrilldownDetails {
+  /** LTC-* cards cared for in the active month (up to 12 items) */
+  ltcCaredCards: CategoryCardHighlight[];
+  /** Cards that achieved verified progress in the active month (up to 15 items) */
+  progressedCards: CategoryCardHighlight[];
+  /** Teammate cards where this user helped with +27h updates (up to 12 items) */
+  assistedCards: CategoryCardHighlight[];
+  /** Won sales deals, completed internal tasks, healthy projects, and collaborator wins (up to 15 items) */
+  outcomeCards: CategoryCardHighlight[];
+}
+
 export interface LeaderboardItem {
   rank: number;
   userId: string;
@@ -91,6 +174,7 @@ export interface LeaderboardItem {
   breakdown?: LeaderboardScoreBreakdown;
   dailyHealthSummary?: UserMonthlyCardHealthSummary;
   dailyLtcSummary?: MonthlyLtcSummary;
+  categoryDetails?: UserCategoryDrilldownDetails;
 }
 
 export interface LeaderboardCategoryData {
@@ -121,6 +205,8 @@ export interface DepartmentLeaderboardData {
   departmentId: string;
   departmentName: string;
   hasSalesAccess: boolean;
+  /** True when the caller is MANAGEMENT or ADMIN and may inspect Analyse diagnostics for every rep in the department */
+  canAnalyseDepartment?: boolean;
   availableDepartments: DepartmentInfo[];
   period: {
     month: number;

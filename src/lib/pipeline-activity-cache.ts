@@ -118,6 +118,8 @@ export function sharedMediaKey(
   return ['opportunity-shared-media', dealId];
 }
 
+import { parseTierPrefix, type UpdateGrade, type UpdateTier } from './pipeline-update-quality';
+
 export interface ParsedLogAttachment {
   url: string;
   filename: string;
@@ -126,8 +128,9 @@ export interface ParsedLogAttachment {
 }
 
 export function parseLogContent(content: string) {
+  const tierMeta = parseTierPrefix(content || '');
   const attachments: ParsedLogAttachment[] = [];
-  const cleanText = (content || '')
+  const cleanText = tierMeta.cleanContent
     .replace(
       /\[ATTACHMENT:([^\|\]]+)(?:\|([^\|\]]*))?(?:\|([^\|\]]*))?\]/g,
       (_match, url, filename = '', type = '') => {
@@ -157,6 +160,15 @@ export function parseLogContent(content: string) {
   const images = attachments.filter((a) => a.isImage);
   const otherFiles = attachments.filter((a) => !a.isImage);
 
-  return { cleanText, images, otherFiles };
+  return {
+    cleanText,
+    images,
+    otherFiles,
+    hasExplicitTier: tierMeta.hasExplicitTier,
+    updateTier: (tierMeta.hasExplicitTier ? tierMeta.tier : undefined) as UpdateTier | undefined,
+    updateGrade: (tierMeta.hasExplicitTier ? tierMeta.grade : undefined) as UpdateGrade | undefined,
+    isCardProgress: tierMeta.isCardProgress,
+    effectiveHours: tierMeta.effectiveHours,
+  };
 }
 

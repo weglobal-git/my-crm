@@ -161,6 +161,38 @@ function CatalogProductImage({
   );
 }
 
+// Calculate effective display price for a variant given baseExportPrice and tiers
+function getEffectivePrice({
+  baseExportPrice,
+  tiers,
+  showOnlyStep,
+  pricingMode,
+  vOverride,
+}: {
+  baseExportPrice: number;
+  tiers: PriceStepTier[];
+  showOnlyStep: number | null;
+  pricingMode: "auto" | "manual";
+  vOverride?: {
+    exportPrice?: number;
+    stepPrices?: Record<number, number>;
+  };
+}) {
+  if (showOnlyStep === null || tiers.length === 0) {
+    return { displayPrice: baseExportPrice, targetStepIdx: -1 };
+  }
+  const targetStepIdx = Math.min(showOnlyStep - 1, tiers.length - 1);
+  const autoTierPrice = calculateTierPrice(
+    baseExportPrice,
+    tiers[targetStepIdx].discountPercent
+  );
+  const displayPrice =
+    pricingMode === "manual" && vOverride?.stepPrices?.[targetStepIdx] !== undefined
+      ? vOverride.stepPrices[targetStepIdx]
+      : autoTierPrice;
+  return { displayPrice, targetStepIdx };
+}
+
 export function ProductCatalogPrintModal({
   isOpen,
   onClose,
@@ -192,6 +224,7 @@ export function ProductCatalogPrintModal({
   const [showExportPrice, setShowExportPrice] = useState(true);
   const [showStepPrice, setShowStepPrice] = useState(false);
   const [maxSteps, setMaxSteps] = useState<number | "all">("all");
+  const [showOnlyStep, setShowOnlyStep] = useState<number | null>(null);
   const [showExclusiveDistributor, setShowExclusiveDistributor] = useState(false);
 
   // Document Options (Quotation Header & Footer)
@@ -448,6 +481,7 @@ export function ProductCatalogPrintModal({
       setShowCbmContainer(false);
       setShowExportPrice(true);
       setShowStepPrice(false);
+      setShowOnlyStep(null);
       setShowExclusiveDistributor(false);
       setShowDocHeader(true);
       setShowDocFooter(true);
@@ -464,6 +498,7 @@ export function ProductCatalogPrintModal({
       setShowExportPrice(true);
       setShowStepPrice(true);
       setMaxSteps("all");
+      setShowOnlyStep(null);
       setShowExclusiveDistributor(true);
       setShowDocHeader(true);
       setShowDocFooter(true);
@@ -533,21 +568,32 @@ export function ProductCatalogPrintModal({
               : v.price || sp.minPrice || 0;
 
           const tiers = parsePriceConditions(v.priceCondition);
-          const tier1Str = tiers[0]
-            ? `${tiers[0].minQuantity}-${tiers[0].maxQuantity || "+"} ctns: ฿${fmt(
-                calculateTierPrice(exportPrice, tiers[0].discountPercent)
-              )}`
-            : "";
-          const tier2Str = tiers[1]
-            ? `${tiers[1].minQuantity}-${tiers[1].maxQuantity || "+"} ctns: ฿${fmt(
-                calculateTierPrice(exportPrice, tiers[1].discountPercent)
-              )}`
-            : "";
-          const tier3Str = tiers[2]
-            ? `${tiers[2].minQuantity}-${tiers[2].maxQuantity || "+"} ctns: ฿${fmt(
-                calculateTierPrice(exportPrice, tiers[2].discountPercent)
-              )}`
-            : "";
+          const { displayPrice: finalExportPrice } = getEffectivePrice({
+            baseExportPrice: exportPrice,
+            tiers,
+            showOnlyStep,
+            pricingMode,
+            vOverride,
+          });
+
+          const tier1Str =
+            showOnlyStep === null && tiers[0]
+              ? `${tiers[0].minQuantity}-${tiers[0].maxQuantity || "+"} ctns: ฿${fmt(
+                  calculateTierPrice(exportPrice, tiers[0].discountPercent)
+                )}`
+              : "";
+          const tier2Str =
+            showOnlyStep === null && tiers[1]
+              ? `${tiers[1].minQuantity}-${tiers[1].maxQuantity || "+"} ctns: ฿${fmt(
+                  calculateTierPrice(exportPrice, tiers[1].discountPercent)
+                )}`
+              : "";
+          const tier3Str =
+            showOnlyStep === null && tiers[2]
+              ? `${tiers[2].minQuantity}-${tiers[2].maxQuantity || "+"} ctns: ฿${fmt(
+                  calculateTierPrice(exportPrice, tiers[2].discountPercent)
+                )}`
+              : "";
 
           const vGrossWeight = v.cartonGrossWeight ?? grossWeight;
 
@@ -560,7 +606,7 @@ export function ProductCatalogPrintModal({
               v.sku || "",
               v.formula || "",
               sp.hsCode || dp?.hsCode || "",
-              exportPrice ? exportPrice.toFixed(2) : "",
+              finalExportPrice ? finalExportPrice.toFixed(2) : "",
               tier1Str,
               tier2Str,
               tier3Str,
@@ -1035,27 +1081,64 @@ export function ProductCatalogPrintModal({
                       label="Step Price"
                       description="Tiered volume discount"
                       checked={showStepPrice}
-                      onChange={setShowStepPrice}
+                      onChange={(val) => {
+                        setShowStepPrice(val);
+                        if (!val) setShowOnlyStep(null);
+                      }}
                     />
 
                     {showStepPrice && (
-                      <div className="ml-2 pl-3 py-1.5 border-l border-[#353638] space-y-1">
-                        <span className="text-[10px] text-slate-400 font-medium">Steps to display:</span>
-                        <div className="grid grid-cols-4 gap-1 bg-[#18191A] p-0.5 rounded-lg border border-[#353638]">
-                          {(["all", 1, 2, 3] as const).map((stepVal) => (
-                            <button
-                              key={String(stepVal)}
-                              type="button"
-                              onClick={() => setMaxSteps(stepVal)}
-                              className={`py-1 rounded text-[10px] font-bold cursor-pointer transition-colors text-center ${
-                                maxSteps === stepVal
-                                  ? "bg-[#C7F33C] text-black"
-                                  : "text-slate-400 hover:text-white"
-                              }`}
-                            >
-                              {stepVal === "all" ? "All" : `${stepVal}st`}
-                            </button>
-                          ))}
+                      <div className="ml-2 pl-3 py-1.5 border-l border-[#353638] space-y-2">
+                        {/* Steps to display */}
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-slate-400 font-medium">Steps to display:</span>
+                          <div className="grid grid-cols-4 gap-1 bg-[#18191A] p-0.5 rounded-lg border border-[#353638]">
+                            {(["all", 1, 2, 3] as const).map((stepVal) => (
+                              <button
+                                key={String(stepVal)}
+                                type="button"
+                                disabled={showOnlyStep !== null}
+                                onClick={() => setMaxSteps(stepVal)}
+                                className={`py-1 rounded text-[10px] font-bold cursor-pointer transition-colors text-center ${
+                                  showOnlyStep !== null
+                                    ? "text-slate-600 cursor-not-allowed opacity-40"
+                                    : maxSteps === stepVal
+                                    ? "bg-[#C7F33C] text-black"
+                                    : "text-slate-400 hover:text-white"
+                                }`}
+                              >
+                                {stepVal === "all" ? "All" : `${stepVal}st`}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Show only target step price */}
+                        <div className="space-y-1 pt-1.5 border-t border-[#353638]/50">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-slate-400 font-medium">Show only:</span>
+                            {showOnlyStep !== null && (
+                              <span className="text-[9px] text-[#C7F33C] font-semibold">
+                                Step {showOnlyStep} applied
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-4 gap-1 bg-[#18191A] p-0.5 rounded-lg border border-[#353638]">
+                            {([null, 1, 2, 3] as const).map((stepVal) => (
+                              <button
+                                key={stepVal === null ? "none" : String(stepVal)}
+                                type="button"
+                                onClick={() => setShowOnlyStep(stepVal)}
+                                className={`py-1 rounded text-[10px] font-bold cursor-pointer transition-colors text-center ${
+                                  showOnlyStep === stepVal
+                                    ? "bg-[#C7F33C] text-black"
+                                    : "text-slate-400 hover:text-white"
+                                }`}
+                              >
+                                {stepVal === null ? "None" : `Step ${stepVal}`}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1275,6 +1358,14 @@ export function ProductCatalogPrintModal({
                             ? tiers
                             : tiers.slice(0, typeof maxSteps === "number" ? maxSteps : 1);
 
+                        const { displayPrice: finalExportPrice, targetStepIdx } = getEffectivePrice({
+                          baseExportPrice,
+                          tiers,
+                          showOnlyStep,
+                          pricingMode,
+                          vOverride,
+                        });
+
                         const formulaCount = fallbackFormulas.length || variants.length || 1;
                         const formulaNames =
                           fallbackFormulas.length > 0
@@ -1416,48 +1507,46 @@ export function ProductCatalogPrintModal({
                                 </div>
 
                                 {/* Right: Price Display (Seamless Manual Inline Editing) */}
-                                {(showExportPrice || showStepPrice) && (
+                                {(showExportPrice || (showStepPrice && showOnlyStep !== null)) && (
                                   <div className="shrink-0 text-right flex flex-col items-end">
-                                    {showExportPrice && (
-                                      <div className="flex flex-col items-end">
-                                        <div className="flex items-baseline gap-0.5">
-                                          {pricingMode === "manual" ? (
-                                            <input
-                                              type="number"
-                                              step="0.01"
-                                              value={baseExportPrice || ""}
-                                              onChange={(e) =>
-                                                updateManualPrice(
-                                                  sp.id,
-                                                  primaryVarId,
-                                                  "exportPrice",
-                                                  parseFloat(e.target.value) || 0
-                                                )
+                                    <div className="flex flex-col items-end">
+                                      <div className="flex items-baseline gap-0.5">
+                                        {pricingMode === "manual" ? (
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            value={finalExportPrice || ""}
+                                            onChange={(e) => {
+                                              const val = parseFloat(e.target.value) || 0;
+                                              if (showOnlyStep !== null && targetStepIdx >= 0) {
+                                                updateManualStepPrice(sp.id, primaryVarId, targetStepIdx, val);
+                                              } else {
+                                                updateManualPrice(sp.id, primaryVarId, "exportPrice", val);
                                               }
-                                              style={{
-                                                width: `${Math.max(String(baseExportPrice || "").length, 1.8)}ch`,
-                                                fieldSizing: "content",
-                                              }}
-                                              className="print-manual-input text-right text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none bg-transparent border-0 outline-none p-0 hover:bg-slate-100/80 focus:bg-slate-100/90 rounded transition-colors cursor-text"
-                                              title="Click to edit quotation price"
-                                            />
-                                          ) : (
-                                            <span className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none">
-                                              {fmt(baseExportPrice)}
-                                            </span>
-                                          )}
+                                            }}
+                                            style={{
+                                              width: `${Math.max(String(finalExportPrice || "").length, 1.8)}ch`,
+                                              fieldSizing: "content",
+                                            }}
+                                            className="print-manual-input text-right text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none bg-transparent border-0 outline-none p-0 hover:bg-slate-100/80 focus:bg-slate-100/90 rounded transition-colors cursor-text"
+                                            title="Click to edit quotation price"
+                                          />
+                                        ) : (
                                           <span className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none">
-                                            ฿
+                                            {fmt(finalExportPrice)}
                                           </span>
-                                        </div>
-                                        <div className="text-[8px] text-slate-500 font-medium text-right mt-0.5 uppercase tracking-wide">
-                                          Ex-Factory · THB
-                                        </div>
+                                        )}
+                                        <span className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none">
+                                          ฿
+                                        </span>
                                       </div>
-                                    )}
+                                      <div className="text-[8px] text-slate-500 font-medium text-right mt-0.5 uppercase tracking-wide">
+                                        Ex-Factory · THB
+                                      </div>
+                                    </div>
 
                                     {/* Dedicated Step Price Volume Tiers */}
-                                    {showStepPrice && (
+                                    {showStepPrice && showOnlyStep === null && (
                                       <div className="mt-0.5 flex flex-col items-end gap-1">
                                         {displayedTiers.length > 0 ? (
                                           displayedTiers.map((t, idx) => {
@@ -1600,6 +1689,14 @@ export function ProductCatalogPrintModal({
                           ? tiers
                           : tiers.slice(0, typeof maxSteps === "number" ? maxSteps : 1);
 
+                      const { displayPrice: finalExportPrice, targetStepIdx } = getEffectivePrice({
+                        baseExportPrice,
+                        tiers,
+                        showOnlyStep,
+                        pricingMode,
+                        vOverride,
+                      });
+
                       const formulaCount = fallbackFormulas.length || variants.length || 1;
                       const formulaNames =
                         fallbackFormulas.length > 0
@@ -1741,7 +1838,7 @@ export function ProductCatalogPrintModal({
 
                           {/* Right: Quotation Price Column (Seamless Manual Inline Editing) */}
                           <div className="print-price-panel w-40 sm:w-44 shrink-0 bg-[#F8FAFC] p-2.5 sm:p-3 flex flex-col justify-start">
-                            {showExportPrice && (
+                            {(showExportPrice || (showStepPrice && showOnlyStep !== null)) && (
                               <div className="flex flex-col items-end text-right">
                                 <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
                                   Quotation Price
@@ -1754,17 +1851,17 @@ export function ProductCatalogPrintModal({
                                       <input
                                         type="number"
                                         step="0.01"
-                                        value={baseExportPrice || ""}
-                                        onChange={(e) =>
-                                          updateManualPrice(
-                                            sp.id,
-                                            primaryVarId,
-                                            "exportPrice",
-                                            parseFloat(e.target.value) || 0
-                                          )
-                                        }
+                                        value={finalExportPrice || ""}
+                                        onChange={(e) => {
+                                          const val = parseFloat(e.target.value) || 0;
+                                          if (showOnlyStep !== null && targetStepIdx >= 0) {
+                                            updateManualStepPrice(sp.id, primaryVarId, targetStepIdx, val);
+                                          } else {
+                                            updateManualPrice(sp.id, primaryVarId, "exportPrice", val);
+                                          }
+                                        }}
                                         style={{
-                                          width: `${Math.max(String(baseExportPrice || "").length, 1.8)}ch`,
+                                          width: `${Math.max(String(finalExportPrice || "").length, 1.8)}ch`,
                                           fieldSizing: "content",
                                         }}
                                         className="print-manual-input text-right text-base sm:text-lg font-bold text-slate-900 tracking-tight bg-transparent border-0 outline-none p-0 hover:bg-slate-100/80 focus:bg-slate-100/90 rounded transition-colors cursor-text"
@@ -1772,7 +1869,7 @@ export function ProductCatalogPrintModal({
                                       />
                                     ) : (
                                       <span className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
-                                        {fmt(baseExportPrice)}
+                                        {fmt(finalExportPrice)}
                                       </span>
                                     )}
                                     <span className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
@@ -1788,7 +1885,7 @@ export function ProductCatalogPrintModal({
                             )}
 
                             {/* Step Price Schedule */}
-                            {showStepPrice && displayedTiers.length > 0 && (
+                            {showStepPrice && showOnlyStep === null && displayedTiers.length > 0 && (
                               <div className="mt-2 pt-2 border-t border-slate-200/90 w-full space-y-1">
                                 <div className="flex items-center justify-between text-[9px] uppercase font-bold text-sky-800 tracking-wider">
                                   <span>Step Tier</span>

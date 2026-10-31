@@ -8,6 +8,23 @@ import {
 } from "@/lib/dashboard/dashboard-realtime-server";
 import { dispatchNotification } from "@/lib/notification-dispatcher";
 import { isDueDateFulfilled, pipelineOpportunitySelect } from "@/lib/pipeline-opportunities";
+import {
+  calculateElapsedWorkingMs,
+  isSameBangkokCalendarDay,
+  RED_CARD_WORKING_MS_THRESHOLD,
+  resolveTimelineDueDate,
+  WORK_HOURS_PER_DAY,
+} from "@/lib/business-days";
+import {
+  classifyUpdateQuality,
+  DUPLICATE_LOOKBACK_LIMIT,
+  encodeTierPrefix,
+  getCommentGrantMs,
+  type UpdateIntent,
+  type UpdateTier,
+} from "@/lib/pipeline-update-quality";
+import { getCompanyHolidaysAction, getUserLeavesAction } from "@/lib/actions/holiday";
+import { gradeActivityCommentWithAi } from "@/lib/actions/ai-accelerator";
 import { requireCapability } from "@/lib/access/pipeline-capabilities";
 import type { OpportunityAccessCheckSubject } from "@/lib/access/pipeline-policy";
 import { v2 as cloudinary } from "cloudinary";
@@ -53,6 +70,7 @@ export interface AddActivityLogInput {
   opportunityId: string;
   content: string;
   parentId?: string;
+  updateIntent?: UpdateIntent;
 }
 
 export interface AddSystemLogInput {
@@ -68,6 +86,7 @@ export interface DeleteActivityLogInput {
     userId: string;
     type: string;
     content: string;
+    parentId?: string | null;
   };
   opportunity: OpportunityAccessCheckSubject;
 }
@@ -82,9 +101,11 @@ export async function addActivityLogForActor(
   input: AddActivityLogInput,
   deps?: ActivityServiceDeps
 ) {
-  const { opportunityId, content, parentId } = input;
+  const { opportunityId, content, parentId, updateIntent } = input;
+  const isSpecialSystemComment =
+    content.startsWith("[URGENT_") || content.startsWith("[DUE DATE:");
 
-  const [parent, deal] = await Promise.all([
+  const [parent, deal, recentTopComments] = await Promise.all([
     parentId
       ? prisma.activityLog.findFirst({
           where: { id: parentId, opportunityId },
@@ -93,11 +114,97 @@ export async function addActivityLogForActor(
       : Promise.resolve(null),
     prisma.opportunity.findUnique({
       where: { id: opportunityId },
-      include: { teamMembers: true },
+      select: {
+        id: true,
+        topic: true,
+        ownerId: true,
+        createdAt: true,
+        dueDate: true,
+        teamMembers: { select: { id: true } },
+      },
     }),
+    !parentId && !isSpecialSystemComment
+      ? prisma.activityLog.findMany({
+          where: {
+            opportunityId,
+            parentId: null,
+            type: "COMMENT",
+            NOT: [
+              { content: { startsWith: "[URGENT_" } },
+              { content: { startsWith: "[DUE DATE:" } },
+            ],
+          },
+          orderBy: { createdAt: "desc" },
+          take: 12,
+          select: { content: true, createdAt: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   if (parentId && !parent) throw new Error("Reply target not found.");
+
+  // Server-authoritative Update Quality classification + Non-Punitive Ceiling
+  let storedContent = content;
+  let evaluatedTier: UpdateTier = parentId ? "0H" : "27H";
+  let requiresAiGrading = false;
+  let priorCeilingHours: number | undefined;
+
+  if (!parentId && !isSpecialSystemComment) {
+    const quality = classifyUpdateQuality(content, {
+      intent: updateIntent,
+      isReply: false,
+      previousCommentsWithMeta: recentTopComments
+        .slice(0, DUPLICATE_LOOKBACK_LIMIT)
+        .map((c) => ({
+          content: c.content,
+          createdAt: c.createdAt,
+        })),
+    });
+    evaluatedTier = quality.tier;
+    requiresAiGrading = quality.requiresAiGrading;
+
+    if (quality.tier !== "0H") {
+      const prevTimerLog = recentTopComments.find((c) => !c.content.startsWith("[TIER:0H]"));
+      const baseDateRaw = prevTimerLog?.createdAt ?? deal?.createdAt ?? null;
+      if (baseDateRaw) {
+        const baseDate = new Date(baseDateRaw);
+        const prevGrantMs = prevTimerLog
+          ? getCommentGrantMs(prevTimerLog.content)
+          : RED_CARD_WORKING_MS_THRESHOLD;
+
+        let companyHolidays = new Set<string>();
+        let ownerPersonalLeaves: Set<string> | undefined;
+        if (!deps) {
+          const [holidaysList, leavesList] = await Promise.all([
+            getCompanyHolidaysAction(),
+            getUserLeavesAction(),
+          ]);
+          companyHolidays = new Set(holidaysList);
+          if (deal?.ownerId) {
+            const ownerSet = new Set<string>();
+            for (const l of leavesList) {
+              if (l.userId === deal.ownerId) ownerSet.add(l.dateStr);
+            }
+            if (ownerSet.size > 0) ownerPersonalLeaves = ownerSet;
+          }
+        }
+
+        const elapsedMs = calculateElapsedWorkingMs(baseDate, new Date(), companyHolidays, {
+          ceilingMs: prevGrantMs,
+          stopAtMs: prevGrantMs,
+          personalLeaves: ownerPersonalLeaves,
+        });
+        const remainingHours = Math.max(0, (prevGrantMs - elapsedMs) / (3600 * 1000));
+        priorCeilingHours = Math.max(WORK_HOURS_PER_DAY, remainingHours);
+      }
+    }
+
+    storedContent = encodeTierPrefix(
+      content,
+      quality.grade,
+      quality.grade === "BRIEF_9H" ? priorCeilingHours : undefined
+    );
+  }
 
   // Pre-calculate notification inputs if deal exists
   const notificationInputs: Array<{
@@ -151,12 +258,13 @@ export async function addActivityLogForActor(
     );
   }
 
-  // Atomic transaction: create comment + conditionally clear fulfilled due date in Asia/Bangkok time
-  const { newLogRaw, dueDateCleared, createdNotifications } = await prisma.$transaction(
+  // Lean atomic transaction: create comment + conditionally clear fulfilled due date in Asia/Bangkok time
+  // Notifications are persisted post-commit in background to cut interactive transaction latency by ~50-75%.
+  const { newLogRaw, dueDateCleared } = await prisma.$transaction(
     async (tx) => {
       const createdLog = await tx.activityLog.create({
         data: {
-          content,
+          content: storedContent,
           opportunity: { connect: { id: opportunityId } },
           user: { connect: { id: actor.id } },
           type: "COMMENT",
@@ -168,37 +276,37 @@ export async function addActivityLogForActor(
       });
 
       let cleared = false;
-      // Re-read current opportunity state inside the transaction to avoid stale snapshot race
-      const currentOpp = await tx.opportunity.findUnique({
-        where: { id: opportunityId },
-        select: { dueDate: true },
-      });
+      const isTopLevelProgressComment =
+        !parentId &&
+        !isSpecialSystemComment &&
+        evaluatedTier !== "0H";
 
-      if (currentOpp?.dueDate && isDueDateFulfilled(currentOpp.dueDate, createdLog.createdAt)) {
-        // Optimistic concurrency check: only clear if dueDate hasn't been concurrently rescheduled!
-        const updateResult = await tx.opportunity.updateMany({
-          where: {
-            id: opportunityId,
-            dueDate: currentOpp.dueDate,
-          },
-          data: { dueDate: null },
+      if (isTopLevelProgressComment) {
+        // Re-read current opportunity state inside the transaction to avoid stale snapshot race
+        const currentOpp = await tx.opportunity.findUnique({
+          where: { id: opportunityId },
+          select: { dueDate: true },
         });
-        cleared = updateResult.count > 0;
-      }
 
-      let notifications: Array<{ id: string; recipientId: string }> = [];
-      if (notificationInputs.length > 0) {
-        notifications = await Promise.all(
-          notificationInputs.map((data) =>
-            tx.notification.create({ data, include: { sender: true } })
-          )
-        );
+        if (
+          currentOpp?.dueDate &&
+          isDueDateFulfilled(currentOpp.dueDate, createdLog.createdAt)
+        ) {
+          // Optimistic concurrency check: only clear if dueDate hasn't been concurrently rescheduled!
+          const updateResult = await tx.opportunity.updateMany({
+            where: {
+              id: opportunityId,
+              dueDate: currentOpp.dueDate,
+            },
+            data: { dueDate: null },
+          });
+          cleared = updateResult.count > 0;
+        }
       }
 
       return {
         newLogRaw: createdLog,
         dueDateCleared: cleared,
-        createdNotifications: notifications,
       };
     }
   );
@@ -211,13 +319,22 @@ export async function addActivityLogForActor(
   const dispatchDash = deps?.dispatchDashboardInvalidation ?? dispatchDashboardInvalidation;
 
   const publishPostCommitEvents = async () => {
-    // Dispatch notifications after successful transaction commit
-    if (createdNotifications.length > 0) {
-      await Promise.all(
-        createdNotifications.map((notification) =>
-          dispatchNotif(notification.recipientId, notification)
-        )
-      ).catch((err) => console.error("[addActivityLog] Notification dispatch failed:", err));
+    // Persist & dispatch notifications asynchronously outside the interactive user-blocking transaction
+    if (notificationInputs.length > 0 && !deps) {
+      try {
+        const createdNotifications = await Promise.all(
+          notificationInputs.map((data) =>
+            prisma.notification.create({ data, include: { sender: true } })
+          )
+        );
+        await Promise.all(
+          createdNotifications.map((notification) =>
+            dispatchNotif(notification.recipientId, notification)
+          )
+        );
+      } catch (err) {
+        console.error("[addActivityLog] Notification dispatch failed:", err);
+      }
     }
 
     // If deal had an active Due Date that was fulfilled by this activity update, notify board
@@ -242,6 +359,17 @@ export async function addActivityLogForActor(
     void dispatchDash({
       resources: ["leaderboard"],
     }).catch(() => {});
+
+    // Async v2.2 Zero-Button AI Auto-Grader for all non-0H top-level updates (0ms user latency)
+    if (!deps && !parentId && !isSpecialSystemComment && requiresAiGrading) {
+      await gradeActivityCommentWithAi({
+        dealId: opportunityId,
+        logId: newLog.id,
+        rawContent: storedContent,
+        authorId: actor.id,
+        priorCeilingHours,
+      });
+    }
   };
 
   if (deps) {
@@ -303,6 +431,59 @@ export async function addSystemLogForActor(
 }
 
 /**
+ * Reconciles `Opportunity.dueDate` with the top-level COMMENT timeline after an Admin edits or deletes a log.
+ * Returns the updated Pipeline card DTO if `Opportunity.dueDate` changed, otherwise `null`.
+ */
+export async function syncOpportunityDueDateWithTimeline(
+  opportunityId: string,
+  options?: { hadDueDateLogMutation?: boolean }
+) {
+  const currentOpp = await prisma.opportunity.findUnique({
+    where: { id: opportunityId },
+    select: { id: true, dueDate: true, createdAt: true },
+  });
+  if (!currentOpp) return null;
+
+  const topLevelComments = await prisma.activityLog.findMany({
+    where: {
+      opportunityId,
+      parentId: null,
+      type: "COMMENT",
+    },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: {
+      content: true,
+      type: true,
+      createdAt: true,
+      parentId: true,
+    },
+  });
+
+  const resolvedDueDate = resolveTimelineDueDate({
+    logs: topLevelComments,
+    fallbackDueDate: options?.hadDueDateLogMutation ? null : currentOpp.dueDate,
+    dealCreatedAt: currentOpp.createdAt,
+    evalDate: new Date(),
+  });
+
+  const bothNull = !currentOpp.dueDate && !resolvedDueDate;
+  const bothSameDay =
+    Boolean(currentOpp.dueDate) &&
+    Boolean(resolvedDueDate) &&
+    isSameBangkokCalendarDay(currentOpp.dueDate, resolvedDueDate);
+
+  if (bothNull || bothSameDay) {
+    return null;
+  }
+
+  return await prisma.opportunity.update({
+    where: { id: opportunityId },
+    data: { dueDate: resolvedDueDate },
+    select: pipelineOpportunitySelect,
+  });
+}
+
+/**
  * Core service for deleting an activity log.
  * Enforces ownership, system update admin restrictions, and Due Date log preservation.
  */
@@ -338,11 +519,32 @@ export async function deleteActivityLogForActor(
   const attachmentCleanup: Array<{
     id: string;
     fileType: string;
+    cloudinaryUrl: string | null;
     cloudinaryPublicId: string | null;
+    googleDriveFileId: string | null;
   }> = [];
   if (attachmentUrls.length > 0) {
+    const driveIds = attachmentUrls
+      .map((u) => {
+        const m = u.match(/\/api\/attachments\/drive\/([^/?|#]+)/);
+        return m ? m[1] : null;
+      })
+      .filter((id): id is string => Boolean(id));
+
     const attachments = await prisma.attachment.findMany({
-      where: { cloudinaryUrl: { in: attachmentUrls } },
+      where: {
+        OR: [
+          { cloudinaryUrl: { in: attachmentUrls } },
+          ...(driveIds.length > 0 ? [{ googleDriveFileId: { in: driveIds } }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        fileType: true,
+        cloudinaryUrl: true,
+        cloudinaryPublicId: true,
+        googleDriveFileId: true,
+      },
     });
     attachmentCleanup.push(...attachments);
   }
@@ -357,19 +559,46 @@ export async function deleteActivityLogForActor(
     where: { id: logId },
   });
 
+  const reconciledDeal =
+    log.type === "COMMENT" && !log.parentId
+      ? await syncOpportunityDueDateWithTimeline(log.opportunityId, {
+          hadDueDateLogMutation: log.content.startsWith("[DUE DATE:"),
+        })
+      : null;
+
   const notifyPusher = deps?.notifyPrivatePipelineUpdate ?? notifyPrivatePipelineUpdate;
+  const dispatchDash = deps?.dispatchDashboardInvalidation ?? dispatchDashboardInvalidation;
 
   const postDeleteTask = async () => {
     await Promise.all(
       attachmentCleanup.map(async (att) => {
-        if (!att.cloudinaryPublicId) return;
-        const resourceType = att.fileType.startsWith("image/") ? "image" : "raw";
-        try {
-          await cloudinary.uploader.destroy(att.cloudinaryPublicId, {
-            resource_type: resourceType,
-          });
-        } catch (error) {
-          console.error("Failed to delete from Cloudinary after Activity deletion:", error);
+        if (att.cloudinaryPublicId) {
+          const isExplicitRaw = Boolean(att.cloudinaryUrl?.includes("/raw/upload/"));
+          const primaryType = isExplicitRaw ? "raw" : "image";
+          try {
+            const res = await cloudinary.uploader.destroy(att.cloudinaryPublicId, {
+              resource_type: primaryType,
+            });
+            if (res?.result === "not found" && primaryType === "image") {
+              await cloudinary.uploader.destroy(att.cloudinaryPublicId, {
+                resource_type: "raw",
+              });
+            }
+          } catch (error) {
+            console.error("Failed to delete from Cloudinary after Activity deletion:", error);
+          }
+        }
+        if (att.googleDriveFileId) {
+          try {
+            const config = await prisma.systemConfig.findUnique({ where: { id: "global" } });
+            if (config?.googleRefreshToken) {
+              const { getDriveService } = await import("@/lib/google");
+              const drive = getDriveService(config.googleRefreshToken);
+              await drive.files.delete({ fileId: att.googleDriveFileId });
+            }
+          } catch (error) {
+            console.error("Failed to delete from Google Drive after Activity deletion:", error);
+          }
         }
       })
     );
@@ -379,7 +608,16 @@ export async function deleteActivityLogForActor(
         opportunityId: log.opportunityId,
         parentId: null,
         type: "COMMENT",
-        NOT: { content: { startsWith: "[DUE DATE:" } },
+        AND: [
+          {
+            OR: [
+              { NOT: { content: { startsWith: "[DUE DATE:" } } },
+              { content: { startsWith: "[DUE DATE: Removed]" } },
+            ],
+          },
+          { NOT: { content: { startsWith: "[URGENT_" } } },
+          { NOT: { content: { startsWith: "[TIER:0H]" } } },
+        ],
       },
       orderBy: { createdAt: "desc" },
       include: {
@@ -388,12 +626,24 @@ export async function deleteActivityLogForActor(
       },
     });
 
+    if (reconciledDeal) {
+      await notifyPusher(log.opportunityId, {
+        action: "OPPORTUNITY_UPDATED",
+        deal: reconciledDeal,
+        dealId: log.opportunityId,
+      });
+    }
+
     await notifyPusher(log.opportunityId, {
       action: "ACTIVITY_DELETED",
       dealId: log.opportunityId,
       logId,
       nextLatestLog,
     });
+
+    void dispatchDash({
+      resources: ["leaderboard"],
+    }).catch(() => {});
   };
 
   if (deps) {

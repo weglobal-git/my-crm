@@ -11,16 +11,10 @@ import { preload, useSWRConfig } from "swr";
 import { getOpportunityActivityLogs, updateOpportunityHotNote } from "@/lib/actions/opportunity";
 import { getDealAccelerators } from "@/lib/actions/ai-accelerator";
 import type { DealTodoItem } from "@/lib/actions/notes";
+import { formatBangkokDueDateShort } from "@/lib/business-days";
 
 function formatShortDueDate(dateVal: Date | string): string {
-  try {
-    const d = new Date(dateVal);
-    const day = String(d.getDate()).padStart(2, '0');
-    const month = d.toLocaleString('en-US', { month: 'short' });
-    return `${day}${month}`;
-  } catch {
-    return '';
-  }
+  return formatBangkokDueDateShort(dateVal, { includeYear: false, padDay: true });
 }
 
 function formatDealCurrency(val: number, curr?: string | null): string {
@@ -42,14 +36,19 @@ export { parseLogContent, type ParsedLogAttachment };
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import {
   checkIsRedCard,
+  evaluateCardTimingState,
   getRedThreshold,
+  type CardTimingState,
   type KanbanCardDTO,
   type PipelineCardDTO,
 } from "@/lib/pipeline-card-dto";
 
 export { checkIsRedCard, getRedThreshold };
-export type { KanbanCardDTO, PipelineCardDTO };
+export type { CardTimingState, KanbanCardDTO, PipelineCardDTO };
 export type OpportunityWithRelations = KanbanCardDTO;
+
+const EMPTY_DEAL_TODOS: DealTodoItem[] = [];
+const HOVER_PREFETCH_DELAY_MS = 120;
 
 export const PendingAcceleratorsContext = createContext<Record<string, PendingAcceleratorInfo | number>>({});
 export const PendingTodosContext = createContext<Record<string, DealTodoItem[]>>({});
@@ -87,34 +86,65 @@ interface KanbanCardProps {
   onFilterByOwner?: (ownerId: string) => void;
   searchQuery?: string;
   onSearchChange?: (query: string) => void;
+  // Pre-resolved scalar/slice props from KanbanColumn to avoid 6-Context fan-out across 200+ cards
+  isRedProp?: boolean;
+  isDueTodayProp?: boolean;
+  isPostHolidayCheckInProp?: boolean;
+  pendingCountProp?: number;
+  dealTodosProp?: DealTodoItem[];
+  isPinnedProp?: boolean;
+  onTogglePinDeal?: (dealId: string) => void;
+  isCompanyFilteredProp?: boolean;
+  isOwnerFilteredProp?: boolean;
 }
 
+interface ResolvedCardBodyProps {
+  deal: OpportunityWithRelations;
+  isDragging?: boolean;
+  isSelected?: boolean;
+  onOpenPanel?: (tab: string) => void;
+  onPanelIntent?: () => void;
+  highlight: boolean;
+  isDueToday: boolean;
+  isPostHolidayCheckIn: boolean;
+  pendingCount: number;
+  dealTodos: DealTodoItem[];
+  isPinned: boolean;
+  onTogglePinDeal: (dealId: string) => void;
+  isCompanyFiltered: boolean;
+  isOwnerFiltered: boolean;
+  handleOwnerFilterChange?: (ownerId: string) => void;
+  handleSearchChange?: (query: string) => void;
+}
 
-export const KanbanCardUI = React.memo(function KanbanCardUI({
+const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
   deal,
   isDragging,
   isSelected,
   onOpenPanel,
   onPanelIntent,
-  currentOwnerFilter,
-  onFilterByOwner,
-  searchQuery,
-  onSearchChange,
-}: KanbanCardProps & { isDragging?: boolean }) {
+  highlight,
+  isDueToday,
+  isPostHolidayCheckIn,
+  pendingCount,
+  dealTodos,
+  isPinned,
+  onTogglePinDeal,
+  isCompanyFiltered,
+  isOwnerFiltered,
+  handleOwnerFilterChange,
+  handleSearchChange,
+}: ResolvedCardBodyProps) {
   const { canSee } = usePermissions();
-  const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
-  const pendingTodosMap = useContext(PendingTodosContext);
-  const { pinnedDealIds, togglePinDeal } = useContext(PinnedDealsContext);
   const { mutate: globalMutate } = useSWRConfig();
-  const isPinned = pinnedDealIds.has(deal.id) || (pinnedDealIds.size === 0 && Boolean(deal.isPinned));
 
-  const dealTodos = pendingTodosMap[deal.id] || [];
   const hasPriorityTodo = dealTodos.some(t => t.isPinned);
 
   const [isTodoPopoverOpen, setIsTodoPopoverOpen] = useState(false);
   const [todoPopoverPos, setTodoPopoverPos] = useState({ left: 0, top: 0 });
   const todoButtonRef = useRef<HTMLButtonElement>(null);
   const todoLeaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const hoverPrefetchTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const updateTodoPopoverPosition = useCallback(() => {
     const rect = todoButtonRef.current?.getBoundingClientRect();
@@ -146,6 +176,9 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
     return () => {
       if (todoLeaveTimerRef.current) {
         clearTimeout(todoLeaveTimerRef.current);
+      }
+      if (hoverPrefetchTimerRef.current) {
+        clearTimeout(hoverPrefetchTimerRef.current);
       }
     };
   }, []);
@@ -185,8 +218,8 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const hasHotNote = Boolean((hotNote && hotNote.trim().length > 0) || (deal.hotNote && deal.hotNote.trim().length > 0));
 
   const handleTogglePin = useCallback(() => {
-    togglePinDeal(deal.id);
-  }, [deal.id, togglePinDeal]);
+    onTogglePinDeal(deal.id);
+  }, [deal.id, onTogglePinDeal]);
 
   const saveHotNote = useCallback(async (textToSave: string) => {
     const trimmed = textToSave.trim();
@@ -234,17 +267,6 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const handleFocusHotNote = () => {
     isHotNoteFocusedRef.current = true;
   };
-
-  const {
-    ownerFilter: contextOwnerFilter,
-    onOwnerFilterChange: contextOnOwnerFilterChange,
-    searchQuery: contextSearchQuery,
-    onSearchChange: contextOnSearchChange,
-  } = useContext(OwnerFilterContext);
-  const activeOwnerFilter = currentOwnerFilter ?? contextOwnerFilter;
-  const handleOwnerFilterChange = onFilterByOwner ?? contextOnOwnerFilterChange;
-  const activeSearchQuery = searchQuery ?? contextSearchQuery;
-  const handleSearchChange = onSearchChange ?? contextOnSearchChange;
   
   const canView = useCallback((tabKey: string) => canSee(`pipeline.${tabKey}`), [canSee]);
   const canViewInformation = canView('information');
@@ -255,27 +277,17 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
     ? (deal.company?.displayName || deal.company?.name || null)
     : (deal.company?.displayName || deal.company?.name || "No Customer");
   const rawCompanyName = deal.company?.displayName || deal.company?.name;
-  const isCompanyFiltered = Boolean(
-    rawCompanyName &&
-    activeSearchQuery &&
-    activeSearchQuery.trim().toLowerCase() === rawCompanyName.trim().toLowerCase()
-  );
   const contactName = deal.owner.name || deal.owner.email || "Unknown Contact";
   const targetOwnerId = deal.ownerId || deal.owner?.id;
-  const isOwnerFiltered = Boolean(targetOwnerId && activeOwnerFilter === targetOwnerId);
-  const pendingEntry = pendingAcceleratorsMap[deal.id];
-  const pendingCount = typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
   const isOrange = pendingCount > 0;
-  const companyHolidays = useContext(CompanyHolidaysContext);
-  const userLeavesByOwner = useContext(UserLeavesContext);
-  const highlight = checkIsRedCard(deal, companyHolidays, userLeavesByOwner);
 
   const latestLog = useMemo(() => {
     return deal.activityLogs?.find(
       (log) =>
         log.type === 'COMMENT' &&
         !log.content.startsWith('[DUE DATE:') &&
-        !log.content.startsWith('[URGENT_')
+        !log.content.startsWith('[URGENT_') &&
+        !log.content.startsWith('[TIER:0H]')
     );
   }, [deal.activityLogs]);
 
@@ -284,39 +296,49 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
     return parseLogContent(latestLog.content);
   }, [latestLog?.content]);
   
-  const handlePrefetch = () => {
+  const handlePrefetchEnter = useCallback(() => {
     onPanelIntent?.();
-    if (!canView('activity')) return;
-    void preload(
-      ['activity-logs', deal.id, 'COMMENT', ''],
-      async ([, id, typeFilter, cursor]: [string, string, string, string]) => {
-        try {
-          return await getOpportunityActivityLogs(
-            id,
-            10,
-            cursor || undefined,
-            typeFilter as 'COMMENT' | 'SYSTEM_UPDATE',
-          );
-        } catch (error) {
-          // A card can remain briefly in the client cache after access changes.
-          // Treat access loss during an optional hover prefetch as an empty result;
-          // the server remains authoritative and the next board refresh removes it.
-          if (error instanceof Error && error.message === 'Forbidden') {
-            return { data: [], nextCursor: undefined };
+    if (hoverPrefetchTimerRef.current) {
+      clearTimeout(hoverPrefetchTimerRef.current);
+    }
+    hoverPrefetchTimerRef.current = setTimeout(() => {
+      hoverPrefetchTimerRef.current = null;
+      if (!canView('activity')) return;
+      void preload(
+        ['activity-logs', deal.id, 'COMMENT', ''],
+        async ([, id, typeFilter, cursor]: [string, string, string, string]) => {
+          try {
+            return await getOpportunityActivityLogs(
+              id,
+              10,
+              cursor || undefined,
+              typeFilter as 'COMMENT' | 'SYSTEM_UPDATE',
+            );
+          } catch (error) {
+            if (error instanceof Error && error.message === 'Forbidden') {
+              return { data: [], nextCursor: undefined };
+            }
+            throw error;
           }
-          throw error;
         }
-      }
-    ).catch((error: unknown) => {
-      console.error('Failed to prefetch opportunity activity logs', error);
-    });
-    void preload(
-      ['deal-accelerators', deal.id],
-      () => getDealAccelerators(deal.id)
-    ).catch((error: unknown) => {
-      console.error('Failed to prefetch deal accelerators', error);
-    });
-  };
+      ).catch((error: unknown) => {
+        console.error('Failed to prefetch opportunity activity logs', error);
+      });
+      void preload(
+        ['deal-accelerators', deal.id],
+        () => getDealAccelerators(deal.id)
+      ).catch((error: unknown) => {
+        console.error('Failed to prefetch deal accelerators', error);
+      });
+    }, HOVER_PREFETCH_DELAY_MS);
+  }, [canView, deal.id, onPanelIntent]);
+
+  const handlePrefetchLeave = useCallback(() => {
+    if (hoverPrefetchTimerRef.current) {
+      clearTimeout(hoverPrefetchTimerRef.current);
+      hoverPrefetchTimerRef.current = null;
+    }
+  }, []);
 
   return (
     <div
@@ -330,7 +352,8 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
         ${isSelected ? "md:ring-2 md:ring-white md:ring-offset-2 md:ring-offset-[#1C1C1D] md:shadow-2xl md:shadow-black/80 md:scale-[1.015] md:z-20" : ""}
       `}
       onClick={() => onOpenPanel?.('')}
-      onMouseEnter={handlePrefetch}
+      onMouseEnter={handlePrefetchEnter}
+      onMouseLeave={handlePrefetchLeave}
     >
       {/* Quick Note Capsule Input */}
       <div 
@@ -672,17 +695,36 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
                 e.stopPropagation();
                 if (canView('activity')) onOpenPanel?.('activity');
               }}
-              title={`Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`}
+              title={
+                isDueToday
+                  ? `Due Today by 17:00 (${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))})`
+                  : `Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`
+              }
               className={`h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
                 isOrange
                   ? 'bg-black/20 text-slate-950 hover:bg-black/30'
                   : highlight
                   ? 'bg-black/15 text-slate-900 hover:bg-black/25'
+                  : isDueToday
+                  ? 'bg-amber-400/20 text-amber-300 border border-amber-400/50 hover:bg-amber-400/30 font-semibold'
                   : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'
               }`}
             >
               <BellRing className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-mono">{formatShortDueDate(deal.dueDate)}</span>
+              <span className="font-mono">{isDueToday && !highlight && !isOrange ? 'Due Today' : formatShortDueDate(deal.dueDate)}</span>
+            </button>
+          ) : isPostHolidayCheckIn && !highlight && !isOrange ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (canView('activity')) onOpenPanel?.('activity');
+              }}
+              title="Post-Holiday Check-In: Update before 17:00 today to keep card clean"
+              className="h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-semibold tracking-wide transition-colors bg-amber-400/15 text-amber-300 border border-amber-400/40 hover:bg-amber-400/25 cursor-pointer"
+            >
+              <BellRing className="w-3.5 h-3.5 shrink-0" />
+              <span>Check-in 17:00</span>
             </button>
           ) : null}
 
@@ -762,6 +804,76 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   );
 });
 
+/**
+ * Fallback context-reading card wrapper used when rendered outside KanbanColumn (e.g. DragOverlay, Archived grid).
+ */
+export const KanbanCardUI = React.memo(function KanbanCardUI({
+  deal,
+  isDragging,
+  isSelected,
+  onOpenPanel,
+  onPanelIntent,
+  currentOwnerFilter,
+  onFilterByOwner,
+  searchQuery,
+  onSearchChange,
+}: KanbanCardProps & { isDragging?: boolean }) {
+  const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
+  const pendingTodosMap = useContext(PendingTodosContext);
+  const { pinnedDealIds, togglePinDeal } = useContext(PinnedDealsContext);
+  const {
+    ownerFilter: contextOwnerFilter,
+    onOwnerFilterChange: contextOnOwnerFilterChange,
+    searchQuery: contextSearchQuery,
+    onSearchChange: contextOnSearchChange,
+  } = useContext(OwnerFilterContext);
+  const companyHolidays = useContext(CompanyHolidaysContext);
+  const userLeavesByOwner = useContext(UserLeavesContext);
+
+  const timing = evaluateCardTimingState(deal, companyHolidays, userLeavesByOwner);
+  const pendingEntry = pendingAcceleratorsMap[deal.id];
+  const pendingCount = typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
+  const dealTodos = pendingTodosMap[deal.id] || EMPTY_DEAL_TODOS;
+  const isPinned = pinnedDealIds.has(deal.id) || (pinnedDealIds.size === 0 && Boolean(deal.isPinned));
+
+  const activeOwnerFilter = currentOwnerFilter ?? contextOwnerFilter;
+  const handleOwnerFilterChange = onFilterByOwner ?? contextOnOwnerFilterChange;
+  const activeSearchQuery = searchQuery ?? contextSearchQuery;
+  const handleSearchChange = onSearchChange ?? contextOnSearchChange;
+
+  const rawCompanyName = deal.company?.displayName || deal.company?.name;
+  const isCompanyFiltered = Boolean(
+    rawCompanyName &&
+    activeSearchQuery &&
+    activeSearchQuery.trim().toLowerCase() === rawCompanyName.trim().toLowerCase()
+  );
+  const targetOwnerId = deal.ownerId || deal.owner?.id;
+  const isOwnerFiltered = Boolean(targetOwnerId && activeOwnerFilter === targetOwnerId);
+
+  return (
+    <KanbanCardResolvedBody
+      deal={deal}
+      isDragging={isDragging}
+      isSelected={isSelected}
+      onOpenPanel={onOpenPanel}
+      onPanelIntent={onPanelIntent}
+      highlight={timing.isRed}
+      isDueToday={timing.isDueToday}
+      isPostHolidayCheckIn={timing.isPostHolidayCheckIn}
+      pendingCount={pendingCount}
+      dealTodos={dealTodos}
+      isPinned={isPinned}
+      onTogglePinDeal={togglePinDeal}
+      isCompanyFiltered={isCompanyFiltered}
+      isOwnerFiltered={isOwnerFiltered}
+      handleOwnerFilterChange={handleOwnerFilterChange}
+      handleSearchChange={handleSearchChange}
+    />
+  );
+});
+
+const NOOP_TOGGLE_PIN = () => {};
+
 export const KanbanCard = React.memo(function KanbanCard({ 
   deal, 
   isSelected,
@@ -774,6 +886,15 @@ export const KanbanCard = React.memo(function KanbanCard({
   onFilterByOwner,
   searchQuery,
   onSearchChange,
+  isRedProp,
+  isDueTodayProp,
+  isPostHolidayCheckInProp,
+  pendingCountProp,
+  dealTodosProp,
+  isPinnedProp,
+  onTogglePinDeal,
+  isCompanyFilteredProp,
+  isOwnerFilteredProp,
 }: KanbanCardProps) {
   const canDrag = currentUserRole === 'ADMIN' || deal.ownerId === currentUserId;
 
@@ -806,6 +927,8 @@ export const KanbanCard = React.memo(function KanbanCard({
     }
   }, [onOpenPanel, onDealClick, deal]);
 
+  const hasFastProps = isRedProp !== undefined;
+
   return (
     <div
       ref={setNodeRef}
@@ -818,17 +941,38 @@ export const KanbanCard = React.memo(function KanbanCard({
       data-deal-id={deal.id}
       className={`${isDragging ? 'touch-none' : 'touch-manipulation'} ${canDrag ? 'cursor-grab active:cursor-pointer' : ''} outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 relative hover:z-30 focus-within:z-30`}
     >
-      <KanbanCardUI 
-        deal={deal} 
-        isDragging={isDragging} 
-        isSelected={isSelected}
-        onOpenPanel={handleOpenPanel} 
-        onPanelIntent={onPanelIntent} 
-        currentOwnerFilter={currentOwnerFilter}
-        onFilterByOwner={onFilterByOwner}
-        searchQuery={searchQuery}
-        onSearchChange={onSearchChange}
-      />
+      {hasFastProps ? (
+        <KanbanCardResolvedBody
+          deal={deal}
+          isDragging={isDragging}
+          isSelected={isSelected}
+          onOpenPanel={handleOpenPanel}
+          onPanelIntent={onPanelIntent}
+          highlight={Boolean(isRedProp)}
+          isDueToday={Boolean(isDueTodayProp)}
+          isPostHolidayCheckIn={Boolean(isPostHolidayCheckInProp)}
+          pendingCount={pendingCountProp ?? 0}
+          dealTodos={dealTodosProp ?? EMPTY_DEAL_TODOS}
+          isPinned={Boolean(isPinnedProp)}
+          onTogglePinDeal={onTogglePinDeal ?? NOOP_TOGGLE_PIN}
+          isCompanyFiltered={Boolean(isCompanyFilteredProp)}
+          isOwnerFiltered={Boolean(isOwnerFilteredProp)}
+          handleOwnerFilterChange={onFilterByOwner}
+          handleSearchChange={onSearchChange}
+        />
+      ) : (
+        <KanbanCardUI 
+          deal={deal} 
+          isDragging={isDragging} 
+          isSelected={isSelected}
+          onOpenPanel={handleOpenPanel} 
+          onPanelIntent={onPanelIntent} 
+          currentOwnerFilter={currentOwnerFilter}
+          onFilterByOwner={onFilterByOwner}
+          searchQuery={searchQuery}
+          onSearchChange={onSearchChange}
+        />
+      )}
     </div>
   );
 });

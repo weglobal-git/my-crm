@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import useSWR, { preload } from "swr";
 import { useSession } from "next-auth/react";
 import { Trophy } from "lucide-react";
@@ -25,10 +25,16 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+function formatNavbarXp(score: number): string {
+  const rounded = Math.round(score * 10) / 10;
+  return Number.isInteger(rounded) ? rounded.toLocaleString() : rounded.toFixed(1);
+}
+
 export function LeaderboardHeaderWidget() {
   const { data: session } = useSession();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentMonth = getBangkokMonth();
   const currentYear = getBangkokYear();
@@ -50,35 +56,31 @@ export function LeaderboardHeaderWidget() {
 
   const scope = useMemo(() => createScopeToken(actor), [actor]);
 
-  // Widget Key (always current month for the navbar leader rank1)
-  const widgetKey = useMemo(
+  // Lightweight Winner Key (< 200B payload for closed navbar trophy indicator)
+  const winnerKey = useMemo(
     () =>
-      dashboardLeaderboardKey(scope, {
-        departmentId: selectedDeptId,
-        month: currentMonth,
-        year: currentYear,
-      }),
+      `dashboard:leaderboard:winner:${scope}:${selectedDeptId || "DEFAULT"}:${currentYear}:${currentMonth}`,
     [scope, selectedDeptId, currentMonth, currentYear]
   );
 
-  const { data: widgetData, isLoading: isWidgetLoading } = useSWR(
-    session?.user?.id ? widgetKey : null,
+  const { data: winnerData, isLoading: isWidgetLoading, mutate: mutateWinner } = useSWR(
+    session?.user?.id ? winnerKey : null,
     async () => {
-      return await getDashboardLeaderboardAction({
+      return await getLeaderboardWinnerSummaryAction({
         departmentId: selectedDeptId,
         month: currentMonth,
         year: currentYear,
       });
     },
     {
-      revalidateOnFocus: false,
+      revalidateOnFocus: true,
+      focusThrottleInterval: 60_000,
       keepPreviousData: true,
-      dedupingInterval: 60000,
+      dedupingInterval: 30_000,
     }
   );
 
-  // Drawer Key (fetches for selected month & year)
-  const isCurrentPeriod = drawerMonth === currentMonth && drawerYear === currentYear;
+  // Full Drawer Key (only fetched on demand when drawer opens or hover-preloaded)
   const drawerKey = useMemo(
     () =>
       dashboardLeaderboardKey(scope, {
@@ -89,7 +91,7 @@ export function LeaderboardHeaderWidget() {
     [scope, selectedDeptId, drawerMonth, drawerYear]
   );
 
-  const { data: drawerData, error, isLoading } = useSWR(
+  const { data: drawerData, error, isLoading, mutate: mutateDrawer } = useSWR(
     session?.user?.id && isDrawerOpen ? drawerKey : null,
     async () => {
       return await getDashboardLeaderboardAction({
@@ -99,26 +101,64 @@ export function LeaderboardHeaderWidget() {
       });
     },
     {
-      fallbackData: isCurrentPeriod ? widgetData : undefined,
-      revalidateOnFocus: false,
+      revalidateOnFocus: true,
+      focusThrottleInterval: 30_000,
       keepPreviousData: true,
-      dedupingInterval: 60000,
+      dedupingInterval: 15_000,
     }
   );
 
-  const activeDrawerData = drawerData || (isCurrentPeriod ? widgetData : null);
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isDrawerOpen || !session?.user?.id) return;
+    void mutateWinner();
+    void mutateDrawer();
+  }, [isDrawerOpen, mutateWinner, mutateDrawer, session?.user?.id]);
 
   if (!session?.user) return null;
 
-  // Winner (Rank 1) from overall ranking (for header widget)
-  const podium = widgetData?.overallPodium;
-  const rank1 = podium?.rank1 || widgetData?.overallXpItems?.[0] || null;
+  const isCurrentPeriod = drawerMonth === currentMonth && drawerYear === currentYear;
+  const drawerRank1 =
+    isCurrentPeriod && drawerData
+      ? drawerData.overallPodium?.rank1 || drawerData.overallXpItems?.[0] || null
+      : null;
+  const rank1 = drawerRank1 || winnerData?.rank1 || null;
+
+  const handleHoverStart = () => {
+    if (!session?.user?.id || isDrawerOpen) return;
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => {
+      void preload(drawerKey, () =>
+        getDashboardLeaderboardAction({
+          departmentId: selectedDeptId,
+          month: drawerMonth,
+          year: drawerYear,
+        })
+      );
+    }, 120);
+  };
+
+  const handleHoverEnd = () => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  };
 
   return (
     <>
       <button
         type="button"
         onClick={() => setIsDrawerOpen(true)}
+        onMouseEnter={handleHoverStart}
+        onMouseLeave={handleHoverEnd}
         className="group flex items-center p-1 rounded-full hover:bg-[#3A3B3C]/50 transition-colors cursor-pointer select-none text-left"
         title="Leaderboard: Click to view full standings"
         aria-label="Open leaderboard"
@@ -129,8 +169,8 @@ export function LeaderboardHeaderWidget() {
           </div>
         ) : rank1 ? (
           <div className="flex items-center gap-2 pr-1.5">
-            {/* Winner Avatar (w-9) */}
-            <div className="w-9 h-9 rounded-full border-2 border-[#C7F33C] bg-[#252728] overflow-hidden flex items-center justify-center shrink-0 shadow-sm transition-transform group-hover:scale-105">
+            {/* Winner Avatar (w-9, flat border per design system) */}
+            <div className="w-9 h-9 rounded-full border-2 border-[#C7F33C] bg-[#252728] overflow-hidden flex items-center justify-center shrink-0 transition-transform group-hover:scale-105">
               {rank1.image ? (
                 <img
                   src={rank1.image}
@@ -150,7 +190,7 @@ export function LeaderboardHeaderWidget() {
                 Leader
               </span>
               <span className="text-xs font-mono font-bold text-[#C7F33C] leading-none">
-                {rank1.score.toLocaleString()} XP
+                {formatNavbarXp(rank1.score)} XP
               </span>
             </div>
           </div>
@@ -165,10 +205,10 @@ export function LeaderboardHeaderWidget() {
       <LeaderboardDrawer
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        data={activeDrawerData}
+        data={drawerData}
         isLoading={isLoading}
         error={error}
-        selectedDeptId={selectedDeptId ?? activeDrawerData?.departmentId ?? null}
+        selectedDeptId={selectedDeptId ?? drawerData?.departmentId ?? null}
         onSelectDepartment={(id) => setSelectedDeptId(id)}
         currentMonth={currentMonth}
         currentYear={currentYear}

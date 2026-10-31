@@ -2,7 +2,6 @@ import {
   calculateElapsedWorkingMs,
   addWorkingMs,
   formatDateToDateKey,
-  RED_CARD_WORKING_MS_THRESHOLD,
   WORK_DAY_START_HOUR,
   WORK_DAY_START_MINUTE,
   WORK_DAY_END_HOUR,
@@ -10,118 +9,34 @@ import {
   WORK_HOURS_PER_DAY,
   toBangkokDateParts,
   createBangkokDate,
+  parseDueDateString,
+  resolveTimelineDueDate,
 } from '@/lib/business-days';
-import { checkIsRedCard, type KanbanCardDTO } from '@/lib/pipeline-card-dto';
-import { isDueDateFulfilled } from '@/lib/pipeline-opportunities';
+import {
+  buildEffectiveOffDatesMap,
+  checkIsRedCard,
+  resolveLatestTimerLog,
+  type KanbanCardDTO,
+} from '@/lib/pipeline-card-dto';
 import type {
   RedCardMiniDetail,
   UserMonthlyCardHealthSummary,
 } from './leaderboard-types';
 import { getCardHealthScoreFromRedRate } from './leaderboard-scoring';
 
-const MONTH_NAME_MAP: Record<string, number> = {
-  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-};
-
-/**
- * Parses a due date string from a `[DUE DATE: ...]` activity log into Bangkok calendar Date.
- */
-export function parseDueDateString(raw: string): Date | null {
-  if (!raw) return null;
-  const cleaned = raw.replace(/,?\s*\d{1,2}[:.]\d{2}(?::\d{2})?/, '').trim();
-  const lower = cleaned.toLowerCase();
-  if (lower === 'removed' || lower === 'none' || lower === 'null') {
-    return null;
-  }
-
-  // 1. Try DD Month YYYY (e.g. "07 Oct 2026", "7 October 2026")
-  const enMatch = cleaned.match(/^(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})$/);
-  if (enMatch) {
-    const day = parseInt(enMatch[1], 10);
-    const mStr = enMatch[2].toLowerCase().slice(0, 3);
-    const month = MONTH_NAME_MAP[mStr];
-    const year = parseInt(enMatch[3], 10);
-    if (month !== undefined) {
-      return createBangkokDate(year, month, day, 0, 0, 0);
-    }
-  }
-
-  // 2. Try DD/MM/YYYY or DD-MM-YYYY
-  const dmyMatch = cleaned.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (dmyMatch) {
-    const day = parseInt(dmyMatch[1], 10);
-    const month = parseInt(dmyMatch[2], 10) - 1;
-    const year = parseInt(dmyMatch[3], 10);
-    return createBangkokDate(year, month, day, 0, 0, 0);
-  }
-
-  // 3. Try ISO YYYY-MM-DD
-  const isoMatch = cleaned.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
-  if (isoMatch) {
-    const year = parseInt(isoMatch[1], 10);
-    const month = parseInt(isoMatch[2], 10) - 1;
-    const day = parseInt(isoMatch[3], 10);
-    return createBangkokDate(year, month, day, 0, 0, 0);
-  }
-
-  // 4. Fallback Date.parse
-  const parsedTimestamp = Date.parse(cleaned);
-  if (!isNaN(parsedTimestamp)) {
-    const p = toBangkokDateParts(new Date(parsedTimestamp));
-    return createBangkokDate(p.year, p.month, p.date, 0, 0, 0);
-  }
-
-  return null;
-}
+export { parseDueDateString };
 
 /**
  * Reconstructs the effective Due Date of a deal as it stood at a historical evaluation date (Asia/Bangkok).
  * Accounts for timeline of [DUE DATE: ...] logs and subsequent fulfilling comments.
  */
 export function resolveEffectiveDueDateAt(card: KanbanCardDTO, evalDate: Date): Date | null {
-  // If card has no activity logs, fall back to card.dueDate if deal existed on/before evalDate
-  if (!card.activityLogs || card.activityLogs.length === 0) {
-    if (card.dueDate && (!card.createdAt || new Date(card.createdAt) <= evalDate)) {
-      return new Date(card.dueDate);
-    }
-    return null;
-  }
-
-  const hasEverHadDueDateLogs = card.activityLogs.some((l) => l.content.startsWith('[DUE DATE:'));
-
-  let activeDueDate: Date | null = null;
-  // If deal currently has card.dueDate set in DB and never had any [DUE DATE: logs (e.g. legacy migrated),
-  // initialize with card.dueDate
-  if (!hasEverHadDueDateLogs && card.dueDate && (!card.createdAt || new Date(card.createdAt) <= evalDate)) {
-    activeDueDate = new Date(card.dueDate);
-  }
-
-  // Evaluate all logs up to evalDate in chronological order (oldest to newest)
-  const relevantLogs = card.activityLogs
-    .filter((log) => new Date(log.createdAt).getTime() <= evalDate.getTime())
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-
-  for (const log of relevantLogs) {
-    if (log.content.startsWith('[DUE DATE:')) {
-      const match = log.content.match(/\[DUE DATE:\s*([^\]\n]+)\]/i);
-      if (match) {
-        activeDueDate = parseDueDateString(match[1]);
-      }
-    } else if (
-      log.type === 'COMMENT' &&
-      !log.content.startsWith('[URGENT_') &&
-      activeDueDate
-    ) {
-      // If a regular comment was posted on or after the active due date's calendar day,
-      // it fulfilled and cleared the active due date at that point in time.
-      if (isDueDateFulfilled(activeDueDate, log.createdAt)) {
-        activeDueDate = null;
-      }
-    }
-  }
-
-  return activeDueDate;
+  return resolveTimelineDueDate({
+    logs: card.activityLogs,
+    fallbackDueDate: card.dueDate,
+    dealCreatedAt: card.createdAt,
+    evalDate,
+  });
 }
 
 export function calculateDailySamplingForMonth(params: {
@@ -167,6 +82,7 @@ export function calculateDailySamplingForMonth(params: {
       userId: user.id,
       totalWorkingDays: 0,
       cleanDaysCount: 0,
+      graceDaysCount: 0,
       redDaysCount: 0,
       offDaysCount: 0,
       totalRedHours: 0,
@@ -181,10 +97,29 @@ export function calculateDailySamplingForMonth(params: {
     });
   }
 
+  // Pre-index deals by ownerId with precomputed timestamps and build off-dates map once outside the day loop
+  const prebuiltOffDatesMap = buildEffectiveOffDatesMap(companyHolidays, leavesByUser);
+  const dealsByOwner = new Map<
+    string,
+    Array<{ card: KanbanCardDTO; createdMs: number | null; closedMs: number | null }>
+  >();
+  for (const d of deals) {
+    if (!d.ownerId) continue;
+    const createdMs = d.createdAt ? new Date(d.createdAt).getTime() : null;
+    const closedMs = d.status !== 'OPEN' && d.closedAt ? new Date(d.closedAt).getTime() : null;
+    let list = dealsByOwner.get(d.ownerId);
+    if (!list) {
+      list = [];
+      dealsByOwner.set(d.ownerId, list);
+    }
+    list.push({ card: d, createdMs, closedMs });
+  }
+
   // Iterate day by day from day 1 to maxDay
   for (let day = 1; day <= maxDay; day++) {
     // Cutoff is 23:00 Bangkok time on that day (full 08:00–17:00 working day = 9h per card)
     const evalDate = createBangkokDate(year, month - 1, day, 23, 0, 0, 0);
+    const evalMs = evalDate.getTime();
 
     const dateKey = formatDateToDateKey(evalDate);
     const dayOfWeek = toBangkokDateParts(evalDate).day;
@@ -231,17 +166,16 @@ export function calculateDailySamplingForMonth(params: {
       // Active working day
       userSummary.totalWorkingDays += 1;
 
-      // Find cards owned by user active at evalDate
-      const activeDeals = deals.filter((d) => {
-        if (d.ownerId !== user.id) return false;
-        const created = d.createdAt ? new Date(d.createdAt) : null;
-        if (created && created > evalDate) return false;
-        if (d.status !== 'OPEN' && d.closedAt) {
-          const closed = new Date(d.closedAt);
-          if (closed <= evalDate) return false;
+      // Find cards owned by user active at evalDate using pre-indexed owner bucket
+      const ownerEntries = dealsByOwner.get(user.id);
+      const activeDeals: KanbanCardDTO[] = [];
+      if (ownerEntries) {
+        for (const entry of ownerEntries) {
+          if (entry.createdMs !== null && entry.createdMs > evalMs) continue;
+          if (entry.closedMs !== null && entry.closedMs <= evalMs) continue;
+          activeDeals.push(entry.card);
         }
-        return true;
-      });
+      }
 
       const activeCardsCount = activeDeals.length;
       if (activeCardsCount === 0) {
@@ -275,64 +209,65 @@ export function calculateDailySamplingForMonth(params: {
           dueDate: effectiveDueDate,
         };
 
-        const isRed = checkIsRedCard(effectiveCard, companyHolidays, leavesByUser, evalDate);
+        const isRed = checkIsRedCard(
+          effectiveCard,
+          companyHolidays,
+          leavesByUser,
+          evalDate,
+          prebuiltOffDatesMap
+        );
         if (isRed) {
-          // If sampling for the current day in progress, verify that the card is actually red
-          // at asOfDate so we don't prematurely penalize a deal before its deadline today.
-          const effectiveCurrentDueDate = resolveEffectiveDueDateAt(card, asOfDate);
-          const effectiveCurrentCard: KanbanCardDTO = {
-            ...card,
-            dueDate: effectiveCurrentDueDate,
-          };
-          const isRedCurrent =
-            isCurrentMonth && day === asOfParts.date
-              ? checkIsRedCard(effectiveCurrentCard, companyHolidays, leavesByUser, asOfDate)
-              : true;
-
-          if (!isRedCurrent) {
-            continue;
+          // Only re-evaluate against live `asOfDate` when sampling the current day in progress
+          // (e.g., 08:00–16:59:59 Amber Due Today grace window or mid-day check-in).
+          if (isCurrentMonth && day === asOfParts.date) {
+            const effectiveCurrentDueDate = resolveEffectiveDueDateAt(card, asOfDate);
+            const effectiveCurrentCard: KanbanCardDTO = {
+              ...card,
+              dueDate: effectiveCurrentDueDate,
+            };
+            const isRedCurrent = checkIsRedCard(
+              effectiveCurrentCard,
+              companyHolidays,
+              leavesByUser,
+              asOfDate,
+              prebuiltOffDatesMap
+            );
+            if (!isRedCurrent) {
+              continue;
+            }
           }
-
-          const effectiveOff = new Set([
-            ...companyHolidays,
-            ...(userLeaves || []),
-          ]);
 
           let redStartTime: Date;
           if (effectiveDueDate) {
             const dueParts = toBangkokDateParts(new Date(effectiveDueDate));
-            redStartTime = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, WORK_DAY_START_HOUR, WORK_DAY_START_MINUTE, 0, 0);
+            redStartTime = createBangkokDate(
+              dueParts.year,
+              dueParts.month,
+              dueParts.date,
+              WORK_DAY_START_HOUR,
+              WORK_DAY_START_MINUTE,
+              0,
+              0
+            );
           } else {
-            let newestDate: Date | null = null;
-            if (card.activityLogs && card.activityLogs.length > 0) {
-              const validLogs = card.activityLogs.filter(
-                (log) =>
-                  log.type === 'COMMENT' &&
-                  new Date(log.createdAt).getTime() <= evalDate.getTime() &&
-                  !log.content.startsWith('[DUE DATE:') &&
-                  !log.content.startsWith('[URGENT_')
-              );
-              if (validLogs.length > 0) {
-                const latest = validLogs.reduce((latestLog, curLog) =>
-                  new Date(curLog.createdAt).getTime() > new Date(latestLog.createdAt).getTime()
-                    ? curLog
-                    : latestLog
-                );
-                newestDate = new Date(latest.createdAt);
-              }
-            }
-            const baseDate = newestDate || (card.createdAt ? new Date(card.createdAt) : workStart);
-            redStartTime = addWorkingMs(baseDate, RED_CARD_WORKING_MS_THRESHOLD, effectiveOff);
+            const { baseDate: resolvedBaseDate, grantMs } = resolveLatestTimerLog(card, evalDate);
+            const baseDate = resolvedBaseDate || workStart;
+            redStartTime = addWorkingMs(baseDate, grantMs, companyHolidays, userLeaves);
           }
 
-          // Working hours red today (between 08:00 and 17:30, up to 9.5h max)
+          // Working hours red today (between 08:00 and 17:00, up to 9h max)
           const windowStart = Math.max(redStartTime.getTime(), workStart.getTime());
-          const windowEnd = Math.min(evalDate.getTime(), workEnd.getTime());
+          const windowEnd = Math.min(evalMs, workEnd.getTime());
           const redMsToday = windowEnd > windowStart ? windowEnd - windowStart : 0;
           const redHoursToday = Math.round((redMsToday / (3600 * 1000)) * 10) / 10;
 
           // Total overdue working hours accumulated up to evalDate
-          const totalOverdueMs = calculateElapsedWorkingMs(redStartTime, evalDate, effectiveOff);
+          const totalOverdueMs = calculateElapsedWorkingMs(
+            redStartTime,
+            evalDate,
+            companyHolidays,
+            { ceilingMs: 0, personalLeaves: userLeaves }
+          );
           const totalOverdueHours = Math.round((totalOverdueMs / (3600 * 1000)) * 10) / 10;
 
           // A card is only an overdue red card for this day if it actually accumulated overdue working hours
@@ -369,10 +304,14 @@ export function calculateDailySamplingForMonth(params: {
       const cleanCardsCount = Math.max(0, activeCardsCount - redCardsCount);
       const redHours = maxRedHoursToday;
 
+      const isGraceShieldDay = activeCardsCount >= 15 && redCardsCount === 1;
       if (redCardsCount === 0) {
         userSummary.cleanDaysCount += 1;
       } else {
         userSummary.redDaysCount += 1;
+        if (isGraceShieldDay) {
+          userSummary.graceDaysCount = (userSummary.graceDaysCount ?? 0) + 1;
+        }
       }
 
       userSummary.totalRedHours += redHours;
@@ -384,6 +323,7 @@ export function calculateDailySamplingForMonth(params: {
         dayIndex: day,
         dayOfWeek,
         isOffDay: false,
+        isGraceShieldDay,
         activeCardsCount,
         cleanCardsCount,
         redCardsCount,
@@ -430,10 +370,17 @@ export function calculateDailySamplingForMonth(params: {
       summary.currentRedCards = latestWorkRecord.redCardsCount;
     }
 
-    // Assign fixed score from Red Rate ladder
+    // Assign fixed score from Red Rate ladder.
+    // Use monthly card-hours exposure so closing all open deals on the final day does not zero out earned XP.
+    const effectiveCardExposure =
+      summary.currentActiveCards > 0
+        ? summary.currentActiveCards
+        : summary.totalCardHours > 0
+        ? 1
+        : 0;
     const { points, badge, status } = getCardHealthScoreFromRedRate(
       summary.avgMonthlyRedRate,
-      summary.currentActiveCards
+      effectiveCardExposure
     );
     summary.totalCardHealthXp = points;
     summary.redRateTier = badge;

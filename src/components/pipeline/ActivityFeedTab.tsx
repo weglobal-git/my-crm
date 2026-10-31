@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useContext, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import useSWR, { useSWRConfig, type KeyedMutator } from 'swr';
+import { useSWRConfig, type KeyedMutator } from 'swr';
 import { useDropzone } from 'react-dropzone';
 import imageCompression from 'browser-image-compression';
 import {
@@ -17,12 +17,10 @@ import {
 } from 'lucide-react';
 import type { Role } from '@prisma/client';
 import type { Session } from 'next-auth';
-import type { OpportunityWithRelations } from '@/components/pipeline/KanbanCard';
+import { PendingTodosContext, type OpportunityWithRelations } from '@/components/pipeline/KanbanCard';
 import type { DealAcceleratorsState, AcceleratorQuestion } from '@/lib/actions/ai-accelerator';
 import { createManagerCallQuestion } from '@/lib/actions/ai-accelerator';
 import type { DealSummaryResponse } from '@/lib/actions/deal-summary';
-import { getNotes } from '@/lib/actions/notes';
-import { getIncompleteTodosCount, type DealTodoNote } from '@/lib/deal-todo-sync';
 import { addActivityLog, updateDueDateWithLog } from '@/lib/actions/opportunity';
 import {
   type ActivityLogPage,
@@ -34,6 +32,10 @@ import {
   formatShortDueDate,
   MIN_DUE_DATE_REASON_LENGTH,
 } from './ActivityCommentItem';
+import {
+  ActivityUpdateQualityBar,
+  type PostSendCoachingFeedback,
+} from './ActivityUpdateQualityBar';
 import { ChatAttachmentButton } from './ChatAttachmentButton';
 import { useDealDraft } from '@/lib/deal-draft-store';
 import {
@@ -42,6 +44,26 @@ import {
   decrementPendingBadge,
 } from '@/lib/deal-accelerators-sync';
 import { rollbackDueDate } from '@/lib/pipeline-delete-rollback';
+import {
+  createBangkokDate,
+  formatBangkokDueDateDisplay,
+  isDueDateFulfilled,
+  MAX_DUE_DATE_HORIZON_DAYS,
+  MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS,
+  MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH,
+  toBangkokDateParts,
+} from '@/lib/business-days';
+import {
+  analyzeDueDateTimeline,
+  classifyUpdateQuality,
+  computeCommentBubbleBadges,
+  DUPLICATE_LOOKBACK_LIMIT,
+  encodeTierPrefix,
+  parseTierPrefix,
+  type PreviousCommentRef,
+  type UpdateGrade,
+  type UpdateQualityReason,
+} from '@/lib/pipeline-update-quality';
 
 export interface ActivityFeedTabProps {
   deal: OpportunityWithRelations;
@@ -75,6 +97,28 @@ export interface ActivityFeedTabProps {
   toast: (options: { title: string; description: string; type: 'success' | 'error' | 'warning' | 'info' }) => void;
 }
 
+function buildPostSendCoachingMessage(
+  grade: UpdateGrade,
+  reason: UpdateQualityReason
+): string {
+  if (grade === 'PROGRESS_27H') {
+    return 'Posted • Progress ★ (+27h • up to +1 XP) — Card timer extended for 3 workdays';
+  }
+  if (grade === 'OUTREACH_27H') {
+    return 'Posted • Outreach (+27h • 0 XP) — Card timer extended for 3 workdays';
+  }
+  if (grade === 'BRIEF_9H') {
+    return 'Posted • Follow-up (+9h • 0 XP) — Card timer extended for 1 workday';
+  }
+  if (reason === 'DUPLICATE') {
+    return 'Saved as Note (+0h • 0 XP) — Duplicate update (click ••• > Edit today to add new details)';
+  }
+  if (reason === 'BOILERPLATE') {
+    return 'Saved as Note (+0h • 0 XP) — Generic status text (click ••• > Edit today to upgrade)';
+  }
+  return 'Saved as Note (+0h • 0 XP) — Short note (click ••• > Edit today to add details & upgrade)';
+}
+
 export function ActivityFeedTab({
   deal,
   localActivityLogs,
@@ -103,21 +147,19 @@ export function ActivityFeedTab({
 }: ActivityFeedTabProps) {
   const { mutate } = useSWRConfig();
 
-  // Shared Deal Notes SWR Cache for To-Do announcement bar
-  const { data: dealNotes = [] } = useSWR<DealTodoNote[]>(
-    ['deal-notes', deal.id],
-    () => getNotes(deal.id),
-    { revalidateOnFocus: false, revalidateOnReconnect: false, dedupingInterval: 30_000 }
-  );
-  const pendingTodosCount = getIncompleteTodosCount(dealNotes);
+  // Zero-fetch To-Do count read directly from board PendingTodosContext
+  const pendingTodosMap = useContext(PendingTodosContext);
+  const pendingTodosCount = pendingTodosMap[deal.id]?.length ?? 0;
 
   // In-Memory Draft Preservation Hook
-  const { draft, updateDraft, clearCurrentDraft } = useDealDraft(deal.id, 'activity');
+  const { draft, updateDraft, syncDraftSilent, clearCurrentDraft } = useDealDraft(deal.id, 'activity');
 
   const [newLog, setNewLog] = useState(draft.text || '');
   const [pendingDueDate, setPendingDueDate] = useState<Date | 'REMOVE' | null>(draft.pendingDueDate || null);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>(draft.pendingAttachments || []);
+  const [attachmentPreviewUrls, setAttachmentPreviewUrls] = useState<(string | null)[]>([]);
   const [isManagerCallMode, setIsManagerCallMode] = useState(draft.isManagerCallMode || false);
+  const [postSendFeedback, setPostSendFeedback] = useState<PostSendCoachingFeedback | null>(null);
 
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
@@ -137,6 +179,43 @@ export function ActivityFeedTab({
   const calendarRef = useRef<HTMLDivElement>(null);
   const isSubmittingLogRef = useRef(false);
   const isSendingManagerCallRef = useRef(false);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showCoachingFeedback = useCallback((next: PostSendCoachingFeedback) => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    setPostSendFeedback(next);
+    feedbackTimerRef.current = setTimeout(() => {
+      setPostSendFeedback(null);
+      feedbackTimerRef.current = null;
+    }, 3500);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
+
+  // Leak-free ObjectURL management for pending image attachments
+  useEffect(() => {
+    if (pendingAttachments.length === 0) {
+      setAttachmentPreviewUrls([]);
+      return;
+    }
+    const createdUrls = pendingAttachments.map((file) =>
+      file.type.startsWith('image/') && typeof URL !== 'undefined' && URL.createObjectURL
+        ? URL.createObjectURL(file)
+        : null
+    );
+    setAttachmentPreviewUrls(createdUrls);
+    return () => {
+      createdUrls.forEach((url) => {
+        if (url && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+          URL.revokeObjectURL(url);
+        }
+      });
+    };
+  }, [pendingAttachments]);
 
   const adjustTextareaHeight = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -158,12 +237,12 @@ export function ActivityFeedTab({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showCalendar]);
 
-  // Adjust height when input value is hydrated from draft
+  // Hydrate textarea height once on mount
   useEffect(() => {
     if (inputRef.current) {
       adjustTextareaHeight(inputRef.current);
     }
-  }, [newLog]);
+  }, []);
 
   // File Dropzone configuration
   const onDrop = useCallback(
@@ -293,8 +372,8 @@ export function ActivityFeedTab({
         setNewLog(questionText);
         updateDraft({ text: questionText });
         toast({
-          title: 'ส่งคำถามไม่สำเร็จ',
-          description: res.error || 'เกิดข้อผิดพลาดในการส่งคำถามด่วน',
+          title: 'Failed to send question',
+          description: res.error || 'Could not send urgent Manager Call question.',
           type: 'error',
         });
         return;
@@ -313,13 +392,35 @@ export function ActivityFeedTab({
       void loadActivityLogs();
       setNewLog(questionText);
       updateDraft({ text: questionText });
-      const errMsg = err instanceof Error ? err.message : 'เกิดข้อผิดพลาดในการส่งคำถามด่วน';
-      toast({ title: 'ส่งคำถามไม่สำเร็จ', description: errMsg, type: 'error' });
+      const errMsg = err instanceof Error ? err.message : 'Could not send urgent Manager Call question.';
+      toast({ title: 'Failed to send question', description: errMsg, type: 'error' });
     } finally {
       setIsSendingManagerCall(false);
       isSendingManagerCallRef.current = false;
     }
   };
+
+  // Up to 10 recent real top-level comments for O(1) duplicate similarity check (14-day recency aware)
+  const recentComparisonComments = useMemo(() => {
+    const out: PreviousCommentRef[] = [];
+    for (const log of localActivityLogs) {
+      if (log.type !== 'COMMENT' || log.parentId) continue;
+      if (log.content.startsWith('[DUE DATE:') || log.content.startsWith('[URGENT_')) continue;
+      out.push({ content: log.content, createdAt: log.createdAt });
+      if (out.length >= DUPLICATE_LOOKBACK_LIMIT) break;
+    }
+    return out;
+  }, [localActivityLogs]);
+
+  // 0ms Live Update Quality Evaluation (Zero-Button AI Auto-Grade)
+  const liveQualityEvaluation = useMemo(
+    () =>
+      classifyUpdateQuality(newLog, {
+        hasPendingAttachments: pendingAttachments.length > 0,
+        previousCommentsWithMeta: recentComparisonComments,
+      }),
+    [newLog, pendingAttachments.length, recentComparisonComments]
+  );
 
   // Handle Add Log (Comment & Due Date update)
   const handleAddLog = async () => {
@@ -331,6 +432,8 @@ export function ActivityFeedTab({
     const currentNewLog = newLog;
     const currentDueDate = pendingDueDate;
     const currentAttachments = [...pendingAttachments];
+    const optimisticEval = liveQualityEvaluation;
+    const createdOptimisticBlobUrls: string[] = [];
 
     // Format content for instant optimistic display
     let optimisticContent = currentNewLog.trim();
@@ -338,18 +441,24 @@ export function ActivityFeedTab({
       const dateStr =
         currentDueDate === 'REMOVE'
           ? 'Removed'
-          : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(
-              currentDueDate
-            );
+          : formatBangkokDueDateDisplay(currentDueDate);
       optimisticContent = `[DUE DATE: ${dateStr}]\nReason: ${optimisticContent || 'No reason provided'}`;
     }
 
     if (currentAttachments.length > 0) {
       const attachInfo = currentAttachments.map((f) => {
-        const previewUrl = typeof URL !== 'undefined' && URL.createObjectURL ? URL.createObjectURL(f) : 'uploading...';
+        let previewUrl = 'uploading...';
+        if (typeof URL !== 'undefined' && URL.createObjectURL) {
+          previewUrl = URL.createObjectURL(f);
+          createdOptimisticBlobUrls.push(previewUrl);
+        }
         return `[ATTACHMENT:${previewUrl}|${f.name}|${f.type}]`;
       }).join('\n');
       optimisticContent = (optimisticContent + '\n' + attachInfo).trim();
+    }
+
+    if (!currentDueDate) {
+      optimisticContent = encodeTierPrefix(optimisticContent || 'Updated deal', optimisticEval.grade);
     }
 
     const optimisticLog = {
@@ -385,34 +494,36 @@ export function ActivityFeedTab({
       { revalidate: false }
     );
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    mutate(
-      (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
-      (currentData: OpportunityWithRelations[] | undefined) => {
-        if (!currentData) return currentData;
-        return currentData.map((opp) => {
-          if (opp.id === deal.id) {
-            const isDueExpired = opp.dueDate && new Date(opp.dueDate) <= today;
-            const updatedDueDate = currentDueDate
-              ? currentDueDate === 'REMOVE'
+    if (currentDueDate || optimisticEval.tier !== '0H') {
+      mutate(
+        (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+        (currentData: OpportunityWithRelations[] | undefined) => {
+          if (!currentData) return currentData;
+          return currentData.map((opp) => {
+            if (opp.id === deal.id) {
+              const isDueCleared =
+                !currentDueDate && opp.dueDate
+                  ? isDueDateFulfilled(opp.dueDate, optimisticLog.createdAt)
+                  : false;
+              const updatedDueDate = currentDueDate
+                ? currentDueDate === 'REMOVE'
+                  ? null
+                  : currentDueDate
+                : isDueCleared
                 ? null
-                : currentDueDate
-              : isDueExpired
-              ? null
-              : opp.dueDate;
-            return {
-              ...opp,
-              dueDate: updatedDueDate,
-              activityLogs: [optimisticLog, ...(opp.activityLogs || [])],
-            };
-          }
-          return opp;
-        });
-      },
-      { revalidate: false }
-    );
+                : opp.dueDate;
+              return {
+                ...opp,
+                dueDate: updatedDueDate,
+                activityLogs: [optimisticLog, ...(opp.activityLogs || [])],
+              };
+            }
+            return opp;
+          });
+        },
+        { revalidate: false }
+      );
+    }
 
     // Notify AI Summary
     void mutateDealSummary?.(
@@ -427,12 +538,23 @@ export function ActivityFeedTab({
       { revalidate: false }
     );
 
-    // 3. Clear UI instantly for snappy feel and wipe in-memory draft
+    // 3. Clear UI instantly for snappy feel, show coaching feedback, and wipe in-memory draft
     setNewLog('');
     setPendingDueDate(null);
     setPendingAttachments([]);
     setShowCalendar(false);
     clearCurrentDraft();
+    if (inputRef.current) {
+      inputRef.current.value = '';
+      adjustTextareaHeight(inputRef.current);
+    }
+    if (!currentDueDate) {
+      showCoachingFeedback({
+        tier: optimisticEval.tier,
+        grade: optimisticEval.grade,
+        message: buildPostSendCoachingMessage(optimisticEval.grade, optimisticEval.reason),
+      });
+    }
 
     // 4. Perform heavy lifting in background
     setIsSubmittingLog(true);
@@ -443,14 +565,29 @@ export function ActivityFeedTab({
         const uploadedBlocks = await Promise.all(
           currentAttachments.map(async (file) => {
             const isImage = file.type.startsWith('image/');
-            let fileToUpload = file;
+            const isCompressibleRaster =
+              file.type === 'image/png' ||
+              file.type === 'image/jpeg' ||
+              file.type === 'image/jpg' ||
+              file.type === 'image/webp';
+            let fileToUpload: File | Blob = file;
+            let uploadFileName = file.name;
+            let uploadFileType = file.type;
 
-            if (isImage) {
-              fileToUpload = await imageCompression(file, {
-                maxSizeMB: 1,
-                maxWidthOrHeight: 1920,
-                useWebWorker: true,
-              });
+            if (isCompressibleRaster) {
+              try {
+                fileToUpload = await imageCompression(file, {
+                  maxSizeMB: 0.35,
+                  maxWidthOrHeight: 1600,
+                  fileType: 'image/webp',
+                  initialQuality: 0.82,
+                  useWebWorker: true,
+                });
+                uploadFileName = file.name.replace(/\.(png|jpe?g|webp)$/i, '') + '.webp';
+                uploadFileType = fileToUpload.type || 'image/webp';
+              } catch {
+                fileToUpload = file;
+              }
             }
 
             const fileBase64 = await new Promise<string>((resolve, reject) => {
@@ -466,8 +603,8 @@ export function ActivityFeedTab({
               body: JSON.stringify({
                 opportunityId: deal.id,
                 fileBase64,
-                fileName: file.name,
-                fileType: file.type,
+                fileName: uploadFileName,
+                fileType: uploadFileType,
                 size: fileToUpload.size,
                 isRaw: !isImage,
               }),
@@ -475,7 +612,7 @@ export function ActivityFeedTab({
 
             const data = await response.json();
             if (data.success && data.attachment?.cloudinaryUrl) {
-              return `\n[ATTACHMENT:${data.attachment.cloudinaryUrl}|${file.name}|${file.type}]`;
+              return `\n[ATTACHMENT:${data.attachment.cloudinaryUrl}|${uploadFileName}|${uploadFileType}]`;
             }
             return '';
           })
@@ -487,46 +624,88 @@ export function ActivityFeedTab({
       const mutationId = `due-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
       let persistedLog: ActivityLogWithRelations | null = null;
+      let authoritativeDueDate: Date | string | null | undefined = undefined;
       if (currentDueDate === 'REMOVE') {
         const res = await updateDueDateWithLog(deal.id, null, finalLog, mutationId);
         persistedLog = (res?.activityLog as unknown as ActivityLogWithRelations) || null;
+        authoritativeDueDate = res?.opp ? res.opp.dueDate : null;
       } else if (currentDueDate instanceof Date) {
         const res = await updateDueDateWithLog(deal.id, currentDueDate, finalLog, mutationId);
         persistedLog = (res?.activityLog as unknown as ActivityLogWithRelations) || null;
+        authoritativeDueDate = res?.opp ? res.opp.dueDate : currentDueDate;
       } else {
         persistedLog = (await addActivityLog(deal.id, finalLog)) as ActivityLogWithRelations;
       }
 
       if (persistedLog) {
+        const persistedParsed = !currentDueDate ? parseTierPrefix(persistedLog.content) : null;
+        const persistedTier = persistedParsed?.tier ?? null;
+        if (persistedParsed && persistedParsed.grade !== optimisticEval.grade) {
+          showCoachingFeedback({
+            tier: persistedParsed.tier,
+            grade: persistedParsed.grade,
+            message: buildPostSendCoachingMessage(persistedParsed.grade, optimisticEval.reason),
+          });
+        }
         loadActivityLogs(
           (pages) => replaceOptimisticActivity(pages, fakeId, persistedLog as ActivityLogWithRelations),
           { revalidate: false }
         );
-        mutate(
-          (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
-          (currentData: OpportunityWithRelations[] | undefined) => {
-            if (!currentData) return currentData;
-            return currentData.map((opp) => {
-              if (opp.id === deal.id) {
-                return {
-                  ...opp,
-                  activityLogs: (opp.activityLogs || []).map((l) => (l.id === fakeId ? (persistedLog as unknown as typeof l) : l)),
-                };
-              }
-              return opp;
-            });
-          },
-          { revalidate: false }
-        );
+        if (currentDueDate || persistedTier !== '0H') {
+          mutate(
+            (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+            (currentData: OpportunityWithRelations[] | undefined) => {
+              if (!currentData) return currentData;
+              return currentData.map((opp) => {
+                if (opp.id === deal.id) {
+                  const resolvedDueDate =
+                    authoritativeDueDate !== undefined
+                      ? authoritativeDueDate
+                      : opp.dueDate && isDueDateFulfilled(opp.dueDate, persistedLog!.createdAt)
+                      ? null
+                      : opp.dueDate;
+                  const existingLogs = opp.activityLogs || [];
+                  const hasFake = existingLogs.some((l) => l.id === fakeId);
+                  const nextLogs = hasFake
+                    ? existingLogs.map((l) => (l.id === fakeId ? (persistedLog as unknown as typeof l) : l))
+                    : [persistedLog as unknown as (typeof existingLogs)[number], ...existingLogs];
+                  return {
+                    ...opp,
+                    dueDate: resolvedDueDate as Date | null,
+                    activityLogs: nextLogs,
+                  };
+                }
+                return opp;
+              });
+            },
+            { revalidate: false }
+          );
+        } else if (optimisticEval.tier !== '0H') {
+          // Server downgraded to 0H: roll back optimistic board log & dueDate
+          mutate(
+            (key) => Array.isArray(key) && key[0] === 'pipeline-deals',
+            (currentData: OpportunityWithRelations[] | undefined) => {
+              if (!currentData) return currentData;
+              const restored = rollbackDueDate(currentData, deal.id, deal.dueDate);
+              return restored?.map((opp) =>
+                opp.id === deal.id ? { ...opp, activityLogs: deal.activityLogs || [] } : opp
+              );
+            },
+            { revalidate: false }
+          );
+        }
       } else {
         loadActivityLogs();
       }
+
+      void mutate((key) => Array.isArray(key) && key[0] === 'dashboard:leaderboard');
 
       if (currentAttachments.length > 0 || finalLog.includes('http')) {
         void mutate(['opportunity-shared-media', deal.id]);
       }
     } catch (e) {
       // Revert if error
+      setPostSendFeedback(null);
       setNewLog(currentNewLog);
       setPendingDueDate(currentDueDate);
       setPendingAttachments(currentAttachments);
@@ -551,6 +730,11 @@ export function ActivityFeedTab({
         toast({ title: 'Error', description: 'Failed to add log: ' + e.message, type: 'error' });
       }
     } finally {
+      createdOptimisticBlobUrls.forEach((url) => {
+        if (typeof URL !== 'undefined' && URL.revokeObjectURL) {
+          URL.revokeObjectURL(url);
+        }
+      });
       setIsSubmittingLog(false);
       isSubmittingLogRef.current = false;
       if (inputRef.current) {
@@ -559,91 +743,158 @@ export function ActivityFeedTab({
     }
   };
 
-  // Comments processing
-  let comments = localActivityLogs.filter((log) => log.type === 'COMMENT' && !log.parentId);
+  // Memoized timeline processing (prevents O(N) filtering/grouping on every keystroke)
+  const {
+    comments,
+    latestDueDateLogId,
+    postponedCountByLogId,
+    bubbleBadgesByLogId,
+    groupedComments,
+    sortedYears,
+  } = useMemo(() => {
+    const rawTopLevel = localActivityLogs.filter((log) => log.type === 'COMMENT' && !log.parentId);
+    const latestDueId = rawTopLevel.find((log) => log.content.startsWith('[DUE DATE:'))?.id ?? null;
 
-  // Filter out answered Manager Call questions from feed
-  comments = comments.filter((log) => {
-    if (!log.content.startsWith('[URGENT_CALL:')) return true;
-    if (!acceleratorsState) return false;
-    const match = log.content.match(/^\[URGENT_CALL:([^\]]+)\]\s*([\s\S]*)$/);
-    const qId = match ? match[1] : '';
-    const qText = match ? match[2].trim() : '';
-    const targetQ =
-      acceleratorsState.questions?.find((q) => q.id === qId && q.question.trim() === qText) ||
-      acceleratorsState.questions?.find((q) => q.id === qId && q.status === 'PENDING') ||
-      acceleratorsState.questions?.find((q) => q.id === qId);
-    if (targetQ) {
-      return targetQ.status === 'PENDING';
-    }
-    return false;
-  });
-
-  // Fallback: If pending questions are not in comments yet, synthesize
-  const pendingAccelerators = acceleratorsState?.questions?.filter((q) => q.status === 'PENDING') || [];
-  if (pendingAccelerators.length > 0) {
-    const existingQIds = new Set(
-      comments
-        .filter((log) => log.content.startsWith('[URGENT_CALL:'))
-        .map((log) => {
-          const match = log.content.match(/^\[URGENT_CALL:([^\]]+)\]/);
-          return match ? match[1] : '';
-        })
-        .filter(Boolean)
-    );
-
-    const missingQuestions = pendingAccelerators.filter((q) => {
-      if (existingQIds.has(q.id)) return false;
-      const isTextAlreadyPresent = comments.some((log) => {
-        if (!log.content.startsWith('[URGENT_CALL:')) return false;
-        const match = log.content.match(/^\[URGENT_CALL:[^\]]+\]\s*([\s\S]*)$/);
-        return match && match[1].trim() === q.question.trim();
-      });
-      return !isTextAlreadyPresent;
+    // Compute smart consecutive Due Date postponement streak & per-bubble XP badges chronologically (oldest -> newest)
+    const chronologicalTopLevel = [...rawTopLevel].reverse();
+    const timelineItems = chronologicalTopLevel.map((item) => ({
+      id: item.id,
+      content: item.content,
+      createdAt: item.createdAt,
+      userId: item.userId,
+    }));
+    const { postponedCountByLogId: postponedMap } = analyzeDueDateTimeline(timelineItems);
+    const bubbleBadgesMap = computeCommentBubbleBadges(timelineItems, {
+      dealOwnerId: deal.ownerId,
+      dealTopic: deal.topic,
     });
 
-    if (missingQuestions.length > 0) {
-      const syntheticLogs = missingQuestions.map((q) => ({
-        id: `synth_log_${q.id}`,
-        content: `[URGENT_CALL:${q.id}] ${q.question}`,
-        type: 'COMMENT',
-        opportunityId: deal.id,
-        userId: q.askedByUserId || session?.user?.id || '',
-        createdAt: q.createdAt ? new Date(q.createdAt) : new Date(),
-        updatedAt: q.createdAt ? new Date(q.createdAt) : new Date(),
-        isEdited: false,
-        parentId: null,
-        user: {
-          id: q.askedByUserId || session?.user?.id || '',
-          name: q.askedBy || (q.source === 'MANAGER' ? 'Manager' : 'AI Assistant'),
-          image: q.askedByImage || null,
-          email: null,
-          role: (q.source === 'MANAGER' ? 'MANAGEMENT' : 'ADMIN') as Role,
-        },
-        replies: [],
-      })) as unknown as ActivityLogWithRelations[];
+    // Filter out answered Manager Call questions from feed
+    let list = rawTopLevel.filter((log) => {
+      if (!log.content.startsWith('[URGENT_CALL:')) return true;
+      if (!acceleratorsState) return false;
+      const match = log.content.match(/^\[URGENT_CALL:([^\]]+)\]\s*([\s\S]*)$/);
+      const qId = match ? match[1] : '';
+      const qText = match ? match[2].trim() : '';
+      const targetQ =
+        acceleratorsState.questions?.find((q) => q.id === qId && q.question.trim() === qText) ||
+        acceleratorsState.questions?.find((q) => q.id === qId && q.status === 'PENDING') ||
+        acceleratorsState.questions?.find((q) => q.id === qId);
+      if (targetQ) {
+        return targetQ.status === 'PENDING';
+      }
+      return false;
+    });
 
-      comments = [...syntheticLogs, ...comments];
+    // Fallback: If pending questions are not in comments yet, synthesize
+    const pendingAccelerators = acceleratorsState?.questions?.filter((q) => q.status === 'PENDING') || [];
+    if (pendingAccelerators.length > 0) {
+      const existingQIds = new Set(
+        list
+          .filter((log) => log.content.startsWith('[URGENT_CALL:'))
+          .map((log) => {
+            const match = log.content.match(/^\[URGENT_CALL:([^\]]+)\]/);
+            return match ? match[1] : '';
+          })
+          .filter(Boolean)
+      );
+
+      const missingQuestions = pendingAccelerators.filter((q) => {
+        if (existingQIds.has(q.id)) return false;
+        const isTextAlreadyPresent = list.some((log) => {
+          if (!log.content.startsWith('[URGENT_CALL:')) return false;
+          const match = log.content.match(/^\[URGENT_CALL:[^\]]+\]\s*([\s\S]*)$/);
+          return match && match[1].trim() === q.question.trim();
+        });
+        return !isTextAlreadyPresent;
+      });
+
+      if (missingQuestions.length > 0) {
+        const syntheticLogs = missingQuestions.map((q) => ({
+          id: `synth_log_${q.id}`,
+          content: `[URGENT_CALL:${q.id}] ${q.question}`,
+          type: 'COMMENT',
+          opportunityId: deal.id,
+          userId: q.askedByUserId || session?.user?.id || '',
+          createdAt: q.createdAt ? new Date(q.createdAt) : new Date(),
+          updatedAt: q.createdAt ? new Date(q.createdAt) : new Date(),
+          isEdited: false,
+          parentId: null,
+          user: {
+            id: q.askedByUserId || session?.user?.id || '',
+            name: q.askedBy || (q.source === 'MANAGER' ? 'Manager' : 'AI Assistant'),
+            image: q.askedByImage || null,
+            email: null,
+            role: (q.source === 'MANAGER' ? 'MANAGEMENT' : 'ADMIN') as Role,
+          },
+          replies: [],
+        })) as unknown as ActivityLogWithRelations[];
+
+        list = [...syntheticLogs, ...list];
+      }
     }
-  }
 
-  if (activitySearchQuery.trim()) {
-    const query = activitySearchQuery.toLowerCase();
-    comments = comments.filter(
-      (log) => log.content?.toLowerCase().includes(query) || log.user?.name?.toLowerCase().includes(query)
-    );
-  }
+    if (activitySearchQuery.trim()) {
+      const query = activitySearchQuery.toLowerCase();
+      list = list.filter(
+        (log) => log.content?.toLowerCase().includes(query) || log.user?.name?.toLowerCase().includes(query)
+      );
+    }
 
-  const groupedComments = comments.reduce((acc, log) => {
-    const year = new Date(log.createdAt).getFullYear();
-    if (!acc[year]) acc[year] = [];
-    acc[year].push(log);
-    return acc;
-  }, {} as Record<number, typeof comments>);
+    const grouped = list.reduce((acc, log) => {
+      const year = toBangkokDateParts(new Date(log.createdAt)).year;
+      if (!acc[year]) acc[year] = [];
+      acc[year].push(log);
+      return acc;
+    }, {} as Record<number, typeof list>);
 
-  const sortedYears = Object.keys(groupedComments)
-    .map(Number)
-    .sort((a, b) => b - a);
+    const years = Object.keys(grouped)
+      .map(Number)
+      .sort((a, b) => b - a);
+
+    return {
+      comments: list,
+      latestDueDateLogId: latestDueId,
+      postponedCountByLogId: postponedMap,
+      bubbleBadgesByLogId: bubbleBadgesMap,
+      groupedComments: grouped,
+      sortedYears: years,
+    };
+  }, [
+    localActivityLogs,
+    acceleratorsState,
+    activitySearchQuery,
+    deal.id,
+    deal.ownerId,
+    deal.topic,
+    session?.user?.id,
+  ]);
+
+  // Standard (45 days) and Long-Lead (180 days) Due Date horizons, extended if Goods Ready / Loading Date is further out
+  const { standardMaxDueDateMs, maxAllowedDueDateMs } = useMemo(() => {
+    const todayParts = toBangkokDateParts(new Date());
+    const todayMidnightMs = createBangkokDate(
+      todayParts.year,
+      todayParts.month,
+      todayParts.date,
+      0,
+      0,
+      0
+    ).getTime();
+    let stdMs = todayMidnightMs + (MAX_DUE_DATE_HORIZON_DAYS + 1) * 24 * 3600 * 1000 - 1;
+    let maxMs = todayMidnightMs + (MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS + 1) * 24 * 3600 * 1000 - 1;
+    const anchorCandidates = [
+      deal.goodsReadyDate ? new Date(deal.goodsReadyDate).getTime() : 0,
+      deal.goodsLoadingDate ? new Date(deal.goodsLoadingDate).getTime() : 0,
+    ];
+    const furthestAnchor = Math.max(0, ...anchorCandidates);
+    if (furthestAnchor > 0) {
+      const shippingMaxMs = furthestAnchor + 7 * 24 * 3600 * 1000;
+      stdMs = Math.max(stdMs, shippingMaxMs);
+      maxMs = Math.max(maxMs, shippingMaxMs);
+    }
+    return { standardMaxDueDateMs: stdMs, maxAllowedDueDateMs: maxMs };
+  }, [deal.goodsReadyDate, deal.goodsLoadingDate]);
 
   const activeDueDate =
     pendingDueDate && pendingDueDate !== 'REMOVE'
@@ -652,7 +903,15 @@ export function ActivityFeedTab({
       ? deal.dueDate
       : null;
   const isDuePending = Boolean(pendingDueDate);
-  const isDueValid = isDuePending ? newLog.trim().length >= MIN_DUE_DATE_REASON_LENGTH : true;
+  const isLongLeadDueDate =
+    pendingDueDate instanceof Date && pendingDueDate.getTime() > standardMaxDueDateMs;
+  const effectiveDueReasonMinLen = isLongLeadDueDate
+    ? MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH
+    : MIN_DUE_DATE_REASON_LENGTH;
+  const dueReasonCurrentLen = isLongLeadDueDate
+    ? newLog.replace(/[\s\p{P}]+/gu, '').length
+    : newLog.trim().length;
+  const isDueValid = isDuePending ? dueReasonCurrentLen >= effectiveDueReasonMinLen : true;
   const hasSubmitContent = isDuePending ? true : newLog.trim().length > 0 || pendingAttachments.length > 0;
 
   return (
@@ -664,7 +923,7 @@ export function ActivityFeedTab({
           {pendingQuestions.length > 0 && (
             <div
               onClick={() => setActiveTab('manager-call')}
-              className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-amber-300 hover:bg-amber-500/15 transition cursor-pointer shadow-sm"
+              className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-amber-300 hover:bg-amber-500/15 transition cursor-pointer"
             >
               <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
                 <PhoneCall className="w-3.5 h-3.5 text-amber-400 animate-pulse shrink-0" />
@@ -682,7 +941,7 @@ export function ActivityFeedTab({
                   e.stopPropagation();
                   setActiveTab('manager-call');
                 }}
-                className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold shrink-0 hover:bg-amber-400 transition cursor-pointer shadow"
+                className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 text-xs font-bold shrink-0 hover:bg-amber-400 transition cursor-pointer"
               >
                 Answer
               </button>
@@ -693,13 +952,13 @@ export function ActivityFeedTab({
           {pendingTodosCount > 0 && (
             <div
               onClick={() => setActiveTab('notes')}
-              className="bg-[#C7F33C]/10 border border-[#C7F33C]/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-[#C7F33C] hover:bg-[#C7F33C]/15 transition cursor-pointer shadow-sm"
+              className="bg-[#C7F33C]/10 border border-[#C7F33C]/30 rounded-xl px-3 py-2 flex items-center justify-between gap-3 text-[#C7F33C] hover:bg-[#C7F33C]/15 transition cursor-pointer"
             >
               <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
                 <ListTodo className="w-3.5 h-3.5 text-[#C7F33C] shrink-0" />
                 <span className="font-bold text-xs text-[#C7F33C] shrink-0">To-Do Tasks</span>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-[#C7F33C]/20 text-[#C7F33C] font-bold border border-[#C7F33C]/30 shrink-0">
-                  {pendingTodosCount} {pendingTodosCount === 1 ? 'Pending' : 'Pending'}
+                  {pendingTodosCount} Pending
                 </span>
               </div>
               <button
@@ -708,7 +967,7 @@ export function ActivityFeedTab({
                   e.stopPropagation();
                   setActiveTab('notes');
                 }}
-                className="px-2.5 py-1 rounded-lg bg-[#C7F33C] text-slate-950 text-xs font-bold shrink-0 hover:bg-[#b8e42f] transition cursor-pointer shadow"
+                className="px-2.5 py-1 rounded-lg bg-[#C7F33C] text-slate-950 text-xs font-bold shrink-0 hover:bg-[#b8e42f] transition cursor-pointer"
               >
                 View To-Do
               </button>
@@ -771,10 +1030,16 @@ export function ActivityFeedTab({
                   onAnswerQuestion={onAnswerAccelerator}
                   onDeleteQuestion={onDeleteAcceleratorQuestion}
                   canUseManagerCall={canUseManagerCall}
+                  activeDealDueDate={deal.dueDate ?? null}
+                  isLatestDueDateLog={log.id === latestDueDateLogId}
+                  postponedCount={postponedCountByLogId.get(log.id) || 0}
+                  bubbleBadge={bubbleBadgesByLogId.get(log.id)}
+                  dealOwnerId={deal.ownerId}
+                  dealTopic={deal.topic}
                   onReplyClick={(username) => {
                     setNewLog((prev) => {
                       const next = prev ? `${prev} @${username} ` : `@${username} `;
-                      updateDraft({ text: next });
+                      syncDraftSilent({ text: next });
                       return next;
                     });
                     if (inputRef.current) inputRef.current.focus();
@@ -821,7 +1086,7 @@ export function ActivityFeedTab({
                 </svg>
               </button>
               <span className="font-bold text-slate-100 text-xs">
-                {calendarMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
+                {calendarMonth.toLocaleString('en-US', { month: 'long', year: 'numeric' })}
               </span>
               <button
                 onClick={() =>
@@ -851,33 +1116,53 @@ export function ActivityFeedTab({
                 length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate(),
               }).map((_, i) => {
                 const date = i + 1;
-                const cellDate = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), date);
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
+                const calYear = calendarMonth.getFullYear();
+                const calMonth = calendarMonth.getMonth();
+                const cellDate = createBangkokDate(calYear, calMonth, date, 0, 0, 0);
+                const todayParts = toBangkokDateParts(new Date());
+                const todayMidnight = createBangkokDate(
+                  todayParts.year,
+                  todayParts.month,
+                  todayParts.date,
+                  0,
+                  0,
+                  0
+                );
 
                 const isToday =
-                  date === new Date().getDate() &&
-                  calendarMonth.getMonth() === new Date().getMonth() &&
-                  calendarMonth.getFullYear() === new Date().getFullYear();
-                const isPast = cellDate < today;
+                  date === todayParts.date &&
+                  calMonth === todayParts.month &&
+                  calYear === todayParts.year;
+                const isPast = cellDate.getTime() < todayMidnight.getTime();
+                const isBeyondMaxHorizon = cellDate.getTime() > maxAllowedDueDateMs;
+                const isDisabled = isPast || isBeyondMaxHorizon;
+                const selectedParts = selectedPopupDate
+                  ? toBangkokDateParts(selectedPopupDate)
+                  : null;
                 const isSelected =
-                  selectedPopupDate?.getDate() === date &&
-                  selectedPopupDate?.getMonth() === calendarMonth.getMonth() &&
-                  selectedPopupDate?.getFullYear() === calendarMonth.getFullYear();
+                  selectedParts?.date === date &&
+                  selectedParts?.month === calMonth &&
+                  selectedParts?.year === calYear;
 
                 return (
                   <button
                     key={date}
                     onClick={() => {
-                      const newDate = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), date);
-                      newDate.setHours(0, 0, 0, 0);
+                      const newDate = createBangkokDate(calYear, calMonth, date, 0, 0, 0);
                       setSelectedPopupDate(newDate);
                     }}
-                    disabled={isPast}
+                    disabled={isDisabled}
+                    title={
+                      isBeyondMaxHorizon
+                        ? `Max ${MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS}-day Due Date horizon`
+                        : cellDate.getTime() > standardMaxDueDateMs
+                        ? `Long-lead (>45d): requires ${MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH}+ chars reason`
+                        : undefined
+                    }
                     className={`
                       h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all
-                      ${isPast ? 'text-slate-500 cursor-not-allowed' : 'cursor-pointer'}
-                      ${!isPast && !isSelected ? 'hover:bg-[#4E4F50] text-slate-300' : ''}
+                      ${isDisabled ? 'text-slate-600 cursor-not-allowed opacity-50' : 'cursor-pointer'}
+                      ${!isDisabled && !isSelected ? 'hover:bg-[#4E4F50] text-slate-300' : ''}
                       ${isToday && !isSelected ? 'border border-[#C7F33C]' : ''}
                       ${isSelected ? 'bg-[#C7F33C] !text-black hover:bg-[#b0d635]' : ''}
                     `}
@@ -887,7 +1172,10 @@ export function ActivityFeedTab({
                 );
               })}
             </div>
-            <div className="flex gap-2 mt-4">
+            <p className="text-[11px] text-slate-400 mt-3 text-center">
+              Due at 17:00 (standard {MAX_DUE_DATE_HORIZON_DAYS}d · long-lead up to {MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS}d)
+            </p>
+            <div className="flex gap-2 mt-2.5">
               {deal.dueDate && (
                 <button
                   onClick={() => {
@@ -922,7 +1210,7 @@ export function ActivityFeedTab({
           <div className="px-2 pb-1.5 flex flex-wrap gap-2 items-center">
             {pendingAttachments.map((file, idx) => {
               const isImg = file.type.startsWith('image/');
-              const objectUrl = isImg ? URL.createObjectURL(file) : null;
+              const objectUrl = attachmentPreviewUrls[idx] ?? null;
               return (
                 <div
                   key={idx}
@@ -953,6 +1241,14 @@ export function ActivityFeedTab({
           </div>
         )}
 
+        {/* Zero-Button AI Auto-Grade Live Meter + Post-Send Coaching Banner */}
+        <ActivityUpdateQualityBar
+          evaluation={liveQualityEvaluation}
+          isVisible={!isManagerCallMode && !pendingDueDate}
+          postSendFeedback={!isManagerCallMode && !pendingDueDate ? postSendFeedback : null}
+          onDismissFeedback={() => setPostSendFeedback(null)}
+        />
+
         {/* Due Date Mode Banner */}
         {pendingDueDate && !isManagerCallMode && (
           <div className="flex items-center justify-between px-3 py-1.5 bg-[#C7F33C]/10 border border-[#C7F33C]/30 rounded-xl text-[#C7F33C] text-xs font-semibold animate-in fade-in">
@@ -961,19 +1257,17 @@ export function ActivityFeedTab({
               <span className="truncate">
                 {pendingDueDate === 'REMOVE'
                   ? 'Remove Due Date'
-                  : `Due Date: ${new Intl.DateTimeFormat('en-GB', {
-                      day: '2-digit',
-                      month: 'short',
-                      year: 'numeric',
-                    }).format(pendingDueDate)}`}
+                  : `Due Date: ${formatBangkokDueDateDisplay(pendingDueDate)}`}
                 <span className="text-slate-300 font-normal ml-1.5">
-                  (Provide at least {MIN_DUE_DATE_REASON_LENGTH} characters
+                  ({isLongLeadDueDate
+                    ? `Long-lead >${MAX_DUE_DATE_HORIZON_DAYS}d: min ${effectiveDueReasonMinLen} chars reason`
+                    : `Provide at least ${effectiveDueReasonMinLen} characters`}
                   {newLog.trim().length > 0 ? (
-                    newLog.trim().length >= MIN_DUE_DATE_REASON_LENGTH ? (
+                    isDueValid ? (
                       <span className="text-[#C7F33C] ml-1 font-bold">✓</span>
                     ) : (
                       <span className="text-amber-400 ml-1 font-mono">
-                        {newLog.trim().length}/{MIN_DUE_DATE_REASON_LENGTH}
+                        {dueReasonCurrentLen}/{effectiveDueReasonMinLen}
                       </span>
                     )
                   ) : null}
@@ -1069,7 +1363,7 @@ export function ActivityFeedTab({
               <button
                 type="button"
                 onClick={onShowRewriteModal}
-                title="AI Rewriter (สรุปและเรียบเรียงข้อความ)"
+                title="AI Rewriter (Summarize & polish update)"
                 className="h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer w-7 px-0 hover:bg-[#4E4F50] text-slate-300"
               >
                 <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
@@ -1088,7 +1382,7 @@ export function ActivityFeedTab({
                 title={isManagerCallMode ? 'Cancel Manager Call mode' : 'Manager Call (Urgent question)'}
                 className={`h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
                   isManagerCallMode
-                    ? 'bg-[#F59E0B] text-slate-950 font-bold text-xs px-2.5 gap-1.5 shadow-sm'
+                    ? 'bg-[#F59E0B] text-slate-950 font-bold text-xs px-2.5 gap-1.5'
                     : 'w-7 px-0 hover:bg-[#4E4F50] text-amber-400'
                 }`}
               >
@@ -1104,9 +1398,41 @@ export function ActivityFeedTab({
             rows={1}
             value={newLog}
             onChange={(e) => {
-              setNewLog(e.target.value);
-              updateDraft({ text: e.target.value });
+              const val = e.target.value;
+              setNewLog(val);
+              syncDraftSilent({ text: val });
               adjustTextareaHeight(e.target);
+            }}
+            onPaste={(e) => {
+              if (isManagerCallMode || !session?.user?.id) return;
+              const items = e.clipboardData?.items;
+              if (!items || items.length === 0) return;
+              const plainText = e.clipboardData.getData('text/plain');
+              if (plainText && plainText.trim().length > 0) return;
+
+              const pastedImages: File[] = [];
+              for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.kind === 'file' && item.type.startsWith('image/')) {
+                  const blob = item.getAsFile();
+                  if (blob) {
+                    const ext = item.type === 'image/jpeg' ? 'jpg' : item.type === 'image/webp' ? 'webp' : 'png';
+                    const namedFile = new File([blob], `screenshot-${Date.now()}-${i + 1}.${ext}`, {
+                      type: item.type || 'image/png',
+                    });
+                    pastedImages.push(namedFile);
+                  }
+                }
+              }
+
+              if (pastedImages.length > 0) {
+                e.preventDefault();
+                setPendingAttachments((prev) => {
+                  const next = [...prev, ...pastedImages];
+                  updateDraft({ pendingAttachments: next });
+                  return next;
+                });
+              }
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -1124,10 +1450,12 @@ export function ActivityFeedTab({
                   if (isManagerCallMode) {
                     handleSendManagerCall();
                   } else {
-                    if (pendingDueDate && newLog.trim().length < MIN_DUE_DATE_REASON_LENGTH) {
+                    if (isDuePending && !isDueValid) {
                       toast({
-                        title: 'จำเป็นต้องระบุเหตุผล',
-                        description: `กรุณาระบุเหตุผลในการตั้ง/เปลี่ยน Due Date อย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร`,
+                        title: 'Reason required',
+                        description: isLongLeadDueDate
+                          ? `Long-lead Due Dates (>${MAX_DUE_DATE_HORIZON_DAYS}d) require at least ${effectiveDueReasonMinLen} meaningful characters explaining the schedule.`
+                          : `Please provide at least ${effectiveDueReasonMinLen} characters explaining the Due Date change.`,
                         type: 'warning',
                       });
                       inputRef.current?.focus();
@@ -1164,8 +1492,10 @@ export function ActivityFeedTab({
                 } else {
                   if (isDuePending && !isDueValid) {
                     toast({
-                      title: 'จำเป็นต้องระบุเหตุผล',
-                      description: `กรุณาระบุเหตุผลในการตั้ง/เปลี่ยน Due Date อย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH} ตัวอักษร`,
+                      title: 'Reason required',
+                      description: isLongLeadDueDate
+                        ? `Long-lead Due Dates (>${MAX_DUE_DATE_HORIZON_DAYS}d) require at least ${effectiveDueReasonMinLen} meaningful characters explaining the schedule.`
+                        : `Please provide at least ${effectiveDueReasonMinLen} characters explaining the Due Date change.`,
                       type: 'warning',
                     });
                     inputRef.current?.focus();
@@ -1183,7 +1513,7 @@ export function ActivityFeedTab({
               }`}
               title={
                 isDuePending && !isDueValid
-                  ? `ระบุเหตุผลอีกอย่างน้อย ${MIN_DUE_DATE_REASON_LENGTH - newLog.trim().length} ตัวอักษร`
+                  ? `Add ${Math.max(1, effectiveDueReasonMinLen - dueReasonCurrentLen)} more characters for Due Date reason`
                   : 'Send (Enter)'
               }
             >

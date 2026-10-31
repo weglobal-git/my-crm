@@ -287,24 +287,31 @@ export async function createLtcDealAction(
 
   const topic = formatLtcDealTopic(new Date());
 
-  const createdDeal = await createOpportunity({
+  const createdDealRaw = await createOpportunity({
     topic,
     type: 'SALES_DEAL',
     companyId,
     pipelineStageId: targetStageId,
   });
 
+  const createdDeal =
+    typeof createdDealRaw === 'string'
+      ? (JSON.parse(createdDealRaw) as Record<string, unknown>)
+      : (createdDealRaw as Record<string, unknown> | null);
+
   // Create initial log on deal explaining it was created from LTC
-  if (typeof createdDeal === 'object' && createdDeal && 'id' in createdDeal) {
+  if (createdDeal && typeof createdDeal === 'object' && typeof createdDeal.id === 'string') {
     await prisma.activityLog.create({
       data: {
-        opportunityId: (createdDeal as { id: string }).id,
+        opportunityId: createdDeal.id,
         userId: actor.id,
         type: 'COMMENT',
         content: `สร้างการ์ดติดตามสำหรับ Qualified Customer จากระบบ LTC (${topic})`,
       },
     }).catch((err) => console.warn('[createLtcDealAction] activityLog warning:', err));
   }
+
+  await invalidateLtcCache();
 
   // Broadcast realtime updates across Pipeline and Dashboard
   void notifyPipelineAudience({

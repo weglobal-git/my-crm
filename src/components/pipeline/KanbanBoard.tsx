@@ -18,6 +18,7 @@ import {
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCardUI, CompanyHolidaysContext, UserLeavesContext, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, PendingTodosContext, OwnerFilterContext, PinnedDealsContext } from "./KanbanCard";
 import { useCompanyHolidays, useUserLeaves } from "@/lib/useCompanyHolidays";
+import type { UserLeaveDTO } from "@/lib/actions/holiday";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import { getPendingTodosMap, type DealTodoItem } from "@/lib/actions/notes";
 import {
@@ -78,7 +79,14 @@ export function DroppablePlaceholder({ id, label }: { id: string, label: string 
   );
 }
 
-import { sortDeals, matchesPipelineCardSearch, type KanbanCardDTO } from "@/lib/pipeline-card-dto";
+import {
+  buildEffectiveOffDatesMap,
+  evaluateCardTimingState,
+  matchesPipelineCardSearch,
+  sortDeals,
+  type CardTimingState,
+  type KanbanCardDTO,
+} from "@/lib/pipeline-card-dto";
 export { sortDeals, type KanbanCardDTO };
 import { shouldAcceptRevision, normalizeRevision } from "@/lib/deal-topic-sync";
 import type { PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
@@ -95,6 +103,8 @@ interface KanbanBoardProps {
   initialOpportunities?: OpportunityWithRelations[];
   initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
   initialPinnedDealIds?: string[];
+  initialHolidays?: string[];
+  initialLeaves?: UserLeaveDTO[];
   activeStageTitleDepartmentId?: string;
   stageTitlesByDepartment?: PipelineStageTitlesByDepartment;
   canEditStageTitles?: boolean;
@@ -120,6 +130,8 @@ export function KanbanBoard({
   initialOpportunities, 
   initialPendingAccelerators, 
   initialPinnedDealIds,
+  initialHolidays,
+  initialLeaves,
   activeStageTitleDepartmentId,
   stageTitlesByDepartment = {},
   canEditStageTitles = false,
@@ -135,8 +147,8 @@ export function KanbanBoard({
   onSearchChange,
   onStatsChange,
 }: KanbanBoardProps) {
-  const { holidaysSet, mutate: mutateCompanyHolidays } = useCompanyHolidays();
-  const { leavesByUser, mutate: mutateUserLeaves } = useUserLeaves();
+  const { holidaysSet, mutate: mutateCompanyHolidays } = useCompanyHolidays(initialHolidays);
+  const { leavesByUser, mutate: mutateUserLeaves } = useUserLeaves(currentUserId, initialLeaves);
   const { toast } = useDialog();
   const { setColumnNavConfig } = useSidebar();
   const searchParams = useSearchParams();
@@ -197,8 +209,11 @@ export function KanbanBoard({
   );
   const pendingAcceleratorsMap = rawPendingAcceleratorsMap || initialPendingAccelerators || EMPTY_PENDING_ACCELERATORS;
 
-  // When allDealIds updates with new deals, incrementally fetch and merge missing accelerator badges
-  const trackedDealIdsRef = useRef<Set<string>>(new Set(Object.keys(initialPendingAccelerators || {})));
+  // Seed tracked IDs with initial allDealIds when SWR already fetches allDealIds on mount
+  // so getPendingAcceleratorsMap and getPendingTodosMap fire ONCE instead of TWICE on load!
+  const trackedDealIdsRef = useRef<Set<string>>(
+    new Set(initialPendingAccelerators ? Object.keys(initialPendingAccelerators) : allDealIds)
+  );
   useEffect(() => {
     const missingIds = allDealIds.filter(id => !trackedDealIdsRef.current.has(id));
     if (missingIds.length > 0) {
@@ -227,7 +242,7 @@ export function KanbanBoard({
   );
   const pendingTodosMap = rawPendingTodosMap || EMPTY_PENDING_TODOS;
 
-  const trackedTodoDealIdsRef = useRef<Set<string>>(new Set());
+  const trackedTodoDealIdsRef = useRef<Set<string>>(new Set(allDealIds));
   useEffect(() => {
     const missingIds = allDealIds.filter(id => !trackedTodoDealIdsRef.current.has(id));
     if (missingIds.length > 0) {
@@ -426,6 +441,20 @@ export function KanbanBoard({
     togglePinDeal,
   }), [pinnedDealIds, togglePinDeal]);
 
+  // Single-pass timing evaluation shared across sortDeals, displayDeals, boardStats, and KanbanColumn
+  // Eliminates 4x redundant checkIsRedCard loops and preserves card object references when pin state matches!
+  const cardTimingMap = useMemo(() => {
+    const fallback = tab === initialTab ? (initialOpportunities || []) : [];
+    const source = rawOpportunities || fallback;
+    const offDatesMap = buildEffectiveOffDatesMap(holidaysSet, leavesByUser);
+    const now = new Date();
+    const map = new Map<string, CardTimingState>();
+    for (const deal of source) {
+      map.set(deal.id, evaluateCardTimingState(deal, holidaysSet, leavesByUser, now, offDatesMap));
+    }
+    return map;
+  }, [rawOpportunities, initialOpportunities, tab, initialTab, holidaysSet, leavesByUser]);
+
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => {
     const fallback = tab === initialTab ? (initialOpportunitiesRef.current || initialOpportunities || []) : [];
@@ -450,14 +479,14 @@ export function KanbanBoard({
       if (!isCompletedTab && searchQuery.trim()) {
         stageDeals = stageDeals.filter(o => matchesPipelineCardSearch(o, searchQuery));
       }
-      const stageDealsWithPins = stageDeals.map(o => ({
-        ...o,
-        isPinned: pinnedDealIds.has(o.id),
-      }));
-      acc[stage.id] = sortDeals(stageDealsWithPins, pendingAcceleratorsMap, holidaysSet, leavesByUser);
+      const stageDealsWithPins = stageDeals.map(o => {
+        const nextPinned = pinnedDealIds.has(o.id);
+        return Boolean(o.isPinned) === nextPinned ? o : { ...o, isPinned: nextPinned };
+      });
+      acc[stage.id] = sortDeals(stageDealsWithPins, pendingAcceleratorsMap, holidaysSet, leavesByUser, cardTimingMap);
       return acc;
     }, {} as Record<string, OpportunityWithRelations[]>);
-  }, [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, optimisticStageByDealId, cardTypeFilter, ownerFilter, hasValueFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery, holidaysSet, leavesByUser, pinnedDealIds]);
+  }, [initialStages, rawOpportunities, tab, initialTab, initialOpportunities, optimisticStageByDealId, cardTypeFilter, ownerFilter, hasValueFilter, pendingAcceleratorsMap, isCompletedTab, searchQuery, holidaysSet, leavesByUser, pinnedDealIds, cardTimingMap]);
 
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
 
@@ -465,10 +494,13 @@ export function KanbanBoard({
     if (!hasRedFilter) return deals;
     const filtered: Record<string, OpportunityWithRelations[]> = {};
     for (const stageId in deals) {
-      filtered[stageId] = (deals[stageId] || []).filter(deal => checkIsRedCard(deal, holidaysSet, leavesByUser));
+      filtered[stageId] = (deals[stageId] || []).filter(deal => {
+        const cached = cardTimingMap.get(deal.id);
+        return cached ? cached.isRed : checkIsRedCard(deal, holidaysSet, leavesByUser);
+      });
     }
     return filtered;
-  }, [deals, hasRedFilter, holidaysSet, leavesByUser]);
+  }, [deals, hasRedFilter, cardTimingMap, holidaysSet, leavesByUser]);
 
   const boardStats = useMemo(() => {
     const redByStage: Record<string, number> = {};
@@ -477,21 +509,22 @@ export function KanbanBoard({
     let revenue = 0;
     for (const stage of initialStages) {
       const stageDeals = deals[stage.id] || [];
-      const stageRed = stageDeals.reduce(
-        (count, deal) => count + (checkIsRedCard(deal, holidaysSet, leavesByUser) ? 1 : 0),
-        0,
-      );
-      redByStage[stage.id] = stageRed;
-      total += stageDeals.length;
-      red += stageRed;
+      let stageRed = 0;
       for (const deal of stageDeals) {
+        const cached = cardTimingMap.get(deal.id);
+        if (cached ? cached.isRed : checkIsRedCard(deal, holidaysSet, leavesByUser)) {
+          stageRed += 1;
+        }
         if (deal.value != null && Number(deal.value) > 0) {
           revenue += Number(deal.value);
         }
       }
+      redByStage[stage.id] = stageRed;
+      total += stageDeals.length;
+      red += stageRed;
     }
     return { total, red, redByStage, revenue };
-  }, [deals, holidaysSet, initialStages, leavesByUser]);
+  }, [deals, cardTimingMap, holidaysSet, initialStages, leavesByUser]);
 
   useEffect(() => {
     onStatsChange?.({ total: boardStats.total, red: boardStats.red, revenue: boardStats.revenue });
@@ -672,8 +705,10 @@ export function KanbanBoard({
         data.activityLog &&
         !data.activityLog.parentId &&
         data.activityLog.type === 'COMMENT' &&
-        !data.activityLog.content.startsWith('[DUE DATE:') &&
-        !data.activityLog.content.startsWith('[URGENT_')
+        (!data.activityLog.content.startsWith('[DUE DATE:') ||
+          data.activityLog.content.startsWith('[DUE DATE: Removed]')) &&
+        !data.activityLog.content.startsWith('[URGENT_') &&
+        !data.activityLog.content.startsWith('[TIER:0H]')
       ) {
         const addedActivityLog = data.activityLog;
         void updatePipelineDealsCacheRef.current(source =>
@@ -1727,6 +1762,15 @@ export function KanbanBoard({
                   isScrollable={true}
                   currentUserId={currentUserId}
                   currentUserRole={currentUserRole}
+                  cardTimingMap={cardTimingMap}
+                  pendingAcceleratorsMap={pendingAcceleratorsMap}
+                  pendingTodosMap={pendingTodosMap}
+                  pinnedDealIds={pinnedDealIds}
+                  onTogglePinDeal={togglePinDeal}
+                  ownerFilter={ownerFilter}
+                  onOwnerFilterChange={onOwnerFilterChange}
+                  normalizedSearchQuery={searchQuery.trim().toLowerCase()}
+                  onSearchChange={onSearchChange}
                 />
               </div>
             ))}

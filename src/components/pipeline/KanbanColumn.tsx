@@ -4,9 +4,13 @@ import { useState, useMemo, memo } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Check, Loader2, Pencil, RotateCcw, X } from "lucide-react";
-import { KanbanCard, OpportunityWithRelations } from "./KanbanCard";
+import { KanbanCard, OpportunityWithRelations, type CardTimingState } from "./KanbanCard";
+import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
+import type { DealTodoItem } from "@/lib/actions/notes";
 import { updatePipelineStageDepartmentTitle } from "@/lib/actions/pipeline-stage-title";
 import { useDialog } from "@/providers/DialogProvider";
+
+const EMPTY_TODOS: DealTodoItem[] = [];
 
 interface KanbanColumnProps {
   id: string;
@@ -24,6 +28,15 @@ interface KanbanColumnProps {
   onDealIntent?: () => void;
   selectedCardId?: string | null;
   redCardsCount?: number;
+  cardTimingMap?: Map<string, CardTimingState>;
+  pendingAcceleratorsMap?: Record<string, PendingAcceleratorInfo | number>;
+  pendingTodosMap?: Record<string, DealTodoItem[]>;
+  pinnedDealIds?: Set<string>;
+  onTogglePinDeal?: (dealId: string) => void;
+  ownerFilter?: string;
+  onOwnerFilterChange?: (ownerId: string) => void;
+  normalizedSearchQuery?: string;
+  onSearchChange?: (query: string) => void;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({ 
@@ -42,6 +55,15 @@ export const KanbanColumn = memo(function KanbanColumn({
   onDealIntent,
   selectedCardId,
   redCardsCount = 0,
+  cardTimingMap,
+  pendingAcceleratorsMap,
+  pendingTodosMap,
+  pinnedDealIds,
+  onTogglePinDeal,
+  ownerFilter = 'ALL',
+  onOwnerFilterChange,
+  normalizedSearchQuery = '',
+  onSearchChange,
 }: KanbanColumnProps) {
   const { toast } = useDialog();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -186,7 +208,7 @@ export const KanbanColumn = memo(function KanbanColumn({
 
           <span 
             className="h-7 md:h-8 px-2.5 min-w-[2rem] md:min-w-[2.25rem] flex items-center justify-center rounded-full bg-[#3A3B3C] text-xs font-semibold shrink-0 tabular-nums select-none"
-            title={`Red Cards: ${redCardsCount} | ทั้งหมด: ${deals.length}`}
+            title={`Red Cards: ${redCardsCount} | Total: ${deals.length}`}
           >
             <span className={redCardsCount > 0 ? "text-[#C7F33C] font-bold" : "text-slate-400"}>
               {redCardsCount}
@@ -201,17 +223,47 @@ export const KanbanColumn = memo(function KanbanColumn({
 
       <div className={`flex flex-col gap-6 flex-1 px-1 md:px-2 pt-5 pb-16 hide-scrollbar ${isScrollable ? 'overflow-y-auto min-h-0' : 'min-h-[500px]'}`}>
         <SortableContext items={dealIds} strategy={verticalListSortingStrategy}>
-          {deals.map((deal) => (
-            <KanbanCard
-              key={deal.id}
-              deal={deal}
-              isSelected={deal.id === selectedCardId}
-              onDealClick={onDealClick}
-              onPanelIntent={onDealIntent}
-              currentUserId={currentUserId}
-              currentUserRole={currentUserRole}
-            />
-          ))}
+          {deals.map((deal) => {
+            const timing = cardTimingMap?.get(deal.id);
+            const pendingEntry = pendingAcceleratorsMap?.[deal.id];
+            const pendingCount =
+              typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
+            const dealTodos = pendingTodosMap?.[deal.id] || EMPTY_TODOS;
+            const isPinned = pinnedDealIds
+              ? pinnedDealIds.has(deal.id) || (pinnedDealIds.size === 0 && Boolean(deal.isPinned))
+              : Boolean(deal.isPinned);
+            const rawCompanyName = deal.company?.displayName || deal.company?.name;
+            const isCompanyFiltered = Boolean(
+              rawCompanyName &&
+                normalizedSearchQuery &&
+                normalizedSearchQuery === rawCompanyName.trim().toLowerCase()
+            );
+            const targetOwnerId = deal.ownerId || deal.owner?.id;
+            const isOwnerFiltered = Boolean(targetOwnerId && ownerFilter === targetOwnerId);
+
+            return (
+              <KanbanCard
+                key={deal.id}
+                deal={deal}
+                isSelected={deal.id === selectedCardId}
+                onDealClick={onDealClick}
+                onPanelIntent={onDealIntent}
+                currentUserId={currentUserId}
+                currentUserRole={currentUserRole}
+                isRedProp={timing ? timing.isRed : undefined}
+                isDueTodayProp={timing?.isDueToday}
+                isPostHolidayCheckInProp={timing?.isPostHolidayCheckIn}
+                pendingCountProp={pendingCount}
+                dealTodosProp={dealTodos}
+                isPinnedProp={isPinned}
+                onTogglePinDeal={onTogglePinDeal}
+                isCompanyFilteredProp={isCompanyFiltered}
+                isOwnerFilteredProp={isOwnerFiltered}
+                onFilterByOwner={onOwnerFilterChange}
+                onSearchChange={onSearchChange}
+              />
+            );
+          })}
         </SortableContext>
       </div>
     </div>

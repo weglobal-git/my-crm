@@ -7,8 +7,9 @@ import { getOpportunityAccessWhere, type PipelineActor } from '@/lib/pipeline-se
 import { pipelineCardSelect, type KanbanCardDTO, type PipelineCardDTO } from './pipeline-card-dto';
 import { recordPipelineActionMetric } from './pipeline-action-telemetry';
 
-import { toBangkokDateParts, createBangkokDate } from './business-days';
+import { toBangkokDateParts, createBangkokDate, isDueDateFulfilled } from './business-days';
 
+export { isDueDateFulfilled };
 export const pipelineOpportunitySelect = pipelineCardSelect;
 export type { KanbanCardDTO, PipelineCardDTO };
 
@@ -31,12 +32,12 @@ export function buildPipelineSearchWhere(searchQuery?: string): Prisma.Opportuni
   };
 }
 
-export async function getPipelineOpportunitiesForActor(
+export async function getPipelineOpportunitiesListForActor(
   actor: PipelineActor,
   tab: string,
   searchQuery?: string,
   limit?: number,
-) {
+): Promise<{ data: KanbanCardDTO[]; dbDurationMs: number; totalDurationMs: number }> {
   const startedAt = performance.now();
   const isCompleted = tab === 'completed';
   const where: Prisma.OpportunityWhereInput = {
@@ -73,13 +74,30 @@ export async function getPipelineOpportunitiesForActor(
     take: effectiveLimit,
   });
   const dbDurationMs = performance.now() - dbStart;
+  const totalDurationMs = performance.now() - startedAt;
+
+  return { data: data as unknown as KanbanCardDTO[], dbDurationMs, totalDurationMs };
+}
+
+export async function getPipelineOpportunitiesForActor(
+  actor: PipelineActor,
+  tab: string,
+  searchQuery?: string,
+  limit?: number,
+) {
+  const isCompleted = tab === 'completed';
+  const { data, dbDurationMs, totalDurationMs } = await getPipelineOpportunitiesListForActor(
+    actor,
+    tab,
+    searchQuery,
+    limit
+  );
 
   const serialized = JSON.stringify(data);
   const payloadBytes = Buffer.byteLength(serialized, 'utf8');
   if (!isCompleted && payloadBytes > 1_500_000) {
     console.warn(`[PIPELINE_PAYLOAD_WARNING] Active board payload size (${payloadBytes} bytes, ${data.length} deals) exceeded 1.5MB budget for user ${actor.id}`);
   }
-  const totalDurationMs = performance.now() - startedAt;
 
   recordPipelineActionMetric({
     action: 'getPipelineOpportunities',
@@ -94,33 +112,24 @@ export async function getPipelineOpportunitiesForActor(
 }
 
 /**
- * Checks whether an activity comment fulfills an opportunity's due date in Asia/Bangkok time.
- * Returns true if comment was posted on or after the due date's calendar day.
- */
-export function isDueDateFulfilled(
-  dueDate: Date | string | null | undefined,
-  commentDate: Date | string | null | undefined
-): boolean {
-  if (!dueDate || !commentDate) return false;
-  const dParts = toBangkokDateParts(new Date(dueDate));
-  const cParts = toBangkokDateParts(new Date(commentDate));
-
-  const dueMidnight = createBangkokDate(dParts.year, dParts.month, dParts.date, 0, 0, 0);
-  const commentMidnight = createBangkokDate(cParts.year, cParts.month, cParts.date, 0, 0, 0);
-  return commentMidnight.getTime() >= dueMidnight.getTime();
-}
-
-/**
  * Maintenance helper to batch clean up legacy fulfilled due dates.
  * This is designed for governed background/cron jobs, NEVER interactive board reads.
  */
 export async function maintainFulfilledDueDates(): Promise<number> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const nowParts = toBangkokDateParts(new Date());
+  const endOfTodayBangkok = createBangkokDate(
+    nowParts.year,
+    nowParts.month,
+    nowParts.date,
+    23,
+    59,
+    59,
+    999
+  );
 
   const candidates = await prisma.opportunity.findMany({
     where: {
-      dueDate: { lte: today },
+      dueDate: { lte: endOfTodayBangkok },
     },
     select: {
       id: true,
@@ -129,6 +138,11 @@ export async function maintainFulfilledDueDates(): Promise<number> {
         where: {
           parentId: null,
           type: 'COMMENT',
+          NOT: [
+            { content: { startsWith: '[DUE DATE:' } },
+            { content: { startsWith: '[URGENT_' } },
+            { content: { startsWith: '[TIER:0H]' } },
+          ],
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: 1,

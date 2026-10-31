@@ -2,22 +2,47 @@ import 'server-only';
 
 import prisma from '@/lib/prisma';
 import type { PipelineActor } from '@/lib/pipeline-security';
-import { bangkokBoundary, resolveCountryFromDeal, type SalesOverviewDeal } from '@/lib/dashboard/sales-overview';
-import { pipelineCardSelect, type KanbanCardDTO } from '@/lib/pipeline-card-dto';
+import {
+  bangkokBoundary,
+  resolveCountryFromDeal,
+  type SalesOverviewDeal,
+} from '@/lib/dashboard/sales-overview';
+import {
+  buildEffectiveOffDatesMap,
+  checkIsRedCard,
+  pipelineCardSelect,
+  type KanbanCardDTO,
+} from '@/lib/pipeline-card-dto';
 import { getCompanyHolidaysAction, getUserLeavesAction } from '@/lib/actions/holiday';
-import { toBangkokDateParts } from '@/lib/business-days';
-import { calculateDailySamplingForMonth } from './leaderboard-daily-sampling';
+import {
+  calculateElapsedWorkingMs,
+  createBangkokDate,
+  toBangkokDateParts,
+  WORK_DAY_END_HOUR,
+  WORK_DAY_END_MINUTE,
+} from '@/lib/business-days';
+import {
+  analyzeDueDateTimeline,
+  classifyUpdateQuality,
+  parseTierPrefix,
+} from '@/lib/pipeline-update-quality';
+import {
+  calculateDailySamplingForMonth,
+  resolveEffectiveDueDateAt,
+} from './leaderboard-daily-sampling';
 import { calculateDailyLtcForMonth } from '@/lib/ltc-utils';
 import type {
+  CategoryCardHighlight,
   DepartmentInfo,
   DepartmentLeaderboardData,
   LeaderboardCategoryData,
+  LeaderboardItem,
+  LeaderboardScoreBreakdown,
+  UserCategoryDrilldownDetails,
 } from './leaderboard-types';
 import {
-  calculateSalesXpBreakdown,
-  calculateNonSalesXp,
+  calculateUnifiedPortfolioBreakdown,
   formatScoreValue,
-  getCardHealthTier,
   rankItems,
   buildPodium,
 } from './leaderboard-scoring';
@@ -43,18 +68,25 @@ interface WinnerCacheEntry {
 
 const leaderboardMemoryCache = new Map<string, LeaderboardCacheEntry>();
 const winnerMemoryCache = new Map<string, WinnerCacheEntry>();
-const LEADERBOARD_CACHE_TTL_MS = 60_000; // 60 seconds
-const WINNER_CACHE_TTL_MS = 120_000; // 120 seconds
+const LEADERBOARD_CACHE_TTL_MS = 60_000; // 60 seconds shared per department
+const WINNER_CACHE_TTL_MS = 120_000; // 120 seconds shared per department
+
+const SUBSTANCE_MIN_WORKING_MS = 2 * 3600 * 1000; // 2 working hours
 
 export function invalidateLeaderboardCache(scope?: string): void {
   if (scope) {
+    if (scope === 'ADMIN') {
+      leaderboardMemoryCache.clear();
+      winnerMemoryCache.clear();
+      return;
+    }
     for (const key of leaderboardMemoryCache.keys()) {
-      if (key.startsWith(scope)) {
+      if (key.startsWith(scope) || key.includes(`:${scope}:`)) {
         leaderboardMemoryCache.delete(key);
       }
     }
     for (const key of winnerMemoryCache.keys()) {
-      if (key.startsWith(scope)) {
+      if (key.startsWith(scope) || key.includes(`:${scope}:`)) {
         winnerMemoryCache.delete(key);
       }
     }
@@ -64,10 +96,70 @@ export function invalidateLeaderboardCache(scope?: string): void {
   }
 }
 
+export function canActorAnalyseDepartment(role?: string | null): boolean {
+  return role === 'ADMIN' || role === 'MANAGEMENT';
+}
+
+/**
+ * Stamps caller-specific `isCurrentUser`, `canAnalyseDepartment`, and `availableDepartments`
+ * onto a shared department cache payload in O(users) without re-running DB queries or daily sampling.
+ * For non-manager (`GENERAL`) callers, strips private `redCardDetails` deal titles on other teammates' records.
+ */
+export function personalizeLeaderboardForActor(
+  base: DepartmentLeaderboardData,
+  actorId: string,
+  availableDepartments: DepartmentInfo[],
+  actorRole?: string | null
+): DepartmentLeaderboardData {
+  const canAnalyseDepartment = canActorAnalyseDepartment(actorRole);
+
+  const stampItem = (item: LeaderboardItem): LeaderboardItem => {
+    const isSelf = item.userId === actorId;
+    if (canAnalyseDepartment || isSelf) {
+      return {
+        ...item,
+        isCurrentUser: isSelf,
+      };
+    }
+
+    return {
+      ...item,
+      isCurrentUser: false,
+      categoryDetails: undefined,
+      dailyHealthSummary: item.dailyHealthSummary
+        ? {
+            ...item.dailyHealthSummary,
+            dailyRecords: item.dailyHealthSummary.dailyRecords.map((rec) =>
+              rec.redCardDetails.length > 0 ? { ...rec, redCardDetails: [] } : rec
+            ),
+          }
+        : undefined,
+    };
+  };
+
+  const overallXpItems = base.overallXpItems.map(stampItem);
+  return {
+    ...base,
+    canAnalyseDepartment,
+    availableDepartments,
+    overallPodium: {
+      ...base.overallPodium,
+      rank1: base.overallPodium.rank1 ? stampItem(base.overallPodium.rank1) : null,
+      rank2: base.overallPodium.rank2 ? stampItem(base.overallPodium.rank2) : null,
+      rank3: base.overallPodium.rank3 ? stampItem(base.overallPodium.rank3) : null,
+    },
+    overallXpItems,
+    categories: base.categories.map((cat) => ({
+      ...cat,
+      items: cat.items.map(stampItem),
+    })),
+  };
+}
+
 /**
  * Lightweight Winner Summary resolver for the navbar trophy indicator.
  * Employs a dedicated 2-minute memory cache shared across department members
- * and reuses existing full leaderboard cache entries to avoid redundant DB/CPU calculations.
+ * and reuses existing unfiltered department leaderboard cache entries.
  */
 export async function getDepartmentLeaderboardWinnerSummary(params: {
   actor: PipelineActor;
@@ -77,7 +169,6 @@ export async function getDepartmentLeaderboardWinnerSummary(params: {
 }): Promise<LeaderboardWinnerSummaryResult> {
   const { actor, departmentId, month, year } = params;
 
-  // 1. Authorize actor and resolve target department strictly within accessible boundaries
   const departmentQuery =
     actor.role === 'ADMIN'
       ? {}
@@ -97,45 +188,41 @@ export async function getDepartmentLeaderboardWinnerSummary(params: {
     return { rank1: null };
   }
 
-  // If specific department is requested, actor MUST be a member (or ADMIN)
   if (departmentId && !accessibleDepts.some((d) => d.id === departmentId)) {
     throw new Error('Forbidden');
   }
 
-  // Resolve target department deterministically per actor (avoiding shared unauthenticated 'default' token)
   const targetDeptId = departmentId || accessibleDepts[0].id;
   const winnerCacheKey = `deptWinner:${targetDeptId}:${month}:${year}`;
 
-  // 2. Fast Path: Check dedicated winner memory cache (safe: targetDeptId access is already proven)
   const cachedWinner = winnerMemoryCache.get(winnerCacheKey);
   if (cachedWinner && cachedWinner.expiresAt > Date.now()) {
     return cachedWinner.data;
   }
 
-  // 3. Fast Path: Check if full department leaderboard was already computed in memory
-  for (const [key, entry] of leaderboardMemoryCache.entries()) {
-    if (entry.expiresAt > Date.now() && key.includes(`:${targetDeptId}:${month}:${year}:`)) {
-      const podium = entry.data.overallPodium;
-      const rank1 = podium?.rank1 || entry.data.overallXpItems?.[0] || null;
-      const result: LeaderboardWinnerSummaryResult = {
-        rank1: rank1
-          ? {
-              userId: rank1.userId,
-              name: rank1.name,
-              image: rank1.image || null,
-              score: rank1.score || 0,
-            }
-          : null,
-      };
-      winnerMemoryCache.set(winnerCacheKey, {
-        data: result,
-        expiresAt: Date.now() + WINNER_CACHE_TTL_MS,
-      });
-      return result;
-    }
+  // Reuse unfiltered department cache entry when present
+  const unfilteredDeptKey = `deptData:${targetDeptId}:${month}:${year}::`;
+  const existingDeptEntry = leaderboardMemoryCache.get(unfilteredDeptKey);
+  if (existingDeptEntry && existingDeptEntry.expiresAt > Date.now()) {
+    const podium = existingDeptEntry.data.overallPodium;
+    const rank1 = podium?.rank1 || existingDeptEntry.data.overallXpItems?.[0] || null;
+    const result: LeaderboardWinnerSummaryResult = {
+      rank1: rank1
+        ? {
+            userId: rank1.userId,
+            name: rank1.name,
+            image: rank1.image || null,
+            score: rank1.score || 0,
+          }
+        : null,
+    };
+    winnerMemoryCache.set(winnerCacheKey, {
+      data: result,
+      expiresAt: Date.now() + WINNER_CACHE_TTL_MS,
+    });
+    return result;
   }
 
-  // 4. Compute department leaderboard once and populate both caches
   const data = await getDepartmentLeaderboardData({
     actor,
     departmentId: targetDeptId,
@@ -176,23 +263,8 @@ export async function getDepartmentLeaderboardData(params: {
 
   const normCountry = country?.trim().toLowerCase() || '';
   const normAccount = account?.trim().toLowerCase() || '';
-  const scopeToken = actor.role === 'ADMIN' ? 'ADMIN' : actor.id;
-  const cacheKey = `${scopeToken}:${params.departmentId || 'default'}:${month}:${year}:${normCountry}:${normAccount}`;
 
-  const cached = leaderboardMemoryCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
-  }
-
-  const cacheAndReturn = (result: DepartmentLeaderboardData): DepartmentLeaderboardData => {
-    leaderboardMemoryCache.set(cacheKey, {
-      data: result,
-      expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
-    });
-    return result;
-  };
-
-  // 1. Fetch accessible departments
+  // 1. Fetch accessible departments for RBAC validation & department switcher
   const departmentQuery =
     actor.role === 'ADMIN'
       ? {}
@@ -239,10 +311,11 @@ export async function getDepartmentLeaderboardData(params: {
   }));
 
   if (availableDepartments.length === 0) {
-    return cacheAndReturn({
+    return {
       departmentId: '',
       departmentName: 'No department found',
       hasSalesAccess: false,
+      canAnalyseDepartment: canActorAnalyseDepartment(actor.role),
       availableDepartments: [],
       period: { month, year },
       overallPodium: {
@@ -254,673 +327,1335 @@ export async function getDepartmentLeaderboardData(params: {
       },
       overallXpItems: [],
       categories: [],
-    });
+    };
   }
 
-  // 2. Select target department
+  // 2. Select target department and check shared department cache
   const selectedDeptId =
     params.departmentId && availableDepartments.some((d) => d.id === params.departmentId)
       ? params.departmentId
       : availableDepartments[0].id;
 
+  const deptCacheKey = `deptData:${selectedDeptId}:${month}:${year}:${normCountry}:${normAccount}`;
+  const cached = leaderboardMemoryCache.get(deptCacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return personalizeLeaderboardForActor(cached.data, actor.id, availableDepartments, actor.role);
+  }
+
   const targetDept = dbDepartments.find((d) => d.id === selectedDeptId)!;
   const hasSalesAccess = targetDept.permissions.length > 0;
   const departmentUsers = targetDept.users;
   const userIds = departmentUsers.map((u) => u.id);
+  const userIdSet = new Set(userIds);
 
-  // 3. Date boundary for the selected period
+  // 3. Date boundary for the selected period (Asia/Bangkok)
   const startDate = bangkokBoundary(year, month - 1);
   const endDate = bangkokBoundary(year, month);
+  const startMs = startDate.getTime();
+  const endMs = endDate.getTime();
   const now = new Date();
   const nowParts = toBangkokDateParts(now);
-  const isCurrentMonth = year === nowParts.year && month === (nowParts.month + 1);
-  const asOfDate = isCurrentMonth ? now : new Date(endDate.getTime() - 1000);
+  const isCurrentMonth = year === nowParts.year && month === nowParts.month + 1;
+  const asOfDate = isCurrentMonth ? now : new Date(endMs - 1000);
 
-  if (hasSalesAccess) {
-    // --- Mode A: Sales Department ---
-    const [deals, openDeals, activityLogs, holidaysList, userLeavesList, monthlyQuotationCount, ltcCompanies] = await Promise.all([
-      prisma.opportunity.findMany({
-        where: {
-          status: 'WON',
-          type: 'SALES_DEAL',
-          ownerId: { in: userIds },
-          OR: [
-            {
-              goodsLoadingDate: {
-                gte: startDate,
-                lt: endDate,
+  // 4. Unified parallel data load across both Sales Deals and Internal Tasks
+  const [
+    deptOpportunities,
+    monthlyActivities,
+    completedNotes,
+    holidaysList,
+    userLeavesList,
+    ltcCompanies,
+  ] = await Promise.all([
+    prisma.opportunity.findMany({
+      where: {
+        createdAt: { lt: asOfDate },
+        OR: [
+          {
+            ownerId: { in: userIds },
+            OR: [
+              { pipelineStageId: { not: null } },
+              { status: { in: ['WON', 'COMPLETED'] } },
+            ],
+            AND: [
+              {
+                OR: [
+                  { status: 'OPEN' },
+                  { closedAt: null },
+                  { closedAt: { gte: startDate } },
+                  { goodsLoadingDate: { gte: startDate, lt: endDate } },
+                ],
               },
-            },
-            {
-              goodsLoadingDate: null,
-              closedAt: {
-                gte: startDate,
-                lt: endDate,
+            ],
+          },
+          {
+            ownerId: { notIn: userIds },
+            OR: [
+              { teamMembers: { some: { id: { in: userIds } } } },
+              {
+                activityLogs: {
+                  some: {
+                    userId: { in: userIds },
+                    createdAt: { gte: startDate, lt: endDate },
+                  },
+                },
               },
-            },
-          ],
-        },
-        select: {
-          id: true,
-          topic: true,
-          status: true,
-          value: true,
-          currency: true,
-          goodsLoadingDate: true,
-          ownerId: true,
-          companyId: true,
-          company: {
-            select: {
-              name: true,
-              displayName: true,
-              country: true,
-              addresses: {
-                select: { country: true },
-                take: 1,
+            ],
+            AND: [
+              {
+                OR: [
+                  { status: 'OPEN' },
+                  { closedAt: null },
+                  { closedAt: { gte: startDate } },
+                  { goodsLoadingDate: { gte: startDate, lt: endDate } },
+                ],
               },
+            ],
+          },
+        ],
+      },
+      select: {
+        ...pipelineCardSelect,
+        companyId: true,
+        quotedAt: true,
+        company: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            country: true,
+            addresses: {
+              select: { country: true },
+              take: 1,
             },
           },
         },
-      }),
-      prisma.opportunity.findMany({
-        where: {
-          pipelineStageId: { not: null },
-          ownerId: { in: userIds },
-          createdAt: { lt: asOfDate },
-          OR: [
-            { status: 'OPEN' },
-            { closedAt: null },
-            { closedAt: { gte: startDate } },
-          ],
+        stage: {
+          select: {
+            id: true,
+            order: true,
+          },
         },
-        select: {
-          ...pipelineCardSelect,
-          activityLogs: {
-            where: {
-              parentId: null,
-              type: 'COMMENT' as const,
-              createdAt: { lte: asOfDate },
-              NOT: [
-                { content: { startsWith: '[URGENT_' } },
-              ],
-            },
-            orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
-            select: {
-              id: true,
-              content: true,
-              type: true,
-              createdAt: true,
-              user: { select: { name: true, image: true } },
+        _count: {
+          select: {
+            attachments: true,
+            quotations: true,
+            notes: {
+              where: { isCompleted: true },
             },
           },
         },
-      }),
-      prisma.activityLog.findMany({
-        where: {
-          userId: { in: userIds },
-          createdAt: {
-            gte: startDate,
-            lt: endDate,
-          },
-        },
-        select: {
-          id: true,
-          userId: true,
-        },
-      }),
-      getCompanyHolidaysAction(),
-      getUserLeavesAction(),
-      prisma.quotation
-        .count({
+        activityLogs: {
           where: {
-            createdAt: {
-              gte: startDate,
-              lt: endDate,
+            parentId: null,
+            type: 'COMMENT' as const,
+            createdAt: { lte: asOfDate },
+            NOT: [{ content: { startsWith: '[URGENT_' } }],
+          },
+          orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            userId: true,
+            createdAt: true,
+            user: { select: { name: true, image: true } },
+          },
+        },
+      },
+    }),
+    prisma.activityLog.findMany({
+      where: {
+        userId: { in: userIds },
+        createdAt: {
+          gte: startDate,
+          lt: endDate,
+        },
+      },
+      select: {
+        id: true,
+        userId: true,
+        type: true,
+        content: true,
+        parentId: true,
+        opportunityId: true,
+        createdAt: true,
+      },
+    }),
+    prisma.note.findMany({
+      where: {
+        authorId: { in: userIds },
+        isCompleted: true,
+        updatedAt: {
+          gte: startDate,
+          lt: endDate,
+        },
+      },
+      select: {
+        id: true,
+        authorId: true,
+        opportunityId: true,
+        updatedAt: true,
+      },
+    }),
+    getCompanyHolidaysAction(),
+    getUserLeavesAction(),
+    hasSalesAccess
+      ? prisma.company.findMany({
+          where: {
+            type: 'CUSTOMER',
+            status: 'QUALIFIED',
+          },
+          select: {
+            id: true,
+            createdAt: true,
+            opportunities: {
+              select: {
+                id: true,
+                value: true,
+                status: true,
+                closedAt: true,
+                goodsLoadingDate: true,
+                createdAt: true,
+                activityLogs: {
+                  where: { createdAt: { lte: asOfDate } },
+                  select: { createdAt: true },
+                  orderBy: { createdAt: 'desc' },
+                  take: 50,
+                },
+              },
             },
           },
         })
-        .catch(() => 0),
-      prisma.company.findMany({
-        where: {
-          type: 'CUSTOMER',
-          status: 'QUALIFIED',
-        },
-        select: {
-          id: true,
-          createdAt: true,
-          opportunities: {
-            select: {
-              id: true,
-              value: true,
-              status: true,
-              closedAt: true,
-              goodsLoadingDate: true,
-              createdAt: true,
-              activityLogs: {
-                select: { createdAt: true },
-                orderBy: { createdAt: 'desc' },
-                take: 5,
-              },
-            },
-          },
-        },
-      }),
-    ]);
+      : Promise.resolve([]),
+  ]);
 
-    const companyHolidays = new Set<string>(holidaysList);
-    const leavesByUser = new Map<string, Set<string>>();
-    for (const leave of userLeavesList) {
-      if (!leavesByUser.has(leave.userId)) {
-        leavesByUser.set(leave.userId, new Set());
-      }
-      leavesByUser.get(leave.userId)!.add(leave.dateStr);
+  const companyHolidays = new Set<string>(holidaysList);
+  const leavesByUser = new Map<string, Set<string>>();
+  for (const leave of userLeavesList) {
+    let set = leavesByUser.get(leave.userId);
+    if (!set) {
+      set = new Set();
+      leavesByUser.set(leave.userId, set);
     }
+    set.add(leave.dateStr);
+  }
+  const prebuiltOffDatesMap = buildEffectiveOffDatesMap(companyHolidays, leavesByUser);
 
-    // Apply On-the-fly Daily 23:00 Sampling across the month
-    const sanitizedOpenDeals = (openDeals as unknown as KanbanCardDTO[]).map((d) => ({
-      ...d,
+  // Filter helper for optional country / account dashboard filters
+  const matchesGlobalFilter = (deal: (typeof deptOpportunities)[number]): boolean => {
+    if (!normCountry && !normAccount) return true;
+    if (normCountry) {
+      const c = resolveCountryFromDeal(deal as unknown as SalesOverviewDeal);
+      const matchesCountry =
+        c.code.toLowerCase() === normCountry || c.name.toLowerCase() === normCountry;
+      if (!matchesCountry) return false;
+    }
+    if (normAccount) {
+      const accId = deal.companyId?.toLowerCase();
+      const accName = (deal.company?.displayName || deal.company?.name || '').toLowerCase();
+      const matchesAccount = accId === normAccount || accName === normAccount;
+      if (!matchesAccount) return false;
+    }
+    return true;
+  };
+
+  // 5. Daily 23:00 Card Health Sampling across ALL owned board cards (SALES_DEAL + INTERNAL_TASK)
+  const ownedBoardDeals = deptOpportunities
+    .filter((d) => userIdSet.has(d.ownerId) && d.pipelineStageId !== null)
+    .map((d) => ({
+      ...(d as unknown as KanbanCardDTO),
       closedAt: d.status === 'OPEN' ? null : d.closedAt,
     }));
 
-    const dailySamplingMap = calculateDailySamplingForMonth({
-      departmentUsers,
-      deals: sanitizedOpenDeals,
-      month,
-      year,
-      companyHolidays,
-      leavesByUser,
-      asOfDate,
-    });
+  const dailySamplingMap = calculateDailySamplingForMonth({
+    departmentUsers,
+    deals: ownedBoardDeals,
+    month,
+    year,
+    companyHolidays,
+    leavesByUser,
+    asOfDate,
+  });
 
-    const ltcDailySummary = calculateDailyLtcForMonth({
-      companies: ltcCompanies,
-      month,
-      year,
-      companyHolidays,
-      asOfDate,
-    });
-    const teamLtcXp = ltcDailySummary.teamLtcXp;
-
-    // Apply global filters (country and account) to deals
-    const filteredDeals = deals.filter((deal) => {
-      if (normCountry) {
-        const c = resolveCountryFromDeal(deal as unknown as SalesOverviewDeal);
-        const matchesCountry =
-          c.code.toLowerCase() === normCountry || c.name.toLowerCase() === normCountry;
-        if (!matchesCountry) return false;
-      }
-      if (normAccount) {
-        const accId = deal.companyId?.toLowerCase();
-        const accName = (deal.company?.displayName || deal.company?.name || '').toLowerCase();
-        const matchesAccount = accId === normAccount || accName === normAccount;
-        if (!matchesAccount) return false;
-      }
-      return true;
-    });
-
-    // Aggregate user scores
-    const userMetrics = new Map<
-      string,
-      {
-        revenue: number;
-        dealsCount: number;
-        cardHealthScore: number;
-        redRate: number;
-        redCount: number;
-        activeCardsCount: number;
-        totalRedHours: number;
-        activityCount: number;
-      }
-    >();
-
-    for (const u of departmentUsers) {
-      const summary = dailySamplingMap.get(u.id);
-      const activeCount = summary?.currentActiveCards ?? 0;
-      const redCount = summary?.currentRedCards ?? 0;
-      const healthRate = summary?.avgMonthlyHealthRate ?? 0;
-      const totalRedHours = summary?.totalRedHours ?? 0;
-
-      userMetrics.set(u.id, {
-        revenue: 0,
-        dealsCount: 0,
-        cardHealthScore: healthRate,
-        redRate: summary?.avgMonthlyRedRate ?? 0,
-        redCount,
-        activeCardsCount: activeCount,
-        totalRedHours,
-        activityCount: 0,
-      });
-    }
-
-    for (const deal of filteredDeals) {
-      const metric = userMetrics.get(deal.ownerId);
-      if (metric) {
-        metric.dealsCount += 1;
-        metric.revenue += deal.value || 0;
-      }
-    }
-
-    for (const act of activityLogs) {
-      const metric = userMetrics.get(act.userId);
-      if (metric) {
-        metric.activityCount += 1;
-      }
-    }
-
-    // Build raw lists for ranking
-    const teamQuotationScore = Math.min(10, monthlyQuotationCount ?? 0);
-
-    const cardHealthRaw = departmentUsers.map((u) => {
-      const m = userMetrics.get(u.id)!;
-      const summary = dailySamplingMap.get(u.id);
-      const tier = getCardHealthTier(m.activeCardsCount, m.cardHealthScore);
-      const cleanDays = summary?.cleanDaysCount ?? 0;
-      const breakdown = calculateSalesXpBreakdown(
-        m.dealsCount,
-        m.revenue,
-        m.cardHealthScore,
-        m.activityCount,
-        m.redCount,
-        m.activeCardsCount,
-        m.totalRedHours,
-        summary?.avgMonthlyRedRate ?? m.redRate,
-        cleanDays,
-        teamLtcXp,
-        teamQuotationScore,
-        monthlyQuotationCount ?? 0
-      );
-
-      const healthXp = summary?.totalCardHealthXp ?? breakdown.cardHealthTotalXp;
-      const rate = summary?.avgMonthlyRedRate ?? 0;
-      const formattedValue = `${rate.toFixed(rate % 1 === 0 ? 0 : 1)}%`;
-
-      return {
-        userId: u.id,
-        name: u.name || 'Anonymous Rep',
-        image: u.image,
-        score: healthXp,
-        formattedValue,
-        unit: '%',
-        healthTier: tier,
-        breakdown,
-        dailyHealthSummary: summary,
-        isCurrentUser: u.id === actor.id,
-      };
-    });
-
-    const cleanBonusRaw = departmentUsers.map((u) => {
-      const summary = dailySamplingMap.get(u.id);
-      const cleanDays = summary?.cleanDaysCount ?? 0;
-      const cleanBonusXp = Math.min(20, cleanDays);
-      return {
-        userId: u.id,
-        name: u.name || 'Anonymous Rep',
-        image: u.image,
-        score: cleanBonusXp,
-        formattedValue: `${cleanBonusXp} XP`,
-        unit: 'XP',
-        dailyHealthSummary: summary,
-        isCurrentUser: u.id === actor.id,
-      };
-    });
-
-    const ltcRaw = departmentUsers.map((u) => {
-      return {
-        userId: u.id,
-        name: u.name || 'Anonymous Rep',
-        image: u.image,
-        score: teamLtcXp,
-        formattedValue: `${teamLtcXp} XP`,
-        unit: 'XP',
-        isCurrentUser: u.id === actor.id,
-        dailyLtcSummary: ltcDailySummary,
-      };
-    });
-
-    const quotationRaw = departmentUsers.map((u) => {
-      return {
-        userId: u.id,
-        name: u.name || 'Anonymous Rep',
-        image: u.image,
-        score: teamQuotationScore,
-        formattedValue: `${teamQuotationScore} XP`,
-        unit: 'XP',
-        isCurrentUser: u.id === actor.id,
-      };
-    });
-
-    const xpRaw = departmentUsers.map((u) => {
-      const m = userMetrics.get(u.id)!;
-      const summary = dailySamplingMap.get(u.id);
-      const cleanDays = summary?.cleanDaysCount ?? 0;
-      const breakdown = calculateSalesXpBreakdown(
-        m.dealsCount,
-        m.revenue,
-        m.cardHealthScore,
-        m.activityCount,
-        m.redCount,
-        m.activeCardsCount,
-        m.totalRedHours,
-        summary?.avgMonthlyRedRate ?? m.redRate,
-        cleanDays,
-        teamLtcXp,
-        teamQuotationScore,
-        monthlyQuotationCount ?? 0
-      );
-      return {
-        userId: u.id,
-        name: u.name || 'Anonymous Rep',
-        image: u.image,
-        score: breakdown.totalXp,
-        formattedValue: `${formatScoreValue(breakdown.totalXp, 'integer')} XP`,
-        unit: 'XP',
-        healthTier: breakdown.healthTier,
-        breakdown,
-        dailyHealthSummary: summary,
-        isCurrentUser: u.id === actor.id,
-      };
-    });
-
-    // Card health tie-breaker: if score is tied, lower red rate ranks higher
-    const rankedCardHealth = [...cardHealthRaw]
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        const aRed = a.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
-        const bRed = b.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
-        const aCards = a.dailyHealthSummary?.currentActiveCards ?? 0;
-        const bCards = b.dailyHealthSummary?.currentActiveCards ?? 0;
-        if (aCards > 0 && bCards === 0) return -1;
-        if (bCards > 0 && aCards === 0) return 1;
-        if (aRed !== bRed) return aRed - bRed;
-        return a.name.localeCompare(b.name);
+  const ltcDailySummary = hasSalesAccess
+    ? calculateDailyLtcForMonth({
+        companies: ltcCompanies,
+        month,
+        year,
+        companyHolidays,
+        asOfDate,
       })
-      .map((item, index) => ({
-        ...item,
-        rank: index + 1,
-      }));
+    : undefined;
+  const teamZeroLtcXp = ltcDailySummary?.teamZeroBonusXp ?? 0;
 
-    // Clean bonus tie-breaker: if score is tied, lower red rate ranks higher
-    const rankedCleanBonus = [...cleanBonusRaw]
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        const aRed = a.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
-        const bRed = b.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
-        if (aRed !== bRed) return aRed - bRed;
-        return a.name.localeCompare(b.name);
-      })
-      .map((item, index) => ({
-        ...item,
-        rank: index + 1,
-      }));
+  // 6. Aggregate Portfolio Weights, v2.2 Velocity & Teamwork (12+6+7), LTC Active Care, and Outcome Signals per user
+  const toBangkokDayKey = (d: Date | string): string => {
+    const p = toBangkokDateParts(new Date(d));
+    return `${p.year}-${String(p.month + 1).padStart(2, '0')}-${String(p.date).padStart(2, '0')}`;
+  };
 
-    const rankedLtc = rankItems(ltcRaw);
-    const rankedQuotation = rankItems(quotationRaw);
-    const rankedXp = rankItems(xpRaw);
-
-    const categories: LeaderboardCategoryData[] = [
-      {
-        id: 'card_health',
-        label: 'Card Health',
-        iconName: 'ShieldCheck',
-        unit: 'Max 50 XP',
-        description: 'Red card rate below 5% target (5-tier KPI)',
-        items: rankedCardHealth,
-      },
-      {
-        id: 'clean_bonus',
-        label: 'Clean Bonus',
-        iconName: 'Sparkles',
-        unit: 'Max 20 XP',
-        description: '+1 XP per 100% clean workday with 0 red cards (max 20 XP)',
-        items: rankedCleanBonus,
-      },
-      {
-        id: 'ltc',
-        label: 'LTC',
-        iconName: 'Clock',
-        unit: 'Max 20 XP',
-        description: '+1 XP per day when all LTC accounts are cleared (max 20 XP)',
-        items: rankedLtc,
-      },
-      {
-        id: 'quotation',
-        label: 'Quotation',
-        iconName: 'FileText',
-        unit: 'Max 10 XP',
-        description: 'Monthly quotations issued by team (max 10 XP)',
-        items: rankedQuotation,
-      },
-    ];
-
-    return cacheAndReturn({
-      departmentId: targetDept.id,
-      departmentName: targetDept.name,
-      hasSalesAccess: true,
-      availableDepartments,
-      period: { month, year },
-      overallPodium: buildPodium(rankedXp, 'xp', 'Overall MVP'),
-      overallXpItems: rankedXp,
-      categories,
-    });
-  } else {
-    // --- Mode B: Non-Sales / Operations & Support Department ---
-    const [tasks, activityLogs, assistedDeals, calendarEvents] = await Promise.all([
-      prisma.note.findMany({
-        where: {
-          authorId: { in: userIds },
-          isCompleted: true,
-          updatedAt: {
-            gte: startDate,
-            lt: endDate,
-          },
-        },
-        select: {
-          id: true,
-          authorId: true,
-        },
-      }),
-      prisma.activityLog.findMany({
-        where: {
-          userId: { in: userIds },
-          createdAt: {
-            gte: startDate,
-            lt: endDate,
-          },
-        },
-        select: {
-          id: true,
-          userId: true,
-        },
-      }),
-      prisma.opportunity.findMany({
-        where: {
-          teamMembers: {
-            some: { id: { in: userIds } },
-          },
-          createdAt: {
-            gte: startDate,
-            lt: endDate,
-          },
-        },
-        select: {
-          id: true,
-          teamMembers: {
-            select: { id: true },
-          },
-        },
-      }),
-      prisma.calendarEvent.findMany({
-        where: {
-          ownerId: { in: userIds },
-          startAt: {
-            gte: startDate,
-            lt: endDate,
-          },
-        },
-        select: {
-          id: true,
-          ownerId: true,
-        },
-      }),
-    ]);
-
-    const userMetrics = new Map<
-      string,
-      {
-        taskCount: number;
-        activityCount: number;
-        assistCount: number;
-        eventCount: number;
-      }
-    >();
-
-    for (const u of departmentUsers) {
-      userMetrics.set(u.id, {
-        taskCount: 0,
-        activityCount: 0,
-        assistCount: 0,
-        eventCount: 0,
-      });
-    }
-
-    for (const t of tasks) {
-      const metric = userMetrics.get(t.authorId);
-      if (metric) metric.taskCount += 1;
-    }
-
-    for (const act of activityLogs) {
-      const metric = userMetrics.get(act.userId);
-      if (metric) metric.activityCount += 1;
-    }
-
-    for (const deal of assistedDeals) {
-      for (const tm of deal.teamMembers) {
-        const metric = userMetrics.get(tm.id);
-        if (metric) metric.assistCount += 1;
-      }
-    }
-
-    for (const ev of calendarEvents) {
-      const metric = userMetrics.get(ev.ownerId);
-      if (metric) metric.eventCount += 1;
-    }
-
-    const tasksRaw = departmentUsers.map((u) => {
-      const m = userMetrics.get(u.id)!;
+  const evaluateCommentSignals = (
+    rawContent: string
+  ): { isNonZero: boolean; isVerified27h: boolean; isCardProgress: boolean } => {
+    const parsed = parseTierPrefix(rawContent);
+    if (parsed.hasExplicitTier) {
       return {
-        userId: u.id,
-        name: u.name || 'Team Member',
-        image: u.image,
-        score: m.taskCount,
-        formattedValue: formatScoreValue(m.taskCount, 'integer'),
-        unit: 'Done',
-        isCurrentUser: u.id === actor.id,
+        isNonZero: parsed.tier !== '0H',
+        isVerified27h: parsed.isVerified27h,
+        isCardProgress: parsed.isCardProgress,
       };
-    });
+    }
+    const legacyEval = classifyUpdateQuality(parsed.cleanContent);
+    return {
+      isNonZero: legacyEval.tier !== '0H',
+      isVerified27h: legacyEval.tier === '27H',
+      isCardProgress: legacyEval.isCardProgress,
+    };
+  };
 
-    const activitiesRaw = departmentUsers.map((u) => {
-      const m = userMetrics.get(u.id)!;
-      return {
-        userId: u.id,
-        name: u.name || 'Team Member',
-        image: u.image,
-        score: m.activityCount,
-        formattedValue: formatScoreValue(m.activityCount, 'integer'),
-        unit: 'Logs',
-        isCurrentUser: u.id === actor.id,
-      };
-    });
+  interface UserPortfolioAccumulator {
+    substantiveSalesDeals: number;
+    substantiveInternalTasks: number;
+    assistedCollaboratorDeals: number;
+    collaboratorActiveDeals: Set<string>;
+    teammate27hAssistedCards: Set<string>;
+    collaboratorWonDealsCount: number;
+    verifiedProgressCardDays: Set<string>;
+    ownProgressWorkdays: Set<string>;
+    ownOutreachWorkdays: Set<string>;
+    collabProgressWorkdays: Set<string>;
+    teammateAssistWorkdays: Set<string>;
+    executionWorkdays: Set<string>;
+    missedOrStalledDueCount: number;
+    progressedOwnedCards: Set<string>;
+    progressedCollaboratorCards: Set<string>;
+    multiStepProgressCardsCount: number;
+    eligibleProgressCardsCount: number;
+    individualLtcXp: number;
+    individualLtcCardsCount: number;
+    onTimeDueFulfillmentsCount: number;
+    todosPerCard: Map<string, number>;
+    rawTodosPerCard: Map<string, number>;
+    completedTodosCount: number;
+    fastAcceleratorRepliesCount: number;
+    readyOwnedCardsCount: number;
+    wonSalesDealsCount: number;
+    salesRevenue: number;
+    completedInternalTasksCount: number;
+    onTimeCompletedInternalTasksCount: number;
+    overdueOpenInternalTasksCount: number;
+    healthyActiveProjectTasksCount: number;
+    openTaskMilestoneCreditsCount: number;
+    totalActivitiesCount: number;
+    ltcCaredCards: CategoryCardHighlight[];
+    progressedCards: CategoryCardHighlight[];
+    assistedCards: CategoryCardHighlight[];
+    outcomeCards: CategoryCardHighlight[];
+  }
 
-    const assistsRaw = departmentUsers.map((u) => {
-      const m = userMetrics.get(u.id)!;
-      return {
-        userId: u.id,
-        name: u.name || 'Team Member',
-        image: u.image,
-        score: m.assistCount,
-        formattedValue: formatScoreValue(m.assistCount, 'integer'),
-        unit: 'Deals',
-        isCurrentUser: u.id === actor.id,
-      };
-    });
-
-    const eventsRaw = departmentUsers.map((u) => {
-      const m = userMetrics.get(u.id)!;
-      return {
-        userId: u.id,
-        name: u.name || 'Team Member',
-        image: u.image,
-        score: m.eventCount,
-        formattedValue: formatScoreValue(m.eventCount, 'integer'),
-        unit: 'Events',
-        isCurrentUser: u.id === actor.id,
-      };
-    });
-
-    const xpRaw = departmentUsers.map((u) => {
-      const m = userMetrics.get(u.id)!;
-      const xp = calculateNonSalesXp(m.taskCount, m.activityCount, m.assistCount, m.eventCount);
-      return {
-        userId: u.id,
-        name: u.name || 'Team Member',
-        image: u.image,
-        score: xp,
-        formattedValue: `${formatScoreValue(xp, 'integer')} XP`,
-        unit: 'XP',
-        isCurrentUser: u.id === actor.id,
-      };
-    });
-
-    const rankedTasks = rankItems(tasksRaw);
-    const rankedActivities = rankItems(activitiesRaw);
-    const rankedAssists = rankItems(assistsRaw);
-    const rankedEvents = rankItems(eventsRaw);
-    const rankedXp = rankItems(xpRaw);
-
-    const categories: LeaderboardCategoryData[] = [
-      {
-        id: 'tasks',
-        label: 'Tasks Completed',
-        iconName: 'CheckSquare',
-        unit: 'Done',
-        description: 'To-do tasks completed in the period',
-        items: rankedTasks,
-      },
-      {
-        id: 'activities',
-        label: 'Activity Logs',
-        iconName: 'MessageSquare',
-        unit: 'Logs',
-        description: 'Activity logs, notes & communications',
-        items: rankedActivities,
-      },
-      {
-        id: 'dealsAssisted',
-        label: 'Deals Assisted',
-        iconName: 'Users',
-        unit: 'Deals',
-        description: 'Deals and projects assisted in team',
-        items: rankedAssists,
-      },
-      {
-        id: 'events',
-        label: 'Calendar & Events',
-        iconName: 'Calendar',
-        unit: 'Events',
-        description: 'Scheduled events and meetings',
-        items: rankedEvents,
-      },
-    ];
-
-    return cacheAndReturn({
-      departmentId: targetDept.id,
-      departmentName: targetDept.name,
-      hasSalesAccess: false,
-      availableDepartments,
-      period: { month, year },
-      overallPodium: buildPodium(rankedXp, 'xp', 'Overall MVP'),
-      overallXpItems: rankedXp,
-      categories,
+  const accByUser = new Map<string, UserPortfolioAccumulator>();
+  for (const u of departmentUsers) {
+    accByUser.set(u.id, {
+      substantiveSalesDeals: 0,
+      substantiveInternalTasks: 0,
+      assistedCollaboratorDeals: 0,
+      collaboratorActiveDeals: new Set<string>(),
+      teammate27hAssistedCards: new Set<string>(),
+      collaboratorWonDealsCount: 0,
+      verifiedProgressCardDays: new Set<string>(),
+      ownProgressWorkdays: new Set<string>(),
+      ownOutreachWorkdays: new Set<string>(),
+      collabProgressWorkdays: new Set<string>(),
+      teammateAssistWorkdays: new Set<string>(),
+      executionWorkdays: new Set<string>(),
+      missedOrStalledDueCount: 0,
+      progressedOwnedCards: new Set<string>(),
+      progressedCollaboratorCards: new Set<string>(),
+      multiStepProgressCardsCount: 0,
+      eligibleProgressCardsCount: 0,
+      individualLtcXp: 0,
+      individualLtcCardsCount: 0,
+      onTimeDueFulfillmentsCount: 0,
+      todosPerCard: new Map<string, number>(),
+      rawTodosPerCard: new Map<string, number>(),
+      completedTodosCount: 0,
+      fastAcceleratorRepliesCount: 0,
+      readyOwnedCardsCount: 0,
+      wonSalesDealsCount: 0,
+      salesRevenue: 0,
+      completedInternalTasksCount: 0,
+      onTimeCompletedInternalTasksCount: 0,
+      overdueOpenInternalTasksCount: 0,
+      healthyActiveProjectTasksCount: 0,
+      openTaskMilestoneCreditsCount: 0,
+      totalActivitiesCount: 0,
+      ltcCaredCards: [],
+      progressedCards: [],
+      assistedCards: [],
+      outcomeCards: [],
     });
   }
+
+  // Index card type & collaborator membership by opportunityId for fast activity classification
+  const oppMetaById = new Map<
+    string,
+    { ownerId: string; isInternalTask: boolean; collaboratorIds: Set<string> }
+  >();
+  for (const opp of deptOpportunities) {
+    oppMetaById.set(opp.id, {
+      ownerId: opp.ownerId,
+      isInternalTask: opp.type === 'INTERNAL_TASK',
+      collaboratorIds: new Set(opp.teamMembers.map((tm) => tm.id)),
+    });
+  }
+
+  // Completed To-Do Notes in [startDate, endDate) (capped at 2 per card for execution XP; >= 2 on teammate card grants Teamwork assist)
+  for (const note of completedNotes) {
+    const acc = accByUser.get(note.authorId);
+    if (!acc) continue;
+    const noteDayKey = toBangkokDayKey(note.updatedAt);
+    const nextRawCount = (acc.rawTodosPerCard.get(note.opportunityId) ?? 0) + 1;
+    acc.rawTodosPerCard.set(note.opportunityId, nextRawCount);
+
+    const prevCardCount = acc.todosPerCard.get(note.opportunityId) ?? 0;
+    if (prevCardCount < 2) {
+      acc.completedTodosCount += 1;
+      acc.todosPerCard.set(note.opportunityId, prevCardCount + 1);
+      acc.executionWorkdays.add(noteDayKey);
+    }
+    const meta = oppMetaById.get(note.opportunityId);
+    if (meta) {
+      if (meta.ownerId === note.authorId) {
+        acc.ownOutreachWorkdays.add(noteDayKey);
+      } else {
+        if (meta.collaboratorIds.has(note.authorId)) {
+          acc.collaboratorActiveDeals.add(note.opportunityId);
+        }
+        if (nextRawCount >= 2) {
+          acc.teammate27hAssistedCards.add(note.opportunityId);
+          acc.teammateAssistWorkdays.add(noteDayKey);
+        }
+      }
+    }
+  }
+
+  // Monthly Activity Logs (Verified Progress Card-Days, Fast Urgent Replies, Teammate +27h Assists)
+  for (const act of monthlyActivities) {
+    const acc = accByUser.get(act.userId);
+    if (!acc) continue;
+    acc.totalActivitiesCount += 1;
+    const actDayKey = toBangkokDayKey(act.createdAt);
+
+    const meta = oppMetaById.get(act.opportunityId);
+    const isCardOwner = Boolean(meta && meta.ownerId === act.userId);
+    const isNotCardOwner = Boolean(meta && meta.ownerId !== act.userId);
+    const isTeammateCollaborator = Boolean(
+      isNotCardOwner && meta!.collaboratorIds.has(act.userId)
+    );
+
+    const content = act.content || '';
+    if (content.startsWith('[URGENT_ACK]')) {
+      acc.fastAcceleratorRepliesCount += 1;
+      acc.executionWorkdays.add(actDayKey);
+      if (isTeammateCollaborator) {
+        acc.collaboratorActiveDeals.add(act.opportunityId);
+      }
+      continue;
+    }
+
+    if (act.type !== 'COMMENT' || act.parentId !== null) {
+      continue;
+    }
+
+    if (content.startsWith('[DUE DATE:')) {
+      if (!content.startsWith('[DUE DATE: Removed]') && isTeammateCollaborator) {
+        acc.collaboratorActiveDeals.add(act.opportunityId);
+      }
+      continue;
+    }
+
+    if (content.startsWith('[URGENT_')) {
+      continue;
+    }
+
+    const signals = evaluateCommentSignals(content);
+
+    if (signals.isNonZero && isTeammateCollaborator) {
+      acc.collaboratorActiveDeals.add(act.opportunityId);
+    }
+
+    if (signals.isVerified27h && isNotCardOwner) {
+      acc.teammate27hAssistedCards.add(act.opportunityId);
+      acc.teammateAssistWorkdays.add(actDayKey);
+    }
+
+    if (signals.isVerified27h && isCardOwner) {
+      if (signals.isCardProgress) {
+        acc.ownProgressWorkdays.add(actDayKey);
+      } else {
+        acc.ownOutreachWorkdays.add(actDayKey);
+      }
+    }
+
+    if (signals.isCardProgress) {
+      acc.verifiedProgressCardDays.add(`${act.opportunityId}:${actDayKey}`);
+      if (isNotCardOwner) {
+        acc.collabProgressWorkdays.add(actDayKey);
+      }
+    }
+  }
+
+  // Evaluate Substance Gate, Due Date Timelines, LTC Care, Coverage, and Outcomes across deptOpportunities
+  let departmentTotalRevenue = 0;
+  const isCardCurrentlyRedById = new Map<string, boolean>();
+
+  for (const opp of deptOpportunities) {
+    if (!matchesGlobalFilter(opp)) continue;
+
+    const isInternalTask = opp.type === 'INTERNAL_TASK';
+    const isLtcCard = opp.topic.trim().toUpperCase().startsWith('LTC-');
+    const createdDate = new Date(opp.createdAt);
+    const closeRefDate =
+      opp.status !== 'OPEN' && opp.closedAt ? new Date(opp.closedAt) : asOfDate;
+
+    const cardDto = opp as unknown as KanbanCardDTO;
+    const effDueNow = opp.status === 'OPEN' ? resolveEffectiveDueDateAt(cardDto, asOfDate) : null;
+    const isCurrentlyRed =
+      opp.status === 'OPEN'
+        ? checkIsRedCard(
+            { ...cardDto, dueDate: effDueNow },
+            companyHolidays,
+            leavesByUser,
+            asOfDate,
+            prebuiltOffDatesMap
+          )
+        : false;
+    isCardCurrentlyRedById.set(opp.id, isCurrentlyRed);
+
+    const chronologicalLogs = [...opp.activityLogs].reverse().map((l) => ({
+      id: l.id,
+      content: l.content,
+      createdAt: l.createdAt,
+      userId: l.userId,
+    }));
+    const dueTimeline = analyzeDueDateTimeline(chronologicalLogs);
+
+    // Single pass over opp.activityLogs to gather verified +27h & card progress timelines
+    const lifetimeVerified27hDaysOnCard = new Set<string>();
+    const lifetimeVerified27hHelpersOnCard = new Set<string>();
+    const monthlyVerified27hDaysByUser = new Map<string, Set<string>>();
+    const monthlyProgressTimestampsByUser = new Map<string, number[]>();
+    const monthlyProgressDaysOnCard = new Set<string>();
+
+    for (const log of opp.activityLogs) {
+      const logMs = new Date(log.createdAt).getTime();
+      const logDayKey = toBangkokDayKey(log.createdAt);
+      const isVerifiedProgressDueLog = dueTimeline.verifiedProgressDueLogIds.has(log.id);
+
+      let isVerified27h = isVerifiedProgressDueLog;
+      let isCardProgress = isVerifiedProgressDueLog;
+
+      if (
+        !isVerifiedProgressDueLog &&
+        !log.content.startsWith('[DUE DATE:') &&
+        !log.content.startsWith('[URGENT_')
+      ) {
+        const sig = evaluateCommentSignals(log.content);
+        isVerified27h = sig.isVerified27h;
+        isCardProgress = sig.isCardProgress;
+      }
+
+      if (isVerified27h && logMs <= closeRefDate.getTime()) {
+        lifetimeVerified27hDaysOnCard.add(logDayKey);
+        if (log.userId !== opp.ownerId) {
+          lifetimeVerified27hHelpersOnCard.add(log.userId);
+        }
+      }
+
+      if (logMs >= startMs && logMs < endMs) {
+        if (isVerified27h) {
+          let uSet = monthlyVerified27hDaysByUser.get(log.userId);
+          if (!uSet) {
+            uSet = new Set<string>();
+            monthlyVerified27hDaysByUser.set(log.userId, uSet);
+          }
+          uSet.add(logDayKey);
+
+          const logAcc = accByUser.get(log.userId);
+          if (logAcc) {
+            if (log.userId === opp.ownerId) {
+              if (isCardProgress) {
+                logAcc.ownProgressWorkdays.add(logDayKey);
+              } else {
+                logAcc.ownOutreachWorkdays.add(logDayKey);
+              }
+            } else {
+              logAcc.teammate27hAssistedCards.add(opp.id);
+              logAcc.teammateAssistWorkdays.add(logDayKey);
+              if (isCardProgress) {
+                logAcc.collabProgressWorkdays.add(logDayKey);
+              }
+            }
+          }
+        }
+
+        if (isCardProgress) {
+          monthlyProgressDaysOnCard.add(logDayKey);
+          let tsList = monthlyProgressTimestampsByUser.get(log.userId);
+          if (!tsList) {
+            tsList = [];
+            monthlyProgressTimestampsByUser.set(log.userId, tsList);
+          }
+          tsList.push(logMs);
+
+          const logAcc = accByUser.get(log.userId);
+          if (logAcc) {
+            logAcc.verifiedProgressCardDays.add(`${opp.id}:${logDayKey}`);
+            if (log.userId !== opp.ownerId) {
+              logAcc.progressedCollaboratorCards.add(opp.id);
+            }
+          }
+        }
+      }
+    }
+
+    const lastFulfilledCreditMsByUser = new Map<string, number>();
+    for (const ev of dueTimeline.onTimeFulfilledEvents) {
+      const evMs = ev.fulfilledAt.getTime();
+      if (evMs < startMs || evMs >= endMs || !ev.userId) continue;
+      const evAcc = accByUser.get(ev.userId);
+      if (!evAcc) continue;
+      const prevMs = lastFulfilledCreditMsByUser.get(ev.userId) ?? 0;
+      if (prevMs === 0 || evMs - prevMs >= 5 * 86_400_000) {
+        evAcc.onTimeDueFulfillmentsCount += 1;
+        evAcc.executionWorkdays.add(toBangkokDayKey(ev.fulfilledAt));
+        lastFulfilledCreditMsByUser.set(ev.userId, evMs);
+      }
+    }
+
+    const lastMissedDueMsByUser = new Map<string, number>();
+    for (const ev of dueTimeline.lateOrStalledEvents) {
+      const evMs = ev.eventAt.getTime();
+      if (evMs < startMs || evMs >= endMs) continue;
+      const targetUid = ev.userId || opp.ownerId;
+      const evAcc = accByUser.get(targetUid);
+      if (!evAcc) continue;
+      const prevMs = lastMissedDueMsByUser.get(targetUid) ?? 0;
+      if (prevMs === 0 || evMs - prevMs >= 3 * 86_400_000) {
+        evAcc.missedOrStalledDueCount += 1;
+        lastMissedDueMsByUser.set(targetUid, evMs);
+      }
+    }
+    if (opp.status === 'OPEN' && isCurrentlyRed && effDueNow !== null) {
+      const dp = toBangkokDateParts(effDueNow);
+      const dueWorkEnd = createBangkokDate(
+        dp.year,
+        dp.month,
+        dp.date,
+        WORK_DAY_END_HOUR,
+        WORK_DAY_END_MINUTE,
+        59
+      );
+      if (asOfDate.getTime() > dueWorkEnd.getTime() && !lastMissedDueMsByUser.has(opp.ownerId)) {
+        const oAcc = accByUser.get(opp.ownerId);
+        if (oAcc) {
+          oAcc.missedOrStalledDueCount += 1;
+        }
+      }
+    }
+
+    const hasMeaningfulComment = opp.activityLogs.some((log) => {
+      if (dueTimeline.verifiedProgressDueLogIds.has(log.id)) return true;
+      if (log.content.startsWith('[DUE DATE:') || log.content.startsWith('[URGENT_')) {
+        return false;
+      }
+      return evaluateCommentSignals(log.content).isNonZero;
+    });
+    const hasCompletedNote = (opp._count?.notes ?? 0) > 0;
+    const hasQuotation = (opp._count?.quotations ?? 0) > 0 || opp.quotedAt !== null;
+    const isWonWithValue = opp.status === 'WON' && (opp.value ?? 0) > 0;
+
+    let passesSubstanceGate =
+      hasMeaningfulComment || hasCompletedNote || hasQuotation || isWonWithValue;
+    if (!passesSubstanceGate && closeRefDate.getTime() > createdDate.getTime()) {
+      const lifespanMs = calculateElapsedWorkingMs(
+        createdDate,
+        closeRefDate,
+        companyHolidays,
+        {
+          ceilingMs: 0,
+          stopAtMs: SUBSTANCE_MIN_WORKING_MS,
+          personalLeaves: leavesByUser.get(opp.ownerId),
+        }
+      );
+      passesSubstanceGate = lifespanMs >= SUBSTANCE_MIN_WORKING_MS;
+    }
+
+    const closedMs = opp.closedAt ? new Date(opp.closedAt).getTime() : null;
+    const readyMs = opp.goodsReadyDate ? new Date(opp.goodsReadyDate).getTime() : null;
+    const loadingMs = opp.goodsLoadingDate ? new Date(opp.goodsLoadingDate).getTime() : null;
+
+    const isWonInPeriod =
+      opp.status === 'WON' &&
+      (loadingMs !== null
+        ? loadingMs >= startMs && loadingMs < endMs
+        : closedMs !== null && closedMs >= startMs && closedMs < endMs);
+
+    const isTaskCompletedInPeriod =
+      isInternalTask &&
+      (opp.status === 'WON' || opp.status === 'COMPLETED') &&
+      closedMs !== null &&
+      closedMs >= startMs &&
+      closedMs < endMs;
+
+    const oppCompanyName = opp.company?.displayName || opp.company?.name || undefined;
+
+    // Teammate +27h / To-Do assist highlights (recorded once per card per active helper)
+    for (const uid of monthlyVerified27hDaysByUser.keys()) {
+      if (uid === opp.ownerId) continue;
+      const helperAcc = accByUser.get(uid);
+      const assistDayCnt = monthlyVerified27hDaysByUser.get(uid)?.size ?? 1;
+      if (helperAcc && helperAcc.assistedCards.length < 12) {
+        helperAcc.assistedCards.push({
+          dealId: opp.id,
+          topic: opp.topic,
+          companyName: oppCompanyName,
+          badgeText: `${assistDayCnt}d +27h Assist`,
+          tone: 'emerald',
+        });
+      }
+    }
+
+    // 2-Step Individual LTC Care (up to +2.0 XP per distinct LTC-* card, Max 8.0 XP)
+    if (hasSalesAccess && isLtcCard) {
+      const ltcCandidateUsers = new Set<string>(monthlyVerified27hDaysByUser.keys());
+      if (isWonInPeriod && passesSubstanceGate) {
+        ltcCandidateUsers.add(opp.ownerId);
+      }
+      for (const uid of ltcCandidateUsers) {
+        const uAcc = accByUser.get(uid);
+        if (!uAcc) continue;
+        const user27hDays = monthlyVerified27hDaysByUser.get(uid)?.size ?? 0;
+        const userProgUpdates = monthlyProgressTimestampsByUser.get(uid)?.length ?? 0;
+        const earnedStep1 =
+          user27hDays >= 1 || (uid === opp.ownerId && isWonInPeriod && passesSubstanceGate);
+        if (!earnedStep1) continue;
+
+        const earnedStep2 =
+          userProgUpdates >= 1 ||
+          opp.status === 'WON' ||
+          (opp.status === 'OPEN' &&
+            !isCurrentlyRed &&
+            (effDueNow !== null || lifetimeVerified27hDaysOnCard.size >= 2)) ||
+          (opp.status === 'LOST' && lifetimeVerified27hDaysOnCard.size >= 2);
+
+        uAcc.individualLtcCardsCount += 1;
+        uAcc.individualLtcXp = Math.min(8, uAcc.individualLtcXp + (earnedStep2 ? 2.0 : 1.0));
+        if (uAcc.ltcCaredCards.length < 12) {
+          uAcc.ltcCaredCards.push({
+            dealId: opp.id,
+            topic: opp.topic,
+            companyName: oppCompanyName,
+            badgeText: earnedStep2 ? '+2 XP (Progress)' : '+1 XP (Outreach)',
+            tone: earnedStep2 ? 'lime' : 'sky',
+          });
+        }
+      }
+    }
+
+    // Owner portfolio, Real Progress Volume & Coverage, and Outcomes
+    const ownerAcc = accByUser.get(opp.ownerId);
+    if (ownerAcc && passesSubstanceGate) {
+      if (isInternalTask) {
+        ownerAcc.substantiveInternalTasks += 1;
+        const hasStructuredTaskSchedule =
+          opp.dueDate !== null ||
+          hasCompletedNote ||
+          dueTimeline.onTimeFulfilledEvents.length > 0 ||
+          opp.activityLogs.some(
+            (l) => l.content.startsWith('[DUE DATE:') && !l.content.startsWith('[DUE DATE: Removed]')
+          );
+        if (hasStructuredTaskSchedule) {
+          ownerAcc.readyOwnedCardsCount += 1;
+        }
+      } else {
+        ownerAcc.substantiveSalesDeals += 1;
+        const hasSalesReadiness =
+          (opp.value ?? 0) > 0 || opp.goodsReadyDate !== null || opp.goodsLoadingDate !== null;
+        if (hasSalesReadiness) {
+          ownerAcc.readyOwnedCardsCount += 1;
+        }
+      }
+
+      const quotedMs = opp.quotedAt ? new Date(opp.quotedAt).getTime() : null;
+      if (quotedMs !== null && quotedMs >= startMs && quotedMs < endMs && opp.quotedAt) {
+        ownerAcc.ownProgressWorkdays.add(toBangkokDayKey(opp.quotedAt));
+      }
+      if (isWonInPeriod || isTaskCompletedInPeriod) {
+        const winDate = opp.goodsLoadingDate || opp.closedAt;
+        if (winDate) {
+          ownerAcc.ownProgressWorkdays.add(toBangkokDayKey(winDate));
+        }
+      }
+
+      const ownerTodosOnCard = ownerAcc.todosPerCard.get(opp.id) ?? 0;
+      const owner27hDaysOnCard = monthlyVerified27hDaysByUser.get(opp.ownerId)?.size ?? 0;
+      const hasGenuineCardProgress =
+        monthlyProgressDaysOnCard.size >= 1 ||
+        isWonInPeriod ||
+        isTaskCompletedInPeriod ||
+        (isInternalTask && ownerTodosOnCard >= 1 && owner27hDaysOnCard >= 1);
+
+      if (hasGenuineCardProgress) {
+        ownerAcc.progressedOwnedCards.add(opp.id);
+        ownerAcc.eligibleProgressCardsCount += 1;
+
+        let isMultiStep = false;
+        const allProgTsOnCard: number[] = [];
+        for (const tsList of monthlyProgressTimestampsByUser.values()) {
+          allProgTsOnCard.push(...tsList);
+        }
+        if (allProgTsOnCard.length >= 2) {
+          const minTs = Math.min(...allProgTsOnCard);
+          const maxTs = Math.max(...allProgTsOnCard);
+          if (maxTs - minTs >= 5 * 86_400_000) {
+            ownerAcc.multiStepProgressCardsCount += 1;
+            isMultiStep = true;
+          }
+        }
+        if (ownerAcc.progressedCards.length < 15) {
+          ownerAcc.progressedCards.push({
+            dealId: opp.id,
+            topic: opp.topic,
+            companyName: oppCompanyName,
+            badgeText: isMultiStep ? 'Multi-Step ★' : 'Progress ★',
+            tone: 'lime',
+          });
+        }
+      } else {
+        // Fair Hold Exemptions for All-Card Progress Coverage denominator
+        const ageWorkingMs =
+          asOfDate.getTime() > createdDate.getTime()
+            ? calculateElapsedWorkingMs(createdDate, asOfDate, companyHolidays, {
+                ceilingMs: 0,
+                stopAtMs: 27 * 3600 * 1000,
+                personalLeaves: leavesByUser.get(opp.ownerId),
+              })
+            : 0;
+        const isBrandNewCard = opp.status === 'OPEN' && ageWorkingMs < 27 * 3600 * 1000;
+        const isShippingOrFactoryHold =
+          opp.status === 'OPEN' &&
+          !isCurrentlyRed &&
+          ((readyMs !== null && readyMs > asOfDate.getTime()) ||
+            (loadingMs !== null && loadingMs > asOfDate.getTime()));
+        const isFutureMonthScheduledHold =
+          opp.status === 'OPEN' &&
+          !isCurrentlyRed &&
+          effDueNow !== null &&
+          effDueNow.getTime() >= endMs;
+
+        if (!isBrandNewCard && !isShippingOrFactoryHold && !isFutureMonthScheduledHold) {
+          ownerAcc.eligibleProgressCardsCount += 1;
+        }
+      }
+
+      if (!isInternalTask && isWonInPeriod) {
+        const rev = opp.value || 0;
+        ownerAcc.wonSalesDealsCount += 1;
+        ownerAcc.salesRevenue += rev;
+        departmentTotalRevenue += rev;
+        if (ownerAcc.outcomeCards.length < 15) {
+          ownerAcc.outcomeCards.push({
+            dealId: opp.id,
+            topic: opp.topic,
+            companyName: oppCompanyName,
+            badgeText: 'Won Deal (+5)',
+            tone: 'lime',
+            value: rev > 0 ? rev : undefined,
+          });
+        }
+      }
+
+      if (isInternalTask) {
+        if (isTaskCompletedInPeriod && closedMs !== null) {
+          ownerAcc.completedInternalTasksCount += 1;
+          const closedAtDate = new Date(closedMs);
+          const effDueAtClose = resolveEffectiveDueDateAt(cardDto, closedAtDate);
+          let completedOnTime = true;
+          if (effDueAtClose) {
+            const dueParts = toBangkokDateParts(effDueAtClose);
+            const dueWorkEnd = createBangkokDate(
+              dueParts.year,
+              dueParts.month,
+              dueParts.date,
+              WORK_DAY_END_HOUR,
+              WORK_DAY_END_MINUTE,
+              0
+            );
+            completedOnTime = closedMs <= dueWorkEnd.getTime();
+          } else {
+            const openSnapshot: KanbanCardDTO = {
+              ...cardDto,
+              status: 'OPEN',
+              closedAt: null,
+              dueDate: null,
+            };
+            completedOnTime = !checkIsRedCard(
+              openSnapshot,
+              companyHolidays,
+              leavesByUser,
+              closedAtDate,
+              prebuiltOffDatesMap
+            );
+          }
+          if (completedOnTime) {
+            ownerAcc.onTimeCompletedInternalTasksCount += 1;
+          }
+          if (ownerAcc.outcomeCards.length < 15) {
+            ownerAcc.outcomeCards.push({
+              dealId: opp.id,
+              topic: opp.topic,
+              companyName: oppCompanyName,
+              badgeText: completedOnTime ? 'On-Time SLA' : 'Completed (Late)',
+              tone: completedOnTime ? 'emerald' : 'amber',
+            });
+          }
+        } else if (opp.status === 'OPEN') {
+          if (isCurrentlyRed) {
+            ownerAcc.overdueOpenInternalTasksCount += 1;
+            if (ownerAcc.outcomeCards.length < 15) {
+              ownerAcc.outcomeCards.push({
+                dealId: opp.id,
+                topic: opp.topic,
+                companyName: oppCompanyName,
+                badgeText: 'Overdue (Hurts SLA)',
+                tone: 'rose',
+              });
+            }
+          } else {
+            const openTaskMilestones = monthlyProgressDaysOnCard.size + ownerTodosOnCard;
+            if (openTaskMilestones >= 1) {
+              ownerAcc.healthyActiveProjectTasksCount += 1;
+              ownerAcc.openTaskMilestoneCreditsCount += Math.min(3, openTaskMilestones);
+              if (ownerAcc.outcomeCards.length < 15) {
+                ownerAcc.outcomeCards.push({
+                  dealId: opp.id,
+                  topic: opp.topic,
+                  companyName: oppCompanyName,
+                  badgeText: `Active Project (${Math.min(3, openTaskMilestones)} Milestones)`,
+                  tone: 'sky',
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Active Contributor Collaborator Portfolio & Outcomes (passive `opp.teamMembers` earn 0 credit)
+    if (passesSubstanceGate) {
+      const activeMonthlyHelpers = new Set<string>();
+      for (const uid of monthlyVerified27hDaysByUser.keys()) {
+        if (uid !== opp.ownerId) activeMonthlyHelpers.add(uid);
+      }
+      for (const [uid, uAcc] of accByUser.entries()) {
+        if (uid !== opp.ownerId && (uAcc.rawTodosPerCard.get(opp.id) ?? 0) >= 2) {
+          activeMonthlyHelpers.add(uid);
+          if (
+            !monthlyVerified27hDaysByUser.has(uid) &&
+            uAcc.assistedCards.length < 12
+          ) {
+            uAcc.assistedCards.push({
+              dealId: opp.id,
+              topic: opp.topic,
+              companyName: oppCompanyName,
+              badgeText: `${uAcc.rawTodosPerCard.get(opp.id)} To-Do Assist`,
+              tone: 'emerald',
+            });
+          }
+        }
+      }
+
+      for (const uid of activeMonthlyHelpers) {
+        const collabAcc = accByUser.get(uid);
+        if (collabAcc) {
+          collabAcc.assistedCollaboratorDeals += 1;
+        }
+      }
+
+      if (isWonInPeriod || isTaskCompletedInPeriod) {
+        const activeWinHelpers = new Set<string>(lifetimeVerified27hHelpersOnCard);
+        for (const uid of activeMonthlyHelpers) {
+          activeWinHelpers.add(uid);
+        }
+        for (const uid of activeWinHelpers) {
+          if (uid === opp.ownerId) continue;
+          const collabAcc = accByUser.get(uid);
+          if (!collabAcc) continue;
+          collabAcc.collaboratorWonDealsCount += 1;
+          if (collabAcc.outcomeCards.length < 15) {
+            collabAcc.outcomeCards.push({
+              dealId: opp.id,
+              topic: opp.topic,
+              companyName: oppCompanyName,
+              badgeText: 'Assist Win (+2)',
+              tone: 'sky',
+              value: !isInternalTask && (opp.value ?? 0) > 0 ? opp.value! : undefined,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // 7. Compute Unified v2.3 100 XP Breakdown ONCE per user
+  const breakdownByUser = new Map<string, LeaderboardScoreBreakdown>();
+
+  for (const u of departmentUsers) {
+    const summary = dailySamplingMap.get(u.id);
+    const acc = accByUser.get(u.id)!;
+    const activeCardsCount = summary?.currentActiveCards ?? 0;
+    const redCardsCount = summary?.currentRedCards ?? 0;
+    const hasMonthlyCardExposure = activeCardsCount > 0 || (summary?.totalCardHours ?? 0) > 0;
+    const elapsedWorkingDays = Math.max(
+      1,
+      summary?.totalWorkingDays ?? ltcDailySummary?.totalWorkingDays ?? 1
+    );
+
+    const totalOwnedSubstantive = acc.substantiveSalesDeals + acc.substantiveInternalTasks;
+    const isPureCollaborator = totalOwnedSubstantive === 0 && acc.teammate27hAssistedCards.size > 0;
+
+    let collaboratorAssistedRedRate = 0;
+    let assistedCleanCount = 0;
+    if (acc.teammate27hAssistedCards.size > 0) {
+      let assistedRedCount = 0;
+      for (const cardId of acc.teammate27hAssistedCards) {
+        if (isCardCurrentlyRedById.get(cardId)) {
+          assistedRedCount += 1;
+        } else {
+          assistedCleanCount += 1;
+        }
+      }
+      if (!hasMonthlyCardExposure) {
+        collaboratorAssistedRedRate =
+          Math.round((assistedRedCount / acc.teammate27hAssistedCards.size) * 1000) / 10;
+      }
+    }
+
+    const effectiveProgressedCards = isPureCollaborator
+      ? acc.progressedCollaboratorCards.size
+      : acc.progressedOwnedCards.size;
+    const effectiveEligibleCards = isPureCollaborator
+      ? Math.max(acc.progressedCollaboratorCards.size, acc.teammate27hAssistedCards.size)
+      : acc.eligibleProgressCardsCount;
+    const effectiveWorkedCards = isPureCollaborator
+      ? Math.round(acc.teammate27hAssistedCards.size * 0.5)
+      : Math.max(activeCardsCount, totalOwnedSubstantive);
+
+    let avgDailyCleanCards = 0;
+    if (summary && summary.totalWorkingDays > 0 && hasMonthlyCardExposure) {
+      let sumCleanCards = 0;
+      for (const rec of summary.dailyRecords) {
+        if (!rec.isOffDay) {
+          sumCleanCards += rec.cleanCardsCount;
+        }
+      }
+      avgDailyCleanCards = Math.round((sumCleanCards / summary.totalWorkingDays) * 10) / 10;
+    } else if (isPureCollaborator) {
+      avgDailyCleanCards = Math.round(assistedCleanCount * 0.5 * 10) / 10;
+    }
+
+    const effectiveProgressDaySet = isPureCollaborator
+      ? acc.collabProgressWorkdays
+      : acc.ownProgressWorkdays;
+    const effectiveOutreachSourceSet = isPureCollaborator
+      ? acc.teammateAssistWorkdays
+      : acc.ownOutreachWorkdays;
+    let outreachOnlyWorkdaysCount = 0;
+    for (const d of effectiveOutreachSourceSet) {
+      if (!effectiveProgressDaySet.has(d)) {
+        outreachOnlyWorkdaysCount += 1;
+      }
+    }
+
+    const breakdown = calculateUnifiedPortfolioBreakdown({
+      redRate: summary?.avgMonthlyRedRate ?? 0,
+      activeCardsCount,
+      redCardsCount,
+      redHours: summary?.totalRedHours ?? 0,
+      hasMonthlyCardExposure,
+      collaboratorAssisted27hCardsCount: acc.teammate27hAssistedCards.size,
+      collaboratorAssistedRedRate,
+      cleanDaysCount: summary?.cleanDaysCount ?? 0,
+      graceDaysCount: summary?.graceDaysCount ?? 0,
+      individualLtcXp: acc.individualLtcXp,
+      individualLtcCardsCount: acc.individualLtcCardsCount,
+      teamZeroLtcXp,
+      hasSalesAccess,
+      substantiveSalesDeals: acc.substantiveSalesDeals,
+      substantiveInternalTasks: acc.substantiveInternalTasks,
+      assistedCollaboratorDeals: Math.max(
+        acc.assistedCollaboratorDeals,
+        acc.teammate27hAssistedCards.size
+      ),
+      elapsedWorkingDays,
+      progressWorkdaysCount: effectiveProgressDaySet.size,
+      outreachWorkdaysCount: outreachOnlyWorkdaysCount,
+      progressedCardsCount: effectiveProgressedCards,
+      multiStepProgressCardsCount: acc.multiStepProgressCardsCount,
+      eligibleProgressCardsCount: effectiveEligibleCards,
+      teammate27hAssistedCardsCount: acc.teammate27hAssistedCards.size,
+      teammateAssistWorkdaysCount: acc.teammateAssistWorkdays.size,
+      avgDailyCleanCards,
+      workedActiveCardsCount: effectiveWorkedCards,
+      verifiedProgressCardDaysCount: acc.verifiedProgressCardDays.size,
+      onTimeDueFulfillmentsCount: acc.onTimeDueFulfillmentsCount,
+      executionWorkdaysCount: acc.executionWorkdays.size,
+      missedOrStalledDueCount: acc.missedOrStalledDueCount,
+      fastAcceleratorRepliesCount: acc.fastAcceleratorRepliesCount,
+      completedTodosCount: acc.completedTodosCount,
+      collaboratorActiveDealsCount: acc.collaboratorActiveDeals.size,
+      readyOwnedCardsCount: acc.readyOwnedCardsCount,
+      wonSalesDealsCount: acc.wonSalesDealsCount,
+      salesRevenue: acc.salesRevenue,
+      departmentTotalRevenue,
+      completedInternalTasksCount: acc.completedInternalTasksCount,
+      onTimeCompletedInternalTasksCount: acc.onTimeCompletedInternalTasksCount,
+      overdueOpenInternalTasksCount: acc.overdueOpenInternalTasksCount,
+      healthyActiveProjectTasksCount: acc.healthyActiveProjectTasksCount,
+      openTaskMilestoneCreditsCount: acc.openTaskMilestoneCreditsCount,
+      collaboratorWonDealsCount: acc.collaboratorWonDealsCount,
+      totalActivitiesCount: acc.totalActivitiesCount,
+    });
+
+    breakdownByUser.set(u.id, breakdown);
+  }
+
+  // 8. Build the 4 Unified Category Leaderboards + Overall 100 XP Ranking
+  const detailsByUser = new Map<string, UserCategoryDrilldownDetails>();
+  for (const u of departmentUsers) {
+    const acc = accByUser.get(u.id)!;
+    detailsByUser.set(u.id, {
+      ltcCaredCards: acc.ltcCaredCards,
+      progressedCards: acc.progressedCards,
+      assistedCards: acc.assistedCards,
+      outcomeCards: acc.outcomeCards,
+    });
+  }
+
+  const cardHealthRaw = departmentUsers.map((u) => {
+    const breakdown = breakdownByUser.get(u.id)!;
+    const summary = dailySamplingMap.get(u.id);
+    const rate = breakdown.redRate ?? summary?.avgMonthlyRedRate ?? 0;
+    const formattedValue = `${rate.toFixed(rate % 1 === 0 ? 0 : 1)}%`;
+
+    return {
+      userId: u.id,
+      name: u.name || 'Team Member',
+      image: u.image,
+      score: breakdown.cardHealthTotalXp,
+      formattedValue,
+      unit: '%',
+      healthTier: breakdown.healthTier,
+      breakdown,
+      dailyHealthSummary: summary,
+      dailyLtcSummary: ltcDailySummary,
+      categoryDetails: detailsByUser.get(u.id),
+      isCurrentUser: false,
+    };
+  });
+
+  const cleanLtcRaw = departmentUsers.map((u) => {
+    const breakdown = breakdownByUser.get(u.id)!;
+    const summary = dailySamplingMap.get(u.id);
+    const score = breakdown.disciplineTotalXp ?? breakdown.cleanBonusXp;
+
+    return {
+      userId: u.id,
+      name: u.name || 'Team Member',
+      image: u.image,
+      score,
+      formattedValue: `${formatScoreValue(score, 'xp')} XP`,
+      unit: 'XP',
+      breakdown,
+      dailyHealthSummary: summary,
+      dailyLtcSummary: ltcDailySummary,
+      categoryDetails: detailsByUser.get(u.id),
+      isCurrentUser: false,
+    };
+  });
+
+  const velocityRaw = departmentUsers.map((u) => {
+    const breakdown = breakdownByUser.get(u.id)!;
+    const summary = dailySamplingMap.get(u.id);
+    const score = breakdown.velocityXp ?? 0;
+
+    return {
+      userId: u.id,
+      name: u.name || 'Team Member',
+      image: u.image,
+      score,
+      formattedValue: `${formatScoreValue(score, 'xp')} XP`,
+      unit: 'XP',
+      breakdown,
+      dailyHealthSummary: summary,
+      dailyLtcSummary: ltcDailySummary,
+      categoryDetails: detailsByUser.get(u.id),
+      isCurrentUser: false,
+    };
+  });
+
+  const outcomeRaw = departmentUsers.map((u) => {
+    const breakdown = breakdownByUser.get(u.id)!;
+    const summary = dailySamplingMap.get(u.id);
+    const score = breakdown.outcomeXp ?? 0;
+
+    return {
+      userId: u.id,
+      name: u.name || 'Team Member',
+      image: u.image,
+      score,
+      formattedValue: `${formatScoreValue(score, 'xp')} XP`,
+      unit: 'XP',
+      breakdown,
+      dailyHealthSummary: summary,
+      dailyLtcSummary: ltcDailySummary,
+      categoryDetails: detailsByUser.get(u.id),
+      isCurrentUser: false,
+    };
+  });
+
+  const xpRaw = departmentUsers.map((u) => {
+    const breakdown = breakdownByUser.get(u.id)!;
+    const summary = dailySamplingMap.get(u.id);
+
+    return {
+      userId: u.id,
+      name: u.name || 'Team Member',
+      image: u.image,
+      score: breakdown.totalXp,
+      formattedValue: `${formatScoreValue(breakdown.totalXp, 'xp')} XP`,
+      unit: 'XP',
+      healthTier: breakdown.healthTier,
+      breakdown,
+      dailyHealthSummary: summary,
+      dailyLtcSummary: ltcDailySummary,
+      categoryDetails: detailsByUser.get(u.id),
+      isCurrentUser: false,
+    };
+  });
+
+  const rankedCardHealth = [...cardHealthRaw]
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aRed = a.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
+      const bRed = b.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
+      const aHasCards =
+        (a.dailyHealthSummary?.currentActiveCards ?? 0) > 0 ||
+        (a.dailyHealthSummary?.totalCardHours ?? 0) > 0;
+      const bHasCards =
+        (b.dailyHealthSummary?.currentActiveCards ?? 0) > 0 ||
+        (b.dailyHealthSummary?.totalCardHours ?? 0) > 0;
+      if (aHasCards && !bHasCards) return -1;
+      if (bHasCards && !aHasCards) return 1;
+      if (aRed !== bRed) return aRed - bRed;
+      return a.name.localeCompare(b.name);
+    })
+    .map((item, index) => ({
+      ...item,
+      rank: index + 1,
+    }));
+
+  const rankedCleanLtc = [...cleanLtcRaw]
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aClean = a.dailyHealthSummary?.cleanDaysCount ?? 0;
+      const bClean = b.dailyHealthSummary?.cleanDaysCount ?? 0;
+      if (bClean !== aClean) return bClean - aClean;
+      const aRed = a.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
+      const bRed = b.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
+      if (aRed !== bRed) return aRed - bRed;
+      return a.name.localeCompare(b.name);
+    })
+    .map((item, index) => ({
+      ...item,
+      rank: index + 1,
+    }));
+
+  const rankedVelocity = rankItems(velocityRaw);
+  const rankedOutcome = rankItems(outcomeRaw);
+  const rankedXp = [...xpRaw]
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const aOutcome = a.breakdown?.outcomeXp ?? 0;
+      const bOutcome = b.breakdown?.outcomeXp ?? 0;
+      if (bOutcome !== aOutcome) return bOutcome - aOutcome;
+      const aRed = a.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
+      const bRed = b.dailyHealthSummary?.avgMonthlyRedRate ?? 100;
+      if (aRed !== bRed) return aRed - bRed;
+      const aHours = a.dailyHealthSummary?.totalCardHours ?? 0;
+      const bHours = b.dailyHealthSummary?.totalCardHours ?? 0;
+      if (bHours !== aHours) return bHours - aHours;
+      return a.name.localeCompare(b.name);
+    })
+    .map((item, index) => ({
+      ...item,
+      rank: index + 1,
+    }));
+
+  const categories: LeaderboardCategoryData[] = [
+    {
+      id: 'card_health',
+      label: 'Card Health',
+      iconName: 'ShieldCheck',
+      unit: 'Max 30 XP',
+      description: 'Continuous Red Rate curve across all owned cards (≤ 5% target)',
+      items: rankedCardHealth,
+    },
+    {
+      id: 'clean_ltc',
+      label: hasSalesAccess ? 'Discipline & LTC' : 'Clean Discipline',
+      iconName: 'Sparkles',
+      unit: 'Max 20 XP',
+      description: hasSalesAccess
+        ? 'Clean workdays & Shield (10 XP) + Individual 2-Step LTC Care (8 XP) + Team Zero-LTC (2 XP)'
+        : '+1.0 XP per 100% clean workday (+0.5 XP Shield on 15+ cards) up to 20 XP',
+      items: rankedCleanLtc,
+    },
+    {
+      id: 'velocity',
+      label: 'Velocity & Teamwork',
+      iconName: 'Zap',
+      unit: 'Max 25 XP',
+      description: 'Daily Progress & Coverage (12) + Consistent Assist Days (6) + Clean Load & On-Time Rate (7)',
+      items: rankedVelocity,
+    },
+    {
+      id: 'outcome',
+      label: 'Outcome',
+      iconName: 'Trophy',
+      unit: 'Max 25 XP',
+      description: 'Active Owner Sales/Task Results + Active Helper Co-Close Bonus (passive members = 0 XP)',
+      items: rankedOutcome,
+    },
+  ];
+
+  const baseData: DepartmentLeaderboardData = {
+    departmentId: targetDept.id,
+    departmentName: targetDept.name,
+    hasSalesAccess,
+    availableDepartments: [],
+    period: { month, year },
+    overallPodium: buildPodium(rankedXp, 'xp', 'Overall MVP'),
+    overallXpItems: rankedXp,
+    categories,
+  };
+
+  leaderboardMemoryCache.set(deptCacheKey, {
+    data: baseData,
+    expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
+  });
+
+  return personalizeLeaderboardForActor(baseData, actor.id, availableDepartments, actor.role);
 }

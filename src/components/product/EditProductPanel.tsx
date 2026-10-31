@@ -50,7 +50,9 @@ import {
   reorderProductVariants,
   createProductVariant,
   deleteProductVariant,
+  deleteProduct,
 } from "@/lib/actions/product";
+import { useDialog } from "@/providers/DialogProvider";
 import {
   ProductListItemDTO,
   ProductOverviewDTO,
@@ -99,6 +101,7 @@ interface EditProductPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onProductUpdated?: (updated: Partial<ProductListItemDTO>) => void;
+  onProductDeleted?: (deletedProductId: string) => void;
   onOverviewUpdated?: (overview: ProductOverviewDTO) => void;
   zIndexLevel?: "default" | "modal-overlay";
   availableCategories?: { category: string; count: number }[];
@@ -118,11 +121,13 @@ export function EditProductPanel({
   isOpen,
   onClose,
   onProductUpdated,
+  onProductDeleted,
   onOverviewUpdated,
   zIndexLevel = "default",
   availableCategories = [],
   availableBrands = [],
 }: EditProductPanelProps) {
+  const { confirm, toast } = useDialog();
   const {
     commercialRates,
     totalPercent: companyCostOverheadPercent,
@@ -130,6 +135,7 @@ export function EditProductPanel({
   } = useCompanyCostOverhead();
   const [activeTab, setActiveTab] = useState<string>(initialTab);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeletingProduct, setIsDeletingProduct] = useState(false);
   const [isCreatingVariant, setIsCreatingVariant] = useState(false);
   const [deletingVariantId, setDeletingVariantId] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -953,6 +959,45 @@ export function EditProductPanel({
     }
   };
 
+  // Delete the entire product
+  const handleDeleteProduct = async () => {
+    if (!productId || isDeletingProduct) return;
+    const ok = await confirm({
+      title: "Delete Product?",
+      description: `Are you sure you want to delete "${name || "this product"}"? All variants, pricing conditions, and customer prices will be permanently removed. This action cannot be undone.`,
+      confirmText: "Delete Product",
+      cancelText: "Cancel",
+      variant: "danger",
+    });
+    if (!ok) return;
+
+    setIsDeletingProduct(true);
+    setSaveError(null);
+    try {
+      const res = await deleteProduct(productId);
+      if (res.success) {
+        toast({
+          title: "Product Deleted",
+          description: `Product "${name || ""}" was deleted successfully.`,
+          type: "success",
+        });
+        onProductDeleted?.(productId);
+        onClose();
+      }
+    } catch (err: unknown) {
+      console.error("Failed to delete product:", err);
+      const msg = err instanceof Error ? err.message : "Failed to delete product";
+      setSaveError(msg);
+      toast({
+        title: "Delete Failed",
+        description: msg,
+        type: "error",
+      });
+    } finally {
+      setIsDeletingProduct(false);
+    }
+  };
+
   // Save changes
   const handleSaveAll = async () => {
     if (!productId) return;
@@ -1279,8 +1324,18 @@ export function EditProductPanel({
               label: isSaving ? "Saving..." : saveSuccess ? "Saved!" : "Save Changes",
               icon: isSaving ? Loader2 : saveSuccess ? Check : Save,
               onClick: handleSaveAll,
-              disabled: isSaving,
+              disabled: isSaving || isDeletingProduct,
+              loading: isSaving,
               variant: "default",
+            },
+            {
+              id: "delete",
+              label: isDeletingProduct ? "Deleting..." : "Delete Product",
+              icon: isDeletingProduct ? Loader2 : Trash2,
+              onClick: handleDeleteProduct,
+              disabled: isSaving || isDeletingProduct,
+              loading: isDeletingProduct,
+              variant: "danger",
             },
           ]}
         />

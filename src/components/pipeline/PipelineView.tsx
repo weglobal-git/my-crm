@@ -18,6 +18,7 @@ import { preload } from "swr";
 import { usePermissions } from "@/providers/PermissionProvider";
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import type { PipelineDepartmentOption, PipelineStageTitlesByDepartment } from "@/lib/pipeline-stage-titles";
+import type { UserLeaveDTO } from "@/lib/actions/holiday";
 
 interface PipelineViewProps {
   userId: string;
@@ -27,6 +28,8 @@ interface PipelineViewProps {
   initialOpportunities?: OpportunityWithRelations[];
   initialPendingAccelerators?: Record<string, PendingAcceleratorInfo>;
   initialPinnedDealIds?: string[];
+  initialHolidays?: string[];
+  initialLeaves?: UserLeaveDTO[];
   stageTitleDepartments?: PipelineDepartmentOption[];
   initialStageTitlesByDepartment?: PipelineStageTitlesByDepartment;
   canEditStageTitles?: boolean;
@@ -53,6 +56,8 @@ export function PipelineView({
   initialOpportunities, 
   initialPendingAccelerators,
   initialPinnedDealIds,
+  initialHolidays,
+  initialLeaves,
   stageTitleDepartments = [],
   initialStageTitlesByDepartment = {},
   canEditStageTitles = false,
@@ -300,7 +305,7 @@ export function PipelineView({
             title={
               hasRedFilter
                 ? `Filtering: Showing only Red Cards (${boardStats.red}) - Click or press Esc to clear`
-                : `Red Cards: ${boardStats.red} / ทั้งหมด: ${boardStats.total} (Click to filter only Red Cards)`
+                : `Red Cards: ${boardStats.red} / Total: ${boardStats.total} (Click to filter only Red Cards)`
             }
             aria-pressed={hasRedFilter}
           >
@@ -386,6 +391,8 @@ export function PipelineView({
         initialOpportunities={initialOpportunities}
         initialPendingAccelerators={initialPendingAccelerators}
         initialPinnedDealIds={initialPinnedDealIds}
+        initialHolidays={initialHolidays}
+        initialLeaves={initialLeaves}
         activeStageTitleDepartmentId={activeStageTitleDepartmentId}
         stageTitlesByDepartment={stageTitlesByDepartment}
         canEditStageTitles={canEditStageTitles}
