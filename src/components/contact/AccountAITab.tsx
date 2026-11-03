@@ -25,6 +25,7 @@ import {
 import { SlideOverSubBar, type SubBarTab, type SubBarActionItem } from "@/components/ui/SlideOverSubBar";
 import { useSession } from "next-auth/react";
 import { useDialog } from "@/providers/DialogProvider";
+import { getReadableActionError } from "@/lib/contact/action-result";
 import { 
   getCachedAccountAnalysis, 
   getAccountBehaviorAnalysis, 
@@ -146,7 +147,7 @@ export function AccountAITab({
       setTaskInstruction(cfg.taskInstruction);
       setJsonSchema(cfg.jsonSchema);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load prompt configuration";
+      const msg = getReadableActionError(err, "Failed to load prompt configuration");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsLoadingPrompt(false);
@@ -175,7 +176,7 @@ export function AccountAITab({
         throw new Error(res.error || "Failed to analyze account");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error analyzing account";
+      const msg = getReadableActionError(err, "Error analyzing account");
       toast({ title: "Analysis Failed", description: msg, type: "error" });
     } finally {
       setIsAnalyzing(false);
@@ -201,21 +202,23 @@ export function AccountAITab({
     }
     setIsEditingProfile(false);
     onBusinessSummaryUpdated?.(editedSummary.trim());
-    toast({
-      title: "Profile Saved",
-      description: "Company business background updated and saved.",
-      type: "success",
-    });
 
     try {
       const res = await updateCompanyBusinessProfile(companyId, editedSummary);
       if (res.success && res.data) {
         mutateAnalysis({ success: true, data: res.data, isUpToDate: true }, false);
         onAnalysisUpdated?.(res.data);
+        toast({
+          title: "Profile Saved",
+          description: "Company business background updated and saved.",
+          type: "success",
+        });
+      } else {
+        throw new Error(res.error || "Failed to update profile");
       }
     } catch (err: unknown) {
       mutateAnalysis(prevRes, false);
-      const msg = err instanceof Error ? err.message : "Failed to update profile";
+      const msg = getReadableActionError(err, "Failed to update profile");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSavingProfile(false);
@@ -289,7 +292,7 @@ export function AccountAITab({
         throw new Error(res.error || "Failed to research company on web");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error researching company";
+      const msg = getReadableActionError(err, "Error researching company");
       toast({ title: "Research Failed", description: msg, type: "error" });
     } finally {
       setIsSearching(false);
@@ -329,10 +332,29 @@ export function AccountAITab({
   // Update a single field in web intelligence and save to database
   const updateWebIntelField = (field: keyof WebIntelligenceData, value: WebIntelligenceData[keyof WebIntelligenceData]) => {
     if (!webIntel) return;
+    const prevWebIntel = webIntelRes;
     const updated = { ...webIntel, [field]: value, isUserEdited: true };
     mutateWebIntel({ success: true, data: updated }, false);
     if (companyId) {
-      saveCompanyWebIntelligence(companyId, { [field]: value });
+      void saveCompanyWebIntelligence(companyId, { [field]: value })
+        .then((res) => {
+          if (!res.success) {
+            mutateWebIntel(prevWebIntel, false);
+            toast({
+              title: "Save Failed",
+              description: res.error || "Failed to save web intelligence",
+              type: "error",
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          mutateWebIntel(prevWebIntel, false);
+          toast({
+            title: "Save Failed",
+            description: getReadableActionError(err, "Failed to save web intelligence"),
+            type: "error",
+          });
+        });
     }
   };
 
@@ -362,18 +384,21 @@ export function AccountAITab({
   const handleSavePrompt = async () => {
     setIsSavingPrompt(true);
     try {
-      await saveAccountAIPromptConfig({
+      const res = await saveAccountAIPromptConfig({
         systemInstruction,
         taskInstruction,
         jsonSchema,
       });
+      if (!res.success) {
+        throw new Error(res.error || "Failed to save prompt configuration");
+      }
       toast({
         title: "Prompt Saved",
         description: "Account AI prompt configuration updated successfully.",
         type: "success",
       });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to save prompt configuration";
+      const msg = getReadableActionError(err, "Failed to save prompt configuration");
       toast({ title: "Save Failed", description: msg, type: "error" });
     } finally {
       setIsSavingPrompt(false);
@@ -394,9 +419,11 @@ export function AccountAITab({
           description: "Prompts have been reset to system defaults.",
           type: "success",
         });
+      } else {
+        throw new Error(res.error || "Failed to reset prompts");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to reset prompts";
+      const msg = getReadableActionError(err, "Failed to reset prompts");
       toast({ title: "Reset Failed", description: msg, type: "error" });
     } finally {
       setIsSavingPrompt(false);

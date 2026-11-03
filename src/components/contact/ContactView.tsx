@@ -13,11 +13,13 @@ import { useSidebar } from "@/components/layout/SidebarContext";
 import type { AccountCardDTO } from "@/lib/contact/account-card-dto";
 import { accountMatchesFilters } from "@/lib/contact/account-card-dto";
 import { getAccountFilterKey, getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
+import { useDialog } from "@/providers/DialogProvider";
 import {
   getCompaniesWithContacts,
   getCompanyCountries,
   getCompanyTypes,
-  updateCompanyStarRating,
+  updateCompanyStarRatingSafe,
   getAccountOverview,
   CompanyMasterItem,
   AccountOverviewResult,
@@ -58,6 +60,7 @@ export function ContactView({
   actorId = "default-actor",
 }: ContactViewProps) {
   const { setPageSearchConfig, setPageManageContent, setHasActiveFilters } = useSidebar();
+  const { toast } = useDialog();
 
   // State: Tab & Filters matching the profile layout
   const [activeTab, setActiveTab] = useState<"QUALIFIED" | "UNQUALIFIED">("QUALIFIED");
@@ -358,13 +361,15 @@ export function ContactView({
     searchQuery,
   ]);
 
-  // Derived effective selection: 0ms pure selection fallback without cascading effect renders
+  // Derived effective selection: keep open drawer pinned to selectedAccountId even if filter status/type changes
   const effectiveSelectedAccountId = useMemo(() => {
-    if (selectedAccountId && displayAccounts.some((c) => c.id === selectedAccountId)) {
-      return selectedAccountId;
+    if (selectedAccountId) {
+      if (isEditAccountOpen || displayAccounts.some((c) => c.id === selectedAccountId)) {
+        return selectedAccountId;
+      }
     }
     return displayAccounts[0]?.id || null;
-  }, [displayAccounts, selectedAccountId]);
+  }, [displayAccounts, isEditAccountOpen, selectedAccountId]);
 
   // Infinite Scroll: Load more accounts
   const handleLoadMore = useCallback(async () => {
@@ -440,8 +445,12 @@ export function ContactView({
   // Selected account for instant slide-over preview (0ms direct object passing)
   const selectedAccount = useMemo(() => {
     if (!effectiveSelectedAccountId) return null;
-    return accounts.find((c) => c.id === effectiveSelectedAccountId) || null;
-  }, [accounts, effectiveSelectedAccountId]);
+    return (
+      accounts.find((c) => c.id === effectiveSelectedAccountId) ||
+      knownAccounts.get(effectiveSelectedAccountId) ||
+      null
+    );
+  }, [accounts, knownAccounts, effectiveSelectedAccountId]);
 
   const initialOverviewForSelected = useMemo<AccountOverviewResult | null>(() => {
     if (!selectedAccount) return null;
@@ -504,6 +513,7 @@ export function ContactView({
         logs: [],
       })),
       deals: [],
+      maskedOpportunityCount: 0,
       topContributors: [],
       businessSummary: null,
       metrics: {
@@ -524,12 +534,30 @@ export function ContactView({
     };
   }, [selectedAccount]);
 
+  const refreshFacetMetadata = useCallback(() => {
+    void getCompanyTypes()
+      .then((list) => setAvailableTypes(list))
+      .catch(() => {});
+    void getCompanyCountries()
+      .then((list) => setAvailableCountries(list))
+      .catch(() => {});
+  }, []);
+
+  const registerOwnMutationId = useCallback((mutationId?: string) => {
+    if (!mutationId) return;
+    activeMutationsRef.current.add(mutationId);
+    setTimeout(() => {
+      activeMutationsRef.current.delete(mutationId);
+    }, 8000);
+  }, []);
+
   // Star Rating Mutation with optimistic paint & per-company sequence guard
   const handleRatingChange = useCallback(async (companyId: string, newRating: number) => {
     const currentSeq = (starSequenceRef.current.get(companyId) || 0) + 1;
     starSequenceRef.current.set(companyId, currentSeq);
 
-    const currentCard = accounts.find((c) => c.id === companyId);
+    const currentCard =
+      accounts.find((c) => c.id === companyId) || knownAccountsMapRef.current.get(companyId);
     const previousRating = currentCard?.starRating ?? 0;
 
     // 1. Optimistic UI update
@@ -541,21 +569,35 @@ export function ContactView({
     });
     const oldKnown = knownAccountsMapRef.current.get(companyId);
     if (oldKnown) {
-      knownAccountsMapRef.current.set(companyId, { ...oldKnown, starRating: newRating });
+      const nextCard = { ...oldKnown, starRating: newRating };
+      knownAccountsMapRef.current.set(companyId, nextCard);
+      setKnownAccounts((prev) => {
+        const next = new Map(prev);
+        next.set(companyId, nextCard);
+        return next;
+      });
     }
 
     const mutationId = `mut_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    activeMutationsRef.current.add(mutationId);
+    registerOwnMutationId(mutationId);
 
     try {
-      const res = await updateCompanyStarRating(companyId, newRating, mutationId);
+      const res = unwrapActionResult(
+        await updateCompanyStarRatingSafe(companyId, newRating, mutationId)
+      );
       if (res?.revision) {
         setAccounts((prev) =>
           prev.map((c) => (c.id === companyId ? { ...c, revision: res.revision } : c))
         );
         const curKnown = knownAccountsMapRef.current.get(companyId);
         if (curKnown) {
-          knownAccountsMapRef.current.set(companyId, { ...curKnown, revision: res.revision });
+          const nextCard = { ...curKnown, revision: res.revision };
+          knownAccountsMapRef.current.set(companyId, nextCard);
+          setKnownAccounts((prev) => {
+            const next = new Map(prev);
+            next.set(companyId, nextCard);
+            return next;
+          });
         }
       }
     } catch (err) {
@@ -569,49 +611,108 @@ export function ContactView({
         });
         const revKnown = knownAccountsMapRef.current.get(companyId);
         if (revKnown) {
-          knownAccountsMapRef.current.set(companyId, { ...revKnown, starRating: previousRating });
+          const revertedCard = { ...revKnown, starRating: previousRating };
+          knownAccountsMapRef.current.set(companyId, revertedCard);
+          setKnownAccounts((prev) => {
+            const next = new Map(prev);
+            next.set(companyId, revertedCard);
+            return next;
+          });
         }
       }
-    } finally {
-      setTimeout(() => {
-        activeMutationsRef.current.delete(mutationId);
-      }, 5000);
-    }
-  }, [accounts]);
-
-  // Edit Account Save: Optimistically update card
-  const handleAccountUpdated = useCallback((updatedCompany?: Partial<CompanyMasterItem>) => {
-    if (!updatedCompany || !effectiveSelectedAccountId) return;
-
-    setAccounts((prev) =>
-      prev.map((c) => {
-        if (c.id !== effectiveSelectedAccountId) return c;
-        return {
-          ...c,
-          ...updatedCompany,
-          displayName: updatedCompany.displayName !== undefined ? updatedCompany.displayName : c.displayName,
-          name: updatedCompany.name !== undefined ? updatedCompany.name : c.name,
-          country: updatedCompany.country !== undefined ? updatedCompany.country : c.country,
-          type: updatedCompany.type !== undefined ? updatedCompany.type : c.type,
-          status: updatedCompany.status !== undefined ? updatedCompany.status : c.status,
-          starRating: updatedCompany.starRating !== undefined ? updatedCompany.starRating : c.starRating,
-        };
-      })
-    );
-    const existing = knownAccountsMapRef.current.get(effectiveSelectedAccountId);
-    if (existing) {
-      knownAccountsMapRef.current.set(effectiveSelectedAccountId, {
-        ...existing,
-        ...updatedCompany,
-        displayName: updatedCompany.displayName !== undefined ? updatedCompany.displayName : existing.displayName,
-        name: updatedCompany.name !== undefined ? updatedCompany.name : existing.name,
-        country: updatedCompany.country !== undefined ? updatedCompany.country : existing.country,
-        type: updatedCompany.type !== undefined ? updatedCompany.type : existing.type,
-        status: updatedCompany.status !== undefined ? updatedCompany.status : existing.status,
-        starRating: updatedCompany.starRating !== undefined ? updatedCompany.starRating : existing.starRating,
+      toast({
+        title: "Error",
+        description: getReadableActionError(err, "Failed to update star rating"),
+        type: "error",
       });
     }
-  }, [effectiveSelectedAccountId]);
+  }, [accounts, registerOwnMutationId, toast]);
+
+  // Edit Account Save: Optimistically update card & counts
+  const handleAccountUpdated = useCallback(
+    (
+      updatedCompany?: Partial<CompanyMasterItem> & { revision?: string },
+      mutationId?: string
+    ) => {
+      registerOwnMutationId(mutationId);
+      if (!updatedCompany || !effectiveSelectedAccountId) return;
+
+      const existing =
+        knownAccountsMapRef.current.get(effectiveSelectedAccountId) ||
+        accounts.find((c) => c.id === effectiveSelectedAccountId);
+
+      const previousStatus = existing?.status;
+      const previousCountry = existing?.country;
+      const previousType = existing?.type;
+
+      setAccounts((prev) =>
+        prev.map((c) => {
+          if (c.id !== effectiveSelectedAccountId) return c;
+          return {
+            ...c,
+            ...updatedCompany,
+            displayName:
+              updatedCompany.displayName !== undefined ? updatedCompany.displayName : c.displayName,
+            name: updatedCompany.name !== undefined ? updatedCompany.name : c.name,
+            country: updatedCompany.country !== undefined ? updatedCompany.country : c.country,
+            type: updatedCompany.type !== undefined ? updatedCompany.type : c.type,
+            status: updatedCompany.status !== undefined ? updatedCompany.status : c.status,
+            starRating:
+              updatedCompany.starRating !== undefined ? updatedCompany.starRating : c.starRating,
+            revision: updatedCompany.revision || c.revision,
+          };
+        })
+      );
+
+      if (existing) {
+        const merged: AccountCardDTO = {
+          ...existing,
+          ...updatedCompany,
+          displayName:
+            updatedCompany.displayName !== undefined
+              ? updatedCompany.displayName
+              : existing.displayName,
+          name: updatedCompany.name !== undefined ? updatedCompany.name : existing.name,
+          country: updatedCompany.country !== undefined ? updatedCompany.country : existing.country,
+          type: updatedCompany.type !== undefined ? updatedCompany.type : existing.type,
+          status: updatedCompany.status !== undefined ? updatedCompany.status : existing.status,
+          starRating:
+            updatedCompany.starRating !== undefined
+              ? updatedCompany.starRating
+              : existing.starRating,
+          revision: updatedCompany.revision || existing.revision,
+        };
+        knownAccountsMapRef.current.set(effectiveSelectedAccountId, merged);
+        setKnownAccounts((prev) => {
+          const next = new Map(prev);
+          next.set(effectiveSelectedAccountId, merged);
+          return next;
+        });
+      }
+
+      if (updatedCompany.status && previousStatus && updatedCompany.status !== previousStatus) {
+        setStats((prev) => ({
+          ...prev,
+          qualifiedCount:
+            updatedCompany.status === "QUALIFIED"
+              ? prev.qualifiedCount + 1
+              : Math.max(0, prev.qualifiedCount - 1),
+          unqualifiedCount:
+            updatedCompany.status === "UNQUALIFIED"
+              ? prev.unqualifiedCount + 1
+              : Math.max(0, prev.unqualifiedCount - 1),
+        }));
+      }
+
+      if (
+        (updatedCompany.country !== undefined && updatedCompany.country !== previousCountry) ||
+        (updatedCompany.type !== undefined && updatedCompany.type !== previousType)
+      ) {
+        refreshFacetMetadata();
+      }
+    },
+    [accounts, effectiveSelectedAccountId, refreshFacetMetadata, registerOwnMutationId]
+  );
 
   // Escape key handler
   useEffect(() => {
@@ -630,17 +731,33 @@ export function ContactView({
         return;
       }
 
-      if (searchQuery || activeType !== "ALL" || activeCountry !== "ALL") {
+      if (
+        searchQuery ||
+        activeType !== "ALL" ||
+        activeCountry !== "ALL" ||
+        selectedTypes.length > 0 ||
+        selectedCountries.length > 0
+      ) {
         e.preventDefault();
         setSearchQuery("");
         setActiveType("ALL");
         setActiveCountry("ALL");
+        setSelectedTypes([]);
+        setSelectedCountries([]);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isEditAccountOpen, isCreateAccountOpen, searchQuery, activeType, activeCountry]);
+  }, [
+    isEditAccountOpen,
+    isCreateAccountOpen,
+    searchQuery,
+    activeType,
+    activeCountry,
+    selectedTypes,
+    selectedCountries,
+  ]);
 
   // Synchronize state with URL parameters (replaceState)
   useEffect(() => {
@@ -666,7 +783,7 @@ export function ContactView({
       revision?: string;
       status?: ContactStatus;
       starRating?: number;
-      company?: Partial<AccountCardDTO>;
+      company?: Partial<AccountCardDTO> & { id?: string; name?: string };
     };
 
     const handleAccountUpdate = (data?: AccountPusherEvent) => {
@@ -674,6 +791,56 @@ export function ContactView({
 
       // Ignore actor's own Pusher echo
       if (data.mutationId && activeMutationsRef.current.has(data.mutationId)) {
+        return;
+      }
+
+      if (data.action === "COMPANY_CREATED" && data.company) {
+        if (knownAccountsMapRef.current.has(data.companyId)) return;
+
+        const dto: AccountCardDTO = {
+          id: data.companyId,
+          displayName: data.company.displayName || data.company.name || "New Account",
+          name: data.company.name || data.company.displayName || "New Account",
+          status: data.company.status || "QUALIFIED",
+          type: data.company.type || "CUSTOMER",
+          country: data.company.country ?? null,
+          starRating: data.company.starRating ?? 0,
+          successRate: 0,
+          wonDealsCount: 0,
+          totalDealsCount: 0,
+          revision: data.revision || data.company.revision || new Date().toISOString(),
+        };
+
+        knownAccountsMapRef.current.set(dto.id, dto);
+        setKnownAccounts((prev) => {
+          const next = new Map(prev);
+          next.set(dto.id, dto);
+          return next;
+        });
+
+        setAccounts((prev) =>
+          prev.some((c) => c.id === dto.id) ? prev : [dto, ...prev]
+        );
+        setStats((prev) => ({
+          ...prev,
+          qualifiedCount:
+            dto.status === "QUALIFIED" ? prev.qualifiedCount + 1 : prev.qualifiedCount,
+          unqualifiedCount:
+            dto.status === "UNQUALIFIED" ? prev.unqualifiedCount + 1 : prev.unqualifiedCount,
+          totalCount: prev.totalCount + 1,
+        }));
+        if (
+          accountMatchesFilters(dto, {
+            status: activeTabRef.current,
+            type: activeTypeRef.current,
+            country: activeCountryRef.current,
+            types: selectedTypesRef.current,
+            countries: selectedCountriesRef.current,
+            search: debouncedSearchRef.current,
+          })
+        ) {
+          setTotalAccounts((prev) => prev + 1);
+        }
         return;
       }
 
@@ -690,6 +857,20 @@ export function ContactView({
           );
           return [...updated].sort((a, b) => (b.starRating || 0) - (a.starRating || 0));
         });
+        const existing = knownAccountsMapRef.current.get(data.companyId);
+        if (existing) {
+          const merged = {
+            ...existing,
+            starRating: data.starRating,
+            revision: data.revision || existing.revision,
+          };
+          knownAccountsMapRef.current.set(data.companyId, merged);
+          setKnownAccounts((prev) => {
+            const next = new Map(prev);
+            next.set(data.companyId, merged);
+            return next;
+          });
+        }
       } else if (data.action === "DETAILS_CHANGE" && data.company) {
         setAccounts((prev) =>
           prev.map((c) =>
@@ -702,17 +883,56 @@ export function ContactView({
               : c
           )
         );
+        const existing = knownAccountsMapRef.current.get(data.companyId);
+        if (existing) {
+          const merged = {
+            ...existing,
+            ...data.company,
+            revision: data.revision || existing.revision,
+          };
+          knownAccountsMapRef.current.set(data.companyId, merged);
+          setKnownAccounts((prev) => {
+            const next = new Map(prev);
+            next.set(data.companyId, merged);
+            return next;
+          });
+        }
       } else if (data.action === "STATUS_CHANGE" && data.status) {
+        const prevStatus = knownAccountsMapRef.current.get(data.companyId)?.status;
         setAccounts((prev) =>
-          prev.map((c) => (c.id === data.companyId ? { ...c, status: data.status! } : c))
+          prev.map((c) =>
+            c.id === data.companyId
+              ? { ...c, status: data.status!, revision: data.revision || c.revision }
+              : c
+          )
         );
-        setStats((prev) => ({
-          ...prev,
-          qualifiedCount:
-            data.status === "QUALIFIED" ? prev.qualifiedCount + 1 : Math.max(0, prev.qualifiedCount - 1),
-          unqualifiedCount:
-            data.status === "UNQUALIFIED" ? prev.unqualifiedCount + 1 : Math.max(0, prev.unqualifiedCount - 1),
-        }));
+        const existing = knownAccountsMapRef.current.get(data.companyId);
+        if (existing) {
+          const merged = {
+            ...existing,
+            status: data.status,
+            revision: data.revision || existing.revision,
+          };
+          knownAccountsMapRef.current.set(data.companyId, merged);
+          setKnownAccounts((prev) => {
+            const next = new Map(prev);
+            next.set(data.companyId, merged);
+            return next;
+          });
+        }
+        if (!prevStatus || prevStatus !== data.status) {
+          setStats((prev) => ({
+            ...prev,
+            qualifiedCount:
+              data.status === "QUALIFIED"
+                ? prev.qualifiedCount + 1
+                : Math.max(0, prev.qualifiedCount - 1),
+            unqualifiedCount:
+              data.status === "UNQUALIFIED"
+                ? prev.unqualifiedCount + 1
+                : Math.max(0, prev.unqualifiedCount - 1),
+          }));
+        }
       }
     };
 
@@ -732,13 +952,25 @@ export function ContactView({
           status: activeTabRef.current,
           type: activeTypeRef.current,
           country: activeCountryRef.current === "ALL" ? "" : activeCountryRef.current,
+          types: selectedTypesRef.current,
+          countries: selectedCountriesRef.current,
           search: debouncedSearchRef.current,
           page: 1,
           pageSize: Math.max(20, pageRef.current * 20),
         });
-        setAccounts(fresh.companies as AccountCardDTO[]);
+        const items = fresh.companies as AccountCardDTO[];
+        setAccounts(items);
+        setHasMore(fresh.hasMore);
+        hasMoreRef.current = fresh.hasMore;
         setStats(fresh.stats);
         setTotalAccounts(fresh.total);
+        setKnownAccounts((prev) => {
+          const next = new Map(prev);
+          for (const item of items) {
+            next.set(item.id, item);
+          }
+          return next;
+        });
       } catch (err) {
         console.warn("[ContactView] Recovery fetch failed:", err);
       }
@@ -956,31 +1188,52 @@ export function ContactView({
         <CreateAccountPanel
           isOpen={isCreateAccountOpen}
           onClose={() => setIsCreateAccountOpen(false)}
-          onAccountCreated={(newCompany) => {
+          onAccountCreated={(newCompany, mutationId) => {
+            registerOwnMutationId(mutationId);
             setIsCreateAccountOpen(false);
             if (newCompany) {
               const dto: AccountCardDTO = {
                 id: newCompany.id,
                 displayName: newCompany.displayName || newCompany.name,
                 name: newCompany.name,
-                status: newCompany.status || activeTab,
-                type: newCompany.type || (activeType !== "ALL" ? activeType : "CUSTOMER"),
-                country: newCompany.country || (activeCountry !== "ALL" ? activeCountry : null),
+                status: newCompany.status || "QUALIFIED",
+                type: newCompany.type || "CUSTOMER",
+                country: newCompany.country || null,
                 starRating: newCompany.starRating || 0,
                 successRate: 0,
                 wonDealsCount: 0,
                 totalDealsCount: 0,
-                revision: new Date().toISOString(),
+                revision: newCompany.revision || new Date().toISOString(),
               };
               knownAccountsMapRef.current.set(dto.id, dto);
-              setAccounts((prev) => [dto, ...prev]);
+              setKnownAccounts((prev) => {
+                const next = new Map(prev);
+                next.set(dto.id, dto);
+                return next;
+              });
+              setAccounts((prev) =>
+                prev.some((c) => c.id === dto.id) ? prev : [dto, ...prev]
+              );
+              setSelectedAccountId(dto.id);
               setStats((prev) => ({
                 ...prev,
                 qualifiedCount: dto.status === "QUALIFIED" ? prev.qualifiedCount + 1 : prev.qualifiedCount,
                 unqualifiedCount: dto.status === "UNQUALIFIED" ? prev.unqualifiedCount + 1 : prev.unqualifiedCount,
                 totalCount: prev.totalCount + 1,
               }));
-              setTotalAccounts((prev) => prev + 1);
+              if (
+                accountMatchesFilters(dto, {
+                  status: activeTab,
+                  type: activeType,
+                  country: activeCountry,
+                  types: selectedTypes,
+                  countries: selectedCountries,
+                  search: debouncedSearch,
+                })
+              ) {
+                setTotalAccounts((prev) => prev + 1);
+              }
+              refreshFacetMetadata();
             }
           }}
         />

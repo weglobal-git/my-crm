@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import useSWR from "swr";
+import useSWR, { mutate as globalMutate } from "swr";
 import { Loader2, Plus, Pencil, Trash2, Check, X, Target } from "lucide-react";
 import {
   getCompanySaleTargets,
-  upsertCompanySaleTarget,
-  deleteCompanySaleTarget,
+  upsertCompanySaleTargetSafe,
+  deleteCompanySaleTargetSafe,
   type CompanySaleTargetDTO,
 } from "@/lib/actions/sales-target";
+import { getCompanySystemLogsKey } from "@/lib/contact/account-cache-keys";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { getBangkokYear, SUPPORTED_SALES_CURRENCIES } from "@/lib/dashboard/sales-overview";
 import { useDialog } from "@/providers/DialogProvider";
 
@@ -57,7 +59,7 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
 
   useEffect(() => {
     if (swrError) {
-      setError(swrError instanceof Error ? swrError.message : "Failed to load sale targets");
+      setError(getReadableActionError(swrError, "Failed to load sale targets"));
       setIsLoading(false);
     }
   }, [swrError]);
@@ -99,12 +101,14 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
 
     setIsSubmittingNew(true);
     try {
-      const saved = await upsertCompanySaleTarget({
-        companyId,
-        year: newYear,
-        amount: cleanAmount,
-        currency: newCurrency,
-      });
+      const saved = unwrapActionResult(
+        await upsertCompanySaleTargetSafe({
+          companyId,
+          year: newYear,
+          amount: cleanAmount,
+          currency: newCurrency,
+        })
+      );
 
       setTargets((prev) => {
         const filtered = prev.filter((t) => !(t.year === saved.year && t.currency === saved.currency));
@@ -112,13 +116,14 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
         void mutateTargets(next, false);
         return next;
       });
+      void globalMutate(getCompanySystemLogsKey(companyId));
       setIsAdding(false);
       setNewAmount("");
       toast({ title: "Sale Target saved", type: "success" });
     } catch (err) {
       toast({
         title: "Failed to save sale target",
-        description: err instanceof Error ? err.message : "Error saving target",
+        description: getReadableActionError(err, "Error saving target"),
         type: "error",
       });
     } finally {
@@ -153,17 +158,20 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
     setPendingKeys((prev) => new Set(prev).add(key));
 
     try {
-      const saved = await upsertCompanySaleTarget({
-        companyId,
-        year: target.year,
-        amount: cleanAmount,
-        currency: target.currency,
-      });
+      const saved = unwrapActionResult(
+        await upsertCompanySaleTargetSafe({
+          companyId,
+          year: target.year,
+          amount: cleanAmount,
+          currency: target.currency,
+        })
+      );
       setTargets((prev) => {
         const next = prev.map((t) => (t.year === target.year && t.currency === target.currency ? saved : t));
         void mutateTargets(next, false);
         return next;
       });
+      void globalMutate(getCompanySystemLogsKey(companyId));
       toast({ title: "Sale Target updated", type: "success" });
     } catch (err) {
       // Rollback
@@ -174,7 +182,7 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
       });
       toast({
         title: "Failed to update sale target",
-        description: err instanceof Error ? err.message : "Error updating target",
+        description: getReadableActionError(err, "Error updating target"),
         type: "error",
       });
     } finally {
@@ -207,11 +215,14 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
     setPendingKeys((prev) => new Set(prev).add(key));
 
     try {
-      await deleteCompanySaleTarget({
-        companyId,
-        year: target.year,
-        currency: target.currency,
-      });
+      unwrapActionResult(
+        await deleteCompanySaleTargetSafe({
+          companyId,
+          year: target.year,
+          currency: target.currency,
+        })
+      );
+      void globalMutate(getCompanySystemLogsKey(companyId));
       toast({ title: "Sale Target deleted", type: "success" });
     } catch (err) {
       // Rollback
@@ -219,7 +230,7 @@ export function SaleTargetTab({ companyId }: SaleTargetTabProps) {
       void mutateTargets(previousTargets, false);
       toast({
         title: "Failed to delete sale target",
-        description: err instanceof Error ? err.message : "Error deleting target",
+        description: getReadableActionError(err, "Error deleting target"),
         type: "error",
       });
     } finally {

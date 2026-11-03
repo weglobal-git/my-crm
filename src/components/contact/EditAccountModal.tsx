@@ -16,13 +16,14 @@ import {
 } from "lucide-react";
 import { 
   getAccountOverview, 
-  updateCompanyDetails, 
-  createCompanyAddress, 
-  updateCompanyAddress, 
-  deleteCompanyAddress, 
-  setDefaultCompanyAddress,
+  updateCompanyDetailsSafe, 
+  createCompanyAddressSafe, 
+  updateCompanyAddressSafe, 
+  deleteCompanyAddressSafe, 
+  setDefaultCompanyAddressSafe,
   CreateCompanyAddressInput
 } from "@/lib/actions/contact";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { useDialog } from "@/providers/DialogProvider";
 import { AddressTypeSelect } from "@/components/ui/AddressTypeSelect";
 
@@ -118,12 +119,14 @@ export function EditAccountModal({
 
     setIsSavingDetails(true);
     try {
-      await updateCompanyDetails(companyId, {
-        displayName: displayName.trim(),
-        name: name.trim(),
-        country: country.trim() || undefined,
-        notes: notes.trim() || undefined,
-      });
+      unwrapActionResult(
+        await updateCompanyDetailsSafe(companyId, {
+          displayName: displayName.trim(),
+          name: name.trim(),
+          country: country.trim() || undefined,
+          notes: notes.trim() || undefined,
+        })
+      );
       toast({
         title: "Account Updated",
         description: "Account details saved successfully.",
@@ -131,7 +134,7 @@ export function EditAccountModal({
       });
       onAccountUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to update account";
+      const msg = getReadableActionError(err, "Failed to update account");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSavingDetails(false);
@@ -176,10 +179,10 @@ export function EditAccountModal({
     setIsSavingAddress(true);
     try {
       if (editingAddressId) {
-        await updateCompanyAddress(editingAddressId, addrForm);
+        unwrapActionResult(await updateCompanyAddressSafe(editingAddressId, addrForm));
         toast({ title: "Address Updated", description: "Address saved successfully.", type: "success" });
       } else {
-        await createCompanyAddress(companyId, addrForm);
+        unwrapActionResult(await createCompanyAddressSafe(companyId, addrForm));
         toast({ title: "Address Created", description: "New address added to account.", type: "success" });
       }
       setIsAddressFormOpen(false);
@@ -187,7 +190,7 @@ export function EditAccountModal({
       await loadData();
       onAccountUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to save address";
+      const msg = getReadableActionError(err, "Failed to save address");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSavingAddress(false);
@@ -205,12 +208,12 @@ export function EditAccountModal({
     if (!ok) return;
 
     try {
-      await deleteCompanyAddress(addrId);
+      unwrapActionResult(await deleteCompanyAddressSafe(addrId));
       toast({ title: "Address Deleted", description: "Address was removed.", type: "success" });
       await loadData();
       onAccountUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete address";
+      const msg = getReadableActionError(err, "Failed to delete address");
       toast({ title: "Error", description: msg, type: "error" });
     }
   };
@@ -218,12 +221,12 @@ export function EditAccountModal({
   const handleSetDefault = async (addrId: string) => {
     if (!companyId) return;
     try {
-      await setDefaultCompanyAddress(companyId, addrId);
+      unwrapActionResult(await setDefaultCompanyAddressSafe(companyId, addrId));
       toast({ title: "Default Set", description: "Primary address updated.", type: "success" });
       await loadData();
       onAccountUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to set default address";
+      const msg = getReadableActionError(err, "Failed to set default address");
       toast({ title: "Error", description: msg, type: "error" });
     }
   };

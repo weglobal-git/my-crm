@@ -2,7 +2,7 @@
 
 import prisma from "@/lib/prisma";
 import { requirePipelineActor, notifyPipelineAudience, type PipelineActor } from "@/lib/pipeline-security";
-import { pusherServer } from "@/lib/pusher-server";
+import { safePusherTrigger } from "@/lib/pusher-server";
 import { dispatchDashboardInvalidation } from "@/lib/dashboard/dashboard-realtime-server";
 import { formatLtcDuration } from "@/lib/business-days";
 import { createOpportunity } from "@/lib/actions/opportunity";
@@ -254,11 +254,11 @@ export async function unqualifyAccountAction(
     resources: ['leaderboard', 'summary'],
     companyIds: [companyId],
   });
-  void pusherServer.trigger('private-contacts', 'account-updated', {
+  safePusherTrigger('private-contacts', 'account-updated', {
     action: 'STATUS_CHANGE',
     companyId,
     status: 'UNQUALIFIED',
-  }).catch((err) => console.error('[unqualifyAccountAction] Pusher trigger error:', err));
+  });
 
   return { success: true };
 }

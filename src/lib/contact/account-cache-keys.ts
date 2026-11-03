@@ -67,3 +67,13 @@ export function getAccountOverviewKey(companyId: string | null) {
   if (!companyId) return null;
   return ["account-overview", companyId] as const;
 }
+
+export function getCompanySystemLogsKey(companyId: string | null) {
+  if (!companyId) return null;
+  return ["company-system-logs", companyId] as const;
+}
+
+export function getContactSystemLogsKey(contactId: string | null) {
+  if (!contactId) return null;
+  return ["contact-system-logs", contactId] as const;
+}

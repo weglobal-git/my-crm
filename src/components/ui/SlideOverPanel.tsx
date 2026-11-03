@@ -21,6 +21,7 @@ export interface SlideOverPanelProps {
   tabs?: SlideOverTab[];
   activeTab?: string;
   onTabChange?: (tabKey: string) => void;
+  onTabHover?: (tabKey: string) => void;
   widthClass?: string; // default "w-[750px]"
   zIndexLevel?: "default" | "modal-overlay";
   children: React.ReactNode;
@@ -36,6 +37,7 @@ export function SlideOverPanel({
   tabs,
   activeTab,
   onTabChange,
+  onTabHover,
   widthClass = "w-[750px]",
   zIndexLevel = "default",
   children,
@@ -157,6 +159,8 @@ export function SlideOverPanel({
                     key={tab.key}
                     type="button"
                     onClick={() => onTabChange?.(tab.key)}
+                    onMouseEnter={() => onTabHover?.(tab.key)}
+                    onFocus={() => onTabHover?.(tab.key)}
                     title={tab.label}
                     className={`flex h-10 w-10 items-center justify-center rounded-full transition-all duration-200 cursor-pointer ${
                       isActive
@@ -234,6 +238,8 @@ export function SlideOverPanel({
                       onClick={() => {
                         onTabChange?.(tab.key);
                       }}
+                      onMouseEnter={() => onTabHover?.(tab.key)}
+                      onFocus={() => onTabHover?.(tab.key)}
                       title={tab.label}
                       className={`flex items-center justify-center h-9 w-9 rounded-full transition-all duration-200 cursor-pointer ${
                         isActive

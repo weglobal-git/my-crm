@@ -11,7 +11,8 @@ import {
   ShieldAlert, 
   Loader2
 } from "lucide-react";
-import { toggleContactStatus } from "@/lib/actions/contact";
+import { toggleContactStatusSafe } from "@/lib/actions/contact";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { useDialog } from "@/providers/DialogProvider";
 
 export interface ContactCardData {
@@ -57,7 +58,7 @@ export function ContactCard({
     e.stopPropagation();
     setIsToggling(true);
     try {
-      const next = await toggleContactStatus(contact.id);
+      const next = unwrapActionResult(await toggleContactStatusSafe(contact.id));
       toast({
         title: "Status Updated",
         description: `Marked as ${next}`,
@@ -65,7 +66,7 @@ export function ContactCard({
       });
       onStatusChanged();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to toggle status";
+      const msg = getReadableActionError(err, "Failed to toggle status");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsToggling(false);

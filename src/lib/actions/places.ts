@@ -1,5 +1,8 @@
 "use server";
 
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+
 export interface PlacePrediction {
   placeId: string;
   mainText: string;
@@ -31,6 +34,9 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 export async function searchPlacesAutocomplete(query: string): Promise<PlacePrediction[]> {
   const trimmed = query.trim();
   if (!trimmed || trimmed.length < 2) return [];
+
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) return [];
 
   const apiKey = process.env.GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
@@ -91,6 +97,9 @@ export async function searchPlacesAutocomplete(query: string): Promise<PlacePred
 export async function getPlaceDetails(placeId: string): Promise<ParsedAddressResult | null> {
   if (!placeId) return null;
 
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) return null;
+
   const apiKey = process.env.GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
     console.warn("[Places API] GOOGLE_MAPS_API_KEY is not configured.");
@@ -105,6 +114,7 @@ export async function getPlaceDetails(placeId: string): Promise<ParsedAddressRes
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
       },
+      next: { revalidate: 86400 },
     });
 
     if (!res.ok) {

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useDialog } from "@/providers/DialogProvider";
+import { getReadableActionError } from "@/lib/contact/action-result";
 import { 
   getCachedAccountAnalysis, 
   getAccountBehaviorAnalysis, 
@@ -153,7 +154,7 @@ export function AccountAISummaryPanel({
       setTaskInstruction(cfg.taskInstruction);
       setJsonSchema(cfg.jsonSchema);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load prompt configuration";
+      const msg = getReadableActionError(err, "Failed to load prompt configuration");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsLoadingPrompt(false);
@@ -181,7 +182,7 @@ export function AccountAISummaryPanel({
         throw new Error(res.error || "Failed to analyze account");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error analyzing account";
+      const msg = getReadableActionError(err, "Error analyzing account");
       toast({ title: "Analysis Failed", description: msg, type: "error" });
     } finally {
       setIsAnalyzing(false);
@@ -204,9 +205,11 @@ export function AccountAISummaryPanel({
           description: "Company business background updated and saved.",
           type: "success",
         });
+      } else {
+        throw new Error(res.error || "Failed to update profile");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to update profile";
+      const msg = getReadableActionError(err, "Failed to update profile");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSavingProfile(false);
@@ -266,18 +269,21 @@ export function AccountAISummaryPanel({
   const handleSavePrompt = async () => {
     setIsSavingPrompt(true);
     try {
-      await saveAccountAIPromptConfig({
+      const res = await saveAccountAIPromptConfig({
         systemInstruction,
         taskInstruction,
         jsonSchema,
       });
+      if (!res.success) {
+        throw new Error(res.error || "Failed to save prompt configuration");
+      }
       toast({
         title: "Prompt Saved",
         description: "Account AI prompt configuration updated successfully.",
         type: "success",
       });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to save prompt configuration";
+      const msg = getReadableActionError(err, "Failed to save prompt configuration");
       toast({ title: "Save Failed", description: msg, type: "error" });
     } finally {
       setIsSavingPrompt(false);
@@ -298,9 +304,11 @@ export function AccountAISummaryPanel({
           description: "Prompts have been reset to system defaults.",
           type: "success",
         });
+      } else {
+        throw new Error(res.error || "Failed to reset prompts");
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to reset prompts";
+      const msg = getReadableActionError(err, "Failed to reset prompts");
       toast({ title: "Reset Failed", description: msg, type: "error" });
     } finally {
       setIsSavingPrompt(false);

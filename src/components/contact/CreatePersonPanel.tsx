@@ -17,7 +17,8 @@ import { SlideOverPanel } from "@/components/ui/SlideOverPanel";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
 import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
 import { useDialog } from "@/providers/DialogProvider";
-import { createContact } from "@/lib/actions/contact";
+import { createContactSafe } from "@/lib/actions/contact";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { ContactStatus } from "@prisma/client";
 
 interface CreatePersonPanelProps {
@@ -162,19 +163,21 @@ export function CreatePersonPanel({
 
     setIsSubmitting(true);
     try {
-      const created = await createContact({
-        name: form.name.trim(),
-        role: form.role.trim() || undefined,
-        contactDepartment: form.contactDepartment.trim() || undefined,
-        departmentId: form.departmentId || undefined,
-        image: form.image || undefined,
-        emails: cleanEmails,
-        phones: cleanPhones,
-        email: cleanEmails[0] || undefined,
-        phone: cleanPhones[0] || undefined,
-        status: form.status,
-        companyId: prefillCompany.id,
-      });
+      const created = unwrapActionResult(
+        await createContactSafe({
+          name: form.name.trim(),
+          role: form.role.trim() || undefined,
+          contactDepartment: form.contactDepartment.trim() || undefined,
+          departmentId: form.departmentId || undefined,
+          image: form.image || undefined,
+          emails: cleanEmails,
+          phones: cleanPhones,
+          email: cleanEmails[0] || undefined,
+          phone: cleanPhones[0] || undefined,
+          status: form.status,
+          companyId: prefillCompany.id,
+        })
+      );
 
       toast({
         title: "Person Created",
@@ -200,7 +203,7 @@ export function CreatePersonPanel({
       onClose();
       onCreated(created.id);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to create person";
+      const msg = getReadableActionError(err, "Failed to create person");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSubmitting(false);

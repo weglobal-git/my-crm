@@ -3,7 +3,12 @@
 import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { useDialog } from "@/providers/DialogProvider";
-import { updateContact, deleteContact } from "@/lib/actions/contact";
+import { updateContactSafe, deleteContactSafe } from "@/lib/actions/contact";
+import {
+  getReadableActionError,
+  sanitizeContactContactabilityInput,
+  unwrapActionResult,
+} from "@/lib/contact/action-result";
 import { ContactType, ContactStatus } from "@prisma/client";
 import { 
   Building2, 
@@ -219,34 +224,41 @@ export function InformationTab({
       return toast({ title: "Validation", description: "Person name is required", type: "warning" });
     }
 
+    const isPersonMasked = Boolean(contact.isMasked);
     const cleanEmails = formData.emails.filter((e) => e.trim()).map((e) => e.trim());
-    const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
-    if (invalidEmail) {
-      return toast({
-        title: "Invalid Email Address",
-        description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
-        type: "warning",
-      });
+    if (!isPersonMasked) {
+      const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
+      if (invalidEmail) {
+        return toast({
+          title: "Invalid Email Address",
+          description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
+          type: "warning",
+        });
+      }
     }
 
     setIsSaving(true);
     try {
-      await updateContact(contact.id, {
-        name: formData.name.trim(),
-        role: formData.role.trim() || undefined,
-        contactDepartment: formData.contactDepartment.trim() || undefined,
-        departmentId: formData.departmentId || null,
-        image: formData.image || null,
-        isActive: formData.isActive,
-        email: (formData.emails[0] ? formData.emails[0].trim() : formData.email.trim()) || undefined,
-        phone: (formData.phones[0] ? formData.phones[0].trim() : formData.phone.trim()) || undefined,
-        emails: formData.emails.filter((e) => e.trim()).map((e) => e.trim()),
-        phones: formData.phones.filter((p) => p.trim()).map((p) => p.trim()),
-        isEmailVerified: formData.isEmailVerified,
-        isPhoneVerified: formData.isPhoneVerified,
-        type: formData.type as ContactType,
-        status: formData.status as ContactStatus,
-      });
+      const payload = sanitizeContactContactabilityInput(
+        {
+          name: formData.name.trim(),
+          role: formData.role.trim() || undefined,
+          contactDepartment: formData.contactDepartment.trim() || undefined,
+          departmentId: formData.departmentId || null,
+          image: formData.image || null,
+          isActive: formData.isActive,
+          email: (formData.emails[0] ? formData.emails[0].trim() : formData.email.trim()) || undefined,
+          phone: (formData.phones[0] ? formData.phones[0].trim() : formData.phone.trim()) || undefined,
+          emails: cleanEmails,
+          phones: formData.phones.filter((p) => p.trim()).map((p) => p.trim()),
+          isEmailVerified: formData.isEmailVerified,
+          isPhoneVerified: formData.isPhoneVerified,
+          type: formData.type as ContactType,
+          status: formData.status as ContactStatus,
+        },
+        isPersonMasked
+      );
+      unwrapActionResult(await updateContactSafe(contact.id, payload));
       toast({
         title: "Person Saved",
         description: "Person profile updated successfully.",
@@ -254,7 +266,7 @@ export function InformationTab({
       });
       onUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to update person";
+      const msg = getReadableActionError(err, "Failed to update person");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSaving(false);
@@ -274,7 +286,7 @@ export function InformationTab({
 
     setIsDeleting(true);
     try {
-      await deleteContact(contact.id);
+      unwrapActionResult(await deleteContactSafe(contact.id));
       toast({
         title: "Deleted",
         description: "Contact deleted successfully.",
@@ -282,7 +294,7 @@ export function InformationTab({
       });
       onDeleted();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete contact";
+      const msg = getReadableActionError(err, "Failed to delete contact");
       toast({ title: "Cannot Delete", description: msg, type: "error" });
     } finally {
       setIsDeleting(false);

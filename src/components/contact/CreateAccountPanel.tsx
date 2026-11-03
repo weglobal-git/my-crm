@@ -26,7 +26,8 @@ import { AddressAutocomplete } from "@/components/contact/AddressAutocomplete";
 import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
 import { useDialog } from "@/providers/DialogProvider";
-import { createCompany, CreateCompanyAddressInput } from "@/lib/actions/contact";
+import { createCompanySafe, CreateCompanyAddressInput } from "@/lib/actions/contact";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { ContactType, ContactStatus } from "@prisma/client";
 
 export interface CreatedCompanyPayload {
@@ -37,12 +38,13 @@ export interface CreatedCompanyPayload {
   type?: ContactType;
   country?: string | null;
   starRating?: number;
+  revision?: string;
 }
 
 interface CreateAccountPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  onAccountCreated: (account: CreatedCompanyPayload) => void;
+  onAccountCreated: (account: CreatedCompanyPayload, mutationId?: string) => void;
 }
 
 interface AddressDraftItem extends CreateCompanyAddressInput {
@@ -243,19 +245,25 @@ export function CreateAccountPanel({
       }));
 
     setIsSubmitting(true);
+    const mutationId = `create_acc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     try {
-      const created = await createCompany({
-        displayName: displayName.trim(),
-        name: name.trim(),
-        phone: validPhones[0] || undefined,
-        email: validEmails[0] || undefined,
-        phones: validPhones.length > 0 ? validPhones : undefined,
-        emails: validEmails.length > 0 ? validEmails : undefined,
-        type: accountType,
-        country: country.trim() || "Thailand",
-        notes: notes.trim() || undefined,
-        addresses: validAddresses.length > 0 ? validAddresses : undefined,
-      });
+      const created = unwrapActionResult(
+        await createCompanySafe(
+          {
+            displayName: displayName.trim(),
+            name: name.trim(),
+            phone: validPhones[0] || undefined,
+            email: validEmails[0] || undefined,
+            phones: validPhones.length > 0 ? validPhones : undefined,
+            emails: validEmails.length > 0 ? validEmails : undefined,
+            type: accountType,
+            country: country.trim() || "Thailand",
+            notes: notes.trim() || undefined,
+            addresses: validAddresses.length > 0 ? validAddresses : undefined,
+          },
+          mutationId
+        )
+      );
 
       toast({
         title: "Account Created",
@@ -265,9 +273,9 @@ export function CreateAccountPanel({
 
       resetForm();
       onClose();
-      onAccountCreated(created);
+      onAccountCreated(created, mutationId);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to create account";
+      const msg = getReadableActionError(err, "Failed to create account");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSubmitting(false);

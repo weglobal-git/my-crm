@@ -21,7 +21,8 @@ import {
   Folder, 
   Sparkles, 
   ExternalLink,
-  Target 
+  Target,
+  ShieldAlert
 } from "lucide-react";
 import { SlideOverPanel, SlideOverTab } from "@/components/ui/SlideOverPanel";
 import { SlideOverSubBar, SubBarTab, SubBarActionItem } from "@/components/ui/SlideOverSubBar";
@@ -32,22 +33,33 @@ import { AddressAutocomplete } from "@/components/contact/AddressAutocomplete";
 import type { ParsedAddressResult } from "@/lib/actions/places";
 import { PhoneInputWithCountry } from "@/components/ui/PhoneInputWithCountry";
 import { EmailInput, isValidEmail } from "@/components/ui/EmailInput";
-import useSWR, { preload } from "swr";
-import { getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
+import useSWR, { preload, mutate as globalMutate } from "swr";
+import {
+  getAccountOverviewKey,
+  getCompanySystemLogsKey,
+  getContactSystemLogsKey,
+} from "@/lib/contact/account-cache-keys";
+import {
+  getReadableActionError,
+  sanitizeContactContactabilityInput,
+  unwrapActionResult,
+} from "@/lib/contact/action-result";
 import { 
   getAccountOverview, 
-  updateCompanyDetails, 
-  createCompanyAddress, 
-  updateCompanyAddress, 
-  deleteCompanyAddress, 
-  setDefaultCompanyAddress, 
-  createContact, 
-  updateContact, 
-  deleteContact, 
+  saveCompanyAccount,
+  deleteCompanyAddressSafe, 
+  setDefaultCompanyAddressSafe, 
+  createContactSafe, 
+  updateContactSafe, 
+  deleteContactSafe, 
+  getCompanySystemLogs,
+  getContactSystemLogs,
   AccountOverviewResult,
   CompanyMasterItem,
+  OverviewCompanyLog,
+  OverviewContactLog,
   getAccountSharedMedia,
-  toggleCompanyStatus
+  toggleCompanyStatusSafe
 } from "@/lib/actions/contact";
 import { getCachedAccountAnalysis, getCachedWebIntelligence } from "@/lib/actions/account-ai";
 import { getCompanySaleTargets } from "@/lib/actions/sales-target";
@@ -78,7 +90,10 @@ interface EditAccountPanelProps {
   initialOverview?: AccountOverviewResult | null;
   isOpen: boolean;
   onClose: () => void;
-  onAccountUpdated: (updatedCompany?: Partial<CompanyMasterItem>) => void;
+  onAccountUpdated: (
+    updatedCompany?: Partial<CompanyMasterItem> & { revision?: string },
+    mutationId?: string
+  ) => void;
   status?: ContactStatus;
   onToggleStatus?: () => void;
   initialTab?: "account" | "contact" | "projects" | "sale_target" | "email" | "ai_analysis" | "sharedMedia" | string;
@@ -95,6 +110,69 @@ const formatDateTime = (date: Date | string) => {
     minute: "2-digit",
   }).format(new Date(date));
 };
+
+function PersonSystemLogList({ contactId }: { contactId: string }) {
+  const { data: logs, isLoading } = useSWR<OverviewContactLog[]>(
+    getContactSystemLogsKey(contactId),
+    () => getContactSystemLogs(contactId),
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 10_000,
+    }
+  );
+
+  if (isLoading && !logs) {
+    return (
+      <div className="p-6 flex items-center justify-center bg-[#252728] rounded-xl">
+        <Loader2 className="w-5 h-5 text-[#C7F33C] animate-spin" />
+      </div>
+    );
+  }
+
+  if (!logs || logs.length === 0) {
+    return (
+      <div className="p-6 text-center bg-[#252728] rounded-xl text-slate-400 text-xs">
+        No system logs recorded for this person.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2.5 max-h-[350px] overflow-y-auto hide-scrollbar">
+      {logs.map((log) => (
+        <div
+          key={log.id}
+          className="flex gap-3 bg-[#252728] p-3 rounded-xl border border-[#4E4F50]/40"
+        >
+          <div className="w-7 h-7 rounded-full bg-[#3A3B3C] shrink-0 overflow-hidden mt-0.5 flex items-center justify-center">
+            {log.user?.image ? (
+              <img
+                src={log.user.image}
+                alt="Avatar"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span className="text-xs font-bold text-[#C7F33C]">
+                {(log.user?.name || "System").slice(0, 2).toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col flex-1 justify-center min-w-0">
+            <span className="text-xs text-slate-400 mb-0.5 font-medium">
+              <strong className="text-slate-200 font-semibold">
+                {log.user?.name || "System"}
+              </strong>{" "}
+              • {formatDateTime(log.createdAt)}
+            </span>
+            <p className="text-xs text-slate-300 font-medium italic whitespace-pre-wrap">
+              {log.summary}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const buildPersonForms = (contacts?: AccountOverviewResult['contacts']) => {
   const forms: Record<string, {
@@ -188,14 +266,22 @@ export function EditAccountPanel({
     if (onToggleStatus) {
       onToggleStatus();
     } else {
+      const mutationId = `status_acc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
       try {
-        await toggleCompanyStatus(companyId, nextStatus);
-        onAccountUpdated?.({ status: nextStatus });
+        const res = unwrapActionResult(
+          await toggleCompanyStatusSafe(companyId, nextStatus, mutationId)
+        );
+        onAccountUpdated?.({ status: nextStatus, revision: res.revision }, mutationId);
         setOverview((prev) =>
           prev ? { ...prev, company: { ...prev.company, status: nextStatus } } : prev
         );
+        void globalMutate(getCompanySystemLogsKey(companyId));
       } catch (err) {
-        console.error("Failed to toggle status:", err);
+        toast({
+          title: "Error",
+          description: getReadableActionError(err, "Failed to update account status"),
+          type: "error",
+        });
       }
     }
   };
@@ -266,6 +352,19 @@ export function EditAccountPanel({
   const [accountSubTab, setAccountSubTab] = useState<"details" | "logs">("details");
   const [accountLogSearch, setAccountLogSearch] = useState("");
   const [isSearchingAccountLogs, setIsSearchingAccountLogs] = useState(false);
+
+  const companyLogsKey =
+    isOpen && companyId && safeActiveTab === "account" && accountSubTab === "logs"
+      ? getCompanySystemLogsKey(companyId)
+      : null;
+  const { data: companyLogsData, isLoading: isLoadingCompanyLogs } = useSWR<OverviewCompanyLog[]>(
+    companyLogsKey,
+    () => getCompanySystemLogs(companyId!),
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 10_000,
+    }
+  );
 
   // Search in Contacts / Person Tab
   const [isSearchingPersons, setIsSearchingPersons] = useState(false);
@@ -392,18 +491,34 @@ export function EditAccountPanel({
     if (swrError) {
       const timer = setTimeout(() => {
         setIsLoading(false);
-        const msg = swrError instanceof Error ? swrError.message : "Failed to load account details";
+        const msg = getReadableActionError(swrError, "Failed to load account details");
         toast({ title: "Error", description: msg, type: "error" });
       }, 0);
       return () => clearTimeout(timer);
     }
   }, [swrError, toast]);
 
+  // Reset transient per-company drafts when switching between different accounts
+  const prevCompanyIdRef = useRef<string | null>(companyId);
+  useEffect(() => {
+    if (prevCompanyIdRef.current !== companyId) {
+      prevCompanyIdRef.current = companyId;
+      const timer = setTimeout(() => {
+        setDraftAddress(null);
+        setAccountSubTab("details");
+        setAccountLogSearch("");
+        setPersonSubTabs({});
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [companyId]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!isOpen) {
         setIsAddingPerson(false);
         setExpandedPersonIds(new Set());
+        setDraftAddress(null);
         return;
       }
 
@@ -414,7 +529,39 @@ export function EditAccountPanel({
     return () => clearTimeout(timer);
   }, [isOpen, selectedContactId]);
 
-  // Idle Background Preloading: warms SWR cache for secondary tabs (0ms instant tab switch)
+  // Intent-based data & module preloading on tab hover/focus (zero eager DB storm on drawer open)
+  const handleTabIntent = useCallback(
+    (tabKey: string) => {
+      if (!companyId || !tabs.some((t) => t.key === tabKey)) return;
+
+      if (tabKey === "projects") {
+        void import("./ProjectsTab").catch(() => {});
+      } else if (tabKey === "email") {
+        void import("./EmailTab").catch(() => {});
+      } else if (tabKey === "sale_target") {
+        void import("./SaleTargetTab").catch(() => {});
+        void preload(["company-sale-targets", companyId], () =>
+          getCompanySaleTargets(companyId)
+        ).catch(() => {});
+      } else if (tabKey === "ai_analysis") {
+        void import("./AccountAITab").catch(() => {});
+        void preload(["account-ai-cached", companyId], () =>
+          getCachedAccountAnalysis(companyId)
+        ).catch(() => {});
+        void preload(["account-web-intel", companyId], () =>
+          getCachedWebIntelligence(companyId)
+        ).catch(() => {});
+      } else if (tabKey === "sharedMedia") {
+        void import("@/components/pipeline/SharedMediaTab").catch(() => {});
+        void preload(["account-shared-media", companyId], () =>
+          getAccountSharedMedia(companyId)
+        ).catch(() => {});
+      }
+    },
+    [companyId, tabs]
+  );
+
+  // Idle JS chunk warmup only (no background database queries until tab hover/click)
   useEffect(() => {
     if (!isOpen || !companyId) return;
 
@@ -422,29 +569,20 @@ export function EditAccountPanel({
     let idleId: number | null = null;
     let cancelled = false;
 
-    const primeSecondaryData = () => {
+    const warmPermittedChunks = () => {
       if (cancelled) return;
-      // 0. Pre-download JS chunks for secondary tabs into module cache
-      void import("./ProjectsTab").catch(() => {});
-      void import("./EmailTab").catch(() => {});
-      void import("./SaleTargetTab").catch(() => {});
-      void import("./AccountAITab").catch(() => {});
-      void import("@/components/pipeline/SharedMediaTab").catch(() => {});
-
-      // 1. Preload Sale Targets
-      void preload(["company-sale-targets", companyId], () => getCompanySaleTargets(companyId)).catch(() => {});
-      // 2. Preload Account AI
-      void preload(["account-ai-cached", companyId], () => getCachedAccountAnalysis(companyId)).catch(() => {});
-      void preload(["account-web-intel", companyId], () => getCachedWebIntelligence(companyId)).catch(() => {});
-      // 3. Preload Shared Media
-      void preload(["account-shared-media", companyId], () => getAccountSharedMedia(companyId)).catch(() => {});
+      if (tabs.some((t) => t.key === "projects")) void import("./ProjectsTab").catch(() => {});
+      if (tabs.some((t) => t.key === "email")) void import("./EmailTab").catch(() => {});
+      if (tabs.some((t) => t.key === "sale_target")) void import("./SaleTargetTab").catch(() => {});
+      if (tabs.some((t) => t.key === "ai_analysis")) void import("./AccountAITab").catch(() => {});
+      if (tabs.some((t) => t.key === "sharedMedia")) void import("@/components/pipeline/SharedMediaTab").catch(() => {});
     };
 
     const hasIdle = typeof window !== "undefined" && "requestIdleCallback" in window;
     if (hasIdle) {
-      idleId = (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(primeSecondaryData, { timeout: 1200 });
+      idleId = (window as unknown as { requestIdleCallback: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback(warmPermittedChunks, { timeout: 1500 });
     } else {
-      timer = setTimeout(primeSecondaryData, 250);
+      timer = setTimeout(warmPermittedChunks, 400);
     }
 
     return () => {
@@ -454,7 +592,7 @@ export function EditAccountPanel({
       }
       if (timer) clearTimeout(timer);
     };
-  }, [isOpen, companyId]);
+  }, [isOpen, companyId, tabs]);
 
   // Address expand/collapse
   const toggleAddressExpand = (id: string) => {
@@ -530,93 +668,84 @@ export function EditAccountPanel({
     }
 
     setIsSavingDetails(true);
+    const mutationId = `save_acc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     try {
       const originalMap = new Map((overview?.addresses || []).map((a) => [a.id, a]));
       const dirtyAddresses = addresses.filter((addr) => !isAddressEqual(addr, originalMap.get(addr.id)));
 
-      const updatedAddressesMap = new Map<string, CompanyAddress>();
-      let createdDraftAddr: CompanyAddress | null = null;
+      const nextIdx = addresses.length + 1;
+      const newAddressInput =
+        draftAddress && draftAddress.addressLine1?.trim()
+          ? {
+              title: draftAddress.title || `Address #${nextIdx}`,
+              type: draftAddress.type || (nextIdx === 1 ? "HEADQUARTERS" : "BRANCH"),
+              taxId: draftAddress.taxId?.trim() || undefined,
+              branchNumber: draftAddress.branchNumber?.trim() || undefined,
+              addressLine1: draftAddress.addressLine1.trim(),
+              addressLine2: draftAddress.addressLine2?.trim() || undefined,
+              subdistrict: draftAddress.subdistrict?.trim() || undefined,
+              district: draftAddress.district?.trim() || undefined,
+              province: draftAddress.province?.trim() || undefined,
+              postalCode: draftAddress.postalCode?.trim() || undefined,
+              country: draftAddress.country || country || "Thailand",
+              googleMapsUrl: draftAddress.googleMapsUrl?.trim() || undefined,
+              isDefault: addresses.length === 0 || Boolean(draftAddress.isDefault),
+            }
+          : null;
 
-      const savePromises: Promise<unknown>[] = [
-        updateCompanyDetails(companyId, {
-          displayName: displayName.trim(),
-          name: name.trim(),
-          phone: validPhones[0] || null,
-          email: validEmails[0] || null,
-          phones: validPhones,
-          emails: validEmails,
-          country: country.trim() || undefined,
-          type: accountType,
-          notes: notes.trim() || undefined,
-        }),
-      ];
+      // Single atomic Server Action & single DB transaction (eliminates N+1 parallel action storm & P2028/#441)
+      const saved = unwrapActionResult(
+        await saveCompanyAccount(
+          companyId,
+          {
+            details: {
+              displayName: displayName.trim(),
+              name: name.trim(),
+              phone: validPhones[0] || null,
+              email: validEmails[0] || null,
+              phones: validPhones,
+              emails: validEmails,
+              country: country.trim(),
+              type: accountType,
+              notes: notes.trim(),
+            },
+            updatedAddresses: dirtyAddresses.map((addr) => ({
+              id: addr.id,
+              title: addr.title || "Address",
+              type: addr.type,
+              taxId: addr.taxId ?? "",
+              branchNumber: addr.branchNumber ?? "",
+              addressLine1: addr.addressLine1.trim(),
+              addressLine2: addr.addressLine2?.trim() || undefined,
+              subdistrict: addr.subdistrict || undefined,
+              district: addr.district || undefined,
+              province: addr.province || undefined,
+              postalCode: addr.postalCode || undefined,
+              country: addr.country || "Thailand",
+              googleMapsUrl: addr.googleMapsUrl ?? "",
+            })),
+            newAddress: newAddressInput,
+          },
+          mutationId
+        )
+      );
 
-      for (const addr of dirtyAddresses) {
-        savePromises.push(
-          updateCompanyAddress(addr.id, {
-            title: addr.title || "Address",
-            type: addr.type,
-            taxId: addr.taxId || undefined,
-            branchNumber: addr.branchNumber || undefined,
-            addressLine1: addr.addressLine1.trim(),
-            addressLine2: addr.addressLine2?.trim() || undefined,
-            subdistrict: addr.subdistrict || undefined,
-            district: addr.district || undefined,
-            province: addr.province || undefined,
-            postalCode: addr.postalCode || undefined,
-            country: addr.country || "Thailand",
-            googleMapsUrl: addr.googleMapsUrl || undefined,
-          }).then((res) => {
-            updatedAddressesMap.set(addr.id, res);
-          })
-        );
-      }
-
-      if (draftAddress && draftAddress.addressLine1?.trim()) {
-        const nextIdx = addresses.length + 1;
-        const shouldBeDefault = addresses.length === 0 || Boolean(draftAddress.isDefault);
-        savePromises.push(
-          createCompanyAddress(companyId, {
-            title: draftAddress.title || `Address #${nextIdx}`,
-            type: draftAddress.type || (nextIdx === 1 ? "HEADQUARTERS" : "BRANCH"),
-            taxId: draftAddress.taxId?.trim() || undefined,
-            branchNumber: draftAddress.branchNumber?.trim() || undefined,
-            addressLine1: draftAddress.addressLine1.trim(),
-            addressLine2: draftAddress.addressLine2?.trim() || undefined,
-            subdistrict: draftAddress.subdistrict?.trim() || undefined,
-            district: draftAddress.district?.trim() || undefined,
-            province: draftAddress.province?.trim() || undefined,
-            postalCode: draftAddress.postalCode?.trim() || undefined,
-            country: draftAddress.country || country || "Thailand",
-            googleMapsUrl: draftAddress.googleMapsUrl?.trim() || undefined,
-            isDefault: shouldBeDefault,
-          }).then((res) => {
-            createdDraftAddr = res;
-          })
-        );
-      }
-
-      await Promise.all(savePromises);
-
-      let nextAddresses = addresses.map((a) => updatedAddressesMap.get(a.id) || a);
-      if (createdDraftAddr) {
-        nextAddresses = [...nextAddresses, createdDraftAddr];
-        setDraftAddress(null);
-      } else if (draftAddress && !hasDraftContent) {
+      const nextAddresses = saved.addresses;
+      if (newAddressInput || (draftAddress && !hasDraftContent)) {
         setDraftAddress(null);
       }
       setAddresses(nextAddresses);
 
       const nextCompany = {
-        name: name.trim(),
-        displayName: displayName.trim(),
-        phone: validPhones[0] || null,
-        email: validEmails[0] || null,
-        phones: validPhones,
-        emails: validEmails,
-        country: country.trim() || null,
-        type: accountType,
-        notes: notes.trim() || null,
+        name: saved.company.name,
+        displayName: saved.company.displayName,
+        phone: saved.company.phone,
+        email: saved.company.email,
+        phones: saved.company.phones,
+        emails: saved.company.emails,
+        country: saved.company.country,
+        type: saved.company.type,
+        notes: saved.company.notes,
       };
 
       setOverview((prev) => prev ? {
@@ -637,23 +766,29 @@ export function EditAccountPanel({
         addresses: nextAddresses,
       } : prev, false);
 
+      void globalMutate(getCompanySystemLogsKey(companyId));
+
       toast({
         title: "Account Saved",
         description: "Account details and address information saved successfully.",
         type: "success",
       });
 
-      onAccountUpdated({
-        name: name.trim(),
-        displayName: displayName.trim(),
-        country: country.trim() || null,
-        type: accountType,
-        email: validEmails[0] || null,
-        emails: validEmails,
-        phones: validPhones,
-      });
+      onAccountUpdated(
+        {
+          name: saved.company.name,
+          displayName: saved.company.displayName,
+          country: saved.company.country,
+          type: saved.company.type,
+          email: saved.company.email,
+          emails: saved.company.emails,
+          phones: saved.company.phones,
+          revision: saved.revision,
+        },
+        mutationId
+      );
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to update account";
+      const msg = getReadableActionError(err, "Failed to update account");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSavingDetails(false);
@@ -696,18 +831,24 @@ export function EditAccountPanel({
     if (!ok) return;
 
     const previous = addresses;
+    const nextList = addresses.filter((a) => a.id !== addrId);
 
     // 1. Instant optimistic delete (<5ms)
-    setAddresses((prev) => prev.filter((a) => a.id !== addrId));
-    toast({ title: "Address Deleted", description: "Address was removed.", type: "success" });
+    setAddresses(nextList);
 
-    // 2. Fire server action in background
+    // 2. Fire server action and confirm
     try {
-      await deleteCompanyAddress(addrId);
+      unwrapActionResult(await deleteCompanyAddressSafe(addrId));
+      toast({ title: "Address Deleted", description: "Address was removed.", type: "success" });
+      mutateOverview(
+        (prev) => (prev ? { ...prev, addresses: prev.addresses.filter((a) => a.id !== addrId) } : prev),
+        false
+      );
+      if (companyId) void globalMutate(getCompanySystemLogsKey(companyId));
       onAccountUpdated();
     } catch (err: unknown) {
       setAddresses(previous);
-      const msg = err instanceof Error ? err.message : "Failed to delete address";
+      const msg = getReadableActionError(err, "Failed to delete address");
       toast({ title: "Error", description: msg, type: "error" });
     }
   };
@@ -715,23 +856,24 @@ export function EditAccountPanel({
   const handleSetDefaultAddress = async (addrId: string) => {
     if (!companyId) return;
     const previous = addresses;
+    const nextList = addresses.map((a) => ({
+      ...a,
+      isDefault: a.id === addrId,
+    }));
 
     // 1. Instant optimistic flip (<5ms)
-    setAddresses((prev) =>
-      prev.map((a) => ({
-        ...a,
-        isDefault: a.id === addrId,
-      }))
-    );
-    toast({ title: "Default Set", description: "Primary address updated.", type: "success" });
+    setAddresses(nextList);
 
-    // 2. Fire server action in background
+    // 2. Fire server action and confirm
     try {
-      await setDefaultCompanyAddress(companyId, addrId);
+      unwrapActionResult(await setDefaultCompanyAddressSafe(companyId, addrId));
+      toast({ title: "Default Set", description: "Primary address updated.", type: "success" });
+      mutateOverview((prev) => (prev ? { ...prev, addresses: nextList } : prev), false);
+      void globalMutate(getCompanySystemLogsKey(companyId));
       onAccountUpdated();
     } catch (err: unknown) {
       setAddresses(previous);
-      const msg = err instanceof Error ? err.message : "Failed to set default address";
+      const msg = getReadableActionError(err, "Failed to set default address");
       toast({ title: "Error", description: msg, type: "error" });
     }
   };
@@ -743,43 +885,77 @@ export function EditAccountPanel({
       return toast({ title: "Validation", description: "Person name is required", type: "warning" });
     }
 
+    const existingContact = overview?.contacts?.find((c) => c.id === personId);
+    const isPersonMasked = Boolean(existingContact?.isMasked);
+
     const cleanEmails = (formData.emails || [formData.email]).map((e) => e.trim()).filter(Boolean);
     const cleanPhones = (formData.phones || [formData.phone]).map((p) => p.trim()).filter(Boolean);
 
-    const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
-    if (invalidEmail) {
-      return toast({
-        title: "Invalid Email Address",
-        description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
-        type: "warning",
-      });
+    if (!isPersonMasked) {
+      const invalidEmail = cleanEmails.find((em) => !isValidEmail(em));
+      if (invalidEmail) {
+        return toast({
+          title: "Invalid Email Address",
+          description: `Email "${invalidEmail}" is invalid. Please enter a valid email format (e.g. name@company.com).`,
+          type: "warning",
+        });
+      }
     }
 
     setIsSavingPersonId(personId);
     try {
-      await updateContact(personId, {
-        name: formData.name.trim(),
-        role: formData.role.trim() || undefined,
-        contactDepartment: formData.contactDepartment.trim() || undefined,
-        emails: cleanEmails,
-        phones: cleanPhones,
-        email: cleanEmails[0] || null,
-        phone: cleanPhones[0] || null,
-      });
-      toast({ title: "Contact Updated", description: `Changes to ${formData.name} saved.`, type: "success" });
-      setOverview((prev) => prev ? {
-        ...prev,
-        contacts: prev.contacts.map((c) => c.id === personId ? {
-          ...c,
+      const sanitizedPayload = sanitizeContactContactabilityInput(
+        {
           name: formData.name.trim(),
-          role: formData.role.trim() || null,
-          contactDepartment: formData.contactDepartment.trim() || null,
+          role: formData.role.trim() || undefined,
+          contactDepartment: formData.contactDepartment.trim() || undefined,
           emails: cleanEmails,
           phones: cleanPhones,
           email: cleanEmails[0] || null,
           phone: cleanPhones[0] || null,
-        } : c)
-      } : prev);
+        },
+        isPersonMasked
+      );
+
+      unwrapActionResult(await updateContactSafe(personId, sanitizedPayload));
+      toast({ title: "Contact Updated", description: `Changes to ${formData.name} saved.`, type: "success" });
+
+      const mergeUpdatedContact = <T extends AccountOverviewResult["contacts"][number]>(c: T): T =>
+        c.id === personId
+          ? {
+              ...c,
+              name: formData.name.trim(),
+              role: formData.role.trim() || null,
+              contactDepartment: formData.contactDepartment.trim() || null,
+              ...(isPersonMasked
+                ? {}
+                : {
+                    emails: cleanEmails,
+                    phones: cleanPhones,
+                    email: cleanEmails[0] || null,
+                    phone: cleanPhones[0] || null,
+                  }),
+            }
+          : c;
+
+      setOverview((prev) =>
+        prev
+          ? {
+              ...prev,
+              contacts: prev.contacts.map(mergeUpdatedContact),
+            }
+          : prev
+      );
+      mutateOverview(
+        (prev) =>
+          prev
+            ? {
+                ...prev,
+                contacts: prev.contacts.map(mergeUpdatedContact),
+              }
+            : prev,
+        false
+      );
       setPersonForms((prev) => ({
         ...prev,
         [personId]: {
@@ -787,15 +963,20 @@ export function EditAccountPanel({
           name: formData.name.trim(),
           role: formData.role.trim(),
           contactDepartment: formData.contactDepartment.trim(),
-          emails: cleanEmails.length > 0 ? cleanEmails : [""],
-          phones: cleanPhones.length > 0 ? cleanPhones : [""],
-          email: cleanEmails[0] || "",
-          phone: cleanPhones[0] || "",
+          ...(isPersonMasked
+            ? {}
+            : {
+                emails: cleanEmails.length > 0 ? cleanEmails : [""],
+                phones: cleanPhones.length > 0 ? cleanPhones : [""],
+                email: cleanEmails[0] || "",
+                phone: cleanPhones[0] || "",
+              }),
         },
       }));
+      void globalMutate(getContactSystemLogsKey(personId));
       onAccountUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to save contact";
+      const msg = getReadableActionError(err, "Failed to save contact");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSavingPersonId(null);
@@ -824,16 +1005,18 @@ export function EditAccountPanel({
 
     setIsSavingNewPerson(true);
     try {
-      const created = await createContact({
-        name: newPersonName.trim(),
-        role: newPersonRole.trim() || undefined,
-        contactDepartment: newPersonDept.trim() || undefined,
-        emails: cleanEmails,
-        phones: cleanPhones,
-        email: cleanEmails[0] || undefined,
-        phone: cleanPhones[0] || undefined,
-        companyId: companyId,
-      });
+      const created = unwrapActionResult(
+        await createContactSafe({
+          name: newPersonName.trim(),
+          role: newPersonRole.trim() || undefined,
+          contactDepartment: newPersonDept.trim() || undefined,
+          emails: cleanEmails,
+          phones: cleanPhones,
+          email: cleanEmails[0] || undefined,
+          phone: cleanPhones[0] || undefined,
+          companyId: companyId,
+        })
+      );
 
       toast({
         title: "Person Added",
@@ -852,7 +1035,7 @@ export function EditAccountPanel({
       setExpandedPersonIds((prev) => new Set(prev).add(created.id));
       onAccountUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to add person";
+      const msg = getReadableActionError(err, "Failed to add person");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSavingNewPerson(false);
@@ -870,7 +1053,7 @@ export function EditAccountPanel({
     if (!ok) return;
 
     try {
-      await deleteContact(personId);
+      unwrapActionResult(await deleteContactSafe(personId));
       toast({ title: "Contact Deleted", description: "Contact person was removed.", type: "success" });
       setExpandedPersonIds((prev) => {
         const next = new Set(prev);
@@ -881,9 +1064,13 @@ export function EditAccountPanel({
         ...prev,
         contacts: prev.contacts.filter((c) => c.id !== personId)
       } : prev);
+      mutateOverview((prev) => prev ? {
+        ...prev,
+        contacts: prev.contacts.filter((c) => c.id !== personId)
+      } : prev, false);
       onAccountUpdated();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete contact";
+      const msg = getReadableActionError(err, "Failed to delete contact");
       toast({ title: "Error", description: msg, type: "error" });
     }
   };
@@ -898,8 +1085,8 @@ export function EditAccountPanel({
 
   const activeEmailContact = overview?.contacts?.find((c) => c.id === selectedEmailContactId) || overview?.contacts?.[0];
 
-  // Filtered account logs
-  const accountLogs = overview?.company?.logs || [];
+  // Filtered account logs (loaded on-demand via SWR when System Log sub-tab is active)
+  const accountLogs = companyLogsData || overview?.company?.logs || [];
   const filteredAccountLogs = accountLogSearch.trim()
     ? accountLogs.filter(
         (l) =>
@@ -1077,6 +1264,7 @@ export function EditAccountPanel({
       tabs={tabs}
       activeTab={safeActiveTab}
       onTabChange={setActiveTab}
+      onTabHover={handleTabIntent}
       widthClass="w-[600px]"
     >
       {isLoading ? (
@@ -1769,7 +1957,11 @@ export function EditAccountPanel({
               ) : (
                 /* Account System Log Sub-tab */
                 <div className="bg-[#3A3B3C] rounded-2xl p-5 space-y-4 border-0">
-                  {filteredAccountLogs.length === 0 ? (
+                  {isLoadingCompanyLogs && !companyLogsData ? (
+                    <div className="p-8 flex items-center justify-center bg-[#252728] rounded-2xl">
+                      <Loader2 className="w-6 h-6 text-[#C7F33C] animate-spin" />
+                    </div>
+                  ) : filteredAccountLogs.length === 0 ? (
                     <div className="p-8 text-center bg-[#252728] rounded-2xl text-slate-400 text-xs">
                       {accountLogSearch.trim() ? "No matching system logs." : "No system logs recorded for this account."}
                     </div>
@@ -2163,6 +2355,15 @@ export function EditAccountPanel({
                                     />
                                   </div>
 
+                                  {c.isMasked && (
+                                    <div className="sm:col-span-2 bg-amber-950/30 border border-amber-800/40 rounded-xl px-3 py-2 flex items-center gap-2 text-xs text-amber-200">
+                                      <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                                      <span>
+                                        Email and phone numbers are masked across departments and remain protected on save.
+                                      </span>
+                                    </div>
+                                  )}
+
                                   {/* Multi-Email Addresses */}
                                   <div className="flex flex-col gap-1.5 sm:col-span-2">
                                     <div className="flex items-center justify-between">
@@ -2170,32 +2371,36 @@ export function EditAccountPanel({
                                         <Mail className="w-3.5 h-3.5 text-slate-400" />
                                         <span>Email Addresses</span>
                                       </label>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setPersonForms((prev) => {
-                                            const existing = prev[c.id] || pForm;
-                                            const currentEmails = existing.emails && existing.emails.length > 0 ? existing.emails : (existing.email ? [existing.email] : [""]);
-                                            return {
-                                              ...prev,
-                                              [c.id]: {
-                                                ...existing,
-                                                emails: [...currentEmails, ""],
-                                              },
-                                            };
-                                          });
-                                        }}
-                                        className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
-                                      >
-                                        + Add Email
-                                      </button>
+                                      {!c.isMasked && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setPersonForms((prev) => {
+                                              const existing = prev[c.id] || pForm;
+                                              const currentEmails = existing.emails && existing.emails.length > 0 ? existing.emails : (existing.email ? [existing.email] : [""]);
+                                              return {
+                                                ...prev,
+                                                [c.id]: {
+                                                  ...existing,
+                                                  emails: [...currentEmails, ""],
+                                                },
+                                              };
+                                            });
+                                          }}
+                                          className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                                        >
+                                          + Add Email
+                                        </button>
+                                      )}
                                     </div>
                                     <div className="space-y-2">
                                       {(pForm.emails && pForm.emails.length > 0 ? pForm.emails : (pForm.email ? [pForm.email] : [""])).map((em, eIdx) => (
                                         <div key={eIdx} className="flex items-center gap-2">
                                           <EmailInput
                                             value={em}
+                                            disabled={Boolean(c.isMasked)}
                                             onChange={(val) => {
+                                              if (c.isMasked) return;
                                               setPersonForms((prev) => {
                                                 const existing = prev[c.id] || pForm;
                                                 const currentEmails = [...(existing.emails && existing.emails.length > 0 ? existing.emails : (existing.email ? [existing.email] : [""]))];
@@ -2213,7 +2418,7 @@ export function EditAccountPanel({
                                             placeholder="e.g. contact@company.com"
                                             className="flex-1"
                                           />
-                                          {(pForm.emails?.length || 1) > 1 && (
+                                          {!c.isMasked && (pForm.emails?.length || 1) > 1 && (
                                             <button
                                               type="button"
                                               onClick={() => {
@@ -2244,29 +2449,33 @@ export function EditAccountPanel({
                                         <Phone className="w-3.5 h-3.5 text-slate-400" />
                                         <span>Phone Numbers</span>
                                       </label>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const currentPhones = pForm.phones && pForm.phones.length > 0 ? pForm.phones : (pForm.phone ? [pForm.phone] : [""]);
-                                          setPersonForms((prev) => ({
-                                            ...prev,
-                                            [c.id]: {
-                                              ...pForm,
-                                              phones: [...currentPhones, ""],
-                                            },
-                                          }));
-                                        }}
-                                        className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
-                                      >
-                                        + Add Phone
-                                      </button>
+                                      {!c.isMasked && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const currentPhones = pForm.phones && pForm.phones.length > 0 ? pForm.phones : (pForm.phone ? [pForm.phone] : [""]);
+                                            setPersonForms((prev) => ({
+                                              ...prev,
+                                              [c.id]: {
+                                                ...pForm,
+                                                phones: [...currentPhones, ""],
+                                              },
+                                            }));
+                                          }}
+                                          className="text-xs font-semibold text-[#C7F33C] hover:underline flex items-center gap-1 cursor-pointer"
+                                        >
+                                          + Add Phone
+                                        </button>
+                                      )}
                                     </div>
                                     <div className="space-y-2">
                                       {(pForm.phones && pForm.phones.length > 0 ? pForm.phones : (pForm.phone ? [pForm.phone] : [""])).map((ph, pIdx) => (
                                         <div key={pIdx} className="flex items-center gap-2">
                                           <PhoneInputWithCountry
                                             value={ph}
+                                            disabled={Boolean(c.isMasked)}
                                             onChange={(val) => {
+                                              if (c.isMasked) return;
                                               setPersonForms((prev) => {
                                                 const existing = prev[c.id] || pForm;
                                                 const currentPhones = [...(existing.phones && existing.phones.length > 0 ? existing.phones : (existing.phone ? [existing.phone] : [""]))];
@@ -2284,7 +2493,7 @@ export function EditAccountPanel({
                                             placeholder="081 234 5678"
                                             className="flex-1"
                                           />
-                                          {(pForm.phones?.length || 1) > 1 && (
+                                          {!c.isMasked && (pForm.phones?.length || 1) > 1 && (
                                             <button
                                               type="button"
                                               onClick={() => {
@@ -2333,47 +2542,9 @@ export function EditAccountPanel({
                                 </div>
                               </div>
                             ) : (
-                              /* Sub-tab 2: Person System Log */
+                              /* Sub-tab 2: Person System Log (loaded on-demand via SWR) */
                               <div className="space-y-3 pt-1">
-                                {(!c.logs || c.logs.length === 0) ? (
-                                  <div className="p-6 text-center bg-[#252728] rounded-xl text-slate-400 text-xs">
-                                    No system logs recorded for this person.
-                                  </div>
-                                ) : (
-                                  <div className="space-y-2.5 max-h-[350px] overflow-y-auto hide-scrollbar">
-                                    {c.logs.map((log) => (
-                                      <div
-                                        key={log.id}
-                                        className="flex gap-3 bg-[#252728] p-3 rounded-xl border border-[#4E4F50]/40"
-                                      >
-                                        <div className="w-7 h-7 rounded-full bg-[#3A3B3C] shrink-0 overflow-hidden mt-0.5 flex items-center justify-center">
-                                          {log.user?.image ? (
-                                            <img
-                                              src={log.user.image}
-                                              alt="Avatar"
-                                              className="w-full h-full object-cover"
-                                            />
-                                          ) : (
-                                            <span className="text-xs font-bold text-[#C7F33C]">
-                                              {(log.user?.name || "System").slice(0, 2).toUpperCase()}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="flex flex-col flex-1 justify-center min-w-0">
-                                          <span className="text-xs text-slate-400 mb-0.5 font-medium">
-                                            <strong className="text-slate-200 font-semibold">
-                                              {log.user?.name || "System"}
-                                            </strong>{" "}
-                                            • {formatDateTime(log.createdAt)}
-                                          </span>
-                                          <p className="text-xs text-slate-300 font-medium italic whitespace-pre-wrap">
-                                            {log.summary}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                <PersonSystemLogList contactId={c.id} />
                               </div>
                             )}
                           </div>
@@ -2392,7 +2563,7 @@ export function EditAccountPanel({
               <ProjectsTab
                 companyName={name}
                 opportunities={overview?.deals || []}
-                maskedOpportunityCount={0}
+                maskedOpportunityCount={overview?.maskedOpportunityCount || 0}
               />
             </div>
           )}

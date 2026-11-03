@@ -10,11 +10,24 @@ import {
   getAccountListKey,
   getAccountFilterKey,
   getAccountOverviewKey,
+  getCompanySystemLogsKey,
+  getContactSystemLogsKey,
 } from "./account-cache-keys";
 import {
   getAccountQuickFilterIntent,
   isModifierQuickFilterClick,
 } from "./account-quick-filter";
+import {
+  actionOk,
+  actionFail,
+  isActionFailure,
+  unwrapActionResult,
+  ContactActionError,
+  getReadableActionError,
+  containsMaskedPlaceholder,
+  sanitizeContactContactabilityInput,
+  isUnfilteredAccountStatusQuery,
+} from "./action-result";
 
 describe("Account Cards — Fast Redesign Unit Tests", () => {
   describe("Success Rate Calculation (Parity with getAccountOverview)", () => {
@@ -301,6 +314,134 @@ describe("Account Cards — Fast Redesign Unit Tests", () => {
 
       assert.equal(cardWithAi.hasAiSummary, true);
       assert.equal(cardWithoutAi.hasAiSummary, false);
+    });
+  });
+
+  describe("ActionResult & Production #441 Error Shield", () => {
+    it("unwraps actionOk data without throwing", () => {
+      const res = actionOk({ id: "comp_1", name: "Acme Corp" });
+      assert.equal(isActionFailure(res), false);
+      assert.deepEqual(unwrapActionResult(res), { id: "comp_1", name: "Acme Corp" });
+    });
+
+    it("throws ContactActionError on the client with exact server error message and code", () => {
+      const res = actionFail(
+        'An account with the name "Acme Corp" already exists (Unqualified).',
+        "DUPLICATE_ACCOUNT"
+      );
+      assert.equal(isActionFailure(res), true);
+
+      assert.throws(
+        () => unwrapActionResult(res),
+        (err: unknown) => {
+          assert.ok(err instanceof ContactActionError);
+          assert.equal(
+            err.message,
+            'An account with the name "Acme Corp" already exists (Unqualified).'
+          );
+          assert.equal(err.code, "DUPLICATE_ACCOUNT");
+          assert.equal(
+            getReadableActionError(err),
+            'An account with the name "Acme Corp" already exists (Unqualified).'
+          );
+          return true;
+        }
+      );
+    });
+
+    it("maps Minified React error #441 and stale Server Action errors to readable messages", () => {
+      const flightErr = new Error(
+        "Minified React error #441; visit https://react.dev/errors/441 for the full message"
+      ) as Error & { digest?: string };
+      assert.equal(
+        getReadableActionError(flightErr, "Failed to save account."),
+        "Failed to save account. Please check your connection or refresh the page."
+      );
+
+      flightErr.digest = "198273645";
+      assert.equal(
+        getReadableActionError(flightErr, "Failed to save account."),
+        "Failed to save account. (Error ref: 198273645)"
+      );
+
+      const skewErr = new Error('Failed to find Server Action "x9f2a1".');
+      assert.equal(
+        getReadableActionError(skewErr),
+        "The application was recently updated. Please refresh the page and try again."
+      );
+    });
+  });
+
+  describe("Cross-Department Contact Masking Guard", () => {
+    it("detects masked asterisk placeholders", () => {
+      assert.equal(containsMaskedPlaceholder("s***@company.com"), true);
+      assert.equal(containsMaskedPlaceholder("081-***-5678"), true);
+      assert.equal(containsMaskedPlaceholder("****"), true);
+      assert.equal(containsMaskedPlaceholder("sales@company.com"), false);
+      assert.equal(containsMaskedPlaceholder("+66812345678"), false);
+      assert.equal(containsMaskedPlaceholder(null), false);
+    });
+
+    it("strips email and phone fields when contact is department-masked", () => {
+      const sanitized = sanitizeContactContactabilityInput(
+        {
+          firstName: "Somchai",
+          position: "Buyer",
+          email: "s***@company.com",
+          phone: "081-***-5678",
+          emails: ["s***@company.com"],
+          phones: ["081-***-5678"],
+        },
+        true
+      );
+
+      assert.equal(sanitized.firstName, "Somchai");
+      assert.equal(sanitized.position, "Buyer");
+      assert.equal("email" in sanitized, false);
+      assert.equal("phone" in sanitized, false);
+      assert.equal("emails" in sanitized, false);
+      assert.equal("phones" in sanitized, false);
+    });
+
+    it("strips accidental masked values even if isMasked flag was omitted, while keeping clean values", () => {
+      const accidentalMasked = sanitizeContactContactabilityInput(
+        {
+          firstName: "Nok",
+          email: "n***@company.com",
+          emails: ["n***@company.com"],
+          phone: "+66891112222",
+          phones: ["+66891112222"],
+        },
+        false
+      );
+      assert.equal("email" in accidentalMasked, false);
+      assert.equal("emails" in accidentalMasked, false);
+      assert.deepEqual(accidentalMasked.phones, ["+66891112222"]);
+    });
+  });
+
+  describe("Unfiltered Status Count Guard & System Log Cache Keys", () => {
+    it("treats multi-select types and countries as filtered queries so count({ where }) runs", () => {
+      assert.equal(isUnfilteredAccountStatusQuery({ page: 1 }), true);
+      assert.equal(isUnfilteredAccountStatusQuery({ page: 2 }), false);
+      assert.equal(isUnfilteredAccountStatusQuery({ page: 1, search: "Siam" }), false);
+      assert.equal(isUnfilteredAccountStatusQuery({ page: 1, type: "CUSTOMER" }), false);
+      assert.equal(isUnfilteredAccountStatusQuery({ page: 1, country: "Thailand" }), false);
+      assert.equal(
+        isUnfilteredAccountStatusQuery({ page: 1, types: ["CUSTOMER", "PARTNER"] }),
+        false
+      );
+      assert.equal(
+        isUnfilteredAccountStatusQuery({ page: 1, countries: ["Thailand", "Myanmar"] }),
+        false
+      );
+    });
+
+    it("builds null-safe SWR keys for on-demand company and contact system logs", () => {
+      assert.equal(getCompanySystemLogsKey(null), null);
+      assert.deepEqual(getCompanySystemLogsKey("comp_99"), ["company-system-logs", "comp_99"]);
+      assert.equal(getContactSystemLogsKey(null), null);
+      assert.deepEqual(getContactSystemLogsKey("person_42"), ["contact-system-logs", "person_42"]);
     });
   });
 });

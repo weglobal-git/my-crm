@@ -15,7 +15,8 @@ import {
   Globe,
   Loader2
 } from "lucide-react";
-import { toggleContactStatus, ContactWithRelations } from "@/lib/actions/contact";
+import { toggleContactStatusSafe, ContactWithRelations } from "@/lib/actions/contact";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { useDialog } from "@/providers/DialogProvider";
 
 export type ContactRow = ContactWithRelations;
@@ -47,7 +48,7 @@ export function ContactTable({
     e.stopPropagation();
     setTogglingId(contactId);
     try {
-      const newStatus = await toggleContactStatus(contactId);
+      const newStatus = unwrapActionResult(await toggleContactStatusSafe(contactId));
       toast({
         title: "Status Changed",
         description: `Contact marked as ${newStatus}`,
@@ -55,7 +56,7 @@ export function ContactTable({
       });
       onStatusToggled();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to toggle status";
+      const msg = getReadableActionError(err, "Failed to toggle status");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setTogglingId(null);

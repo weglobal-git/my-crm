@@ -4,12 +4,41 @@ import prisma from "@/lib/prisma";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { ContactType, ContactStatus, Role, Prisma, AddressType } from "@prisma/client";
-import { revalidatePath } from "next/cache";
 import { maskEmail, maskPhone } from "@/lib/contact-utils";
-import { pusherServer } from "@/lib/pusher-server";
+import { safePusherTrigger } from "@/lib/pusher-server";
 import { normalizeCountryName } from "@/lib/data/countries";
 import { notifyPipelineAudience } from "@/lib/pipeline-security";
 import { dispatchDashboardInvalidation } from "@/lib/dashboard/dashboard-realtime-server";
+import {
+  actionFail,
+  actionOk,
+  type ActionResult,
+  isUnfilteredAccountStatusQuery,
+  sanitizeContactContactabilityInput,
+} from "@/lib/contact/action-result";
+
+const CONTACT_TX_OPTIONS = {
+  maxWait: 10_000,
+  timeout: 15_000,
+} as const;
+
+function toServerErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === "P2002") {
+      return "A record with this unique value already exists.";
+    }
+    if (err.code === "P2025") {
+      return "The record was not found or has already been removed.";
+    }
+    if (err.code === "P2028") {
+      return "Database connection timed out across regions. Please click Save/Create again.";
+    }
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return fallback;
+}
 
 export type ContactActor = {
   id: string;
@@ -23,11 +52,22 @@ export type ContactActor = {
 const ACTOR_CACHE_TTL_MS = 60 * 1000;
 const actorCache = new Map<string, { actor: ContactActor; expires: number }>();
 
+type SessionLike = {
+  user?: {
+    id?: string | null;
+    name?: string | null;
+    email?: string | null;
+    role?: string | null;
+    departments?: string[] | null;
+    departmentIds?: string[] | null;
+  };
+} | null;
+
 export async function getContactActor(
-  providedSession?: { user?: { id?: string | null; email?: string | null } } | null
+  providedSession?: SessionLike
 ): Promise<ContactActor> {
   const session =
-    providedSession !== undefined ? providedSession : await getServerSession(authOptions);
+    providedSession !== undefined ? providedSession : ((await getServerSession(authOptions)) as SessionLike);
   if (!session?.user?.id && !session?.user?.email) {
     throw new Error("Unauthorized");
   }
@@ -38,13 +78,33 @@ export async function getContactActor(
     return cached.actor;
   }
 
+  // Fast path: authOptions JWT callback already verified user in DB (15s TTL)
+  // and populated role, departments, and departmentIds on session.user.
+  if (
+    session.user.id &&
+    session.user.role &&
+    ["ADMIN", "MANAGEMENT", "GENERAL"].includes(session.user.role) &&
+    Array.isArray(session.user.departments) &&
+    Array.isArray(session.user.departmentIds)
+  ) {
+    const fastActor: ContactActor = {
+      id: session.user.id,
+      name: session.user.name || "Unknown User",
+      email: session.user.email || "",
+      role: session.user.role as Role,
+      departments: session.user.departments,
+      departmentIds: session.user.departmentIds,
+    };
+    actorCache.set(cacheKey, { actor: fastActor, expires: Date.now() + ACTOR_CACHE_TTL_MS });
+    return fastActor;
+  }
+
+  const orConditions: Prisma.UserWhereInput[] = [];
+  if (session.user.id) orConditions.push({ id: session.user.id });
+  if (session.user.email) orConditions.push({ email: session.user.email });
+
   const dbUser = await prisma.user.findFirst({
-    where: {
-      OR: [
-        { id: session.user.id || undefined },
-        { email: session.user.email || undefined },
-      ],
-    },
+    where: { OR: orConditions },
     include: {
       departments: true,
     },
@@ -417,13 +477,16 @@ export async function getCompaniesWithContacts({
   const now = Date.now();
   const isStatsFresh = cachedStatusStats && now - lastStatusStatsFetch < STATUS_STATS_TTL;
 
-  // If there is no custom search and no type or country filter, the total count for the status
-  // is directly available from the status stats without needing a separate count query
-  const isUnfilteredStatusQuery =
-    isFirstPage &&
-    !search.trim() &&
-    (type === "ALL" || !type) &&
-    (!country || country.trim() === "" || country === "ALL");
+  // If there is no custom search and no type/types or country/countries filter, the total count for
+  // the status is directly available from the status stats without needing a separate count query
+  const isUnfilteredStatusQuery = isUnfilteredAccountStatusQuery({
+    page,
+    search,
+    type,
+    types: types as string[] | undefined,
+    country,
+    countries,
+  });
 
   const shouldRunFilterCount = isFirstPage && !isUnfilteredStatusQuery;
 
@@ -452,7 +515,7 @@ export async function getCompaniesWithContacts({
           },
         },
       },
-      orderBy: [{ starRating: "desc" }, { createdAt: "desc" }],
+      orderBy: [{ starRating: "desc" }, { createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * pageSize,
       take: pageSize + 1,
     }),
@@ -591,11 +654,17 @@ let cachedInitialCompanies: GetCompaniesResult | null = null;
 let lastInitialCompaniesFetch = 0;
 const INITIAL_COMPANIES_CACHE_TTL = 45 * 1000; // 45-second memory cache for instant SSR
 
-function invalidateInitialCompaniesCache() {
+function invalidateInitialCompaniesCache(includeFacetMetadata = false) {
   cachedInitialCompanies = null;
   lastInitialCompaniesFetch = 0;
   cachedStatusStats = null;
   lastStatusStatsFetch = 0;
+  if (includeFacetMetadata) {
+    cachedCountries = null;
+    lastCountriesFetch = 0;
+    cachedTypes = null;
+    lastTypesFetch = 0;
+  }
 }
 
 export async function getCachedInitialCompanies(actor?: ContactActor): Promise<GetCompaniesResult> {
@@ -713,8 +782,27 @@ export async function getContactById(contactId: string) {
 
   const maskedOpportunityCount = allDeals.length - visibleOpportunities.length;
 
+  const sanitizedLogs = isSameDept
+    ? contact.logs
+      : contact.logs.map((log) => {
+          const fieldName = log.fieldName;
+          const sensitiveField =
+            fieldName === "Email" ||
+            fieldName === "Phone" ||
+            fieldName === "Emails" ||
+            fieldName === "Phones";
+          if (!sensitiveField) return log;
+          return {
+            ...log,
+            oldValue: log.oldValue ? "***" : log.oldValue,
+            newValue: log.newValue ? "***" : log.newValue,
+            summary: `Updated ${fieldName.toLowerCase()} (masked by department policy)`,
+          };
+        });
+
   return {
     ...contact,
+    logs: sanitizedLogs,
     isMasked: !isSameDept,
     email: isSameDept ? contact.email : maskEmail(contact.email),
     phone: isSameDept ? contact.phone : maskPhone(contact.phone),
@@ -751,290 +839,392 @@ export interface UpdateContactInput {
   companyCountry?: string;
 }
 
-export async function updateContact(contactId: string, input: UpdateContactInput) {
-  const actor = await getContactActor();
+export async function updateContactSafe(
+  contactId: string,
+  rawInput: UpdateContactInput
+): Promise<ActionResult<{ success: true }>> {
+  try {
+    const actor = await getContactActor();
 
-  const current = await prisma.contact.findUnique({
-    where: { id: contactId },
-    include: { company: true },
-  });
-
-  if (!current) {
-    throw new Error("Contact not found");
-  }
-
-  const logsToCreate: Prisma.ContactLogCreateManyInput[] = [];
-
-  // Track contact changes
-  if (input.name !== undefined && input.name !== current.name) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Name",
-      oldValue: current.name,
-      newValue: input.name,
-      summary: `Changed name from "${current.name}" to "${input.name}"`,
-    });
-  }
-
-  if (input.role !== undefined && input.role !== (current.role || "")) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Role",
-      oldValue: current.role || "-",
-      newValue: input.role || "-",
-      summary: `Changed role from "${current.role || "-"}" to "${input.role || "-"}"`,
-    });
-  }
-
-  if (input.isActive !== undefined && input.isActive !== current.isActive) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "STATUS_CHANGE",
-      fieldName: "isActive",
-      oldValue: current.isActive ? "Active" : "Inactive",
-      newValue: input.isActive ? "Active" : "Inactive",
-      summary: `Changed active status to ${input.isActive ? "Active" : "Inactive"}`,
-    });
-  }
-
-  if (input.email !== undefined && input.email !== (current.email || "")) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Email",
-      oldValue: current.email || "-",
-      newValue: input.email || "-",
-      summary: `Changed email from "${current.email || "-"}" to "${input.email || "-"}"`,
-    });
-  }
-
-  if (input.phone !== undefined && input.phone !== (current.phone || "")) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Phone",
-      oldValue: current.phone || "-",
-      newValue: input.phone || "-",
-      summary: `Changed phone from "${current.phone || "-"}" to "${input.phone || "-"}"`,
-    });
-  }
-
-  if (input.type !== undefined && input.type !== current.type) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Type",
-      oldValue: current.type,
-      newValue: input.type,
-      summary: `Changed type from "${current.type}" to "${input.type}"`,
-    });
-  }
-
-  if (input.status !== undefined && input.status !== current.status) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "STATUS_CHANGE",
-      fieldName: "Status",
-      oldValue: current.status,
-      newValue: input.status,
-      summary: `Changed status from "${current.status}" to "${input.status}"`,
-    });
-  }
-
-  // Track company changes
-  if (
-    input.companyName !== undefined &&
-    input.companyName !== current.company.name
-  ) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Company Name",
-      oldValue: current.company.name,
-      newValue: input.companyName,
-      summary: `Changed company name from "${current.company.name}" to "${input.companyName}"`,
-    });
-  }
-
-  if (
-    input.companyCountry !== undefined &&
-    input.companyCountry !== (current.company.country || "")
-  ) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Country",
-      oldValue: current.company.country || "-",
-      newValue: input.companyCountry || "-",
-      summary: `Changed country from "${current.company.country || "-"}" to "${input.companyCountry || "-"}"`,
-    });
-  }
-
-  if (
-    input.companyAddress !== undefined &&
-    input.companyAddress !== (current.company.address || "")
-  ) {
-    logsToCreate.push({
-      contactId,
-      userId: actor.id,
-      action: "UPDATE",
-      fieldName: "Address",
-      oldValue: current.company.address || "-",
-      newValue: input.companyAddress || "-",
-      summary: `Changed address from "${current.company.address || "-"}" to "${input.companyAddress || "-"}"`,
-    });
-  }
-
-  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    await tx.contact.update({
+    const current = await prisma.contact.findUnique({
       where: { id: contactId },
-      data: {
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.email !== undefined ? { email: input.email || null } : {}),
-        ...(input.phone !== undefined ? { phone: input.phone || null } : {}),
-        ...(input.role !== undefined ? { role: input.role || null } : {}),
-        ...(input.contactDepartment !== undefined ? { contactDepartment: input.contactDepartment || null } : {}),
-        ...(input.emails !== undefined ? { emails: input.emails } : {}),
-        ...(input.phones !== undefined ? { phones: input.phones } : {}),
-        ...(input.isEmailVerified !== undefined ? { isEmailVerified: input.isEmailVerified } : {}),
-        ...(input.isPhoneVerified !== undefined ? { isPhoneVerified: input.isPhoneVerified } : {}),
-        ...(input.image !== undefined ? { image: input.image || null } : {}),
-        ...(input.departmentId !== undefined ? { departmentId: input.departmentId || null } : {}),
-        ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
-        ...(input.type !== undefined ? { type: input.type } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
+      include: {
+        company: true,
+        department: { select: { id: true, name: true } },
       },
     });
 
+    if (!current) {
+      return actionFail("Contact not found", "NOT_FOUND");
+    }
+
+    const isSameDept =
+      actor.role === "ADMIN" ||
+      Boolean(current.department?.name && actor.departments.includes(current.department.name));
+
+    // Server-authoritative guard: never allow cross-department edits or masked '***'
+    // placeholders to overwrite real contact emails or phone numbers.
+    const input = sanitizeContactContactabilityInput(rawInput, !isSameDept);
+
+    if (input.name !== undefined && !input.name.trim()) {
+      return actionFail("Person name is required", "VALIDATION");
+    }
+
+    const logsToCreate: Prisma.ContactLogCreateManyInput[] = [];
+
+    if (input.name !== undefined && input.name.trim() !== current.name) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Name",
+        oldValue: current.name,
+        newValue: input.name.trim(),
+        summary: `Changed name from "${current.name}" to "${input.name.trim()}"`,
+      });
+    }
+
+    if (input.role !== undefined && (input.role || "") !== (current.role || "")) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Role",
+        oldValue: current.role || "-",
+        newValue: input.role || "-",
+        summary: `Changed role from "${current.role || "-"}" to "${input.role || "-"}"`,
+      });
+    }
+
     if (
-      input.companyName !== undefined ||
-      input.companyCountry !== undefined ||
-      input.companyAddress !== undefined
+      input.contactDepartment !== undefined &&
+      (input.contactDepartment || "") !== (current.contactDepartment || "")
     ) {
-      await tx.company.update({
-        where: { id: current.companyId },
-        data: {
-          ...(input.companyName !== undefined
-            ? { name: input.companyName }
-            : {}),
-          ...(input.companyCountry !== undefined
-            ? { country: input.companyCountry ? normalizeCountryName(input.companyCountry) : null }
-            : {}),
-          ...(input.companyAddress !== undefined
-            ? { address: input.companyAddress || null }
-            : {}),
-        },
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Department",
+        oldValue: current.contactDepartment || "-",
+        newValue: input.contactDepartment || "-",
+        summary: `Changed department from "${current.contactDepartment || "-"}" to "${input.contactDepartment || "-"}"`,
       });
     }
 
-    if (logsToCreate.length > 0) {
-      await tx.contactLog.createMany({
-        data: logsToCreate,
+    if (input.isActive !== undefined && input.isActive !== current.isActive) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "STATUS_CHANGE",
+        fieldName: "isActive",
+        oldValue: current.isActive ? "Active" : "Inactive",
+        newValue: input.isActive ? "Active" : "Inactive",
+        summary: `Changed active status to ${input.isActive ? "Active" : "Inactive"}`,
       });
     }
-  });
 
-  revalidatePath("/contact");
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "CONTACT_UPDATED",
-    companyId: current.companyId,
-    contactId,
-  }).catch((err) => console.error("Pusher trigger error:", err));
+    if (input.emails !== undefined) {
+      const nextEmails = input.emails.map((e) => e.trim()).filter(Boolean);
+      const prevEmails = current.emails || (current.email ? [current.email] : []);
+      if (JSON.stringify(nextEmails) !== JSON.stringify(prevEmails)) {
+        logsToCreate.push({
+          contactId,
+          userId: actor.id,
+          action: "UPDATE",
+          fieldName: "Email",
+          oldValue: prevEmails.join(", ") || "-",
+          newValue: nextEmails.join(", ") || "-",
+          summary: `Changed email from "${prevEmails.join(", ") || "-"}" to "${nextEmails.join(", ") || "-"}"`,
+        });
+      }
+    } else if (input.email !== undefined && (input.email || "") !== (current.email || "")) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Email",
+        oldValue: current.email || "-",
+        newValue: input.email || "-",
+        summary: `Changed email from "${current.email || "-"}" to "${input.email || "-"}"`,
+      });
+    }
 
-  return { success: true };
-}
+    if (input.phones !== undefined) {
+      const nextPhones = input.phones.map((p) => p.trim()).filter(Boolean);
+      const prevPhones = current.phones || (current.phone ? [current.phone] : []);
+      if (JSON.stringify(nextPhones) !== JSON.stringify(prevPhones)) {
+        logsToCreate.push({
+          contactId,
+          userId: actor.id,
+          action: "UPDATE",
+          fieldName: "Phone",
+          oldValue: prevPhones.join(", ") || "-",
+          newValue: nextPhones.join(", ") || "-",
+          summary: `Changed phone from "${prevPhones.join(", ") || "-"}" to "${nextPhones.join(", ") || "-"}"`,
+        });
+      }
+    } else if (input.phone !== undefined && (input.phone || "") !== (current.phone || "")) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Phone",
+        oldValue: current.phone || "-",
+        newValue: input.phone || "-",
+        summary: `Changed phone from "${current.phone || "-"}" to "${input.phone || "-"}"`,
+      });
+    }
 
-export async function toggleContactStatus(contactId: string) {
-  const actor = await getContactActor();
+    if (input.type !== undefined && input.type !== current.type) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Type",
+        oldValue: current.type,
+        newValue: input.type,
+        summary: `Changed type from "${current.type}" to "${input.type}"`,
+      });
+    }
 
-  const current = await prisma.contact.findUnique({
-    where: { id: contactId },
-    select: { status: true },
-  });
-
-  if (!current) throw new Error("Contact not found");
-
-  const newStatus: ContactStatus =
-    current.status === "QUALIFIED" ? "UNQUALIFIED" : "QUALIFIED";
-
-  await prisma.$transaction([
-    prisma.contact.update({
-      where: { id: contactId },
-      data: { status: newStatus },
-    }),
-    prisma.contactLog.create({
-      data: {
+    if (input.status !== undefined && input.status !== current.status) {
+      logsToCreate.push({
         contactId,
         userId: actor.id,
         action: "STATUS_CHANGE",
         fieldName: "Status",
         oldValue: current.status,
-        newValue: newStatus,
-        summary: `Toggled status to ${newStatus}`,
-      },
-    }),
-  ]);
+        newValue: input.status,
+        summary: `Changed status from "${current.status}" to "${input.status}"`,
+      });
+    }
 
-  revalidatePath("/contact");
-  return newStatus;
+    if (
+      input.companyName !== undefined &&
+      input.companyName !== current.company.name
+    ) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Company Name",
+        oldValue: current.company.name,
+        newValue: input.companyName,
+        summary: `Changed company name from "${current.company.name}" to "${input.companyName}"`,
+      });
+    }
+
+    if (
+      input.companyCountry !== undefined &&
+      input.companyCountry !== (current.company.country || "")
+    ) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Country",
+        oldValue: current.company.country || "-",
+        newValue: input.companyCountry || "-",
+        summary: `Changed country from "${current.company.country || "-"}" to "${input.companyCountry || "-"}"`,
+      });
+    }
+
+    if (
+      input.companyAddress !== undefined &&
+      input.companyAddress !== (current.company.address || "")
+    ) {
+      logsToCreate.push({
+        contactId,
+        userId: actor.id,
+        action: "UPDATE",
+        fieldName: "Address",
+        oldValue: current.company.address || "-",
+        newValue: input.companyAddress || "-",
+        summary: `Changed address from "${current.company.address || "-"}" to "${input.companyAddress || "-"}"`,
+      });
+    }
+
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await tx.contact.update({
+        where: { id: contactId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.email !== undefined ? { email: input.email || null } : {}),
+          ...(input.phone !== undefined ? { phone: input.phone || null } : {}),
+          ...(input.role !== undefined ? { role: input.role || null } : {}),
+          ...(input.contactDepartment !== undefined ? { contactDepartment: input.contactDepartment || null } : {}),
+          ...(input.emails !== undefined ? { emails: input.emails.map((e) => e.trim()).filter(Boolean) } : {}),
+          ...(input.phones !== undefined ? { phones: input.phones.map((p) => p.trim()).filter(Boolean) } : {}),
+          ...(input.isEmailVerified !== undefined ? { isEmailVerified: input.isEmailVerified } : {}),
+          ...(input.isPhoneVerified !== undefined ? { isPhoneVerified: input.isPhoneVerified } : {}),
+          ...(input.image !== undefined ? { image: input.image || null } : {}),
+          ...(input.departmentId !== undefined ? { departmentId: input.departmentId || null } : {}),
+          ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+          ...(input.type !== undefined ? { type: input.type } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+        },
+      });
+
+      if (
+        input.companyName !== undefined ||
+        input.companyCountry !== undefined ||
+        input.companyAddress !== undefined
+      ) {
+        await tx.company.update({
+          where: { id: current.companyId },
+          data: {
+            ...(input.companyName !== undefined
+              ? { name: input.companyName }
+              : {}),
+            ...(input.companyCountry !== undefined
+              ? { country: input.companyCountry ? normalizeCountryName(input.companyCountry) : null }
+              : {}),
+            ...(input.companyAddress !== undefined
+              ? { address: input.companyAddress || null }
+              : {}),
+          },
+        });
+      }
+
+      if (logsToCreate.length > 0) {
+        await tx.contactLog.createMany({
+          data: logsToCreate,
+        });
+      }
+    }, CONTACT_TX_OPTIONS);
+
+    invalidateInitialCompaniesCache(Boolean(input.companyCountry !== undefined));
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "CONTACT_UPDATED",
+      companyId: current.companyId,
+      contactId,
+    });
+
+    return actionOk({ success: true });
+  } catch (err) {
+    console.error("[updateContactSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to update contact"));
+  }
 }
 
-export async function deleteContact(contactId: string) {
-  const actor = await getContactActor();
+export async function updateContact(contactId: string, input: UpdateContactInput) {
+  const res = await updateContactSafe(contactId, input);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
 
-  if (actor.role !== "ADMIN" && actor.role !== "MANAGEMENT") {
-    throw new Error("Forbidden. Only Management or Admin can delete contacts.");
+export async function toggleContactStatusSafe(
+  contactId: string
+): Promise<ActionResult<ContactStatus>> {
+  try {
+    const actor = await getContactActor();
+
+    const current = await prisma.contact.findUnique({
+      where: { id: contactId },
+      select: { status: true, companyId: true },
+    });
+
+    if (!current) return actionFail("Contact not found", "NOT_FOUND");
+
+    const newStatus: ContactStatus =
+      current.status === "QUALIFIED" ? "UNQUALIFIED" : "QUALIFIED";
+
+    await prisma.$transaction([
+      prisma.contact.update({
+        where: { id: contactId },
+        data: { status: newStatus },
+      }),
+      prisma.contactLog.create({
+        data: {
+          contactId,
+          userId: actor.id,
+          action: "STATUS_CHANGE",
+          fieldName: "Status",
+          oldValue: current.status,
+          newValue: newStatus,
+          summary: `Toggled status to ${newStatus}`,
+        },
+      }),
+    ]);
+
+    invalidateInitialCompaniesCache();
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "CONTACT_UPDATED",
+      companyId: current.companyId,
+      contactId,
+    });
+
+    return actionOk(newStatus);
+  } catch (err) {
+    console.error("[toggleContactStatusSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to toggle contact status"));
   }
+}
 
-  const contact = await prisma.contact.findUnique({
-    where: { id: contactId },
-    include: {
-      company: {
-        include: {
-          opportunities: {
-            where: { status: "OPEN" },
-            select: { id: true, topic: true },
+export async function toggleContactStatus(contactId: string) {
+  const res = await toggleContactStatusSafe(contactId);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
+
+export async function deleteContactSafe(
+  contactId: string
+): Promise<ActionResult<{ success: true }>> {
+  try {
+    const actor = await getContactActor();
+
+    if (actor.role !== "ADMIN" && actor.role !== "MANAGEMENT") {
+      return actionFail("Only Management or Admin can delete contacts.", "FORBIDDEN");
+    }
+
+    const contact = await prisma.contact.findUnique({
+      where: { id: contactId },
+      include: {
+        company: {
+          include: {
+            opportunities: {
+              where: { status: "OPEN" },
+              select: { id: true, topic: true },
+            },
           },
         },
       },
-    },
-  });
+    });
 
-  if (!contact) {
-    throw new Error("Contact not found");
+    if (!contact) {
+      return actionFail("Contact not found", "NOT_FOUND");
+    }
+
+    const openDeals = contact.company?.opportunities || [];
+    if (openDeals.length > 0) {
+      return actionFail(
+        `Cannot delete contact: There are ${openDeals.length} active (OPEN) project(s) linked to this account.`,
+        "HAS_ACTIVE_DEALS"
+      );
+    }
+
+    await prisma.contact.delete({
+      where: { id: contactId },
+    });
+
+    invalidateInitialCompaniesCache();
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "CONTACT_DELETED",
+      companyId: contact.companyId,
+      contactId,
+    });
+
+    return actionOk({ success: true });
+  } catch (err) {
+    console.error("[deleteContactSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to delete contact"));
   }
+}
 
-  // Safety guard: Active projects check
-  const openDeals = contact.company?.opportunities || [];
-  if (openDeals.length > 0) {
-    throw new Error(
-      `Cannot delete contact: There are ${openDeals.length} active (OPEN) projects linked to this customer.`
-    );
-  }
-
-  await prisma.contact.delete({
-    where: { id: contactId },
-  });
-
-  revalidatePath("/contact");
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "CONTACT_DELETED",
-    companyId: contact.companyId,
-    contactId,
-  }).catch((err) => console.error("Pusher trigger error:", err));
-
-  return { success: true };
+export async function deleteContact(contactId: string) {
+  const res = await deleteContactSafe(contactId);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
 }
 
 export interface CreateContactInput {
@@ -1056,172 +1246,321 @@ export interface CreateContactInput {
   departmentId?: string;
 }
 
-export async function createContact(input: CreateContactInput) {
-  const actor = await getContactActor();
+export type CreatedContactRecord = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+  contactDepartment: string | null;
+  emails: string[];
+  phones: string[];
+  image: string | null;
+  isActive: boolean;
+  type: ContactType;
+  status: ContactStatus;
+  companyId: string;
+  departmentId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
-  if (!input.name.trim()) throw new Error("Contact name is required");
-  if (!input.companyId && !input.companyName?.trim()) {
-    throw new Error("Company is required");
-  }
+export async function createContactSafe(
+  input: CreateContactInput
+): Promise<ActionResult<CreatedContactRecord>> {
+  try {
+    const actor = await getContactActor();
 
-  // Determine department: user specified or actor's first department
-  const targetDeptId = input.departmentId || actor.departmentIds[0] || null;
-
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    let company: { id: string; name: string } | null = null;
-    if (input.companyId) {
-      company = await tx.company.findUnique({ where: { id: input.companyId } });
+    if (!input.name?.trim()) {
+      return actionFail("Person name is required", "VALIDATION");
     }
-    if (!company && input.companyName?.trim()) {
-      company = await tx.company.findFirst({
-        where: { name: { equals: input.companyName.trim(), mode: "insensitive" } },
-      });
-      if (!company) {
-        company = await tx.company.create({
-          data: {
-            name: input.companyName.trim(),
-            country: input.companyCountry ? normalizeCountryName(input.companyCountry) : null,
-            address: input.companyAddress || null,
-          },
+    if (!input.companyId && !input.companyName?.trim()) {
+      return actionFail("Account is required", "VALIDATION");
+    }
+
+    const targetDeptId = input.departmentId || actor.departmentIds[0] || null;
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      let company: { id: string; name: string } | null = null;
+      if (input.companyId) {
+        company = await tx.company.findUnique({
+          where: { id: input.companyId },
+          select: { id: true, name: true },
         });
       }
+      if (!company && input.companyName?.trim()) {
+        company = await tx.company.findFirst({
+          where: { name: { equals: input.companyName.trim(), mode: "insensitive" } },
+          select: { id: true, name: true },
+        });
+        if (!company) {
+          company = await tx.company.create({
+            data: {
+              name: input.companyName.trim(),
+              displayName: input.companyName.trim(),
+              country: input.companyCountry ? normalizeCountryName(input.companyCountry) : null,
+              address: input.companyAddress || null,
+            },
+            select: { id: true, name: true },
+          });
+        }
+      }
+      if (!company) return null;
+
+      const emailsArray = input.emails && input.emails.length > 0
+        ? input.emails.filter(Boolean).map((e) => e.trim())
+        : (input.email ? [input.email.trim()] : []);
+
+      const phonesArray = input.phones && input.phones.length > 0
+        ? input.phones.filter(Boolean).map((p) => p.trim())
+        : (input.phone ? [input.phone.trim()] : []);
+
+      const contact = await tx.contact.create({
+        data: {
+          name: input.name.trim(),
+          email: input.email ? input.email.trim() : (emailsArray[0] || null),
+          phone: input.phone ? input.phone.trim() : (phonesArray[0] || null),
+          role: input.role ? input.role.trim() : null,
+          contactDepartment: input.contactDepartment ? input.contactDepartment.trim() : null,
+          emails: emailsArray,
+          phones: phonesArray,
+          image: input.image ? input.image.trim() : null,
+          isActive: input.isActive !== undefined ? input.isActive : true,
+          type: input.type || "CUSTOMER",
+          status: input.status || "UNQUALIFIED",
+          companyId: company.id,
+          departmentId: targetDeptId,
+        },
+      });
+
+      await tx.contactLog.create({
+        data: {
+          contactId: contact.id,
+          userId: actor.id,
+          action: "CREATE",
+          summary: `Created contact "${contact.name}" under ${company.name}`,
+        },
+      });
+
+      return contact;
+    }, CONTACT_TX_OPTIONS);
+
+    if (!result) {
+      return actionFail("Selected account could not be found.", "NOT_FOUND");
     }
-    if (!company) throw new Error("Company could not be resolved");
 
-    const emailsArray = input.emails && input.emails.length > 0
-      ? input.emails.filter(Boolean).map(e => e.trim())
-      : (input.email ? [input.email.trim()] : []);
-
-    const phonesArray = input.phones && input.phones.length > 0
-      ? input.phones.filter(Boolean).map(p => p.trim())
-      : (input.phone ? [input.phone.trim()] : []);
-
-    const contact = await tx.contact.create({
-      data: {
-        name: input.name.trim(),
-        email: input.email ? input.email.trim() : (emailsArray[0] || null),
-        phone: input.phone ? input.phone.trim() : (phonesArray[0] || null),
-        role: input.role ? input.role.trim() : null,
-        contactDepartment: input.contactDepartment ? input.contactDepartment.trim() : null,
-        emails: emailsArray,
-        phones: phonesArray,
-        image: input.image ? input.image.trim() : null,
-        isActive: input.isActive !== undefined ? input.isActive : true,
-        type: input.type || "CUSTOMER",
-        status: input.status || "UNQUALIFIED",
-        companyId: company.id,
-        departmentId: targetDeptId,
-      },
+    invalidateInitialCompaniesCache(true);
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "CONTACT_CREATED",
+      companyId: result.companyId,
+      contact: result,
     });
 
-    await tx.contactLog.create({
-      data: {
-        contactId: contact.id,
-        userId: actor.id,
-        action: "CREATE",
-        summary: `Created contact "${contact.name}" under ${company.name}`,
-      },
+    return actionOk(result);
+  } catch (err) {
+    console.error("[createContactSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to create contact"));
+  }
+}
+
+export async function createContact(input: CreateContactInput) {
+  const res = await createContactSafe(input);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
+
+export async function toggleContactActiveSafe(
+  contactId: string,
+  isActive: boolean
+): Promise<ActionResult<{ success: true; isActive: boolean }>> {
+  try {
+    const actor = await getContactActor();
+
+    const current = await prisma.contact.findUnique({
+      where: { id: contactId },
+      select: { id: true, name: true, isActive: true, companyId: true },
     });
 
-    return contact;
-  });
+    if (!current) return actionFail("Person not found", "NOT_FOUND");
 
-  revalidatePath("/contact");
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "CONTACT_CREATED",
-    companyId: result.companyId,
-    contact: result,
-  }).catch((err) => console.error("Pusher trigger error:", err));
+    await prisma.$transaction([
+      prisma.contact.update({
+        where: { id: contactId },
+        data: { isActive },
+      }),
+      prisma.contactLog.create({
+        data: {
+          contactId,
+          userId: actor.id,
+          action: "STATUS_CHANGE",
+          fieldName: "isActive",
+          oldValue: current.isActive ? "Active" : "Inactive",
+          newValue: isActive ? "Active" : "Inactive",
+          summary: `Marked as ${isActive ? "Active" : "Inactive"}`,
+        },
+      }),
+    ]);
 
-  return result;
+    invalidateInitialCompaniesCache();
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "CONTACT_STATUS_CHANGE",
+      companyId: current.companyId,
+      contactId,
+      isActive,
+    });
+
+    return actionOk({ success: true, isActive });
+  } catch (err) {
+    console.error("[toggleContactActiveSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to update contact status"));
+  }
 }
 
 export async function toggleContactActive(contactId: string, isActive: boolean) {
-  const actor = await getContactActor();
-
-  const current = await prisma.contact.findUnique({
-    where: { id: contactId },
-    select: { id: true, name: true, isActive: true, companyId: true },
-  });
-
-  if (!current) throw new Error("Person not found");
-
-  await prisma.$transaction([
-    prisma.contact.update({
-      where: { id: contactId },
-      data: { isActive },
-    }),
-    prisma.contactLog.create({
-      data: {
-        contactId,
-        userId: actor.id,
-        action: "STATUS_CHANGE",
-        fieldName: "isActive",
-        oldValue: current.isActive ? "Active" : "Inactive",
-        newValue: isActive ? "Active" : "Inactive",
-        summary: `Marked as ${isActive ? "Active" : "Inactive"}`,
-      },
-    }),
-  ]);
-
-  revalidatePath("/contact");
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "CONTACT_STATUS_CHANGE",
-    companyId: current.companyId,
-    contactId,
-    isActive,
-  }).catch((err) => console.error("Pusher trigger error:", err));
-
-  return { success: true, isActive };
+  const res = await toggleContactActiveSafe(contactId, isActive);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
 }
 
-export async function toggleCompanyStatus(companyId: string, status: ContactStatus) {
-  const actor = await getContactActor();
+export async function toggleCompanyStatusSafe(
+  companyId: string,
+  status: ContactStatus,
+  mutationId?: string
+): Promise<ActionResult<{ success: true; status: ContactStatus; revision: string; mutationId?: string }>> {
+  try {
+    const actor = await getContactActor();
 
-  const current = await prisma.company.findUnique({
-    where: { id: companyId },
-    select: { id: true, name: true, status: true },
-  });
-
-  if (!current) throw new Error("Account not found");
-
-  const [updated] = await prisma.$transaction([
-    prisma.company.update({
+    const current = await prisma.company.findUnique({
       where: { id: companyId },
-      data: { status },
-    }),
-    prisma.companyLog.create({
-      data: {
-        companyId,
-        userId: actor.id,
-        action: "STATUS_CHANGE",
-        fieldName: "status",
-        oldValue: current.status,
-        newValue: status,
-        summary: `Marked account as ${status === "QUALIFIED" ? "Qualified" : "Unqualified"}`,
-      },
-    }),
-  ]);
+      select: { id: true, name: true, status: true },
+    });
 
-  revalidatePath("/contact");
-  invalidateInitialCompaniesCache();
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "STATUS_CHANGE",
-    companyId,
-    status: updated.status,
-  }).catch((err) => console.error("Pusher trigger error:", err));
+    if (!current) return actionFail("Account not found", "NOT_FOUND");
 
-  // Sync LTC count in Pipeline and Leaderboard in real-time
-  void notifyPipelineAudience({
-    action: "LTC_UPDATED",
-    companyId,
-  });
-  void dispatchDashboardInvalidation({
-    resources: ["leaderboard", "summary"],
-    companyIds: [companyId],
-  });
+    const [updated] = await prisma.$transaction([
+      prisma.company.update({
+        where: { id: companyId },
+        data: { status },
+        select: { id: true, status: true, updatedAt: true },
+      }),
+      prisma.companyLog.create({
+        data: {
+          companyId,
+          userId: actor.id,
+          action: "STATUS_CHANGE",
+          fieldName: "status",
+          oldValue: current.status,
+          newValue: status,
+          summary: `Marked account as ${status === "QUALIFIED" ? "Qualified" : "Unqualified"}`,
+        },
+      }),
+    ]);
 
-  return { success: true, status: updated.status };
+    const revision = updated.updatedAt.toISOString();
+    invalidateInitialCompaniesCache();
+
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "STATUS_CHANGE",
+      companyId,
+      status: updated.status,
+      previousStatus: current.status,
+      revision,
+      mutationId,
+    });
+
+    // Sync LTC count in Pipeline and Leaderboard in real-time
+    void notifyPipelineAudience({
+      action: "LTC_UPDATED",
+      companyId,
+    });
+    void dispatchDashboardInvalidation({
+      resources: ["leaderboard", "summary"],
+      companyIds: [companyId],
+    });
+
+    return actionOk({ success: true, status: updated.status, revision, mutationId });
+  } catch (err) {
+    console.error("[toggleCompanyStatusSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to update account status"));
+  }
+}
+
+export async function toggleCompanyStatus(
+  companyId: string,
+  status: ContactStatus,
+  mutationId?: string
+) {
+  const res = await toggleCompanyStatusSafe(companyId, status, mutationId);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
+
+export async function updateCompanyStarRatingSafe(
+  companyId: string,
+  starRating: number,
+  mutationId?: string
+): Promise<
+  ActionResult<{
+    success: true;
+    starRating: number;
+    revision: string;
+    companyId: string;
+    mutationId?: string;
+  }>
+> {
+  try {
+    const actor = await getContactActor();
+
+    const current = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true, name: true, starRating: true },
+    });
+
+    if (!current) return actionFail("Account not found", "NOT_FOUND");
+
+    const clamped = Math.max(0, Math.min(5, Math.round(starRating)));
+
+    const [updated] = await prisma.$transaction([
+      prisma.company.update({
+        where: { id: companyId },
+        data: { starRating: clamped },
+        select: { id: true, starRating: true, updatedAt: true },
+      }),
+      prisma.companyLog.create({
+        data: {
+          companyId,
+          userId: actor.id,
+          action: "RATING_CHANGE",
+          fieldName: "starRating",
+          oldValue: String(current.starRating || 0),
+          newValue: String(clamped),
+          summary: `Updated star rating to ${clamped} star${clamped === 1 ? "" : "s"}`,
+        },
+      }),
+    ]);
+
+    const revision = updated.updatedAt.toISOString();
+    invalidateInitialCompaniesCache();
+
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "RATING_CHANGE",
+      companyId,
+      starRating: updated.starRating,
+      revision,
+      mutationId,
+    });
+
+    return actionOk({
+      success: true,
+      starRating: updated.starRating,
+      revision,
+      companyId,
+      mutationId,
+    });
+  } catch (err) {
+    console.error("[updateCompanyStarRatingSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to update star rating"));
+  }
 }
 
 export async function updateCompanyStarRating(
@@ -1229,173 +1568,541 @@ export async function updateCompanyStarRating(
   starRating: number,
   mutationId?: string
 ) {
-  const actor = await getContactActor();
+  const res = await updateCompanyStarRatingSafe(companyId, starRating, mutationId);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
 
-  const current = await prisma.company.findUnique({
-    where: { id: companyId },
-    select: { id: true, name: true, starRating: true },
-  });
+export interface UpdateCompanyDetailsInput {
+  displayName?: string;
+  name?: string;
+  country?: string | null;
+  type?: ContactType;
+  status?: ContactStatus;
+  starRating?: number;
+  notes?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  phones?: string[];
+  emails?: string[];
+}
 
-  if (!current) throw new Error("Account not found");
+function buildFormattedAddressAndMapsUrl(
+  companyName: string,
+  addr: {
+    addressLine1?: string | null;
+    addressLine2?: string | null;
+    subdistrict?: string | null;
+    district?: string | null;
+    province?: string | null;
+    postalCode?: string | null;
+    country?: string | null;
+    googleMapsUrl?: string | null;
+  },
+  fallbackMapsUrl?: string | null
+) {
+  const addressParts = [
+    addr.addressLine1,
+    addr.addressLine2,
+    addr.subdistrict,
+    addr.district,
+    addr.province,
+    addr.postalCode,
+    addr.country || "Thailand",
+  ].filter(Boolean);
+  const formattedAddress = addressParts.join(" ");
 
-  const clamped = Math.max(0, Math.min(5, Math.round(starRating)));
+  let mapsUrl =
+    addr.googleMapsUrl !== undefined ? addr.googleMapsUrl?.trim() : fallbackMapsUrl?.trim();
+  if (!mapsUrl && formattedAddress) {
+    const query = encodeURIComponent(`${companyName} ${formattedAddress}`);
+    mapsUrl = `https://www.google.com/maps/search/?api=1&query=${query}`;
+  }
 
-  const [updated] = await prisma.$transaction([
-    prisma.company.update({
+  return {
+    formattedAddress,
+    googleMapsUrl: mapsUrl || null,
+  };
+}
+
+export async function updateCompanyDetailsSafe(
+  companyId: string,
+  data: UpdateCompanyDetailsInput,
+  mutationId?: string
+): Promise<
+  ActionResult<
+    Prisma.CompanyGetPayload<Record<string, never>> & {
+      revision: string;
+    }
+  >
+> {
+  try {
+    const actor = await getContactActor();
+
+    const company = await prisma.company.findUnique({
       where: { id: companyId },
-      data: { starRating: clamped },
-      select: { id: true, starRating: true, updatedAt: true },
-    }),
-    prisma.companyLog.create({
-      data: {
-        companyId,
-        userId: actor.id,
-        action: "RATING_CHANGE",
-        fieldName: "starRating",
-        oldValue: String(current.starRating || 0),
-        newValue: String(clamped),
-        summary: `Updated star rating to ${clamped} star${clamped === 1 ? "" : "s"}`,
+    });
+    if (!company) return actionFail("Account not found", "NOT_FOUND");
+
+    if (data.name !== undefined) {
+      const nextName = data.name.trim();
+      if (!nextName) {
+        return actionFail("Account legal name is required", "VALIDATION");
+      }
+      if (nextName.toLowerCase() !== company.name.toLowerCase()) {
+        const duplicate = await prisma.company.findFirst({
+          where: {
+            id: { not: companyId },
+            name: { equals: nextName, mode: "insensitive" },
+          },
+          select: { id: true, name: true, status: true },
+        });
+        if (duplicate) {
+          return actionFail(
+            `Another account named "${duplicate.name}" already exists (${duplicate.status === "QUALIFIED" ? "Qualified" : "Unqualified"}).`,
+            "DUPLICATE_NAME"
+          );
+        }
+      }
+    }
+
+    const changes: string[] = [];
+    if (data.displayName !== undefined && data.displayName.trim() !== (company.displayName || company.name)) {
+      changes.push(`Changed display name to "${data.displayName.trim()}"`);
+    }
+    if (data.name !== undefined && data.name.trim() !== company.name) {
+      changes.push(`Changed name from "${company.name}" to "${data.name.trim()}"`);
+    }
+    const newEmails = data.emails !== undefined ? data.emails.map((e) => e.trim()).filter(Boolean) : undefined;
+    const newPhones = data.phones !== undefined ? data.phones.map((p) => p.trim()).filter(Boolean) : undefined;
+    const primaryEmail = newEmails !== undefined ? (newEmails[0] || null) : (data.email !== undefined ? data.email?.trim() || null : company.email);
+    const primaryPhone = newPhones !== undefined ? (newPhones[0] || null) : (data.phone !== undefined ? data.phone?.trim() || null : company.phone);
+    const finalEmails = newEmails !== undefined ? newEmails : (primaryEmail ? [primaryEmail] : company.emails || []);
+    const finalPhones = newPhones !== undefined ? newPhones : (primaryPhone ? [primaryPhone] : company.phones || []);
+
+    if (data.phone !== undefined && data.phone?.trim() !== (company.phone || "")) {
+      changes.push(`Updated office phone to ${data.phone?.trim() || "None"}`);
+    }
+    if (data.email !== undefined && data.email?.trim() !== (company.email || "")) {
+      changes.push(`Updated company email to ${data.email?.trim() || "None"}`);
+    }
+    if (newEmails !== undefined && JSON.stringify(newEmails) !== JSON.stringify(company.emails)) {
+      changes.push(`Updated company emails list (${newEmails.length} email${newEmails.length === 1 ? "" : "s"})`);
+    }
+    if (newPhones !== undefined && JSON.stringify(newPhones) !== JSON.stringify(company.phones)) {
+      changes.push(`Updated company phones list (${newPhones.length} phone${newPhones.length === 1 ? "" : "s"})`);
+    }
+    const normalizedCountry =
+      data.country !== undefined
+        ? data.country && data.country.trim()
+          ? normalizeCountryName(data.country)
+          : null
+        : company.country;
+    if (data.country !== undefined && (normalizedCountry || "") !== (company.country || "")) {
+      changes.push(`Updated country to ${normalizedCountry || "None"}`);
+    }
+    if (data.type !== undefined && data.type !== company.type) {
+      changes.push(`Changed account type to ${data.type}`);
+    }
+    if (data.status !== undefined && data.status !== company.status) {
+      changes.push(`Changed status to ${data.status}`);
+    }
+    if (data.starRating !== undefined && data.starRating !== company.starRating) {
+      changes.push(`Updated star rating to ${data.starRating}`);
+    }
+    if (data.notes !== undefined && (data.notes?.trim() || "") !== (company.notes || "")) {
+      changes.push("Updated account notes");
+    }
+
+    const [updated] = await prisma.$transaction([
+      prisma.company.update({
+        where: { id: companyId },
+        data: {
+          displayName: data.displayName !== undefined ? data.displayName.trim() : company.displayName,
+          name: data.name !== undefined ? data.name.trim() : company.name,
+          phone: primaryPhone,
+          email: primaryEmail,
+          emails: finalEmails,
+          phones: finalPhones,
+          country: normalizedCountry,
+          type: data.type !== undefined ? data.type : company.type,
+          status: data.status !== undefined ? data.status : company.status,
+          starRating: data.starRating !== undefined ? data.starRating : company.starRating,
+          notes: data.notes !== undefined ? data.notes?.trim() || null : company.notes,
+        },
+      }),
+      ...(changes.length > 0
+        ? [
+            prisma.companyLog.create({
+              data: {
+                companyId,
+                userId: actor.id,
+                action: "UPDATE",
+                summary: changes.join("; "),
+              },
+            }),
+          ]
+        : []),
+    ]);
+
+    const revision = updated.updatedAt.toISOString();
+    const metadataChanged =
+      normalizedCountry !== company.country ||
+      (data.type !== undefined && data.type !== company.type);
+    invalidateInitialCompaniesCache(metadataChanged);
+
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "DETAILS_CHANGE",
+      companyId,
+      revision,
+      mutationId,
+      company: {
+        id: updated.id,
+        displayName: updated.displayName,
+        name: updated.name,
+        phone: updated.phone,
+        email: updated.email,
+        emails: updated.emails,
+        phones: updated.phones,
+        country: updated.country,
+        type: updated.type,
+        status: updated.status,
+        starRating: updated.starRating,
+        updatedAt: updated.updatedAt,
+        revision,
       },
-    }),
-  ]);
+    });
 
-  const revision = updated.updatedAt.toISOString();
-  invalidateInitialCompaniesCache();
-
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "RATING_CHANGE",
-    companyId,
-    starRating: updated.starRating,
-    revision,
-    mutationId,
-  }).catch((err) => console.error("Pusher trigger error:", err));
-
-  return { success: true, starRating: updated.starRating, revision, companyId, mutationId };
+    return actionOk({ ...updated, revision });
+  } catch (err) {
+    console.error("[updateCompanyDetailsSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to update account details"));
+  }
 }
 
 export async function updateCompanyDetails(
   companyId: string,
-  data: {
-    displayName?: string;
-    name?: string;
-    country?: string | null;
-    type?: ContactType;
-    status?: ContactStatus;
-    starRating?: number;
-    notes?: string | null;
-    phone?: string | null;
-    email?: string | null;
-    phones?: string[];
-    emails?: string[];
-  },
+  data: UpdateCompanyDetailsInput,
   mutationId?: string
 ) {
-  const actor = await getContactActor();
+  const res = await updateCompanyDetailsSafe(companyId, data, mutationId);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
 
-  const company = await prisma.company.findUnique({
-    where: { id: companyId },
-  });
-  if (!company) throw new Error("Account not found");
+export interface SaveCompanyAccountAddressPatch {
+  id: string;
+  title?: string;
+  type?: AddressType;
+  taxId?: string;
+  branchNumber?: string;
+  addressLine1: string;
+  addressLine2?: string;
+  subdistrict?: string;
+  district?: string;
+  province?: string;
+  postalCode?: string;
+  country?: string;
+  isDefault?: boolean;
+  googleMapsUrl?: string;
+}
 
-  const changes: string[] = [];
-  if (data.displayName !== undefined && data.displayName.trim() !== (company.displayName || company.name)) {
-    changes.push(`Changed display name to "${data.displayName.trim()}"`);
-  }
-  if (data.name !== undefined && data.name.trim() !== company.name) {
-    changes.push(`Changed name from "${company.name}" to "${data.name.trim()}"`);
-  }
-  const newEmails = data.emails !== undefined ? data.emails.map((e) => e.trim()).filter(Boolean) : undefined;
-  const newPhones = data.phones !== undefined ? data.phones.map((p) => p.trim()).filter(Boolean) : undefined;
-  const primaryEmail = newEmails !== undefined ? (newEmails[0] || null) : (data.email !== undefined ? data.email?.trim() || null : company.email);
-  const primaryPhone = newPhones !== undefined ? (newPhones[0] || null) : (data.phone !== undefined ? data.phone?.trim() || null : company.phone);
-  const finalEmails = newEmails !== undefined ? newEmails : (primaryEmail ? [primaryEmail] : company.emails || []);
-  const finalPhones = newPhones !== undefined ? newPhones : (primaryPhone ? [primaryPhone] : company.phones || []);
+export interface SaveCompanyAccountInput {
+  details: UpdateCompanyDetailsInput;
+  updatedAddresses?: SaveCompanyAccountAddressPatch[];
+  newAddress?: CreateCompanyAddressInput | null;
+}
 
-  if (data.phone !== undefined && data.phone?.trim() !== (company.phone || "")) {
-    changes.push(`Updated office phone to ${data.phone?.trim() || "None"}`);
-  }
-  if (data.email !== undefined && data.email?.trim() !== (company.email || "")) {
-    changes.push(`Updated company email to ${data.email?.trim() || "None"}`);
-  }
-  if (newEmails !== undefined && JSON.stringify(newEmails) !== JSON.stringify(company.emails)) {
-    changes.push(`Updated company emails list (${newEmails.length} email${newEmails.length === 1 ? "" : "s"})`);
-  }
-  if (newPhones !== undefined && JSON.stringify(newPhones) !== JSON.stringify(company.phones)) {
-    changes.push(`Updated company phones list (${newPhones.length} phone${newPhones.length === 1 ? "" : "s"})`);
-  }
-  if (data.country !== undefined && data.country?.trim() !== (company.country || "")) {
-    changes.push(`Updated country to ${data.country || "None"}`);
-  }
-  if (data.type !== undefined && data.type !== company.type) {
-    changes.push(`Changed account type to ${data.type}`);
-  }
-  if (data.status !== undefined && data.status !== company.status) {
-    changes.push(`Changed status to ${data.status}`);
-  }
-  if (data.starRating !== undefined && data.starRating !== company.starRating) {
-    changes.push(`Updated star rating to ${data.starRating}`);
-  }
-  if (data.notes !== undefined && data.notes?.trim() !== (company.notes || "")) {
-    changes.push("Updated account notes");
-  }
+export type SavedCompanyAddressRecord = Prisma.CompanyAddressGetPayload<Record<string, never>>;
 
-  const [updated] = await prisma.$transaction([
-    prisma.company.update({
-      where: { id: companyId },
-      data: {
-        displayName: data.displayName !== undefined ? data.displayName.trim() : company.displayName,
-        name: data.name !== undefined ? data.name.trim() : company.name,
-        phone: primaryPhone,
-        email: primaryEmail,
-        emails: finalEmails,
-        phones: finalPhones,
-        country: data.country !== undefined ? (data.country ? normalizeCountryName(data.country) : null) : company.country,
-        type: data.type !== undefined ? data.type : company.type,
-        status: data.status !== undefined ? data.status : company.status,
-        starRating: data.starRating !== undefined ? data.starRating : company.starRating,
-        notes: data.notes !== undefined ? data.notes?.trim() || null : company.notes,
-      },
-    }),
-    ...(changes.length > 0
-      ? [
-          prisma.companyLog.create({
-            data: {
-              companyId,
-              userId: actor.id,
-              action: "UPDATE",
-              summary: changes.join("; "),
+export interface SaveCompanyAccountResult {
+  company: Prisma.CompanyGetPayload<Record<string, never>> & { revision: string };
+  addresses: SavedCompanyAddressRecord[];
+  revision: string;
+}
+
+/**
+ * Single atomic Server Action for EditAccountPanel "Save Account":
+ * Updates Company details, dirty CompanyAddress rows, and optional new draft address
+ * in ONE round-trip and ONE transaction (eliminating N+1 sequential Server Actions
+ * and cross-region transaction timeouts between iad1 and ap-southeast-1).
+ */
+export async function saveCompanyAccount(
+  companyId: string,
+  input: SaveCompanyAccountInput,
+  mutationId?: string
+): Promise<ActionResult<SaveCompanyAccountResult>> {
+  try {
+    const actor = await getContactActor();
+    const { details, updatedAddresses = [], newAddress } = input;
+
+    const trimmedName = details.name?.trim();
+    if (details.name !== undefined && !trimmedName) {
+      return actionFail("Account legal name is required", "VALIDATION");
+    }
+    if (details.displayName !== undefined && !details.displayName.trim()) {
+      return actionFail("Account display name is required", "VALIDATION");
+    }
+
+    for (const addr of updatedAddresses) {
+      if (!addr.addressLine1?.trim()) {
+        return actionFail(
+          `Address Line 1 is required for ${addr.title || "an address"}.`,
+          "VALIDATION"
+        );
+      }
+    }
+    if (newAddress && !newAddress.addressLine1?.trim()) {
+      return actionFail("Address Line 1 is required for the new address.", "VALIDATION");
+    }
+
+    const [company, duplicate] = await Promise.all([
+      prisma.company.findUnique({
+        where: { id: companyId },
+        include: { addresses: { orderBy: { createdAt: "asc" } } },
+      }),
+      trimmedName
+        ? prisma.company.findFirst({
+            where: {
+              id: { not: companyId },
+              name: { equals: trimmedName, mode: "insensitive" },
             },
-          }),
-        ]
-      : []),
-  ]);
+            select: { id: true, name: true, status: true },
+          })
+        : Promise.resolve(null),
+    ]);
 
-  const revision = updated.updatedAt.toISOString();
-  invalidateInitialCompaniesCache();
+    if (!company) {
+      return actionFail("Account not found", "NOT_FOUND");
+    }
+    if (duplicate) {
+      return actionFail(
+        `Another account named "${duplicate.name}" already exists (${duplicate.status === "QUALIFIED" ? "Qualified" : "Unqualified"}).`,
+        "DUPLICATE_NAME"
+      );
+    }
 
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "DETAILS_CHANGE",
-    companyId,
-    revision,
-    mutationId,
-    company: {
-      id: updated.id,
-      displayName: updated.displayName,
-      name: updated.name,
-      phone: updated.phone,
-      email: updated.email,
-      emails: updated.emails,
-      phones: updated.phones,
-      country: updated.country,
-      type: updated.type,
-      status: updated.status,
-      starRating: updated.starRating,
-      updatedAt: updated.updatedAt,
+    const targetCompanyName = trimmedName || company.name;
+    const changes: string[] = [];
+
+    if (details.displayName !== undefined && details.displayName.trim() !== (company.displayName || company.name)) {
+      changes.push(`Changed display name to "${details.displayName.trim()}"`);
+    }
+    if (trimmedName && trimmedName !== company.name) {
+      changes.push(`Changed name from "${company.name}" to "${trimmedName}"`);
+    }
+
+    const newEmails = details.emails !== undefined ? details.emails.map((e) => e.trim()).filter(Boolean) : undefined;
+    const newPhones = details.phones !== undefined ? details.phones.map((p) => p.trim()).filter(Boolean) : undefined;
+    const primaryEmail = newEmails !== undefined ? (newEmails[0] || null) : (details.email !== undefined ? details.email?.trim() || null : company.email);
+    const primaryPhone = newPhones !== undefined ? (newPhones[0] || null) : (details.phone !== undefined ? details.phone?.trim() || null : company.phone);
+    const finalEmails = newEmails !== undefined ? newEmails : (primaryEmail ? [primaryEmail] : company.emails || []);
+    const finalPhones = newPhones !== undefined ? newPhones : (primaryPhone ? [primaryPhone] : company.phones || []);
+
+    if (newEmails !== undefined && JSON.stringify(newEmails) !== JSON.stringify(company.emails)) {
+      changes.push(`Updated company emails (${newEmails.length})`);
+    }
+    if (newPhones !== undefined && JSON.stringify(newPhones) !== JSON.stringify(company.phones)) {
+      changes.push(`Updated company phones (${newPhones.length})`);
+    }
+
+    const normalizedCountry =
+      details.country !== undefined
+        ? details.country && details.country.trim()
+          ? normalizeCountryName(details.country)
+          : null
+        : company.country;
+    if (details.country !== undefined && (normalizedCountry || "") !== (company.country || "")) {
+      changes.push(`Updated country to ${normalizedCountry || "None"}`);
+    }
+    if (details.type !== undefined && details.type !== company.type) {
+      changes.push(`Changed account type to ${details.type}`);
+    }
+    if (details.notes !== undefined && (details.notes?.trim() || "") !== (company.notes || "")) {
+      changes.push("Updated account notes");
+    }
+
+    const existingAddrMap = new Map(company.addresses.map((a) => [a.id, a]));
+    const validUpdates = updatedAddresses.filter((a) => existingAddrMap.has(a.id));
+    if (validUpdates.length > 0) {
+      changes.push(
+        validUpdates.length === 1
+          ? `Updated address "${validUpdates[0].title || "Location"}"`
+          : `Updated ${validUpdates.length} addresses`
+      );
+    }
+    if (newAddress) {
+      changes.push(`Added address "${newAddress.title?.trim() || "New Location"}"`);
+    }
+
+    const txResult = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const updatedCompany = await tx.company.update({
+        where: { id: companyId },
+        data: {
+          displayName: details.displayName !== undefined ? details.displayName.trim() : company.displayName,
+          name: targetCompanyName,
+          phone: primaryPhone,
+          email: primaryEmail,
+          emails: finalEmails,
+          phones: finalPhones,
+          country: normalizedCountry,
+          type: details.type !== undefined ? details.type : company.type,
+          status: details.status !== undefined ? details.status : company.status,
+          starRating: details.starRating !== undefined ? details.starRating : company.starRating,
+          notes: details.notes !== undefined ? details.notes?.trim() || null : company.notes,
+        },
+      });
+
+      const newDefaultRequested =
+        Boolean(newAddress?.isDefault) || validUpdates.some((u) => u.isDefault === true);
+      if (newDefaultRequested) {
+        await tx.companyAddress.updateMany({
+          where: { companyId },
+          data: { isDefault: false },
+        });
+      }
+
+      if (validUpdates.length > 0) {
+        await Promise.all(
+          validUpdates.map((addr) => {
+            const currentAddr = existingAddrMap.get(addr.id)!;
+            const resolvedCountry =
+              addr.country !== undefined
+                ? addr.country
+                  ? normalizeCountryName(addr.country)
+                  : null
+                : currentAddr.country;
+            const { formattedAddress, googleMapsUrl } = buildFormattedAddressAndMapsUrl(
+              targetCompanyName,
+              {
+                addressLine1: addr.addressLine1,
+                addressLine2: addr.addressLine2 ?? null,
+                subdistrict: addr.subdistrict ?? null,
+                district: addr.district ?? null,
+                province: addr.province ?? null,
+                postalCode: addr.postalCode ?? null,
+                country: resolvedCountry,
+                googleMapsUrl: addr.googleMapsUrl,
+              },
+              currentAddr.googleMapsUrl
+            );
+
+            return tx.companyAddress.update({
+              where: { id: addr.id },
+              data: {
+                title: addr.title !== undefined ? addr.title?.trim() || null : currentAddr.title,
+                type: addr.type !== undefined ? addr.type : currentAddr.type,
+                ...(addr.isDefault !== undefined ? { isDefault: addr.isDefault } : {}),
+                taxId: addr.taxId !== undefined ? addr.taxId?.trim() || null : currentAddr.taxId,
+                branchNumber:
+                  addr.branchNumber !== undefined
+                    ? addr.branchNumber?.trim() || null
+                    : currentAddr.branchNumber,
+                addressLine1: addr.addressLine1.trim(),
+                addressLine2: addr.addressLine2?.trim() || null,
+                subdistrict: addr.subdistrict?.trim() || null,
+                district: addr.district?.trim() || null,
+                province: addr.province?.trim() || null,
+                postalCode: addr.postalCode?.trim() || null,
+                country: resolvedCountry,
+                formattedAddress,
+                googleMapsUrl,
+              },
+            });
+          })
+        );
+      }
+
+      if (newAddress) {
+        const addrCountry = newAddress.country
+          ? normalizeCountryName(newAddress.country)
+          : normalizedCountry || "Thailand";
+        const { formattedAddress, googleMapsUrl } = buildFormattedAddressAndMapsUrl(
+          targetCompanyName,
+          {
+            ...newAddress,
+            country: addrCountry,
+          }
+        );
+
+        await tx.companyAddress.create({
+          data: {
+            companyId,
+            title: newAddress.title?.trim() || "Headquarters",
+            type: newAddress.type || "BRANCH",
+            isDefault: company.addresses.length === 0 ? true : Boolean(newAddress.isDefault),
+            taxId: newAddress.taxId?.trim() || null,
+            branchNumber: newAddress.branchNumber?.trim() || null,
+            addressLine1: newAddress.addressLine1.trim(),
+            addressLine2: newAddress.addressLine2?.trim() || null,
+            subdistrict: newAddress.subdistrict?.trim() || null,
+            district: newAddress.district?.trim() || null,
+            province: newAddress.province?.trim() || null,
+            postalCode: newAddress.postalCode?.trim() || null,
+            country: addrCountry,
+            formattedAddress,
+            googleMapsUrl,
+          },
+        });
+      }
+
+      const [freshAddresses] = await Promise.all([
+        tx.companyAddress.findMany({
+          where: { companyId },
+          orderBy: { createdAt: "asc" },
+        }),
+        changes.length > 0
+          ? tx.companyLog.create({
+              data: {
+                companyId,
+                userId: actor.id,
+                action: "UPDATE",
+                summary: changes.join("; "),
+              },
+            })
+          : Promise.resolve(null),
+      ]);
+
+      return { updatedCompany, freshAddresses };
+    }, CONTACT_TX_OPTIONS);
+
+    const revision = txResult.updatedCompany.updatedAt.toISOString();
+    const metadataChanged =
+      normalizedCountry !== company.country ||
+      (details.type !== undefined && details.type !== company.type);
+    invalidateInitialCompaniesCache(metadataChanged);
+
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "DETAILS_CHANGE",
+      companyId,
       revision,
-    },
-  }).catch((err) => console.error("Pusher trigger error:", err));
+      mutationId,
+      company: {
+        id: txResult.updatedCompany.id,
+        displayName: txResult.updatedCompany.displayName,
+        name: txResult.updatedCompany.name,
+        phone: txResult.updatedCompany.phone,
+        email: txResult.updatedCompany.email,
+        emails: txResult.updatedCompany.emails,
+        phones: txResult.updatedCompany.phones,
+        country: txResult.updatedCompany.country,
+        type: txResult.updatedCompany.type,
+        status: txResult.updatedCompany.status,
+        starRating: txResult.updatedCompany.starRating,
+        updatedAt: txResult.updatedCompany.updatedAt,
+        revision,
+      },
+    });
 
-  return { ...updated, revision };
+    return actionOk({
+      company: { ...txResult.updatedCompany, revision },
+      addresses: txResult.freshAddresses,
+      revision,
+    });
+  } catch (err) {
+    console.error("[saveCompanyAccount] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to save account changes"));
+  }
 }
 
 export interface CreateCompanyInput {
@@ -1412,116 +2119,159 @@ export interface CreateCompanyInput {
   address?: CreateCompanyAddressInput;
 }
 
-export async function createCompany(input: CreateCompanyInput) {
-  await getContactActor();
+export type CreatedCompanyPayload = Prisma.CompanyGetPayload<Record<string, never>> & {
+  revision: string;
+};
 
-  if (!input.name || !input.name.trim()) {
-    throw new Error("Account name is required");
-  }
+export async function createCompanySafe(
+  input: CreateCompanyInput,
+  mutationId?: string
+): Promise<ActionResult<CreatedCompanyPayload>> {
+  try {
+    const actor = await getContactActor();
 
-  const displayName = input.displayName?.trim() || input.name.trim();
-
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // Check if company already exists
-    const existing = await tx.company.findFirst({
-      where: { name: { equals: input.name.trim(), mode: "insensitive" } },
-    });
-    if (existing) {
-      throw new Error(`An account with the name "${input.name.trim()}" already exists`);
+    const trimmedName = input.name?.trim();
+    if (!trimmedName) {
+      return actionFail("Account legal name is required", "VALIDATION");
     }
 
+    // Pre-transaction duplicate check saves an interactive transaction round-trip
+    // and returns a structured user-friendly message instead of throwing #441.
+    const existing = await prisma.company.findFirst({
+      where: { name: { equals: trimmedName, mode: "insensitive" } },
+      select: { id: true, name: true, status: true },
+    });
+    if (existing) {
+      return actionFail(
+        `An account named "${existing.name}" already exists (${existing.status === "QUALIFIED" ? "Qualified" : "Unqualified"}).`,
+        "DUPLICATE_NAME"
+      );
+    }
+
+    const displayName = input.displayName?.trim() || trimmedName;
     const rawEmails = (input.emails || []).map((e) => e.trim()).filter(Boolean);
     const rawPhones = (input.phones || []).map((p) => p.trim()).filter(Boolean);
     const primaryEmail = rawEmails[0] || input.email?.trim() || null;
     const primaryPhone = rawPhones[0] || input.phone?.trim() || null;
     const finalEmails = rawEmails.length > 0 ? rawEmails : (primaryEmail ? [primaryEmail] : []);
     const finalPhones = rawPhones.length > 0 ? rawPhones : (primaryPhone ? [primaryPhone] : []);
+    const normalizedCountry = input.country ? normalizeCountryName(input.country) : "Thailand";
 
-    const company = await tx.company.create({
-      data: {
-        displayName,
-        name: input.name.trim(),
-        phone: primaryPhone,
-        email: primaryEmail,
-        emails: finalEmails,
-        phones: finalPhones,
-        country: input.country ? normalizeCountryName(input.country) : "Thailand",
-        type: input.type || "CUSTOMER",
-        notes: input.notes?.trim() || null,
-      },
-    });
-
-    const addrsToCreate = input.addresses && input.addresses.length > 0
-      ? input.addresses
-      : (input.address ? [input.address] : []);
-
+    const addrsToCreate =
+      input.addresses && input.addresses.length > 0
+        ? input.addresses
+        : input.address
+        ? [input.address]
+        : [];
     const validAddrs = addrsToCreate.filter((a) => a.addressLine1 && a.addressLine1.trim());
     const hasDefault = validAddrs.some((a) => a.isDefault);
 
-    for (let i = 0; i < validAddrs.length; i++) {
-      const addr = validAddrs[i];
-      const isDefault = hasDefault ? !!addr.isDefault : i === 0;
-
-      const addressParts = [
-        addr.addressLine1,
-        addr.addressLine2,
-        addr.subdistrict,
-        addr.district,
-        addr.province,
-        addr.postalCode,
-        addr.country || company.country || "Thailand",
-      ].filter(Boolean);
-      const formattedAddress = addressParts.join(" ");
-
-      let mapsUrl = addr.googleMapsUrl?.trim();
-      if (!mapsUrl && formattedAddress) {
-        const query = encodeURIComponent(`${company.name} ${formattedAddress}`);
-        mapsUrl = `https://www.google.com/maps/search/?api=1&query=${query}`;
-      }
-
-      await tx.companyAddress.create({
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const company = await tx.company.create({
         data: {
-          companyId: company.id,
-          title: addr.title?.trim() || (i === 0 ? "Headquarters" : `Location ${i + 1}`),
-          type: addr.type || "HEADQUARTERS",
-          isDefault,
-          taxId: addr.taxId?.trim() || null,
-          branchNumber: addr.branchNumber?.trim() || null,
-          addressLine1: addr.addressLine1.trim(),
-          addressLine2: addr.addressLine2?.trim() || null,
-          subdistrict: addr.subdistrict?.trim() || null,
-          district: addr.district?.trim() || null,
-          province: addr.province?.trim() || null,
-          postalCode: addr.postalCode?.trim() || null,
-          country: addr.country ? normalizeCountryName(addr.country) : (company.country || "Thailand"),
-          formattedAddress,
-          googleMapsUrl: mapsUrl || null,
+          displayName,
+          name: trimmedName,
+          phone: primaryPhone,
+          email: primaryEmail,
+          emails: finalEmails,
+          phones: finalPhones,
+          country: normalizedCountry,
+          type: input.type || "CUSTOMER",
+          notes: input.notes?.trim() || null,
         },
       });
-    }
 
-    return company;
-  });
+      if (validAddrs.length > 0) {
+        const addressRows: Prisma.CompanyAddressCreateManyInput[] = validAddrs.map((addr, i) => {
+          const isDefault = hasDefault ? Boolean(addr.isDefault) : i === 0;
+          const addrCountry = addr.country
+            ? normalizeCountryName(addr.country)
+            : company.country || "Thailand";
+          const { formattedAddress, googleMapsUrl } = buildFormattedAddressAndMapsUrl(
+            company.name,
+            {
+              ...addr,
+              country: addrCountry,
+            }
+          );
 
-  revalidatePath("/contact");
-  invalidateInitialCompaniesCache();
-  void pusherServer.trigger("private-contacts", "account-updated", {
-    action: "COMPANY_CREATED",
-    companyId: result.id,
-    company: {
-      id: result.id,
-      name: result.name,
-      displayName: result.displayName,
-      country: result.country,
-      status: result.status,
-      type: result.type,
-      starRating: result.starRating,
-      createdAt: result.createdAt,
-      _count: { contacts: 0, opportunities: 0 },
-    },
-  }).catch((err) => console.error("Pusher trigger error:", err));
+          return {
+            companyId: company.id,
+            title: addr.title?.trim() || (i === 0 ? "Headquarters" : `Location ${i + 1}`),
+            type: addr.type || "HEADQUARTERS",
+            isDefault,
+            taxId: addr.taxId?.trim() || null,
+            branchNumber: addr.branchNumber?.trim() || null,
+            addressLine1: addr.addressLine1.trim(),
+            addressLine2: addr.addressLine2?.trim() || null,
+            subdistrict: addr.subdistrict?.trim() || null,
+            district: addr.district?.trim() || null,
+            province: addr.province?.trim() || null,
+            postalCode: addr.postalCode?.trim() || null,
+            country: addrCountry,
+            formattedAddress,
+            googleMapsUrl,
+          };
+        });
 
-  return result;
+        await tx.companyAddress.createMany({
+          data: addressRows,
+        });
+      }
+
+      await tx.companyLog.create({
+        data: {
+          companyId: company.id,
+          userId: actor.id,
+          action: "CREATE",
+          summary:
+            validAddrs.length > 0
+              ? `Created account "${company.name}" with ${validAddrs.length} address${validAddrs.length === 1 ? "" : "es"}`
+              : `Created account "${company.name}"`,
+        },
+      });
+
+      return company;
+    }, CONTACT_TX_OPTIONS);
+
+    const revision = result.updatedAt.toISOString();
+    invalidateInitialCompaniesCache(true);
+
+    safePusherTrigger("private-contacts", "account-updated", {
+      action: "COMPANY_CREATED",
+      companyId: result.id,
+      revision,
+      mutationId,
+      company: {
+        id: result.id,
+        name: result.name,
+        displayName: result.displayName,
+        phone: result.phone,
+        email: result.email,
+        emails: result.emails,
+        phones: result.phones,
+        country: result.country,
+        status: result.status,
+        type: result.type,
+        starRating: result.starRating,
+        createdAt: result.createdAt,
+        updatedAt: result.updatedAt,
+        revision,
+        _count: { contacts: 0, opportunities: 0 },
+      },
+    });
+
+    return actionOk({ ...result, revision });
+  } catch (err) {
+    console.error("[createCompanySafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to create account"));
+  }
+}
+
+export async function createCompany(input: CreateCompanyInput) {
+  const res = await createCompanySafe(input);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
 }
 
 export interface CreateCompanyAddressInput {
@@ -1540,154 +2290,265 @@ export interface CreateCompanyAddressInput {
   googleMapsUrl?: string;
 }
 
+export async function createCompanyAddressSafe(
+  companyId: string,
+  input: CreateCompanyAddressInput
+): Promise<ActionResult<SavedCompanyAddressRecord>> {
+  try {
+    const actor = await getContactActor();
+
+    if (!input.addressLine1?.trim()) {
+      return actionFail("Address Line 1 is required", "VALIDATION");
+    }
+
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { id: true, name: true },
+    });
+    if (!company) return actionFail("Account not found", "NOT_FOUND");
+
+    const addrCountry = input.country ? normalizeCountryName(input.country) : "Thailand";
+    const { formattedAddress, googleMapsUrl } = buildFormattedAddressAndMapsUrl(company.name, {
+      ...input,
+      country: addrCountry,
+    });
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (input.isDefault) {
+        await tx.companyAddress.updateMany({
+          where: { companyId },
+          data: { isDefault: false },
+        });
+      }
+
+      const created = await tx.companyAddress.create({
+        data: {
+          companyId,
+          title: input.title?.trim() || "Headquarters",
+          type: input.type || "BILLING",
+          isDefault: Boolean(input.isDefault),
+          taxId: input.taxId?.trim() || null,
+          branchNumber: input.branchNumber?.trim() || null,
+          addressLine1: input.addressLine1.trim(),
+          addressLine2: input.addressLine2?.trim() || null,
+          subdistrict: input.subdistrict?.trim() || null,
+          district: input.district?.trim() || null,
+          province: input.province?.trim() || null,
+          postalCode: input.postalCode?.trim() || null,
+          country: addrCountry,
+          formattedAddress,
+          googleMapsUrl,
+        },
+      });
+
+      await tx.companyLog.create({
+        data: {
+          companyId,
+          userId: actor.id,
+          action: "UPDATE",
+          summary: `Added address "${created.title || "Location"}"`,
+        },
+      });
+
+      return created;
+    }, CONTACT_TX_OPTIONS);
+
+    invalidateInitialCompaniesCache();
+    return actionOk(result);
+  } catch (err) {
+    console.error("[createCompanyAddressSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to add address"));
+  }
+}
+
 export async function createCompanyAddress(
   companyId: string,
   input: CreateCompanyAddressInput
 ) {
-  await getContactActor();
+  const res = await createCompanyAddressSafe(companyId, input);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
 
-  const company = await prisma.company.findUnique({ where: { id: companyId } });
-  if (!company) throw new Error("Account not found");
+export async function updateCompanyAddressSafe(
+  addressId: string,
+  input: Partial<CreateCompanyAddressInput>
+): Promise<ActionResult<SavedCompanyAddressRecord>> {
+  try {
+    const actor = await getContactActor();
 
-  const addressParts = [
-    input.addressLine1,
-    input.addressLine2,
-    input.subdistrict,
-    input.district,
-    input.province,
-    input.postalCode,
-    input.country || "Thailand",
-  ].filter(Boolean);
-  const formattedAddress = addressParts.join(" ");
-
-  let mapsUrl = input.googleMapsUrl?.trim();
-  if (!mapsUrl && formattedAddress) {
-    const query = encodeURIComponent(`${company.name} ${formattedAddress}`);
-    mapsUrl = `https://www.google.com/maps/search/?api=1&query=${query}`;
-  }
-
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    if (input.isDefault) {
-      await tx.companyAddress.updateMany({
-        where: { companyId },
-        data: { isDefault: false },
-      });
-    }
-
-    return await tx.companyAddress.create({
-      data: {
-        companyId,
-        title: input.title?.trim() || "Headquarters",
-        type: input.type || "BILLING",
-        isDefault: !!input.isDefault,
-        taxId: input.taxId?.trim() || null,
-        branchNumber: input.branchNumber?.trim() || null,
-        addressLine1: input.addressLine1.trim(),
-        addressLine2: input.addressLine2?.trim() || null,
-        subdistrict: input.subdistrict?.trim() || null,
-        district: input.district?.trim() || null,
-        province: input.province?.trim() || null,
-        postalCode: input.postalCode?.trim() || null,
-        country: input.country ? normalizeCountryName(input.country) : "Thailand",
-        formattedAddress,
-        googleMapsUrl: mapsUrl || null,
-      },
+    const current = await prisma.companyAddress.findUnique({
+      where: { id: addressId },
+      include: { company: { select: { id: true, name: true } } },
     });
-  });
+    if (!current) return actionFail("Address not found", "NOT_FOUND");
 
-  revalidatePath("/contact");
-  return result;
+    const resolvedCountry =
+      input.country !== undefined
+        ? input.country
+          ? normalizeCountryName(input.country)
+          : null
+        : current.country;
+    const { formattedAddress, googleMapsUrl } = buildFormattedAddressAndMapsUrl(
+      current.company.name,
+      {
+        addressLine1: input.addressLine1 !== undefined ? input.addressLine1 : current.addressLine1,
+        addressLine2: input.addressLine2 !== undefined ? input.addressLine2 : current.addressLine2,
+        subdistrict: input.subdistrict !== undefined ? input.subdistrict : current.subdistrict,
+        district: input.district !== undefined ? input.district : current.district,
+        province: input.province !== undefined ? input.province : current.province,
+        postalCode: input.postalCode !== undefined ? input.postalCode : current.postalCode,
+        country: resolvedCountry,
+        googleMapsUrl: input.googleMapsUrl,
+      },
+      current.googleMapsUrl
+    );
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      if (input.isDefault) {
+        await tx.companyAddress.updateMany({
+          where: { companyId: current.companyId },
+          data: { isDefault: false },
+        });
+      }
+
+      const updated = await tx.companyAddress.update({
+        where: { id: addressId },
+        data: {
+          ...(input.title !== undefined ? { title: input.title?.trim() || null } : {}),
+          ...(input.type !== undefined ? { type: input.type } : {}),
+          ...(input.isDefault !== undefined ? { isDefault: input.isDefault } : {}),
+          ...(input.taxId !== undefined ? { taxId: input.taxId?.trim() || null } : {}),
+          ...(input.branchNumber !== undefined ? { branchNumber: input.branchNumber?.trim() || null } : {}),
+          ...(input.addressLine1 !== undefined ? { addressLine1: input.addressLine1.trim() } : {}),
+          ...(input.addressLine2 !== undefined ? { addressLine2: input.addressLine2?.trim() || null } : {}),
+          ...(input.subdistrict !== undefined ? { subdistrict: input.subdistrict?.trim() || null } : {}),
+          ...(input.district !== undefined ? { district: input.district?.trim() || null } : {}),
+          ...(input.province !== undefined ? { province: input.province?.trim() || null } : {}),
+          ...(input.postalCode !== undefined ? { postalCode: input.postalCode?.trim() || null } : {}),
+          ...(input.country !== undefined ? { country: resolvedCountry } : {}),
+          formattedAddress,
+          googleMapsUrl,
+        },
+      });
+
+      await tx.companyLog.create({
+        data: {
+          companyId: current.companyId,
+          userId: actor.id,
+          action: "UPDATE",
+          summary: `Updated address "${updated.title || "Location"}"`,
+        },
+      });
+
+      return updated;
+    }, CONTACT_TX_OPTIONS);
+
+    invalidateInitialCompaniesCache();
+    return actionOk(result);
+  } catch (err) {
+    console.error("[updateCompanyAddressSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to update address"));
+  }
 }
 
 export async function updateCompanyAddress(
   addressId: string,
   input: Partial<CreateCompanyAddressInput>
 ) {
-  await getContactActor();
+  const res = await updateCompanyAddressSafe(addressId, input);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
 
-  const current = await prisma.companyAddress.findUnique({
-    where: { id: addressId },
-    include: { company: true },
-  });
-  if (!current) throw new Error("Address not found");
+export async function deleteCompanyAddressSafe(
+  addressId: string
+): Promise<ActionResult<{ success: true }>> {
+  try {
+    const actor = await getContactActor();
 
-  const addressParts = [
-    input.addressLine1 !== undefined ? input.addressLine1 : current.addressLine1,
-    input.addressLine2 !== undefined ? input.addressLine2 : current.addressLine2,
-    input.subdistrict !== undefined ? input.subdistrict : current.subdistrict,
-    input.district !== undefined ? input.district : current.district,
-    input.province !== undefined ? input.province : current.province,
-    input.postalCode !== undefined ? input.postalCode : current.postalCode,
-    input.country !== undefined ? input.country : current.country,
-  ].filter(Boolean);
-  const formattedAddress = addressParts.join(" ");
-
-  let mapsUrl = input.googleMapsUrl !== undefined ? input.googleMapsUrl?.trim() : current.googleMapsUrl;
-  if (!mapsUrl && formattedAddress) {
-    const query = encodeURIComponent(`${current.company.name} ${formattedAddress}`);
-    mapsUrl = `https://www.google.com/maps/search/?api=1&query=${query}`;
-  }
-
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    if (input.isDefault) {
-      await tx.companyAddress.updateMany({
-        where: { companyId: current.companyId },
-        data: { isDefault: false },
-      });
+    const existing = await prisma.companyAddress.findUnique({
+      where: { id: addressId },
+      select: { id: true, companyId: true, title: true },
+    });
+    if (!existing) {
+      return actionOk({ success: true });
     }
 
-    return await tx.companyAddress.update({
-      where: { id: addressId },
-      data: {
-        ...(input.title !== undefined ? { title: input.title?.trim() || null } : {}),
-        ...(input.type !== undefined ? { type: input.type } : {}),
-        ...(input.isDefault !== undefined ? { isDefault: input.isDefault } : {}),
-        ...(input.taxId !== undefined ? { taxId: input.taxId?.trim() || null } : {}),
-        ...(input.branchNumber !== undefined ? { branchNumber: input.branchNumber?.trim() || null } : {}),
-        ...(input.addressLine1 !== undefined ? { addressLine1: input.addressLine1.trim() } : {}),
-        ...(input.addressLine2 !== undefined ? { addressLine2: input.addressLine2?.trim() || null } : {}),
-        ...(input.subdistrict !== undefined ? { subdistrict: input.subdistrict?.trim() || null } : {}),
-        ...(input.district !== undefined ? { district: input.district?.trim() || null } : {}),
-        ...(input.province !== undefined ? { province: input.province?.trim() || null } : {}),
-        ...(input.postalCode !== undefined ? { postalCode: input.postalCode?.trim() || null } : {}),
-        ...(input.country !== undefined ? { country: input.country ? normalizeCountryName(input.country) : null } : {}),
-        formattedAddress,
-        googleMapsUrl: mapsUrl || null,
-      },
-    });
-  });
+    await prisma.$transaction([
+      prisma.companyAddress.delete({
+        where: { id: addressId },
+      }),
+      prisma.companyLog.create({
+        data: {
+          companyId: existing.companyId,
+          userId: actor.id,
+          action: "UPDATE",
+          summary: `Removed address "${existing.title || "Location"}"`,
+        },
+      }),
+    ]);
 
-  revalidatePath("/contact");
-  return result;
+    invalidateInitialCompaniesCache();
+    return actionOk({ success: true });
+  } catch (err) {
+    console.error("[deleteCompanyAddressSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to delete address"));
+  }
 }
 
 export async function deleteCompanyAddress(addressId: string) {
-  await getContactActor();
+  const res = await deleteCompanyAddressSafe(addressId);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
 
-  await prisma.companyAddress.delete({
-    where: { id: addressId },
-  });
+export async function setDefaultCompanyAddressSafe(
+  companyId: string,
+  addressId: string
+): Promise<ActionResult<{ success: true }>> {
+  try {
+    const actor = await getContactActor();
 
-  revalidatePath("/contact");
-  return { success: true };
+    const target = await prisma.companyAddress.findUnique({
+      where: { id: addressId },
+      select: { id: true, companyId: true, title: true },
+    });
+    if (!target || target.companyId !== companyId) {
+      return actionFail("Address not found", "NOT_FOUND");
+    }
+
+    await prisma.$transaction([
+      prisma.companyAddress.updateMany({
+        where: { companyId },
+        data: { isDefault: false },
+      }),
+      prisma.companyAddress.update({
+        where: { id: addressId },
+        data: { isDefault: true },
+      }),
+      prisma.companyLog.create({
+        data: {
+          companyId,
+          userId: actor.id,
+          action: "UPDATE",
+          summary: `Set "${target.title || "Location"}" as primary address`,
+        },
+      }),
+    ]);
+
+    invalidateInitialCompaniesCache();
+    return actionOk({ success: true });
+  } catch (err) {
+    console.error("[setDefaultCompanyAddressSafe] error:", err);
+    return actionFail(toServerErrorMessage(err, "Failed to set primary address"));
+  }
 }
 
 export async function setDefaultCompanyAddress(companyId: string, addressId: string) {
-  await getContactActor();
-
-  await prisma.$transaction([
-    prisma.companyAddress.updateMany({
-      where: { companyId },
-      data: { isDefault: false },
-    }),
-    prisma.companyAddress.update({
-      where: { id: addressId },
-      data: { isDefault: true },
-    }),
-  ]);
-
-  revalidatePath("/contact");
-  return { success: true };
+  const res = await setDefaultCompanyAddressSafe(companyId, addressId);
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
 }
 
 export type OverviewUserSummary = {
@@ -1723,6 +2584,94 @@ export type OverviewCompanyLog = {
   user?: OverviewUserSummary | null;
 };
 
+/**
+ * On-demand System Log loader for Account -> System Log sub-tab.
+ * Keeps `getAccountOverview` lightweight on initial drawer open while delivering
+ * real audit logs when the user clicks "System Log".
+ */
+export async function getCompanySystemLogs(
+  companyId: string
+): Promise<OverviewCompanyLog[]> {
+  await getContactActor();
+  const logs = await prisma.companyLog.findMany({
+    where: { companyId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
+  return logs.map((log) => ({
+    ...log,
+    createdAt: log.createdAt.toISOString(),
+  }));
+}
+
+/**
+ * On-demand System Log loader for Contact -> Person -> System Log sub-tab.
+ * Preserves department-level masking for email/phone change history.
+ */
+export async function getContactSystemLogs(
+  contactId: string
+): Promise<OverviewContactLog[]> {
+  const actor = await getContactActor();
+  const [contact, logs] = await Promise.all([
+    prisma.contact.findUnique({
+      where: { id: contactId },
+      select: { id: true, department: { select: { name: true } } },
+    }),
+    prisma.contactLog.findMany({
+      where: { contactId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    }),
+  ]);
+
+  if (!contact) return [];
+
+  const isSameDept =
+    actor.role === "ADMIN" ||
+    Boolean(contact.department?.name && actor.departments.includes(contact.department.name));
+
+  return logs.map((log) => {
+    const serialized = {
+      ...log,
+      createdAt: log.createdAt.toISOString(),
+    };
+    if (isSameDept) return serialized;
+    const fieldName = log.fieldName;
+    const sensitiveField =
+      fieldName === "Email" ||
+      fieldName === "Phone" ||
+      fieldName === "Emails" ||
+      fieldName === "Phones";
+    if (!sensitiveField) return serialized;
+    return {
+      ...serialized,
+      oldValue: log.oldValue ? "***" : log.oldValue,
+      newValue: log.newValue ? "***" : log.newValue,
+      summary: `Updated ${fieldName.toLowerCase()} (masked by department policy)`,
+    };
+  });
+}
+
 export interface GetAccountOverviewOptions {
   includeAddresses?: boolean;
   includeLogs?: boolean;
@@ -1754,6 +2703,8 @@ export async function getAccountOverview(
         starRating: true,
         country: true,
         notes: true,
+        createdAt: true,
+        updatedAt: true,
         contacts: {
           select: {
             id: true,
@@ -1803,9 +2754,23 @@ export async function getAccountOverview(
                 name: true,
                 email: true,
                 image: true,
+                departments: {
+                  select: { name: true },
+                },
+              },
+            },
+            teamMembers: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                departments: {
+                  select: { name: true },
+                },
               },
             },
           },
+          orderBy: { createdAt: "desc" },
         },
       },
     }),
@@ -1866,7 +2831,52 @@ export async function getAccountOverview(
     };
   });
 
-  const deals = company.opportunities;
+  const allDeals = company.opportunities;
+  const visibleDeals = allDeals.filter((deal) => {
+    if (actor.role === "ADMIN") return true;
+    if (actor.role === "MANAGEMENT") {
+      const ownerInDept = Boolean(
+        deal.owner?.departments?.some((d) => actor.departments.includes(d.name))
+      );
+      const memberInDept = Boolean(
+        deal.teamMembers?.some((m) =>
+          m.departments?.some((d) => actor.departments.includes(d.name))
+        )
+      );
+      return ownerInDept || memberInDept;
+    }
+    return (
+      deal.ownerId === actor.id ||
+      Boolean(deal.teamMembers?.some((m) => m.id === actor.id))
+    );
+  });
+  const maskedOpportunityCount = allDeals.length - visibleDeals.length;
+
+  const deals = visibleDeals.map((deal) => ({
+    id: deal.id,
+    topic: deal.topic,
+    status: deal.status,
+    value: deal.value,
+    currency: deal.currency,
+    dueDate: deal.dueDate,
+    createdAt: deal.createdAt,
+    ownerId: deal.ownerId,
+    stage: deal.stage,
+    owner: deal.owner
+      ? {
+          id: deal.owner.id,
+          name: deal.owner.name,
+          email: deal.owner.email,
+          image: deal.owner.image,
+        }
+      : null,
+    teamMembers: deal.teamMembers.map((m) => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+    })),
+  }));
+
   const totalDeals = deals.length;
   const openDeals = deals.filter((d) => d.status === "OPEN");
   const wonDeals = deals.filter((d) => d.status === "WON" || (d.status as string) === "COMPLETED");
@@ -1983,12 +2993,13 @@ export async function getAccountOverview(
       country: company.country,
       notes: company.notes,
       address: null,
-      createdAt: new Date(),
+      createdAt: company.createdAt,
       logs: [] as OverviewCompanyLog[],
     },
     addresses: ((company as unknown as { addresses?: typeof company.addresses }).addresses || []) as NonNullable<typeof company.addresses>,
     contacts: sanitizedContacts,
-    deals: company.opportunities,
+    deals,
+    maskedOpportunityCount,
     topContributors,
     businessSummary,
     metrics: {
@@ -2019,7 +3030,7 @@ export async function deleteContactsBulk(contactIds: string[]) {
   const res = await prisma.contact.deleteMany({
     where: { id: { in: contactIds } },
   });
-  revalidatePath("/contact");
+  invalidateInitialCompaniesCache();
   return { count: res.count };
 }
 
@@ -2059,13 +3070,32 @@ export interface AccountSharedMediaResult {
 }
 
 export async function getAccountSharedMedia(companyId: string): Promise<AccountSharedMediaResult> {
-  await getContactActor();
+  const actor = await getContactActor();
 
-  // Run Attachment & ActivityLog queries concurrently in parallel
+  const opportunityWhere: Prisma.OpportunityWhereInput =
+    actor.role === "ADMIN"
+      ? { companyId }
+      : actor.role === "MANAGEMENT"
+      ? {
+          companyId,
+          OR: [
+            { owner: { departments: { some: { name: { in: actor.departments } } } } },
+            { teamMembers: { some: { departments: { some: { name: { in: actor.departments } } } } } },
+          ],
+        }
+      : {
+          companyId,
+          OR: [
+            { ownerId: actor.id },
+            { teamMembers: { some: { id: actor.id } } },
+          ],
+        };
+
+  // Run Attachment & ActivityLog queries concurrently in parallel with bounded rows
   const [rawAttachments, logs] = await Promise.all([
     prisma.attachment.findMany({
       where: {
-        opportunity: { companyId },
+        opportunity: opportunityWhere,
       },
       select: {
         id: true,
@@ -2085,10 +3115,11 @@ export async function getAccountSharedMedia(companyId: string): Promise<AccountS
         },
       },
       orderBy: { createdAt: "desc" },
+      take: 200,
     }),
     prisma.activityLog.findMany({
       where: {
-        opportunity: { companyId },
+        opportunity: opportunityWhere,
         content: { contains: "http" },
       },
       select: {

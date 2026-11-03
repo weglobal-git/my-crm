@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { X, UserPlus, Loader2 } from "lucide-react";
 import { useDialog } from "@/providers/DialogProvider";
-import { createContact } from "@/lib/actions/contact";
+import { createContactSafe } from "@/lib/actions/contact";
+import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { ContactType, ContactStatus } from "@prisma/client";
 
 export function CreateContactModal({
@@ -58,17 +59,19 @@ export function CreateContactModal({
 
     setIsSubmitting(true);
     try {
-      const created = await createContact({
-        name: form.name.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim(),
-        type: form.type,
-        status: form.status,
-        companyId: prefillCompany?.id,
-        companyName: form.companyName.trim(),
-        companyCountry: form.companyCountry.trim(),
-        companyAddress: form.companyAddress.trim(),
-      });
+      const created = unwrapActionResult(
+        await createContactSafe({
+          name: form.name.trim(),
+          email: form.email.trim(),
+          phone: form.phone.trim(),
+          type: form.type,
+          status: form.status,
+          companyId: prefillCompany?.id,
+          companyName: form.companyName.trim(),
+          companyCountry: form.companyCountry.trim(),
+          companyAddress: form.companyAddress.trim(),
+        })
+      );
 
       toast({
         title: "Person Created",
@@ -79,7 +82,7 @@ export function CreateContactModal({
       onClose();
       onCreated(created.id);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to create person";
+      const msg = getReadableActionError(err, "Failed to create person");
       toast({ title: "Error", description: msg, type: "error" });
     } finally {
       setIsSubmitting(false);

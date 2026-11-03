@@ -185,9 +185,9 @@ const DEFAULT_ACCOUNT_AI_SCHEMA = {
 };
 
 /**
- * ดึงการตั้งค่า Prompt สำหรับ Account AI
+ * Internal helper to read prompt config without redundant actor lookup.
  */
-export async function getAccountAIPromptConfig(): Promise<AccountAIPromptConfig> {
+async function loadAccountAIPromptConfig(): Promise<AccountAIPromptConfig> {
   try {
     const configRow = await prisma.systemConfig.findUnique({
       where: { id: "account_ai_prompt" },
@@ -217,101 +217,131 @@ export async function getAccountAIPromptConfig(): Promise<AccountAIPromptConfig>
 }
 
 /**
+ * ดึงการตั้งค่า Prompt สำหรับ Account AI
+ */
+export async function getAccountAIPromptConfig(): Promise<AccountAIPromptConfig> {
+  await getContactActor();
+  return loadAccountAIPromptConfig();
+}
+
+/**
  * บันทึกการตั้งค่า Prompt สำหรับ Account AI (สำหรับ Admin)
  */
 export async function saveAccountAIPromptConfig(config: {
   systemInstruction: string;
   taskInstruction: string;
   jsonSchema: string;
-}) {
-  const actor = await getContactActor();
-  if (actor.role !== "ADMIN") {
-    throw new Error("Forbidden: Only Administrators can update AI prompts.");
-  }
-
+}): Promise<{ success: boolean; error?: string }> {
   try {
-    JSON.parse(config.jsonSchema);
-  } catch {
-    throw new Error("Invalid JSON Schema format.");
+    const actor = await getContactActor();
+    if (actor.role !== "ADMIN") {
+      return { success: false, error: "Forbidden: Only Administrators can update AI prompts." };
+    }
+
+    try {
+      JSON.parse(config.jsonSchema);
+    } catch {
+      return { success: false, error: "Invalid JSON Schema format." };
+    }
+
+    const payload = {
+      systemInstruction: config.systemInstruction,
+      taskInstruction: config.taskInstruction,
+      jsonSchema: config.jsonSchema,
+      updatedAt: new Date().toISOString(),
+      isReset: false,
+    };
+
+    await prisma.systemConfig.upsert({
+      where: { id: "account_ai_prompt" },
+      update: { googleRefreshToken: JSON.stringify(payload) },
+      create: { id: "account_ai_prompt", googleRefreshToken: JSON.stringify(payload) },
+    });
+
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to save prompt configuration";
+    return { success: false, error: msg };
   }
-
-  const payload = {
-    systemInstruction: config.systemInstruction,
-    taskInstruction: config.taskInstruction,
-    jsonSchema: config.jsonSchema,
-    updatedAt: new Date().toISOString(),
-    isReset: false,
-  };
-
-  await prisma.systemConfig.upsert({
-    where: { id: "account_ai_prompt" },
-    update: { googleRefreshToken: JSON.stringify(payload) },
-    create: { id: "account_ai_prompt", googleRefreshToken: JSON.stringify(payload) },
-  });
-
-  return { success: true };
 }
 
 /**
  * รีเซ็ตการตั้งค่า Prompt กลับเป็นค่าเริ่มต้น
  */
-export async function resetAccountAIPromptConfig() {
-  const actor = await getContactActor();
-  if (actor.role !== "ADMIN") {
-    throw new Error("Forbidden: Only Administrators can reset AI prompts.");
+export async function resetAccountAIPromptConfig(): Promise<{
+  success: boolean;
+  data?: AccountAIPromptConfig;
+  error?: string;
+}> {
+  try {
+    const actor = await getContactActor();
+    if (actor.role !== "ADMIN") {
+      return { success: false, error: "Forbidden: Only Administrators can reset AI prompts." };
+    }
+
+    await prisma.systemConfig.upsert({
+      where: { id: "account_ai_prompt" },
+      update: { googleRefreshToken: JSON.stringify({ isReset: true }) },
+      create: { id: "account_ai_prompt", googleRefreshToken: JSON.stringify({ isReset: true }) },
+    });
+
+    return {
+      success: true,
+      data: {
+        systemInstruction: DEFAULT_ACCOUNT_AI_SYSTEM_INSTRUCTION,
+        taskInstruction: DEFAULT_ACCOUNT_AI_TASK_INSTRUCTION,
+        jsonSchema: JSON.stringify(DEFAULT_ACCOUNT_AI_SCHEMA, null, 2),
+        isCustom: false,
+      },
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to reset prompts";
+    return { success: false, error: msg };
   }
-
-  await prisma.systemConfig.upsert({
-    where: { id: "account_ai_prompt" },
-    update: { googleRefreshToken: JSON.stringify({ isReset: true }) },
-    create: { id: "account_ai_prompt", googleRefreshToken: JSON.stringify({ isReset: true }) },
-  });
-
-  return {
-    success: true,
-    data: {
-      systemInstruction: DEFAULT_ACCOUNT_AI_SYSTEM_INSTRUCTION,
-      taskInstruction: DEFAULT_ACCOUNT_AI_TASK_INSTRUCTION,
-      jsonSchema: JSON.stringify(DEFAULT_ACCOUNT_AI_SCHEMA, null, 2),
-      isCustom: false,
-    },
-  };
 }
 
 /**
  * อัปเดตข้อมูลประวัติบริษัทที่ผู้ใช้แก้ไขด้วยตนเอง
  */
-export async function updateCompanyBusinessProfile(companyId: string, businessSummary: string) {
-  await getContactActor();
+export async function updateCompanyBusinessProfile(
+  companyId: string,
+  businessSummary: string
+): Promise<{ success: boolean; data?: AccountBehaviorAnalysis; error?: string }> {
+  try {
+    await getContactActor();
 
-  const cacheKey = `account_ai_${companyId}`;
-  const existing = await prisma.systemConfig.findUnique({
-    where: { id: cacheKey },
-  });
+    const cacheKey = `account_ai_${companyId}`;
+    const existing = await prisma.systemConfig.findUnique({
+      where: { id: cacheKey },
+    });
 
-  let currentData: Partial<AccountBehaviorAnalysis> & Record<string, unknown> = {};
-  if (existing?.googleRefreshToken) {
-    try {
-      currentData = JSON.parse(existing.googleRefreshToken);
-    } catch {}
+    let currentData: Partial<AccountBehaviorAnalysis> & Record<string, unknown> = {};
+    if (existing?.googleRefreshToken) {
+      try {
+        currentData = JSON.parse(existing.googleRefreshToken);
+      } catch {}
+    }
+
+    currentData.companyProfile = {
+      ...(currentData.companyProfile || {
+        accountType: "CUSTOMER",
+        country: "Thailand",
+      }),
+      businessSummary: businessSummary.trim(),
+      isUserEdited: true,
+    };
+
+    await prisma.systemConfig.upsert({
+      where: { id: cacheKey },
+      update: { googleRefreshToken: JSON.stringify(currentData) },
+      create: { id: cacheKey, googleRefreshToken: JSON.stringify(currentData) },
+    });
+
+    return { success: true, data: currentData as AccountBehaviorAnalysis };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to update company profile";
+    return { success: false, error: msg };
   }
-
-  currentData.companyProfile = {
-    ...(currentData.companyProfile || {
-      accountType: "CUSTOMER",
-      country: "Thailand",
-    }),
-    businessSummary: businessSummary.trim(),
-    isUserEdited: true,
-  };
-
-  await prisma.systemConfig.upsert({
-    where: { id: cacheKey },
-    update: { googleRefreshToken: JSON.stringify(currentData) },
-    create: { id: cacheKey, googleRefreshToken: JSON.stringify(currentData) },
-  });
-
-  return { success: true, data: currentData as AccountBehaviorAnalysis };
 }
 
 /**
@@ -441,7 +471,7 @@ export async function getAccountBehaviorAnalysis(companyId: string): Promise<Acc
       : null;
 
     const apiKey = process.env.GOOGLE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
-    const promptConfig = await getAccountAIPromptConfig();
+    const promptConfig = await loadAccountAIPromptConfig();
 
     let analysis: AccountBehaviorAnalysis;
 
