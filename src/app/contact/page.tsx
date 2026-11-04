@@ -8,6 +8,7 @@ import {
   getCompanyCountries,
 } from "@/lib/actions/contact";
 import { ContactView } from "@/components/contact/ContactView";
+import { getStoredAccountCardDensityServer } from "@/lib/contact/account-card-density-server";
 
 // Preload and render Account & Person view with lightweight SSR
 export const dynamic = "force-dynamic";
@@ -22,11 +23,12 @@ export default async function ContactPage() {
   // Preload actor first to avoid duplicate user lookup in companies query
   const actor = await getContactActor(session);
 
-  // Preload companies, types, and countries concurrently with preloaded actor
-  const [companiesResult, initialTypes, initialCountries] = await Promise.all([
+  // Preload companies, types, countries, and density preference concurrently
+  const [companiesResult, initialTypes, initialCountries, initialCardDensity] = await Promise.all([
     getCachedInitialCompanies(actor),
     getCompanyTypes(),
     getCompanyCountries(),
+    getStoredAccountCardDensityServer(actor.id),
   ]);
 
   const { companies, stats, total } = companiesResult;
@@ -38,6 +40,7 @@ export default async function ContactPage() {
       initialTotal={total}
       initialTypes={initialTypes}
       initialCountries={initialCountries}
+      initialCardDensity={initialCardDensity}
       actorId={actor.id}
     />
   );

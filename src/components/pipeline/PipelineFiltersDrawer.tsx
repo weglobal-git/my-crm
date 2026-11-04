@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, SlidersHorizontal, RotateCcw, Check, Clock, ChevronDown } from "lucide-react";
+import { X, SlidersHorizontal, RotateCcw, Check, Clock, ChevronDown, Rows3, Rows2 } from "lucide-react";
 import { PipelineStage } from "@prisma/client";
+import type { PipelineCardDensity } from "@/lib/pipeline-card-density-shared";
 import { CardTypeFilter, CardTypeFilterValue } from "@/components/pipeline/CardTypeFilter";
 import { PipelineQuickFilters } from "@/components/pipeline/PipelineQuickFilters";
 import { CreateDealButton } from "@/components/pipeline/CreateDealButton";
@@ -31,6 +32,9 @@ export interface PipelineFilterContentProps {
   // Tab / View
   tab: string;
   onTabChange: (tab: string) => void;
+  // Card Density (Compact / Standard)
+  cardDensity?: PipelineCardDensity;
+  onCardDensityChange?: (density: PipelineCardDensity) => void;
   // Card Type Filter
   cardType: CardTypeFilterValue;
   onCardTypeChange: (type: CardTypeFilterValue) => void;
@@ -58,6 +62,8 @@ export interface PipelineFilterContentProps {
 export function PipelineFilterContent({
   tab,
   onTabChange,
+  cardDensity = "compact",
+  onCardDensityChange,
   cardType,
   onCardTypeChange,
   ownerFilter,
@@ -170,6 +176,43 @@ export function PipelineFilterContent({
           </button>
         </div>
       </div>
+
+      {/* Section 1.5: Card Display Density (Compact / Standard) */}
+      {onCardDensityChange && (
+        <div className="space-y-2">
+          <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider pl-1">
+            Card Size
+          </label>
+          <div className="grid grid-cols-2 gap-2 bg-[#1C1C1D] p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => onCardDensityChange("compact")}
+              aria-pressed={cardDensity === "compact"}
+              className={`py-2 px-3 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                cardDensity === "compact"
+                  ? "bg-[#3A3B3C] text-[#C7F33C]"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Rows3 className="w-3.5 h-3.5 shrink-0" />
+              <span>Compact</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onCardDensityChange("standard")}
+              aria-pressed={cardDensity === "standard"}
+              className={`py-2 px-3 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                cardDensity === "standard"
+                  ? "bg-[#3A3B3C] text-[#C7F33C]"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Rows2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Standard</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Column Labels (Department-specific Stage Titles) */}
       {stageTitleDepartments && stageTitleDepartments.length > 1 && (

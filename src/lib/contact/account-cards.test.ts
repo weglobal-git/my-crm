@@ -7,15 +7,19 @@ import {
   type AccountCardDTO,
 } from "./account-card-dto";
 import {
+  DEFAULT_ACCOUNT_CARD_DENSITY,
+  getAccountCardDensityStorageKey,
+  parseAccountCardDensity,
+  parseExplicitAccountCardDensity,
+} from "./account-card-density-shared";
+import {
   getAccountListKey,
-  getAccountFilterKey,
   getAccountOverviewKey,
   getCompanySystemLogsKey,
   getContactSystemLogsKey,
 } from "./account-cache-keys";
 import {
   getAccountQuickFilterIntent,
-  isModifierQuickFilterClick,
 } from "./account-quick-filter";
 import {
   actionOk,
@@ -442,6 +446,28 @@ describe("Account Cards — Fast Redesign Unit Tests", () => {
       assert.deepEqual(getCompanySystemLogsKey("comp_99"), ["company-system-logs", "comp_99"]);
       assert.equal(getContactSystemLogsKey(null), null);
       assert.deepEqual(getContactSystemLogsKey("person_42"), ["contact-system-logs", "person_42"]);
+    });
+  });
+
+  describe("Account Card Density Preference (Compact Default & Per-User Isolation)", () => {
+    it("defaults to compact and scopes storage keys per userId", () => {
+      assert.equal(DEFAULT_ACCOUNT_CARD_DENSITY, "compact");
+      assert.notEqual(
+        getAccountCardDensityStorageKey("user_1"),
+        getAccountCardDensityStorageKey("user_2")
+      );
+      assert.equal(getAccountCardDensityStorageKey(""), "crm_contact_card_density_default");
+    });
+
+    it("parses compact, standard, URI-encoded/quoted strings, and falls back to compact on invalid values", () => {
+      assert.equal(parseAccountCardDensity(undefined), "compact");
+      assert.equal(parseAccountCardDensity(null), "compact");
+      assert.equal(parseAccountCardDensity(""), "compact");
+      assert.equal(parseAccountCardDensity("compact"), "compact");
+      assert.equal(parseAccountCardDensity("STANDARD"), "standard");
+      assert.equal(parseAccountCardDensity("%22standard%22"), "standard");
+      assert.equal(parseAccountCardDensity("unexpected"), "compact");
+      assert.equal(parseExplicitAccountCardDensity("unexpected"), null);
     });
   });
 });

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import dynamic from "next/dynamic";
 import { ContactType, ContactStatus } from "@prisma/client";
 import useSWR, { preload } from "swr";
-import { Plus, SlidersHorizontal } from "lucide-react";
+import { Plus, SlidersHorizontal, Rows3, Rows2 } from "lucide-react";
 import { acquireChannelWhenConnected } from "@/lib/pusher-subscription-manager";
 import { CONTACT_RECOVERY_EVENT } from "@/lib/pusher-connection-manager";
 import { WorkspaceLayout } from "@/components/layout/WorkspaceLayout";
@@ -12,6 +12,13 @@ import { useSidebar } from "@/components/layout/SidebarContext";
 
 import type { AccountCardDTO } from "@/lib/contact/account-card-dto";
 import { accountMatchesFilters } from "@/lib/contact/account-card-dto";
+import {
+  getAccountCardDensityStorageKey,
+  getStoredAccountCardDensityClient,
+  parseAccountCardDensity,
+  saveStoredAccountCardDensityClient,
+  type AccountCardDensity,
+} from "@/lib/contact/account-card-density-client";
 import { getAccountFilterKey, getAccountOverviewKey } from "@/lib/contact/account-cache-keys";
 import { getReadableActionError, unwrapActionResult } from "@/lib/contact/action-result";
 import { useDialog } from "@/providers/DialogProvider";
@@ -48,6 +55,7 @@ interface ContactViewProps {
   initialTotal: number;
   initialTypes?: { type: ContactType; count: number }[];
   initialCountries?: { country: string; count: number }[];
+  initialCardDensity?: AccountCardDensity;
   actorId?: string;
 }
 
@@ -57,6 +65,7 @@ export function ContactView({
   initialTotal,
   initialTypes,
   initialCountries,
+  initialCardDensity,
   actorId = "default-actor",
 }: ContactViewProps) {
   const { setPageSearchConfig, setPageManageContent, setHasActiveFilters } = useSidebar();
@@ -68,6 +77,28 @@ export function ContactView({
   const [activeCountry, setActiveCountry] = useState<string>("ALL");
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
+  const [cardDensity, setCardDensity] = useState<AccountCardDensity>(
+    () => initialCardDensity ?? getStoredAccountCardDensityClient(actorId)
+  );
+
+  useEffect(() => {
+    const storageKey = getAccountCardDensityStorageKey(actorId);
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === storageKey) {
+        setCardDensity(parseAccountCardDensity(e.newValue));
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [actorId]);
+
+  const handleCardDensityChange = useCallback(
+    (nextDensity: AccountCardDensity) => {
+      setCardDensity(nextDensity);
+      saveStoredAccountCardDensityClient(actorId, nextDensity);
+    },
+    [actorId]
+  );
 
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -1007,6 +1038,8 @@ export function ContactView({
       <AccountFilterContent
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        cardDensity={cardDensity}
+        onCardDensityChange={handleCardDensityChange}
         selectedTypes={selectedTypes}
         onSelectTypes={handleSelectTypes}
         availableTypes={availableTypes}
@@ -1029,6 +1062,8 @@ export function ContactView({
     return () => setPageManageContent(null);
   }, [
     activeTab,
+    cardDensity,
+    handleCardDensityChange,
     selectedTypes,
     handleSelectTypes,
     activeType,
@@ -1067,6 +1102,7 @@ export function ContactView({
           <div className="flex-1 min-w-0 h-full flex flex-col overflow-hidden w-full">
             <AccountCardList
               accounts={displayAccounts}
+              cardDensity={cardDensity}
               isLoading={isFilterLoading && displayAccounts.length === 0}
               isLoadingMore={isLoadingMore}
               hasMore={hasMore}
@@ -1078,7 +1114,7 @@ export function ContactView({
               onLoadMore={handleLoadMore}
               onRowIntent={handleCardIntent}
               headerAction={
-                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                   {/* Qualification Status Tabs (Desktop Only) */}
                   <div className="hidden md:flex gap-1 bg-[#1E1F21] p-1 rounded-full shrink-0">
                     <button
@@ -1118,11 +1154,47 @@ export function ContactView({
                     placeholder="Search accounts..."
                   />
 
+                  {/* Card Density Switcher (Compact <-> Standard, icon-only matching PipelineView) */}
+                  <div
+                    role="group"
+                    aria-label="Account display density"
+                    className="hidden md:flex h-8 p-0.5 rounded-full bg-[#252728] border border-[#3A3B3C] items-center gap-0.5 shrink-0"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleCardDensityChange("compact")}
+                      aria-label="Compact view"
+                      aria-pressed={cardDensity === "compact"}
+                      title="Compact view"
+                      className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                        cardDensity === "compact"
+                          ? "bg-[#3A3B3C] text-[#C7F33C]"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <Rows3 className="w-3.5 h-3.5 shrink-0" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCardDensityChange("standard")}
+                      aria-label="Standard view"
+                      aria-pressed={cardDensity === "standard"}
+                      title="Standard view"
+                      className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                        cardDensity === "standard"
+                          ? "bg-[#3A3B3C] text-[#C7F33C]"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <Rows2 className="w-3.5 h-3.5 shrink-0" />
+                    </button>
+                  </div>
+
                   {/* Centralized Filters Button (Desktop Only, matches PipelineView style) */}
                   <button
                     type="button"
                     onClick={() => setIsFiltersOpen(true)}
-                    className={`hidden md:flex px-3.5 py-1.5 rounded-full text-xs font-semibold items-center gap-2 border transition-all cursor-pointer ${
+                    className={`hidden md:flex h-8 px-3.5 rounded-full text-xs font-semibold items-center gap-2 border transition-all cursor-pointer ${
                       activeFilterCount > 0
                         ? "bg-[#C7F33C]/10 border-[#C7F33C] text-[#C7F33C]"
                         : "bg-[#252728] border-[#3A3B3C] text-slate-300 hover:text-white hover:bg-[#3A3B3C]"
@@ -1146,7 +1218,7 @@ export function ContactView({
                       setIsCreateAccountOpen(true);
                     }}
                     onPointerEnter={handleCreatePanelIntent}
-                    className="h-8 px-3.5 rounded-full text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer shadow-none"
+                    className="h-8 px-3.5 rounded-full text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5 text-black" />
                     <span>Add</span>
@@ -1164,6 +1236,8 @@ export function ContactView({
         onClose={() => setIsFiltersOpen(false)}
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        cardDensity={cardDensity}
+        onCardDensityChange={handleCardDensityChange}
         selectedTypes={selectedTypes}
         onSelectTypes={handleSelectTypes}
         availableTypes={availableTypes}

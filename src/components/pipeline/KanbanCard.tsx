@@ -34,6 +34,7 @@ import { parseLogContent, type ParsedLogAttachment } from "@/lib/pipeline-activi
 export { parseLogContent, type ParsedLogAttachment };
 
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
+import type { PipelineCardDensity } from "@/lib/pipeline-card-density-shared";
 import {
   checkIsRedCard,
   checkIsYellowCard,
@@ -75,9 +76,11 @@ export const PinnedDealsContext = createContext<PinnedDealsContextType>({
   togglePinDeal: () => {},
 });
 
+export const CardDensityContext = createContext<PipelineCardDensity>("compact");
+
 interface KanbanCardProps {
   deal: OpportunityWithRelations;
-  isSelected?: boolean;
+  isCompactProp?: boolean;
   onOpenPanel?: (tab: string) => void;
   onDealClick?: (deal: OpportunityWithRelations, tab?: string) => void;
   onPanelIntent?: () => void;
@@ -104,7 +107,7 @@ interface KanbanCardProps {
 interface ResolvedCardBodyProps {
   deal: OpportunityWithRelations;
   isDragging?: boolean;
-  isSelected?: boolean;
+  isCompact?: boolean;
   onOpenPanel?: (tab: string) => void;
   onPanelIntent?: () => void;
   highlight: boolean;
@@ -125,7 +128,7 @@ interface ResolvedCardBodyProps {
 const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
   deal,
   isDragging,
-  isSelected,
+  isCompact = false,
   onOpenPanel,
   onPanelIntent,
   highlight,
@@ -165,13 +168,14 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
   }, []);
 
   const handleTodoMouseEnter = useCallback(() => {
+    if (isDragging) return;
     if (todoLeaveTimerRef.current) {
       clearTimeout(todoLeaveTimerRef.current);
       todoLeaveTimerRef.current = null;
     }
     updateTodoPopoverPosition();
     setIsTodoPopoverOpen(true);
-  }, [updateTodoPopoverPosition]);
+  }, [isDragging, updateTodoPopoverPosition]);
 
   const handleTodoMouseLeave = useCallback(() => {
     todoLeaveTimerRef.current = setTimeout(() => {
@@ -190,6 +194,10 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
     };
   }, []);
 
+  if (isDragging && isTodoPopoverOpen) {
+    setIsTodoPopoverOpen(false);
+  }
+
   useEffect(() => {
     if (!isTodoPopoverOpen) return;
     window.addEventListener('resize', updateTodoPopoverPosition);
@@ -199,12 +207,6 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
       window.removeEventListener('scroll', updateTodoPopoverPosition, true);
     };
   }, [isTodoPopoverOpen, updateTodoPopoverPosition]);
-
-  useEffect(() => {
-    if (isDragging) {
-      setIsTodoPopoverOpen(false);
-    }
-  }, [isDragging]);
 
   const [hotNote, setHotNote] = useState(deal.hotNote || '');
   const [isSavingHotNote, setIsSavingHotNote] = useState(false);
@@ -289,6 +291,7 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
   const isOrange = pendingCount > 0;
 
   const latestLog = useMemo(() => {
+    if (isCompact) return undefined;
     return deal.activityLogs?.find(
       (log) =>
         log.type === 'COMMENT' &&
@@ -296,12 +299,12 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
         !log.content.startsWith('[URGENT_') &&
         !log.content.startsWith('[TIER:0H]')
     );
-  }, [deal.activityLogs]);
+  }, [deal.activityLogs, isCompact]);
 
   const parsedLog = useMemo(() => {
-    if (!latestLog?.content) return null;
+    if (isCompact || !latestLog?.content) return null;
     return parseLogContent(latestLog.content);
-  }, [latestLog?.content]);
+  }, [isCompact, latestLog]);
   
   const handlePrefetchEnter = useCallback(() => {
     onPanelIntent?.();
@@ -347,6 +350,226 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
     }
   }, []);
 
+  if (isCompact) {
+    const compactAccountLabel = isInternal
+      ? (rawCompanyName || "Internal")
+      : (rawCompanyName || "No Customer");
+
+    const statusBarClass = isOrange
+      ? "bg-[#F59E0B]"
+      : highlight
+      ? "bg-[#C7F33C]"
+      : isYellow
+      ? "bg-[#FACC15]"
+      : "bg-transparent";
+
+    const rowBgClass = isOrange
+      ? "bg-[#F59E0B]/[0.08] hover:bg-[#F59E0B]/[0.14]"
+      : highlight
+      ? "bg-[#C7F33C]/[0.05] hover:bg-[#C7F33C]/[0.10]"
+      : isYellow
+      ? "bg-[#FACC15]/[0.03] hover:bg-[#3A3B3C]/45"
+      : "bg-transparent hover:bg-[#3A3B3C]/45";
+
+    return (
+      <div
+        id={`deal-card-${deal.id}`}
+        data-deal-id={deal.id}
+        style={{ outline: 'none' }}
+        className={`
+          flex items-center gap-2.5 pl-1.5 pr-2 py-2.5 border-b border-[#3A3B3C]/80 relative group/card transition-colors duration-150 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none
+          ${rowBgClass}
+          ${isDragging ? "opacity-30" : "cursor-pointer"}
+        `}
+        onClick={() => onOpenPanel?.('')}
+        onMouseEnter={handlePrefetchEnter}
+        onMouseLeave={handlePrefetchLeave}
+      >
+        {/* Minimal Left Status Indicator Bar (3px) */}
+        <span
+          aria-hidden="true"
+          className={`w-[3px] h-7 rounded-full shrink-0 ${statusBarClass}`}
+        />
+
+        {/* Card Owner Avatar */}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            if (e.metaKey || e.ctrlKey) {
+              if (targetOwnerId && handleOwnerFilterChange) {
+                handleOwnerFilterChange(isOwnerFiltered ? 'ALL' : targetOwnerId);
+                return;
+              }
+            }
+            if (canView('collaborate')) onOpenPanel?.('collaborate');
+          }}
+          title={
+            isOwnerFiltered
+              ? `${contactName} (⌘+Click or Esc to clear filter)`
+              : `${contactName} (⌘+Click to filter by owner)`
+          }
+          className={`w-7 h-7 rounded-full overflow-hidden flex items-center justify-center shrink-0 cursor-pointer transition-all ${
+            isOwnerFiltered
+              ? 'ring-2 ring-[#C7F33C] ring-offset-1 ring-offset-[#252728]'
+              : 'ring-1 ring-white/10 hover:ring-white/30'
+          }`}
+        >
+          <img
+            src={
+              deal.owner.image
+                ? getOptimizedCloudinaryUrl(deal.owner.image, 100)
+                : `https://api.dicebear.com/7.x/notionists/svg?seed=${deal.owner.name || deal.owner.email || "Unknown"}`
+            }
+            alt={contactName}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-cover"
+          />
+        </div>
+
+        {/* Right: Line 1 (Card Topic + Urgent/Pin) & Line 2 (Account · Quick Note) */}
+        <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+          <div className="flex items-center justify-between gap-1.5 min-w-0">
+            <div
+              className={`text-[13px] leading-snug truncate flex-1 min-w-0 ${
+                isOrange
+                  ? 'text-amber-200 font-semibold'
+                  : highlight
+                  ? 'text-slate-100 font-medium'
+                  : 'text-slate-200 font-normal'
+              }`}
+              title={deal.topic}
+            >
+              {deal.topic}
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {isOrange && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenPanel?.('manager-call');
+                  }}
+                  title="ดูและตอบ Manager Call"
+                  className="text-[10px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                  <span>{pendingCount}</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                aria-label={isPinned ? "Unpin deal" : "Pin deal to top"}
+                title={isPinned ? "Unpin deal (currently pinned to top)" : "Pin deal to top of column"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleTogglePin();
+                }}
+                className={`w-5 h-5 rounded flex items-center justify-center shrink-0 transition-opacity cursor-pointer ${
+                  isPinned
+                    ? 'opacity-100 text-amber-400'
+                    : 'opacity-0 group-hover/card:opacity-100 pointer-events-none group-hover/card:pointer-events-auto text-slate-500 hover:text-amber-400'
+                }`}
+              >
+                <Star className={`w-3 h-3 ${isPinned ? 'fill-amber-400 text-amber-400' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 min-w-0 text-xs leading-tight">
+            <span
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey) {
+                  e.stopPropagation();
+                  if (rawCompanyName && handleSearchChange) {
+                    handleSearchChange(isCompanyFiltered ? '' : rawCompanyName);
+                  }
+                  return;
+                }
+                if (rawCompanyName) {
+                  e.stopPropagation();
+                  if (canViewInformation && deal.type === 'SALES_DEAL') {
+                    onOpenPanel?.('information');
+                  } else if (canView('notes')) {
+                    onOpenPanel?.('notes');
+                  } else {
+                    onOpenPanel?.('activity');
+                  }
+                }
+              }}
+              className={`truncate max-w-[46%] shrink-0 transition-colors ${
+                isCompanyFiltered
+                  ? "text-[#C7F33C] font-semibold underline underline-offset-2"
+                  : rawCompanyName
+                  ? "text-slate-400 hover:text-slate-200"
+                  : "text-slate-500"
+              }`}
+              title={
+                rawCompanyName
+                  ? isCompanyFiltered
+                    ? `${compactAccountLabel} (⌘+Click to clear search)`
+                    : `${compactAccountLabel} (⌘+Click to search account)`
+                  : compactAccountLabel
+              }
+            >
+              {compactAccountLabel}
+            </span>
+
+            {/* Inline Quick Note (flat text when viewing, subtle input frame on focus) */}
+            <div
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className={`relative flex items-center gap-1.5 flex-1 min-w-0 transition-opacity duration-150 ${
+                hasHotNote
+                  ? 'opacity-100 pointer-events-auto'
+                  : 'opacity-0 group-hover/card:opacity-100 focus-within:opacity-100 pointer-events-none group-hover/card:pointer-events-auto focus-within:pointer-events-auto'
+              }`}
+            >
+              <span className="text-slate-600 select-none shrink-0" aria-hidden="true">
+                ·
+              </span>
+              <input
+                type="text"
+                value={hotNote}
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onFocus={handleFocusHotNote}
+                onChange={(e) => setHotNote(e.target.value)}
+                onBlur={handleBlurHotNote}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void saveHotNote(hotNote);
+                    e.currentTarget.blur();
+                  }
+                }}
+                placeholder="+ Quick Note"
+                title={hotNote.trim() ? hotNote : "Press Enter to save Quick Note"}
+                className={`w-full min-w-0 bg-transparent focus:bg-[#1C1C1D] px-0 focus:px-1.5 py-0.5 rounded text-xs leading-tight outline-none border border-transparent focus:border-[#4E4F50] truncate cursor-text transition-colors ${
+                  isSavingHotNote ? 'pr-4' : ''
+                } ${
+                  hasHotNote
+                    ? 'text-slate-300 focus:text-slate-100 placeholder:text-slate-600'
+                    : 'text-slate-400 focus:text-slate-100 placeholder:text-slate-500'
+                }`}
+              />
+              {isSavingHotNote && (
+                <span className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                  <Loader2 className="w-3 h-3 text-amber-400 animate-spin" />
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       id={`deal-card-${deal.id}`}
@@ -356,7 +579,6 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
         flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card h-[220px] transition-all duration-150 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none hover:z-30
         ${isOrange ? "bg-[#F59E0B]" : highlight ? "bg-[#C7F33C]" : isYellow ? "bg-[#3A3B3C] border-2 border-[#FACC15]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
-        ${isSelected ? "md:ring-2 md:ring-white md:ring-offset-2 md:ring-offset-[#1C1C1D] md:shadow-2xl md:shadow-black/80 md:scale-[1.015] md:z-20" : ""}
       `}
       onClick={() => onOpenPanel?.('')}
       onMouseEnter={handlePrefetchEnter}
@@ -426,7 +648,7 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
               }}
               title={
                 isOwnerFiltered
-                  ? `${contactName} (⌘+Click to clear filter)`
+                  ? `${contactName} (⌘+Click or Esc to clear filter)`
                   : `${contactName} (⌘+Click to filter by owner)`
               }
               className={`w-12 h-12 rounded-full overflow-hidden flex items-center justify-center shrink-0 border-2 cursor-pointer hover:border-black/50 hover:border-solid transition-all relative ${
@@ -840,7 +1062,7 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
 export const KanbanCardUI = React.memo(function KanbanCardUI({
   deal,
   isDragging,
-  isSelected,
+  isCompactProp,
   onOpenPanel,
   onPanelIntent,
   currentOwnerFilter,
@@ -851,6 +1073,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const pendingAcceleratorsMap = useContext(PendingAcceleratorsContext);
   const pendingTodosMap = useContext(PendingTodosContext);
   const { pinnedDealIds, togglePinDeal } = useContext(PinnedDealsContext);
+  const contextCardDensity = useContext(CardDensityContext);
   const {
     ownerFilter: contextOwnerFilter,
     onOwnerFilterChange: contextOnOwnerFilterChange,
@@ -865,6 +1088,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
   const pendingCount = typeof pendingEntry === 'number' ? pendingEntry : (pendingEntry?.count || 0);
   const dealTodos = pendingTodosMap[deal.id] || EMPTY_DEAL_TODOS;
   const isPinned = pinnedDealIds.has(deal.id) || (pinnedDealIds.size === 0 && Boolean(deal.isPinned));
+  const isCompact = isCompactProp ?? (contextCardDensity === "compact");
 
   const activeOwnerFilter = currentOwnerFilter ?? contextOwnerFilter;
   const handleOwnerFilterChange = onFilterByOwner ?? contextOnOwnerFilterChange;
@@ -884,7 +1108,7 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
     <KanbanCardResolvedBody
       deal={deal}
       isDragging={isDragging}
-      isSelected={isSelected}
+      isCompact={isCompact}
       onOpenPanel={onOpenPanel}
       onPanelIntent={onPanelIntent}
       highlight={timing.isRed}
@@ -908,7 +1132,7 @@ const NOOP_TOGGLE_PIN = () => {};
 
 export const KanbanCard = React.memo(function KanbanCard({ 
   deal, 
-  isSelected,
+  isCompactProp,
   onOpenPanel, 
   onDealClick,
   onPanelIntent, 
@@ -979,7 +1203,7 @@ export const KanbanCard = React.memo(function KanbanCard({
         <KanbanCardResolvedBody
           deal={deal}
           isDragging={isDragging}
-          isSelected={isSelected}
+          isCompact={Boolean(isCompactProp)}
           onOpenPanel={handleOpenPanel}
           onPanelIntent={onPanelIntent}
           highlight={Boolean(isRedProp)}
@@ -1000,7 +1224,7 @@ export const KanbanCard = React.memo(function KanbanCard({
         <KanbanCardUI 
           deal={deal} 
           isDragging={isDragging} 
-          isSelected={isSelected}
+          isCompactProp={isCompactProp}
           onOpenPanel={handleOpenPanel} 
           onPanelIntent={onPanelIntent} 
           currentOwnerFilter={currentOwnerFilter}

@@ -6,13 +6,14 @@ import {
   SlidersHorizontal,
   RotateCcw,
   Search,
-  Building2,
-  Globe,
   Plus,
   Check,
+  Rows3,
+  Rows2,
 } from "lucide-react";
 import { ContactType } from "@prisma/client";
 import { normalizeCountryName } from "@/lib/data/countries";
+import type { AccountCardDensity } from "@/lib/contact/account-card-density-shared";
 
 export interface AccountFiltersState {
   status?: "QUALIFIED" | "UNQUALIFIED" | "ALL";
@@ -24,6 +25,8 @@ export interface AccountFiltersState {
 export interface AccountFilterContentProps {
   activeTab: "QUALIFIED" | "UNQUALIFIED";
   onTabChange: (tab: "QUALIFIED" | "UNQUALIFIED") => void;
+  cardDensity?: AccountCardDensity;
+  onCardDensityChange?: (density: AccountCardDensity) => void;
 
   // Multi-select props (Primary)
   selectedTypes?: string[];
@@ -79,6 +82,8 @@ const DEFAULT_COUNTRIES = [
 export function AccountFilterContent({
   activeTab,
   onTabChange,
+  cardDensity = "compact",
+  onCardDensityChange,
 
   selectedTypes = [],
   onToggleType,
@@ -93,9 +98,7 @@ export function AccountFilterContent({
   availableCountries = [],
 
   // Legacy fallback props
-  activeType = "ALL",
   onTypeChange,
-  activeCountry = "ALL",
   onCountryChange,
 
   stats,
@@ -377,7 +380,7 @@ export function AccountFilterContent({
               onClose?.();
               onOpenCreateAccount();
             }}
-            className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-none"
+            className="w-full py-2.5 px-4 rounded-xl text-xs font-bold bg-[#C7F33C] text-black hover:bg-[#b5dc35] transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4 text-black" />
             <span>Add Account</span>
@@ -396,7 +399,7 @@ export function AccountFilterContent({
             onClick={() => onTabChange("QUALIFIED")}
             className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === "QUALIFIED"
-                ? "bg-[#3A3B3C] text-white shadow-sm"
+                ? "bg-[#3A3B3C] text-white"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
@@ -408,7 +411,7 @@ export function AccountFilterContent({
             onClick={() => onTabChange("UNQUALIFIED")}
             className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
               activeTab === "UNQUALIFIED"
-                ? "bg-[#3A3B3C] text-white shadow-sm"
+                ? "bg-[#3A3B3C] text-white"
                 : "text-slate-400 hover:text-slate-200"
             }`}
           >
@@ -417,6 +420,41 @@ export function AccountFilterContent({
           </button>
         </div>
       </div>
+
+      {/* Section 1.5: Display Mode (Compact vs Standard) */}
+      {onCardDensityChange && (
+        <div className="space-y-2">
+          <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider pl-1">
+            Display Mode
+          </label>
+          <div className="grid grid-cols-2 gap-2 bg-[#1C1C1D] p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => onCardDensityChange("compact")}
+              className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                cardDensity === "compact"
+                  ? "bg-[#3A3B3C] text-[#C7F33C]"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Rows3 className="w-3.5 h-3.5 shrink-0" />
+              <span>Compact</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onCardDensityChange("standard")}
+              className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                cardDensity === "standard"
+                  ? "bg-[#3A3B3C] text-[#C7F33C]"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <Rows2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Standard</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Section 2: Account Type */}
       <div className="space-y-2">
@@ -428,19 +466,19 @@ export function AccountFilterContent({
             <button
               type="button"
               onClick={() => onSelectTypes ? onSelectTypes([]) : onTypeChange?.("ALL")}
-              className="text-[10px] text-slate-400 hover:text-[#C7F33C] underline cursor-pointer"
+              className="text-[11px] text-slate-400 hover:text-[#C7F33C] hover:underline cursor-pointer font-medium transition-colors"
             >
               Reset ({typeSelectedCount})
             </button>
           )}
         </div>
 
-        <div className="flex flex-col gap-1">
-          {/* Header Row: ALL TYPES */}
+        <div className="flex flex-col gap-0.5">
+          {/* Header Row: ALL */}
           <button
             type="button"
             onClick={handleToggleAllTypes}
-            className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer border ${
+            className={`group/item w-full flex items-center justify-between px-3 py-2 text-left rounded-lg transition-colors cursor-pointer border ${
               isAllTypesActive
                 ? "bg-[#2D2E30] border-[#4E5052] text-slate-100 hover:bg-[#343638]"
                 : typeSelectedCount > 0
@@ -452,10 +490,10 @@ export function AccountFilterContent({
               <div
                 className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                   isAllTypesActive
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
                     : typeSelectedCount > 0
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                    : "border-slate-600 bg-[#1E2021] hover:border-slate-400"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                    : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                 }`}
               >
                 {isAllTypesActive && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -463,17 +501,11 @@ export function AccountFilterContent({
                   <div className="w-2 h-0.5 bg-[#C7F33C] rounded-full" />
                 )}
               </div>
-              <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
-              <span className="text-xs font-black uppercase tracking-wider">
-                {isAllTypesActive ? "ALL TYPES" : "SELECT ALL"}
+              <span className="text-xs font-bold uppercase tracking-wider">
+                ALL
               </span>
-              {typeSelectedCount > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums">
-                  {typeSelectedCount} selected
-                </span>
-              )}
             </div>
-            <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-[#1E2021] text-slate-400">
+            <span className="text-[11px] font-normal px-1.5 py-0.5 rounded text-slate-400">
               {totalTypeCount}
             </span>
           </button>
@@ -486,31 +518,31 @@ export function AccountFilterContent({
                 key={t.type}
                 type="button"
                 onClick={() => handleToggleSingleType(t.type)}
-                className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer ${
+                className={`group/item w-full flex items-center justify-between px-3 py-1.5 text-left rounded-md transition-colors cursor-pointer ${
                   isChecked
-                    ? "bg-transparent hover:bg-[#2D2E30] text-slate-200"
-                    : "bg-transparent hover:bg-[#252627] text-slate-500 hover:text-slate-300"
+                    ? "bg-transparent hover:bg-[#323335] text-slate-200 hover:text-white"
+                    : "bg-transparent hover:bg-[#2D2E30] text-slate-500 hover:text-slate-300"
                 }`}
               >
                 <div className="flex items-center gap-2.5">
                   <div
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
-                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021]"
+                        ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                        : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
                   </div>
-                  <span className={`text-xs ${isChecked ? "font-normal text-slate-200" : "font-normal text-slate-500"}`}>
+                  <span className={`text-xs ${isChecked ? "font-normal text-slate-200 group-hover/item:text-white" : "font-normal text-slate-500 group-hover/item:text-slate-300"}`}>
                     {formatTypeLabel(t.type)}
                   </span>
                 </div>
                 <span
-                  className={`text-[11px] font-normal px-2 py-0.5 rounded-full ${
+                  className={`text-[11px] font-normal px-1.5 py-0.5 rounded transition-colors ${
                     isChecked
-                      ? "bg-[#1E2021] text-slate-400"
-                      : "bg-transparent text-slate-600"
+                      ? "text-slate-400 group-hover/item:text-slate-200"
+                      : "bg-transparent text-slate-600 group-hover/item:text-slate-400"
                   }`}
                 >
                   {t.count}
@@ -531,7 +563,7 @@ export function AccountFilterContent({
             <button
               type="button"
               onClick={() => onSelectCountries ? onSelectCountries([]) : onCountryChange?.("ALL")}
-              className="text-[10px] text-slate-400 hover:text-[#C7F33C] underline cursor-pointer"
+              className="text-[11px] text-slate-400 hover:text-[#C7F33C] hover:underline cursor-pointer font-medium transition-colors"
             >
               Reset ({countrySelectedCount})
             </button>
@@ -540,13 +572,13 @@ export function AccountFilterContent({
 
         {/* Country Search */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
           <input
             type="text"
             value={countrySearch}
             onChange={(e) => setCountrySearch(e.target.value)}
             placeholder="Search country..."
-            className="w-full bg-[#1C1C1D] border border-transparent rounded-xl pl-9 pr-8 py-2 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C] transition-all"
+            className="w-full bg-[#3A3B3C] border border-transparent rounded-full pl-8 pr-7 py-1.5 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-[#C7F33C]/60 transition-all"
           />
           {countrySearch && (
             <button
@@ -560,12 +592,12 @@ export function AccountFilterContent({
         </div>
 
         {/* Country List */}
-        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto hide-scrollbar">
-          {/* Header Row: ALL COUNTRIES */}
+        <div className="flex flex-col gap-0.5 max-h-48 overflow-y-auto hide-scrollbar">
+          {/* Header Row: ALL */}
           <button
             type="button"
             onClick={handleToggleAllCountries}
-            className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer border ${
+            className={`group/item w-full flex items-center justify-between px-3 py-2 text-left rounded-lg transition-colors cursor-pointer border ${
               isAllCountriesActive
                 ? "bg-[#2D2E30] border-[#4E5052] text-slate-100 hover:bg-[#343638]"
                 : countrySelectedCount > 0
@@ -577,10 +609,10 @@ export function AccountFilterContent({
               <div
                 className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                   isAllCountriesActive
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
                     : countrySelectedCount > 0
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                    : "border-slate-600 bg-[#1E2021] hover:border-slate-400"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                    : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                 }`}
               >
                 {isAllCountriesActive && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -588,17 +620,11 @@ export function AccountFilterContent({
                   <div className="w-2 h-0.5 bg-[#C7F33C] rounded-full" />
                 )}
               </div>
-              <Globe className="w-4 h-4 text-slate-400 shrink-0" />
-              <span className="text-xs font-black uppercase tracking-wider">
-                {isAllCountriesActive ? "ALL COUNTRIES" : "SELECT ALL"}
+              <span className="text-xs font-bold uppercase tracking-wider">
+                ALL
               </span>
-              {countrySelectedCount > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums">
-                  {countrySelectedCount} selected
-                </span>
-              )}
             </div>
-            <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-[#1E2021] text-slate-400">
+            <span className="text-[11px] font-normal px-1.5 py-0.5 rounded text-slate-400">
               {totalCountryCount}
             </span>
           </button>
@@ -613,31 +639,31 @@ export function AccountFilterContent({
                 key={countryName}
                 type="button"
                 onClick={() => handleToggleSingleCountry(countryName)}
-                className={`w-full flex items-center justify-between px-3 py-2 text-left rounded-xl transition-colors cursor-pointer ${
+                className={`group/item w-full flex items-center justify-between px-3 py-1.5 text-left rounded-md transition-colors cursor-pointer ${
                   isChecked
-                    ? "bg-transparent hover:bg-[#2D2E30] text-slate-200"
-                    : "bg-transparent hover:bg-[#252627] text-slate-500 hover:text-slate-300"
+                    ? "bg-transparent hover:bg-[#323335] text-slate-200 hover:text-white"
+                    : "bg-transparent hover:bg-[#2D2E30] text-slate-500 hover:text-slate-300"
                 }`}
               >
                 <div className="flex items-center gap-2.5">
                   <div
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
-                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021]"
+                        ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                        : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
                   </div>
-                  <span className={`text-xs ${isChecked ? "font-normal text-slate-200" : "font-normal text-slate-500"}`}>
-                    {countryName.toUpperCase()}
+                  <span className={`text-xs ${isChecked ? "font-normal text-slate-200 group-hover/item:text-white" : "font-normal text-slate-500 group-hover/item:text-slate-300"}`}>
+                    {countryName}
                   </span>
                 </div>
                 <span
-                  className={`text-[11px] font-normal px-2 py-0.5 rounded-full ${
+                  className={`text-[11px] font-normal px-1.5 py-0.5 rounded transition-colors ${
                     isChecked
-                      ? "bg-[#1E2021] text-slate-400"
-                      : "bg-transparent text-slate-600"
+                      ? "text-slate-400 group-hover/item:text-slate-200"
+                      : "bg-transparent text-slate-600 group-hover/item:text-slate-400"
                   }`}
                 >
                   {count}
@@ -720,7 +746,7 @@ export function AccountFiltersDrawer({
       >
         <div
           ref={drawerRef}
-          className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden shadow-2xl"
+          className="w-full bg-[#252728] border-0 md:border border-[#3A3B3C] flex flex-col h-full rounded-none md:rounded-2xl overflow-hidden"
         >
           {/* Header */}
           <div className="flex items-center justify-between p-5 sm:p-6 border-b border-[#1C1C1D] shrink-0 bg-[#252728]">

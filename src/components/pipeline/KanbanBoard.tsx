@@ -16,7 +16,8 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { KanbanColumn } from "./KanbanColumn";
-import { KanbanCardUI, CompanyHolidaysContext, UserLeavesContext, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, PendingTodosContext, OwnerFilterContext, PinnedDealsContext } from "./KanbanCard";
+import { KanbanCardUI, CardDensityContext, CompanyHolidaysContext, UserLeavesContext, OpportunityWithRelations, checkIsRedCard, PendingAcceleratorsContext, PendingTodosContext, OwnerFilterContext, PinnedDealsContext } from "./KanbanCard";
+import type { PipelineCardDensity } from "@/lib/pipeline-card-density-shared";
 import { useCompanyHolidays, useUserLeaves } from "@/lib/useCompanyHolidays";
 import type { UserLeaveDTO } from "@/lib/actions/holiday";
 import { getPendingAcceleratorsMap, type DealAcceleratorsState, type PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
@@ -119,6 +120,7 @@ interface KanbanBoardProps {
   hasValueFilter?: boolean;
   hasRedFilter?: boolean;
   hasYellowFilter?: boolean;
+  cardDensity?: PipelineCardDensity;
   onOwnerFilterChange?: (ownerId: string) => void;
   onSearchChange?: (query: string) => void;
   onStatsChange?: (stats: { total: number; red: number; yellow: number; revenue?: number }) => void;
@@ -146,10 +148,12 @@ export function KanbanBoard({
   hasValueFilter = false,
   hasRedFilter = false,
   hasYellowFilter = false,
+  cardDensity = 'compact',
   onOwnerFilterChange,
   onSearchChange,
   onStatsChange,
 }: KanbanBoardProps) {
+  const isCompact = cardDensity === 'compact';
   const { holidaysSet, mutate: mutateCompanyHolidays } = useCompanyHolidays(initialHolidays);
   const { leavesByUser, mutate: mutateUserLeaves } = useUserLeaves(currentUserId, initialLeaves);
   const { toast } = useDialog();
@@ -599,21 +603,12 @@ export function KanbanBoard({
 
 
 
-  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const dealsRef = useRef(deals);
   useEffect(() => {
     dealsRef.current = deals;
   }, [deals]);
-  const selectedCardIdRef = useRef(selectedCardId);
-  useEffect(() => {
-    selectedCardIdRef.current = selectedCardId;
-  }, [selectedCardId]);
-  const isKeyboardNavRef = useRef(false);
 
   const handleOpenPanel = useCallback((deal: OpportunityWithRelations, tab: TabType) => {
-    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
-      setSelectedCardId(deal.id);
-    }
     if (closingTimeout) clearTimeout(closingTimeout);
     setActivePanelDeal({ deal, tab });
     setPanelOpen(true);
@@ -628,9 +623,6 @@ export function KanbanBoard({
   }, []);
 
   const handleDealClick = useCallback((deal: OpportunityWithRelations, tab?: string) => {
-    if (typeof window !== 'undefined' && window.innerWidth >= 768) {
-      setSelectedCardId(deal.id);
-    }
     void handleOpenPanel(deal, (tab || 'activity') as TabType);
   }, [handleOpenPanel]);
 
@@ -1028,39 +1020,6 @@ export function KanbanBoard({
     if (activeDeal) return; // Don't interrupt drag operations
 
     const timer = setTimeout(() => {
-      // If the currently selected card was sorted down or moved out, transfer selection
-      // to the card that replaced it at the same position (instead of following it down).
-      const currentSelectedId = selectedCardIdRef.current;
-      if (currentSelectedId) {
-        const prevDeals = dealsRef.current;
-        let prevColId: string | null = null;
-        let prevIndex = -1;
-
-        for (const [colId, list] of Object.entries(prevDeals)) {
-          const idx = list.findIndex(d => d.id === currentSelectedId);
-          if (idx !== -1) {
-            prevColId = colId;
-            prevIndex = idx;
-            break;
-          }
-        }
-
-        if (prevColId && prevIndex !== -1) {
-          const nextList = groupedDeals[prevColId];
-          if (nextList && nextList.length > 0) {
-            const nextIndex = nextList.findIndex(d => d.id === currentSelectedId);
-            // If the card was sorted down or moved out of the column:
-            if (nextIndex > prevIndex || nextIndex === -1) {
-              const replacementIndex = Math.min(prevIndex, nextList.length - 1);
-              const replacementCard = nextList[replacementIndex];
-              if (replacementCard && replacementCard.id !== currentSelectedId) {
-                setSelectedCardId(replacementCard.id);
-              }
-            }
-          }
-        }
-      }
-
       setDeals(prev => {
         const prevKeys = Object.keys(prev);
         const nextKeys = Object.keys(groupedDeals);
@@ -1542,146 +1501,6 @@ export function KanbanBoard({
     };
   }, [setColumnNavConfig]);
 
-  // Auto-scroll selected card into view smoothly ONLY when explicitly navigating with keyboard
-  useEffect(() => {
-    if (!selectedCardId || panelOpen || !isKeyboardNavRef.current) return;
-    isKeyboardNavRef.current = false;
-    const el = document.getElementById(`deal-card-${selectedCardId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-    }
-  }, [selectedCardId, panelOpen]);
-
-  // Desktop Keyboard Navigation for Kanban Cards (Arrow keys & Enter)
-  useEffect(() => {
-    if (panelOpen || isCompletedTab) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input, textarea, select, or editable element
-      const target = e.target as HTMLElement | null;
-      if (
-        target?.isContentEditable ||
-        ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName || "")
-      ) {
-        return;
-      }
-
-      // Ignore if modifier keys are pressed
-      if (e.metaKey || e.ctrlKey || e.altKey) {
-        return;
-      }
-
-      // Ignore if EditDealPanel or any drawer/modal is open
-      if (
-        document.body.dataset.dealPanelOpen === "true" ||
-        document.querySelector('[data-deal-panel-open="true"]')
-      ) {
-        return;
-      }
-
-      const isArrowKey = ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"].includes(e.key);
-      const isEnterKey = e.key === "Enter";
-      const isEscKey = e.key === "Escape";
-
-      if (!isArrowKey && !isEnterKey && !isEscKey) return;
-
-      if (isEscKey) {
-        if (selectedCardId) {
-          e.preventDefault();
-          setSelectedCardId(null);
-          if (document.activeElement && typeof (document.activeElement as HTMLElement).blur === 'function') {
-            (document.activeElement as HTMLElement).blur();
-          }
-        }
-        return;
-      }
-
-      // Map columns with their deals
-      const columnsWithDeals = initialStages.map((stage, idx) => ({
-        stageIdx: idx,
-        stageId: stage.id,
-        deals: deals[stage.id] || [],
-      }));
-
-      // Find current position of selected deal
-      let currentColIdx = -1;
-      let currentCardIdx = -1;
-      let currentDeal: OpportunityWithRelations | null = null;
-
-      if (selectedCardId) {
-        for (const col of columnsWithDeals) {
-          const cardIdx = col.deals.findIndex(d => d.id === selectedCardId);
-          if (cardIdx !== -1) {
-            currentColIdx = col.stageIdx;
-            currentCardIdx = cardIdx;
-            currentDeal = col.deals[cardIdx];
-            break;
-          }
-        }
-      }
-
-      if (isEnterKey) {
-        if (currentDeal) {
-          e.preventDefault();
-          handleOpenPanel(currentDeal, 'activity');
-        }
-        return;
-      }
-
-      if (isArrowKey) {
-        e.preventDefault();
-
-        // If no card is currently selected, select the first card in the first non-empty column
-        if (currentColIdx === -1 || currentCardIdx === -1) {
-          const firstNonEmpty = columnsWithDeals.find(c => c.deals.length > 0);
-          if (firstNonEmpty && firstNonEmpty.deals.length > 0) {
-            isKeyboardNavRef.current = true;
-            setSelectedCardId(firstNonEmpty.deals[0].id);
-            scrollToColumn(firstNonEmpty.stageIdx);
-          }
-          return;
-        }
-
-        const currentCol = columnsWithDeals[currentColIdx];
-
-        if (e.key === "ArrowDown") {
-          if (currentCardIdx < currentCol.deals.length - 1) {
-            isKeyboardNavRef.current = true;
-            setSelectedCardId(currentCol.deals[currentCardIdx + 1].id);
-          }
-        } else if (e.key === "ArrowUp") {
-          if (currentCardIdx > 0) {
-            isKeyboardNavRef.current = true;
-            setSelectedCardId(currentCol.deals[currentCardIdx - 1].id);
-          }
-        } else if (e.key === "ArrowRight") {
-          // Find next non-empty column to the right
-          const nextCols = columnsWithDeals.filter(c => c.stageIdx > currentColIdx && c.deals.length > 0);
-          if (nextCols.length > 0) {
-            const targetCol = nextCols[0];
-            const targetCardIdx = Math.min(currentCardIdx, targetCol.deals.length - 1);
-            isKeyboardNavRef.current = true;
-            setSelectedCardId(targetCol.deals[targetCardIdx].id);
-            scrollToColumn(targetCol.stageIdx);
-          }
-        } else if (e.key === "ArrowLeft") {
-          // Find previous non-empty column to the left
-          const prevCols = columnsWithDeals.filter(c => c.stageIdx < currentColIdx && c.deals.length > 0);
-          if (prevCols.length > 0) {
-            const targetCol = prevCols[prevCols.length - 1];
-            const targetCardIdx = Math.min(currentCardIdx, targetCol.deals.length - 1);
-            isKeyboardNavRef.current = true;
-            setSelectedCardId(targetCol.deals[targetCardIdx].id);
-            scrollToColumn(targetCol.stageIdx);
-          }
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [panelOpen, isCompletedTab, initialStages, deals, selectedCardId, handleOpenPanel, scrollToColumn]);
-
   const ownerFilterContextValue = useMemo(() => ({
     ownerFilter,
     onOwnerFilterChange,
@@ -1701,6 +1520,7 @@ export function KanbanBoard({
   }
 
   return (
+    <CardDensityContext.Provider value={cardDensity}>
     <OwnerFilterContext.Provider value={ownerFilterContextValue}>
       <PendingAcceleratorsContext.Provider value={pendingAcceleratorsMap}>
         <PendingTodosContext.Provider value={pendingTodosMap}>
@@ -1709,7 +1529,7 @@ export function KanbanBoard({
               <PinnedDealsContext.Provider value={pinnedDealsContextValue}>
         <div 
           ref={boardContainerRef}
-          className={`relative flex gap-0 md:gap-1 ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-auto xl:overflow-x-auto touch-pan-x xl:touch-auto snap-x snap-mandatory md:snap-none'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
+          className={`relative flex ${isCompact && !isCompletedTab ? 'gap-0 md:gap-4' : 'gap-0 md:gap-1'} ${isCompletedTab ? 'overflow-x-auto' : 'overflow-x-auto xl:overflow-x-auto touch-pan-x xl:touch-auto snap-x snap-mandatory md:snap-none'} hide-scrollbar scroll-smooth w-full max-w-full min-w-0 ${isCompletedTab ? '' : 'h-full'}`}
         >
         {isCompletedTab ? (
           <div className="w-full max-w-8xl mx-auto flex flex-col gap-8 px-4 pb-12">
@@ -1741,11 +1561,12 @@ export function KanbanBoard({
               return sortedYears.map(year => (
                 <div key={year} className="flex flex-col gap-4">
                   <h3 className="font-semibold text-2xl text-slate-100">{year}</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 px-8 pt-6">
+                  <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 ${isCompact ? 'gap-x-6 gap-y-0 pt-2' : 'gap-4 pt-6'} px-8`}>
                     {grouped[year].map(deal => (
                       <div key={deal.id} className="cursor-pointer">
                         <KanbanCardUI 
                           deal={deal} 
+                          isCompactProp={isCompact}
                           onOpenPanel={(tab) => handleOpenPanel(deal, (tab || 'activity') as TabType)} 
                         />
                       </div>
@@ -1792,7 +1613,6 @@ export function KanbanBoard({
                   canEditTitle={canEditStageTitles && Boolean(activeStageTitleDepartmentId)}
                   onTitleChanged={onStageTitleChanged}
                   deals={displayDeals[col.id] || []} 
-                  selectedCardId={selectedCardId}
                   redCardsCount={boardStats.redByStage[col.id] || 0}
                   onDealClick={handleDealClick}
                   isScrollable={true}
@@ -1807,14 +1627,18 @@ export function KanbanBoard({
                   onOwnerFilterChange={onOwnerFilterChange}
                   normalizedSearchQuery={searchQuery.trim().toLowerCase()}
                   onSearchChange={onSearchChange}
+                  isCompact={isCompact}
                 />
               </div>
             ))}
 
             <DragOverlay dropAnimation={null}>
               {activeDeal ? (
-                <div style={{ width: activeWidth || undefined }}>
-                  <KanbanCardUI deal={activeDeal} />
+                <div
+                  style={{ width: activeWidth || undefined }}
+                  className={isCompact ? "bg-[#252728] rounded-xl border border-[#4E4F50] overflow-hidden" : undefined}
+                >
+                  <KanbanCardUI deal={activeDeal} isCompactProp={isCompact} />
                 </div>
               ) : null}
             </DragOverlay>
@@ -1851,5 +1675,6 @@ export function KanbanBoard({
         </PendingTodosContext.Provider>
       </PendingAcceleratorsContext.Provider>
     </OwnerFilterContext.Provider>
+    </CardDensityContext.Provider>
   );
 }

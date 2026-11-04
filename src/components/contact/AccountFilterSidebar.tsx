@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Search, X, Check, Building2, Globe } from "lucide-react";
+import { Search, X, Check } from "lucide-react";
 import { ContactType } from "@prisma/client";
 import { normalizeCountryName } from "@/lib/data/countries";
 
@@ -58,9 +58,7 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
   availableCountries = [],
 
   // Legacy fallback props
-  activeType = "ALL",
   onTypeChange,
-  activeCountry = "ALL",
   onCountryChange,
 }: AccountFilterSidebarProps) {
   const [countrySearch, setCountrySearch] = useState("");
@@ -266,13 +264,15 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
         onCountryChange?.(countryName);
       }
     } else {
-      const isCurrentlyChecked = selectedCountries.some(
-        (sc) => sc.toLowerCase() === countryName.toLowerCase()
-      );
+      const isCurrentlyChecked = isCountryChecked(countryName);
       if (isCurrentlyChecked) {
-        const next = selectedCountries.filter(
-          (sc) => sc.toLowerCase() !== countryName.toLowerCase()
-        );
+        const norm = normalizeCountryName(countryName).toLowerCase();
+        const cLower = countryName.toLowerCase();
+        const next = selectedCountries.filter((sc) => {
+          const scLower = sc.toLowerCase();
+          const scNorm = normalizeCountryName(sc).toLowerCase();
+          return scLower !== cLower && scNorm !== norm;
+        });
         const resolvedNext = next.length === 0 ? ["__NONE__"] : next;
         if (onSelectCountries) {
           onSelectCountries(resolvedNext);
@@ -320,7 +320,7 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
 
   return (
     <div className="hidden md:flex w-full md:w-64 lg:w-72 shrink-0 h-full flex-col select-none gap-2 pb-2">
-      {/* TOP HALF: TYPE WITH CALM CHECKBOXES */}
+      {/* TOP HALF: TYPE WITH CHECKBOXES (Matching ProductFilterSidebar standard) */}
       <div className="shrink-0 flex flex-col">
         <div className="h-8 flex items-center justify-between px-2 shrink-0">
           <span className="font-black text-xs uppercase text-slate-100 tracking-wider">
@@ -355,10 +355,10 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
               <div
                 className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                   isAllTypesActive
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
                     : typeSelectedCount > 0
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                    : "border-slate-600 bg-[#1E2021] group-hover/item:border-slate-400"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                    : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                 }`}
               >
                 {isAllTypesActive && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -367,15 +367,10 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
                 )}
               </div>
               <span className="text-xs font-bold uppercase tracking-wider truncate">
-                {isAllTypesActive ? "ALL TYPES" : "SELECT ALL"}
+                ALL
               </span>
-              {typeSelectedCount > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums shrink-0">
-                  {typeSelectedCount} selected
-                </span>
-              )}
             </div>
-            <span className="text-xs font-normal px-1.5 py-0.5 rounded shrink-0 bg-[#1E2021] text-slate-400">
+            <span className="text-[11px] font-normal px-1.5 py-0.5 rounded shrink-0 text-slate-400">
               {totalTypeCount}
             </span>
           </button>
@@ -399,8 +394,8 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
                   <div
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
-                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021] group-hover/item:border-slate-400"
+                        ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                        : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -417,9 +412,9 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
                 </div>
 
                 <span
-                  className={`text-xs font-normal px-1.5 py-0.5 rounded shrink-0 transition-colors ${
+                  className={`text-[11px] font-normal px-1.5 py-0.5 rounded shrink-0 transition-colors ${
                     isChecked
-                      ? "bg-[#1E2021] text-slate-400 group-hover/item:text-slate-200"
+                      ? "text-slate-400 group-hover/item:text-slate-200"
                       : "bg-transparent text-slate-600 group-hover/item:text-slate-400"
                   }`}
                 >
@@ -434,7 +429,7 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
       {/* DIVIDER */}
       <div className="border-t border-[#3A3B3C]/60 my-0.5 shrink-0" />
 
-      {/* BOTTOM HALF: COUNTRY WITH CHECKBOXES & SEARCH */}
+      {/* BOTTOM HALF: COUNTRY WITH CHECKBOXES & SEARCH (Matching ProductFilterSidebar standard) */}
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="h-8 flex items-center justify-between px-2 shrink-0">
           <span className="font-black text-xs uppercase text-slate-100 tracking-wider">
@@ -493,10 +488,10 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
               <div
                 className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                   isAllCountriesActive
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
                     : countrySelectedCount > 0
-                    ? "bg-[#242D16] border-[#7E9E26] text-[#C7F33C]"
-                    : "border-slate-600 bg-[#1E2021] group-hover/item:border-slate-400"
+                    ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                    : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                 }`}
               >
                 {isAllCountriesActive && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -505,15 +500,10 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
                 )}
               </div>
               <span className="text-xs font-bold uppercase tracking-wider truncate">
-                {isAllCountriesActive ? "ALL COUNTRIES" : "SELECT ALL"}
+                ALL
               </span>
-              {countrySelectedCount > 0 && (
-                <span className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold bg-[#262F16] text-[#B8E62C] border border-[#4D631B] tabular-nums shrink-0">
-                  {countrySelectedCount} selected
-                </span>
-              )}
             </div>
-            <span className="text-xs font-normal px-1.5 py-0.5 rounded shrink-0 text-slate-400">
+            <span className="text-[11px] font-normal px-1.5 py-0.5 rounded shrink-0 text-slate-400">
               {totalCountryCount}
             </span>
           </button>
@@ -538,8 +528,8 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
                   <div
                     className={`w-4 h-4 rounded transition-all shrink-0 flex items-center justify-center border ${
                       isChecked
-                        ? "bg-[#242D16] border-[#688523] text-[#C7F33C]"
-                        : "border-slate-600/70 bg-[#1E2021] group-hover/item:border-slate-400"
+                        ? "bg-[#2D2E30] border-[#4E5052] text-slate-200"
+                        : "bg-[#2D2E30] border-[#4E5052] group-hover/item:border-slate-400"
                     }`}
                   >
                     {isChecked && <Check className="w-3 h-3 stroke-[2.5]" />}
@@ -556,9 +546,9 @@ export const AccountFilterSidebar = React.memo(function AccountFilterSidebar({
                 </div>
 
                 <span
-                  className={`text-xs font-normal px-1.5 py-0.5 rounded shrink-0 transition-colors ${
+                  className={`text-[11px] font-normal px-1.5 py-0.5 rounded shrink-0 transition-colors ${
                     isChecked
-                      ? "bg-[#1E2021] text-slate-400 group-hover/item:text-slate-200"
+                      ? "text-slate-400 group-hover/item:text-slate-200"
                       : "bg-transparent text-slate-600 group-hover/item:text-slate-400"
                   }`}
                 >

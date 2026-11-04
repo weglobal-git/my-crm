@@ -5,6 +5,7 @@ import { requirePipelineActor } from '@/lib/pipeline-security';
 import { getPipelineOpportunitiesListForActor } from '@/lib/pipeline-opportunities';
 import { getPipelineStageTitleContext, getCachedPipelineStages } from '@/lib/pipeline-stage-titles';
 import { getStoredPinnedDealIdsServer } from "@/lib/user-pinned-deals";
+import { getStoredPipelineCardDensityServer } from "@/lib/pipeline-card-density-server";
 import { getCompanyHolidaysAction, getUserLeavesAction } from "@/lib/actions/holiday";
 
 export const dynamic = 'force-dynamic';
@@ -27,11 +28,12 @@ export default async function PipelinePage({
   // Fetch the first board snapshot + cached holidays/leaves on the server in parallel
   // so KanbanBoard renders accurate Red/Due Today state at 0ms without 2 extra mount Server Actions
   // or redundant JSON.stringify -> JSON.parse CPU overhead.
-  const [stages, opportunitiesResult, stageTitleContext, userPinnedSet, initialHolidays, initialLeaves] = await Promise.all([
+  const [stages, opportunitiesResult, stageTitleContext, userPinnedSet, initialCardDensity, initialHolidays, initialLeaves] = await Promise.all([
     getCachedPipelineStages(),
     getPipelineOpportunitiesListForActor(actor, tab, search || undefined),
     getPipelineStageTitleContext(actor),
     getStoredPinnedDealIdsServer(actor.id),
+    getStoredPipelineCardDensityServer(actor.id),
     getCompanyHolidaysAction(),
     getUserLeavesAction(),
   ]);
@@ -48,6 +50,7 @@ export default async function PipelinePage({
       stages={stages}
       initialOpportunities={initialOpportunities}
       initialPinnedDealIds={Array.from(userPinnedSet)}
+      initialCardDensity={initialCardDensity}
       initialHolidays={initialHolidays}
       initialLeaves={initialLeaves}
       stageTitleDepartments={stageTitleContext.departments}

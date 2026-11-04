@@ -39,9 +39,7 @@ import {
   syncOpportunityDueDateWithTimeline,
 } from '@/lib/pipeline-activity-service';
 import {
-  classifyUpdateQuality,
   DUPLICATE_LOOKBACK_LIMIT,
-  encodeTierPrefix,
   getCommentGrantMs,
   MIN_CHARS_FOR_27H,
   parseTierPrefix,

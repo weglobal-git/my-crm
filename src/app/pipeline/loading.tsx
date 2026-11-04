@@ -10,7 +10,7 @@ export default function PipelineLoading() {
           <div className="flex justify-between items-center mb-4 gap-3 flex-wrap shrink-0">
             {/* Left Tabs (My Workspace / Completed Projects) */}
             <div className="flex gap-2 bg-[#252728] p-1 rounded-full shrink-0 animate-pulse">
-              <div className="h-9 w-32 bg-[#3A3B3C] rounded-full shadow-sm" />
+              <div className="h-9 w-32 bg-[#3A3B3C] rounded-full" />
               <div className="h-9 w-40 bg-transparent rounded-full" />
             </div>
 
@@ -38,38 +38,21 @@ export default function PipelineLoading() {
                     <div className="w-8 h-8 rounded-full bg-[#3A3B3C]/70 animate-pulse" />
                   </div>
                   
-                  {/* Column Cards Container */}
-                  <div className="flex flex-col gap-4 flex-1 p-2 rounded-3xl hide-scrollbar overflow-y-auto min-h-0">
-                    {[1, 2, 3].map((card) => (
+                  {/* Column Cards Container (Compact Border-Bottom List Skeleton) */}
+                  <div className="flex flex-col gap-0 flex-1 px-2 pt-1 pb-8 border-t border-[#3A3B3C]/60 hide-scrollbar overflow-y-auto min-h-0">
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((card) => (
                       <div 
                         key={card} 
-                        className="w-full min-h-[160px] bg-[#3A3B3C]/30 border border-[#3A3B3C]/50 rounded-[24px] p-4 flex flex-col gap-3 animate-pulse select-none"
+                        className="w-full border-b border-[#3A3B3C]/80 pl-1.5 pr-2 py-2.5 flex items-center gap-2.5 animate-pulse select-none"
                       >
-                        {/* Card Top Row: Deal title & badges */}
-                        <div className="flex justify-between items-center">
-                          <div className="h-5 w-36 bg-[#4E4F50]/60 rounded-full" />
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-5 h-5 bg-[#4E4F50]/40 rounded-full" />
-                            <div className="w-5 h-5 bg-[#4E4F50]/40 rounded-full" />
+                        <div className="w-[3px] h-7 rounded-full bg-[#3A3B3C] shrink-0" />
+                        <div className="w-7 h-7 rounded-full bg-[#3A3B3C] shrink-0" />
+                        <div className="flex-1 flex flex-col gap-1.5 min-w-0">
+                          <div className="h-3.5 w-3/4 bg-[#3A3B3C] rounded" />
+                          <div className="flex items-center gap-2">
+                            <div className="h-3 w-20 bg-[#3A3B3C]/70 rounded" />
+                            <div className="h-3 w-24 bg-[#3A3B3C]/50 rounded" />
                           </div>
-                        </div>
-
-                        {/* Card Middle: Latest activity preview */}
-                        <div className="flex flex-col gap-2 mt-1 flex-1">
-                          <div className="h-2.5 w-24 bg-[#4E4F50]/30 rounded pl-2" />
-                          <div className="flex items-start gap-2 px-1">
-                            <div className="w-5 h-5 rounded-full bg-[#4E4F50]/60 shrink-0" />
-                            <div className="flex-1 flex flex-col gap-1.5">
-                              <div className="h-3 w-full bg-[#4E4F50]/50 rounded" />
-                              <div className="h-3 w-4/5 bg-[#4E4F50]/30 rounded" />
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Card Bottom Row: Customer Name Pill & Timer Badge */}
-                        <div className="mt-auto flex justify-between items-center pt-2">
-                          <div className="h-6 w-28 bg-[#4E4F50]/50 rounded-full" />
-                          <div className="h-4 w-16 bg-[#4E4F50]/30 rounded-md" />
                         </div>
                       </div>
                     ))}

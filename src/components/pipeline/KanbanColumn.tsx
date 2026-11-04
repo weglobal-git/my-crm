@@ -26,7 +26,6 @@ interface KanbanColumnProps {
   currentUserId?: string;
   currentUserRole?: string;
   onDealIntent?: () => void;
-  selectedCardId?: string | null;
   redCardsCount?: number;
   cardTimingMap?: Map<string, CardTimingState>;
   pendingAcceleratorsMap?: Record<string, PendingAcceleratorInfo | number>;
@@ -37,6 +36,7 @@ interface KanbanColumnProps {
   onOwnerFilterChange?: (ownerId: string) => void;
   normalizedSearchQuery?: string;
   onSearchChange?: (query: string) => void;
+  isCompact?: boolean;
 }
 
 export const KanbanColumn = memo(function KanbanColumn({ 
@@ -53,7 +53,6 @@ export const KanbanColumn = memo(function KanbanColumn({
   currentUserId, 
   currentUserRole, 
   onDealIntent,
-  selectedCardId,
   redCardsCount = 0,
   cardTimingMap,
   pendingAcceleratorsMap,
@@ -64,6 +63,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   onOwnerFilterChange,
   normalizedSearchQuery = '',
   onSearchChange,
+  isCompact = false,
 }: KanbanColumnProps) {
   const { toast } = useDialog();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -221,7 +221,7 @@ export const KanbanColumn = memo(function KanbanColumn({
         </div>
       )}
 
-      <div className={`flex flex-col gap-6 flex-1 px-1 md:px-2 pt-5 pb-16 hide-scrollbar ${isScrollable ? 'overflow-y-auto min-h-0' : 'min-h-[500px]'}`}>
+      <div className={`flex flex-col ${isCompact ? 'gap-0 pt-1 border-t border-[#3A3B3C]/60' : 'gap-6 pt-5'} flex-1 px-1 md:px-2 pb-16 hide-scrollbar ${isScrollable ? 'overflow-y-auto min-h-0' : 'min-h-[500px]'}`}>
         <SortableContext items={dealIds} strategy={verticalListSortingStrategy}>
           {deals.map((deal) => {
             const timing = cardTimingMap?.get(deal.id);
@@ -245,7 +245,7 @@ export const KanbanColumn = memo(function KanbanColumn({
               <KanbanCard
                 key={deal.id}
                 deal={deal}
-                isSelected={deal.id === selectedCardId}
+                isCompactProp={isCompact}
                 onDealClick={onDealClick}
                 onPanelIntent={onDealIntent}
                 currentUserId={currentUserId}

@@ -3,10 +3,12 @@
 import React, { useEffect, useRef } from "react";
 import { Loader2, Building2 } from "lucide-react";
 import type { AccountCardDTO } from "@/lib/contact/account-card-dto";
+import type { AccountCardDensity } from "@/lib/contact/account-card-density-shared";
 import { AccountCardRow } from "./AccountCardRow";
 
 interface AccountCardListProps {
   accounts: AccountCardDTO[];
+  cardDensity?: AccountCardDensity;
   isLoading: boolean;
   isLoadingMore: boolean;
   hasMore: boolean;
@@ -20,7 +22,41 @@ interface AccountCardListProps {
   headerAction?: React.ReactNode;
 }
 
-function AccountRowSkeleton() {
+function AccountRowSkeleton({ density = "compact" }: { density?: AccountCardDensity }) {
+  if (density === "compact") {
+    return (
+      <div className="w-full px-3 py-1.5 min-h-[36px] flex items-center border-b border-[#3A3B3C]/60 animate-pulse select-none">
+        <div className="hidden sm:grid grid-cols-[92px_minmax(0,1fr)_124px_104px_100px] gap-3 items-center w-full">
+          <div className="w-[92px] shrink-0 flex items-center gap-1.5">
+            <div className="h-3 w-8 rounded bg-[#3A3B3C]" />
+            <div className="h-2.5 w-6 rounded bg-[#3A3B3C]/70" />
+          </div>
+          <div className="min-w-0 pr-2 flex items-center">
+            <div className="h-3.5 w-40 rounded bg-[#3A3B3C]" />
+          </div>
+          <div className="w-[124px] shrink-0 flex items-center gap-1">
+            <div className="w-3 h-3 rounded-sm bg-[#3A3B3C]" />
+            <div className="h-3 w-3 rounded bg-[#3A3B3C]/70" />
+          </div>
+          <div className="w-[104px] shrink-0 flex items-center">
+            <div className="h-3 w-14 rounded bg-[#3A3B3C]/80" />
+          </div>
+          <div className="w-[100px] shrink-0 flex items-center justify-end">
+            <div className="h-3 w-14 rounded bg-[#3A3B3C]/80" />
+          </div>
+        </div>
+
+        <div className="flex sm:hidden items-center justify-between w-full">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className="h-3 w-8 rounded bg-[#3A3B3C] shrink-0" />
+            <div className="h-3.5 w-32 rounded bg-[#3A3B3C]" />
+          </div>
+          <div className="h-3 w-12 rounded bg-[#3A3B3C]/70 shrink-0" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full bg-[#1E1F21] rounded-xl px-6 py-1.5 mb-2.5 min-h-[52px] flex items-center border border-transparent animate-pulse select-none">
       <div className="hidden sm:grid grid-cols-[72px_minmax(0,1fr)_170px_120px_100px] gap-4 items-center w-full">
@@ -73,11 +109,11 @@ function AccountRowSkeleton() {
 
 export function AccountCardList({
   accounts,
+  cardDensity = "compact",
   isLoading,
   isLoadingMore,
   hasMore,
   totalAccounts,
-  selectedAccountId,
   onSelectAccount,
   onRatingChange,
   onLoadMore,
@@ -88,7 +124,10 @@ export function AccountCardList({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef(onLoadMore);
-  loadMoreRef.current = onLoadMore;
+
+  useEffect(() => {
+    loadMoreRef.current = onLoadMore;
+  }, [onLoadMore]);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -111,6 +150,8 @@ export function AccountCardList({
     return () => observer.disconnect();
   }, [hasMore, isLoadingMore, isLoading]);
 
+  const skeletonRows = cardDensity === "compact" ? [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] : [1, 2, 3, 4, 5];
+
   return (
     <div
       ref={containerRef}
@@ -126,12 +167,10 @@ export function AccountCardList({
 
       {/* Main Content */}
       {isLoading && accounts.length === 0 ? (
-        <div className="space-y-2.5">
-          <AccountRowSkeleton />
-          <AccountRowSkeleton />
-          <AccountRowSkeleton />
-          <AccountRowSkeleton />
-          <AccountRowSkeleton />
+        <div className={cardDensity === "compact" ? "" : "space-y-2.5"}>
+          {skeletonRows.map((idx) => (
+            <AccountRowSkeleton key={idx} density={cardDensity} />
+          ))}
         </div>
       ) : accounts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -147,6 +186,7 @@ export function AccountCardList({
             <AccountCardRow
               key={account.id}
               account={account}
+              cardDensity={cardDensity}
               onSelect={onSelectAccount}
               onRatingChange={onRatingChange}
               onIntent={onRowIntent}
