@@ -230,10 +230,10 @@ export function ScoringRulesModal({
                     <div className="p-2 rounded-lg bg-[#1C1C1D] border border-[#3A3B3C]/60 space-y-0.5">
                       <div className="text-slate-200 font-semibold flex items-center gap-1.5">
                         <Coffee className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Due Today &amp; Holidays</span>
+                        <span>Yellow Card → 08:00 Red</span>
                       </div>
                       <p className="text-[10px] text-slate-400">
-                        Amber until 17:00 on Due Date; ≥3 off-days require 17:00 return check-in
+                        Yellow Card warns all day; turns Red at 08:00 next active workday (no sudden 17:00 OT flip)
                       </p>
                     </div>
                   </div>
@@ -268,7 +268,7 @@ export function ScoringRulesModal({
                           <span className="font-mono text-[#C7F33C]">Max 10 XP</span>
                         </div>
                         <div className="text-slate-400">
-                          +0.5 XP per 0-Red workday. Holding ≥ 15 active cards with only 1 Red Card triggers Heavy-Load Shield (+0.25 XP half-credit). Non-sales / pure task roles scale up to 20 XP.
+                          +0.5 XP per 0-Red workday. Holding ≥ 10 active cards with only 1 Red Card triggers Heavy-Load Shield (+0.25 XP half-credit). Non-sales / pure task roles scale up to 20 XP.
                         </div>
                       </div>
                     </div>
@@ -350,7 +350,7 @@ export function ScoringRulesModal({
                       </div>
                       <div className="text-slate-400 space-y-0.5">
                         <div>• Daily Clean Load (Max 3 XP): +0.2 XP per average daily non-red card maintained across the month (15+ clean cards/day = 3 XP)</div>
-                        <div>• On-Time Execution (Max 4 XP): Rolling pace of Due Dates met before 17:00, To-Dos &amp; Urgent Replies × Due Date reliability (late/postponed Due Dates reduce score)</div>
+                        <div>• On-Time Execution (Max 4 XP): Rolling pace of Due Dates met on Due Date (before 08:00 next workday Red cutoff), To-Dos &amp; Urgent Replies × Due Date reliability (late/postponed Due Dates reduce score)</div>
                       </div>
                     </div>
                   </div>

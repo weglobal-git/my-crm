@@ -317,7 +317,7 @@ export function DailyCardHealthDrawer({
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-400 px-1">
                 <span className="font-bold uppercase tracking-wider text-slate-300">
-                  Daily Sampling (23:00 Cutoff)
+                  Daily Workday Sampling (08:00–17:00)
                 </span>
                 <span className="text-[11px]">
                   {sortedDailyRecords.length} days
@@ -444,7 +444,7 @@ export function DailyCardHealthDrawer({
                             <>
                               {day.isGraceShieldDay && (
                                 <span
-                                  title="Heavy-Load Shield: ≥ 15 active cards with only 1 Red Card earns +0.25 XP half-credit"
+                                  title="Heavy-Load Shield: ≥ 10 active cards with only 1 Red Card earns +0.25 XP half-credit"
                                   className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/15 text-sky-300 border border-sky-500/35"
                                 >
                                   Shield +0.25
@@ -535,7 +535,7 @@ export function DailyCardHealthDrawer({
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Clock className="w-3 h-3 text-[#C7F33C] shrink-0" />
-                  <span>23:00 daily cutoff</span>
+                  <span>Yellow all day → 08:00 Red</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Layers className="w-3 h-3 text-purple-400 shrink-0" />

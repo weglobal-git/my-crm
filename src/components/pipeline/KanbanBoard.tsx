@@ -81,6 +81,7 @@ export function DroppablePlaceholder({ id, label }: { id: string, label: string 
 
 import {
   buildEffectiveOffDatesMap,
+  checkIsYellowCard,
   evaluateCardTimingState,
   matchesPipelineCardSearch,
   sortDeals,
@@ -117,9 +118,10 @@ interface KanbanBoardProps {
   ownerFilter?: string;
   hasValueFilter?: boolean;
   hasRedFilter?: boolean;
+  hasYellowFilter?: boolean;
   onOwnerFilterChange?: (ownerId: string) => void;
   onSearchChange?: (query: string) => void;
-  onStatsChange?: (stats: { total: number; red: number; revenue?: number }) => void;
+  onStatsChange?: (stats: { total: number; red: number; yellow: number; revenue?: number }) => void;
 }
 
 export function KanbanBoard({ 
@@ -143,6 +145,7 @@ export function KanbanBoard({
   ownerFilter = 'ALL',
   hasValueFilter = false,
   hasRedFilter = false,
+  hasYellowFilter = false,
   onOwnerFilterChange,
   onSearchChange,
   onStatsChange,
@@ -441,9 +444,28 @@ export function KanbanBoard({
     togglePinDeal,
   }), [pinnedDealIds, togglePinDeal]);
 
+  // Lightweight 60s local clock tick (zero network calls) so Yellow -> Red 08:00 transitions
+  // update live on long-lived open tabs while visible.
+  const [clockMinuteTick, setClockMinuteTick] = useState(0);
+  useEffect(() => {
+    if (isCompletedTab || typeof document === 'undefined') return;
+    const tickIfVisible = () => {
+      if (document.visibilityState === 'visible') {
+        setClockMinuteTick((t) => t + 1);
+      }
+    };
+    const intervalId = setInterval(tickIfVisible, 60_000);
+    document.addEventListener('visibilitychange', tickIfVisible);
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', tickIfVisible);
+    };
+  }, [isCompletedTab]);
+
   // Single-pass timing evaluation shared across sortDeals, displayDeals, boardStats, and KanbanColumn
   // Eliminates 4x redundant checkIsRedCard loops and preserves card object references when pin state matches!
   const cardTimingMap = useMemo(() => {
+    void clockMinuteTick;
     const fallback = tab === initialTab ? (initialOpportunities || []) : [];
     const source = rawOpportunities || fallback;
     const offDatesMap = buildEffectiveOffDatesMap(holidaysSet, leavesByUser);
@@ -453,7 +475,7 @@ export function KanbanBoard({
       map.set(deal.id, evaluateCardTimingState(deal, holidaysSet, leavesByUser, now, offDatesMap));
     }
     return map;
-  }, [rawOpportunities, initialOpportunities, tab, initialTab, holidaysSet, leavesByUser]);
+  }, [rawOpportunities, initialOpportunities, tab, initialTab, holidaysSet, leavesByUser, clockMinuteTick]);
 
   // Group opportunities by stageId
   const groupedDeals = useMemo(() => {
@@ -491,29 +513,38 @@ export function KanbanBoard({
   const [deals, setDeals] = useState<Record<string, OpportunityWithRelations[]>>(groupedDeals);
 
   const displayDeals = useMemo(() => {
-    if (!hasRedFilter) return deals;
+    if (!hasRedFilter && !hasYellowFilter) return deals;
     const filtered: Record<string, OpportunityWithRelations[]> = {};
     for (const stageId in deals) {
       filtered[stageId] = (deals[stageId] || []).filter(deal => {
         const cached = cardTimingMap.get(deal.id);
-        return cached ? cached.isRed : checkIsRedCard(deal, holidaysSet, leavesByUser);
+        const isRed = cached ? cached.isRed : checkIsRedCard(deal, holidaysSet, leavesByUser);
+        const isYellow = cached ? cached.isYellow : checkIsYellowCard(deal, holidaysSet, leavesByUser);
+        if (hasRedFilter && hasYellowFilter) return isRed || isYellow;
+        if (hasRedFilter) return isRed;
+        return isYellow;
       });
     }
     return filtered;
-  }, [deals, hasRedFilter, cardTimingMap, holidaysSet, leavesByUser]);
+  }, [deals, hasRedFilter, hasYellowFilter, cardTimingMap, holidaysSet, leavesByUser]);
 
   const boardStats = useMemo(() => {
     const redByStage: Record<string, number> = {};
     let total = 0;
     let red = 0;
+    let yellow = 0;
     let revenue = 0;
     for (const stage of initialStages) {
       const stageDeals = deals[stage.id] || [];
       let stageRed = 0;
       for (const deal of stageDeals) {
         const cached = cardTimingMap.get(deal.id);
-        if (cached ? cached.isRed : checkIsRedCard(deal, holidaysSet, leavesByUser)) {
+        const isRed = cached ? cached.isRed : checkIsRedCard(deal, holidaysSet, leavesByUser);
+        const isYellow = cached ? cached.isYellow : checkIsYellowCard(deal, holidaysSet, leavesByUser);
+        if (isRed) {
           stageRed += 1;
+        } else if (isYellow) {
+          yellow += 1;
         }
         if (deal.value != null && Number(deal.value) > 0) {
           revenue += Number(deal.value);
@@ -523,12 +554,17 @@ export function KanbanBoard({
       total += stageDeals.length;
       red += stageRed;
     }
-    return { total, red, redByStage, revenue };
+    return { total, red, yellow, redByStage, revenue };
   }, [deals, cardTimingMap, holidaysSet, initialStages, leavesByUser]);
 
   useEffect(() => {
-    onStatsChange?.({ total: boardStats.total, red: boardStats.red, revenue: boardStats.revenue });
-  }, [boardStats.red, boardStats.revenue, boardStats.total, onStatsChange]);
+    onStatsChange?.({
+      total: boardStats.total,
+      red: boardStats.red,
+      yellow: boardStats.yellow,
+      revenue: boardStats.revenue,
+    });
+  }, [boardStats.red, boardStats.yellow, boardStats.revenue, boardStats.total, onStatsChange]);
   const dragOriginRef = useRef<Record<string, OpportunityWithRelations[]> | null>(null);
   const [activeDeal, setActiveDeal] = useState<OpportunityWithRelations | null>(null);
   const [activeWidth, setActiveWidth] = useState<number>(0);

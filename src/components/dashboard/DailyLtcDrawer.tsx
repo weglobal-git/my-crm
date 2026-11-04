@@ -365,13 +365,13 @@ export function DailyLtcDrawer({
                   <span className="text-[#C7F33C] font-bold">How it works:</span>{" "}
                   Keep 0 red cards all day to earn{" "}
                   <span className="font-bold text-white">+{cleanDayUnitXp} XP/day</span> •
-                  Holders of 15+ active cards with only 1 red card still earn a Heavy-Load Shield{" "}
+                  Holders of 10+ active cards with only 1 red card still earn a Heavy-Load Shield{" "}
                   <span className="font-bold text-sky-300">(+{shieldUnitXp} XP)</span>.
                 </div>
 
                 <div className="flex items-center justify-between text-xs text-slate-400 px-1">
                   <span className="font-bold text-slate-200">
-                    Daily Discipline Log (23:00 Cutoff)
+                    Daily Discipline Log (08:00–17:00 Workday)
                   </span>
                   <span className="text-[11px]">{healthDailyRecords.length} days</span>
                 </div>

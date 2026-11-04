@@ -131,6 +131,7 @@ export function parseLogContent(content: string) {
   const tierMeta = parseTierPrefix(content || '');
   const attachments: ParsedLogAttachment[] = [];
   const cleanText = tierMeta.cleanContent
+    .replace(/^\[(?:HANDOVER:[^\]]+|HANDOVER|REOPEN)\]\s*/i, '')
     .replace(
       /\[ATTACHMENT:([^\|\]]+)(?:\|([^\|\]]*))?(?:\|([^\|\]]*))?\]/g,
       (_match, url, filename = '', type = '') => {

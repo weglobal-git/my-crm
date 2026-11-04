@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useState, useMemo, useCall
 import { createPortal } from "react-dom";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BellRing, FileText, Loader2, Star, ListTodo, Flame } from "lucide-react";
+import { BellRing, Clock, FileText, Loader2, Star, ListTodo, Flame } from "lucide-react";
 import { DealTypeIcon } from "./DealTypeBadge";
 import { usePermissions } from "@/providers/PermissionProvider";
 import { getOptimizedCloudinaryUrl } from "@/lib/utils";
@@ -36,6 +36,7 @@ export { parseLogContent, type ParsedLogAttachment };
 import type { PendingAcceleratorInfo } from "@/lib/actions/ai-accelerator";
 import {
   checkIsRedCard,
+  checkIsYellowCard,
   evaluateCardTimingState,
   getRedThreshold,
   type CardTimingState,
@@ -43,7 +44,7 @@ import {
   type PipelineCardDTO,
 } from "@/lib/pipeline-card-dto";
 
-export { checkIsRedCard, getRedThreshold };
+export { checkIsRedCard, checkIsYellowCard, getRedThreshold };
 export type { CardTimingState, KanbanCardDTO, PipelineCardDTO };
 export type OpportunityWithRelations = KanbanCardDTO;
 
@@ -88,6 +89,8 @@ interface KanbanCardProps {
   onSearchChange?: (query: string) => void;
   // Pre-resolved scalar/slice props from KanbanColumn to avoid 6-Context fan-out across 200+ cards
   isRedProp?: boolean;
+  isYellowProp?: boolean;
+  yellowStartProp?: Date | null;
   isDueTodayProp?: boolean;
   isPostHolidayCheckInProp?: boolean;
   pendingCountProp?: number;
@@ -105,6 +108,8 @@ interface ResolvedCardBodyProps {
   onOpenPanel?: (tab: string) => void;
   onPanelIntent?: () => void;
   highlight: boolean;
+  isYellow: boolean;
+  yellowStart: Date | null;
   isDueToday: boolean;
   isPostHolidayCheckIn: boolean;
   pendingCount: number;
@@ -124,6 +129,8 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
   onOpenPanel,
   onPanelIntent,
   highlight,
+  isYellow,
+  yellowStart,
   isDueToday,
   isPostHolidayCheckIn,
   pendingCount,
@@ -347,7 +354,7 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
       style={{ outline: 'none' }}
       className={`
         flex flex-col gap-2 p-2.5 md:p-2 rounded-2xl md:rounded-[24px] relative overflow-visible group/card h-[220px] transition-all duration-150 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none hover:z-30
-        ${isOrange ? "bg-[#F59E0B]" : highlight ? "bg-[#C7F33C]" : "bg-[#3A3B3C]"}
+        ${isOrange ? "bg-[#F59E0B]" : highlight ? "bg-[#C7F33C]" : isYellow ? "bg-[#3A3B3C] border-2 border-[#FACC15]" : "bg-[#3A3B3C]"}
         ${isDragging ? "opacity-30" : "cursor-pointer"}
         ${isSelected ? "md:ring-2 md:ring-white md:ring-offset-2 md:ring-offset-[#1C1C1D] md:shadow-2xl md:shadow-black/80 md:scale-[1.015] md:z-20" : ""}
       `}
@@ -429,6 +436,8 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
                   ? 'border-[#F59E0B]'
                   : highlight
                   ? 'border-[#C7F33C]'
+                  : isYellow
+                  ? 'border-[#FACC15]'
                   : 'border-[#3A3B3C]'
               }`}
             >
@@ -687,7 +696,7 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
             </button>
           ) : null}
 
-          {/* Bell Due Date Button (only when Due Date is set) */}
+          {/* Yellow / Due Date / Next Check-In Transparency Pill */}
           {deal.dueDate ? (
             <button
               type="button"
@@ -697,34 +706,55 @@ const KanbanCardResolvedBody = React.memo(function KanbanCardResolvedBody({
               }}
               title={
                 isDueToday
-                  ? `Due Today by 17:00 (${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))})`
+                  ? `Yellow Card (Due Today): Clear before 08:00 next working day (${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))})`
                   : `Due: ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(deal.dueDate))}`
               }
-              className={`h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-medium tracking-wide transition-colors ${
+              className={`h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-medium tracking-wide transition-colors cursor-pointer ${
                 isOrange
                   ? 'bg-black/20 text-slate-950 hover:bg-black/30'
                   : highlight
                   ? 'bg-black/15 text-slate-900 hover:bg-black/25'
                   : isDueToday
-                  ? 'bg-amber-400/20 text-amber-300 border border-amber-400/50 hover:bg-amber-400/30 font-semibold'
+                  ? 'bg-[#FACC15]/20 text-[#FDE047] border border-[#FACC15]/60 hover:bg-[#FACC15]/30 font-semibold'
                   : 'bg-[#252728] text-[#C7F33C] hover:bg-[#4E4F50]'
               }`}
             >
               <BellRing className="w-3.5 h-3.5 shrink-0" />
               <span className="font-mono">{isDueToday && !highlight && !isOrange ? 'Due Today' : formatShortDueDate(deal.dueDate)}</span>
             </button>
-          ) : isPostHolidayCheckIn && !highlight && !isOrange ? (
+          ) : isYellow && !highlight && !isOrange ? (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 if (canView('activity')) onOpenPanel?.('activity');
               }}
-              title="Post-Holiday Check-In: Update before 17:00 today to keep card clean"
-              className="h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-semibold tracking-wide transition-colors bg-amber-400/15 text-amber-300 border border-amber-400/40 hover:bg-amber-400/25 cursor-pointer"
+              title={
+                isPostHolidayCheckIn
+                  ? 'Post-Holiday Yellow Card: Update today (turns Red at 08:00 next working day)'
+                  : 'Yellow Card: Clear today — turns Red at 08:00 next working day'
+              }
+              className="h-7 px-2.5 rounded-full flex items-center gap-1 text-xs font-semibold tracking-wide transition-colors bg-[#FACC15]/20 text-[#FDE047] border border-[#FACC15]/60 hover:bg-[#FACC15]/30 cursor-pointer"
             >
-              <BellRing className="w-3.5 h-3.5 shrink-0" />
-              <span>Check-in 17:00</span>
+              {isPostHolidayCheckIn ? (
+                <BellRing className="w-3.5 h-3.5 shrink-0" />
+              ) : (
+                <Clock className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span>{isPostHolidayCheckIn ? 'Check-in' : 'Clear Today'}</span>
+            </button>
+          ) : !highlight && !isOrange && deal.status === 'OPEN' && yellowStart ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (canView('activity')) onOpenPanel?.('activity');
+              }}
+              title={`Next check-in (Yellow Card): ${new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(yellowStart))} — turns Red at 08:00 the working day after`}
+              className="h-7 px-2 rounded-full flex items-center gap-1 text-[11px] font-medium tracking-wide transition-colors bg-[#252728] text-slate-400 border border-[#4E4F50]/60 hover:bg-[#4E4F50]/60 hover:text-slate-200 cursor-pointer"
+            >
+              <Clock className="w-3 h-3 shrink-0" />
+              <span className="font-mono">{formatShortDueDate(yellowStart)}</span>
             </button>
           ) : null}
 
@@ -858,6 +888,8 @@ export const KanbanCardUI = React.memo(function KanbanCardUI({
       onOpenPanel={onOpenPanel}
       onPanelIntent={onPanelIntent}
       highlight={timing.isRed}
+      isYellow={timing.isYellow}
+      yellowStart={timing.yellowStart}
       isDueToday={timing.isDueToday}
       isPostHolidayCheckIn={timing.isPostHolidayCheckIn}
       pendingCount={pendingCount}
@@ -887,6 +919,8 @@ export const KanbanCard = React.memo(function KanbanCard({
   searchQuery,
   onSearchChange,
   isRedProp,
+  isYellowProp,
+  yellowStartProp,
   isDueTodayProp,
   isPostHolidayCheckInProp,
   pendingCountProp,
@@ -949,6 +983,8 @@ export const KanbanCard = React.memo(function KanbanCard({
           onOpenPanel={handleOpenPanel}
           onPanelIntent={onPanelIntent}
           highlight={Boolean(isRedProp)}
+          isYellow={Boolean(isYellowProp)}
+          yellowStart={yellowStartProp ?? null}
           isDueToday={Boolean(isDueTodayProp)}
           isPostHolidayCheckIn={Boolean(isPostHolidayCheckInProp)}
           pendingCount={pendingCountProp ?? 0}

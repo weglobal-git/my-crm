@@ -111,23 +111,20 @@ export function matchesPipelineCardSearch(
 }
 
 import {
-  calculateElapsedWorkingMs,
-  addWorkingMs,
   RED_CARD_WORKING_MS_THRESHOLD,
   WORK_MS_PER_DAY,
-  WORK_DAY_END_HOUR,
-  WORK_DAY_END_MINUTE,
-  toBangkokDateParts,
-  createBangkokDate,
-  isPostHolidayCheckInDay,
+  resolveDueDateSchedule,
+  resolveWorkdayTimerSchedule,
 } from './business-days';
 import { getCommentGrantMs, parseTierPrefix } from './pipeline-update-quality';
 
 export interface CardTimingState {
   isRed: boolean;
+  isYellow: boolean;
   isDueToday: boolean;
   isPostHolidayCheckIn: boolean;
   threshold: Date | null;
+  yellowStart: Date | null;
 }
 
 /**
@@ -182,11 +179,18 @@ export function resolveLatestTimerLog(
     let latestTime = -Infinity;
 
     for (const log of deal.activityLogs) {
-      if (log.type !== 'COMMENT') continue;
       const content = log.content || '';
-      if (content.startsWith('[URGENT_') || content.startsWith('[TIER:0H]')) continue;
-      if (content.startsWith('[DUE DATE:') && !content.startsWith('[DUE DATE: Removed]')) {
-        continue;
+      const isTransferSystemReset =
+        log.type === 'SYSTEM_UPDATE' && content.startsWith('Ownership transferred from ');
+      const isReopenSystemReset =
+        log.type === 'SYSTEM_UPDATE' && content.startsWith('Deal reopened');
+
+      if (log.type !== 'COMMENT' && !isTransferSystemReset && !isReopenSystemReset) continue;
+      if (log.type === 'COMMENT') {
+        if (content.startsWith('[URGENT_') || content.startsWith('[TIER:0H]')) continue;
+        if (content.startsWith('[DUE DATE:') && !content.startsWith('[DUE DATE: Removed]')) {
+          continue;
+        }
       }
       const createdMs = new Date(log.createdAt).getTime();
       if (createdMs > evalMs) continue;
@@ -198,8 +202,14 @@ export function resolveLatestTimerLog(
 
     if (latestLog) {
       const baseDate = new Date(latestLog.createdAt);
+      if (latestLog.type === 'SYSTEM_UPDATE') {
+        const grantMs = latestLog.content.startsWith('Ownership transferred from ')
+          ? WORK_MS_PER_DAY
+          : RED_CARD_WORKING_MS_THRESHOLD;
+        return { baseDate, grantMs };
+      }
       if (latestLog.content.startsWith('[DUE DATE: Removed]')) {
-        // Removing a Due Date grants a 9h grace floor (or preserves higher embedded [TIER:9H:XX] ceiling)
+        // Removing a Due Date grants a 1-workday floor (or preserves higher embedded [TIER:9H:XX] ceiling)
         const lines = latestLog.content.split('\n');
         const tierLine = lines.find((line) => line.startsWith('[TIER:'));
         const grantMs = tierLine
@@ -222,121 +232,159 @@ export function resolveLatestTimerLog(
 }
 
 /**
- * Single-pass timing evaluator for Kanban cards and Leaderboard sampling.
- * - Stage 1 (00:00–16:59:59 Bangkok on Due Date): `isDueToday = true`, `isRed = false`
- * - Stage 2 (>= 17:00:00 Bangkok on Due Date, or past days): `isRed = true`
- * - No Due Date: uses latest timer-eligible comment's granted window (+9h or +27h) + Post-Holiday Check-In Cap
+ * Single-pass Workday-Aligned 3-Stage Timing Evaluator for Kanban cards and Leaderboard sampling:
+ * - Stage 0 (Normal): Before the final eligible working day (`asOfDate < yellowStart`)
+ * - Stage 1 (Yellow Card): All day on the final eligible working day (`yellowStart <= asOfDate < redStart`),
+ *   giving employees the entire workday to wrap up without evening panic (`0` Red Hours).
+ * - Stage 2 (Red Card): Strictly at `08:00:00` of the NEXT active working day (`asOfDate >= redStart`),
+ *   respecting Sundays, Company Holidays, and Owner Personal Leaves on both Due Date and Timer cards.
  */
 export function evaluateCardTimingState(
   deal: KanbanCardDTO,
   companyHolidays: Set<string> = new Set(),
   userLeavesByOwner?: Map<string, Set<string>>,
   asOfDate: Date = new Date(),
-  prebuiltOffDatesMap?: Map<string, Set<string>>
+  _prebuiltOffDatesMap?: Map<string, Set<string>>
 ): CardTimingState {
   if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status)) {
-    return { isRed: false, isDueToday: false, isPostHolidayCheckIn: false, threshold: null };
+    return {
+      isRed: false,
+      isYellow: false,
+      isDueToday: false,
+      isPostHolidayCheckIn: false,
+      threshold: null,
+      yellowStart: null,
+    };
   }
 
   const evalMs = asOfDate.getTime();
+  const ownerPersonalLeaves = deal.ownerId ? userLeavesByOwner?.get(deal.ownerId) : undefined;
 
-  // 1. If Due Date is set: 2-stage evaluation in Asia/Bangkok
+  // 1. If Due Date is set: Holiday & Personal-Leave-aware 3-stage workday evaluation in Asia/Bangkok
   if (deal.dueDate) {
-    const dueParts = toBangkokDateParts(new Date(deal.dueDate));
-    const dueMidnight = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, 0, 0, 0);
-    const dueWorkEnd = createBangkokDate(
-      dueParts.year,
-      dueParts.month,
-      dueParts.date,
-      WORK_DAY_END_HOUR,
-      WORK_DAY_END_MINUTE,
-      0
-    );
+    const dueSchedule = resolveDueDateSchedule(deal.dueDate, companyHolidays, ownerPersonalLeaves);
 
-    if (evalMs >= dueWorkEnd.getTime()) {
+    if (evalMs >= dueSchedule.redStart.getTime()) {
       return {
         isRed: true,
+        isYellow: false,
         isDueToday: false,
         isPostHolidayCheckIn: false,
-        threshold: dueWorkEnd,
+        threshold: dueSchedule.redStart,
+        yellowStart: dueSchedule.yellowStart,
       };
     }
 
-    if (evalMs >= dueMidnight.getTime()) {
+    if (evalMs >= dueSchedule.yellowStart.getTime()) {
       return {
         isRed: false,
+        isYellow: true,
         isDueToday: true,
         isPostHolidayCheckIn: false,
         threshold: null,
+        yellowStart: dueSchedule.yellowStart,
       };
     }
 
     return {
       isRed: false,
+      isYellow: false,
       isDueToday: false,
       isPostHolidayCheckIn: false,
       threshold: null,
+      yellowStart: dueSchedule.yellowStart,
     };
   }
 
-  // 2. No Due Date: evaluate working-hours ceiling (+9h or +27h) with Post-Holiday Check-In Cap
-  const ownerPersonalLeaves = deal.ownerId ? userLeavesByOwner?.get(deal.ownerId) : undefined;
-
+  // 2. No Due Date: Workday-aligned evaluation (+1 workday or +3 workdays) with Post-Holiday Check-In Cap
   const { baseDate, grantMs } = resolveLatestTimerLog(deal, asOfDate);
   if (!baseDate) {
-    return { isRed: true, isDueToday: false, isPostHolidayCheckIn: false, threshold: asOfDate };
+    return {
+      isRed: true,
+      isYellow: false,
+      isDueToday: false,
+      isPostHolidayCheckIn: false,
+      threshold: asOfDate,
+      yellowStart: null,
+    };
   }
 
   if (grantMs <= 0) {
-    return { isRed: true, isDueToday: false, isPostHolidayCheckIn: false, threshold: baseDate };
-  }
-
-  const elapsedWorkingMs = calculateElapsedWorkingMs(baseDate, asOfDate, companyHolidays, {
-    ceilingMs: grantMs,
-    stopAtMs: grantMs,
-    personalLeaves: ownerPersonalLeaves,
-  });
-
-  if (elapsedWorkingMs >= grantMs) {
-    const threshold = addWorkingMs(baseDate, grantMs, companyHolidays, ownerPersonalLeaves);
     return {
       isRed: true,
+      isYellow: false,
       isDueToday: false,
       isPostHolidayCheckIn: false,
-      threshold,
+      threshold: baseDate,
+      yellowStart: baseDate,
     };
   }
 
-  const isPostHoliday = isPostHolidayCheckInDay(
+  const timerSchedule = resolveWorkdayTimerSchedule(
     baseDate,
-    asOfDate,
+    grantMs,
     companyHolidays,
     ownerPersonalLeaves
   );
+
+  if (evalMs >= timerSchedule.redStart.getTime()) {
+    return {
+      isRed: true,
+      isYellow: false,
+      isDueToday: false,
+      isPostHolidayCheckIn: false,
+      threshold: timerSchedule.redStart,
+      yellowStart: timerSchedule.yellowStart,
+    };
+  }
+
+  if (evalMs >= timerSchedule.yellowStart.getTime()) {
+    return {
+      isRed: false,
+      isYellow: true,
+      isDueToday: false,
+      isPostHolidayCheckIn: timerSchedule.isPostHolidayCap,
+      threshold: null,
+      yellowStart: timerSchedule.yellowStart,
+    };
+  }
+
   return {
     isRed: false,
+    isYellow: false,
     isDueToday: false,
-    isPostHolidayCheckIn: isPostHoliday,
+    isPostHolidayCheckIn: false,
     threshold: null,
+    yellowStart: timerSchedule.yellowStart,
   };
 }
 
-export function checkIsDueToday(deal: KanbanCardDTO, asOfDate: Date = new Date()): boolean {
+export function checkIsDueToday(
+  deal: KanbanCardDTO,
+  asOfDate: Date = new Date(),
+  companyHolidays: Set<string> = new Set(),
+  userLeavesByOwner?: Map<string, Set<string>>
+): boolean {
   if (['WON', 'LOST', 'COMPLETED', 'CANCELLED'].includes(deal.status) || !deal.dueDate) {
     return false;
   }
-  const dueParts = toBangkokDateParts(new Date(deal.dueDate));
-  const dueMidnight = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, 0, 0, 0);
-  const dueWorkEnd = createBangkokDate(
-    dueParts.year,
-    dueParts.month,
-    dueParts.date,
-    WORK_DAY_END_HOUR,
-    WORK_DAY_END_MINUTE,
-    0
-  );
-  const t = asOfDate.getTime();
-  return t >= dueMidnight.getTime() && t < dueWorkEnd.getTime();
+  return evaluateCardTimingState(deal, companyHolidays, userLeavesByOwner, asOfDate).isDueToday;
+}
+
+export function checkIsYellowCard(
+  deal: KanbanCardDTO,
+  companyHolidays: Set<string> = new Set(),
+  userLeavesByOwner?: Map<string, Set<string>>,
+  asOfDate: Date = new Date(),
+  prebuiltOffDatesMap?: Map<string, Set<string>>
+): boolean {
+  return evaluateCardTimingState(
+    deal,
+    companyHolidays,
+    userLeavesByOwner,
+    asOfDate,
+    prebuiltOffDatesMap
+  ).isYellow;
 }
 
 export function checkIsRedCard(
@@ -432,11 +480,11 @@ export function sortDeals<T extends KanbanCardDTO>(
       }
     }
 
-    // 2.5 Amber Warning Cards (Due Today 08:00–17:00 or Post-Holiday Check-In Day) above normal cards
-    const aAmber = Boolean(aState?.isDueToday || aState?.isPostHolidayCheckIn);
-    const bAmber = Boolean(bState?.isDueToday || bState?.isPostHolidayCheckIn);
-    if (aAmber && !bAmber) return -1;
-    if (!aAmber && bAmber) return 1;
+    // 2.5 Yellow Warning Cards (all final eligible workday cards: Due Today, Timer Final Day, or Post-Holiday Check-In) above normal cards
+    const aYellow = Boolean(aState?.isYellow || aState?.isDueToday || aState?.isPostHolidayCheckIn);
+    const bYellow = Boolean(bState?.isYellow || bState?.isDueToday || bState?.isPostHolidayCheckIn);
+    if (aYellow && !bYellow) return -1;
+    if (!aYellow && bYellow) return 1;
 
     // 3. Normal Cards: latest activity/update first
     const aTime = updatedMsMap.get(a.id) ?? 0;

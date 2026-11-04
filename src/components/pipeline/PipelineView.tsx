@@ -73,16 +73,22 @@ export function PipelineView({
   const [boardStats, setBoardStats] = useState(() => ({ 
     total: initialOpportunities?.length || 0, 
     red: 0,
+    yellow: 0,
     revenue: initialOpportunities?.reduce((sum, d) => sum + (d.value != null && Number(d.value) > 0 ? Number(d.value) : 0), 0) || 0,
   }));
 
-  const handleStatsChange = useCallback((newStats: { total: number; red: number; revenue?: number }) => {
+  const handleStatsChange = useCallback((newStats: { total: number; red: number; yellow: number; revenue?: number }) => {
     setBoardStats((prev) => {
       const newRev = newStats.revenue !== undefined ? newStats.revenue : prev.revenue;
-      if (prev.total === newStats.total && prev.red === newStats.red && prev.revenue === newRev) {
+      if (
+        prev.total === newStats.total &&
+        prev.red === newStats.red &&
+        prev.yellow === newStats.yellow &&
+        prev.revenue === newRev
+      ) {
         return prev;
       }
-      return { total: newStats.total, red: newStats.red, revenue: newRev };
+      return { total: newStats.total, red: newStats.red, yellow: newStats.yellow, revenue: newRev };
     });
   }, []);
   const [activeStageTitleDepartmentId, setActiveStageTitleDepartmentId] = useState(
@@ -145,6 +151,7 @@ export function PipelineView({
   const { canSee, isAdmin } = usePermissions();
   const [hasValueFilter, setHasValueFilter] = useState(false);
   const [hasRedFilter, setHasRedFilter] = useState(false);
+  const [hasYellowFilter, setHasYellowFilter] = useState(false);
 
   // Determine active department based on activeStageTitleDepartmentId
   const activeDept = stageTitleDepartments?.find(
@@ -155,24 +162,26 @@ export function PipelineView({
     ? (isAdmin ? Boolean(activeDept.hasSalesAccess) : (Boolean(activeDept.hasSalesAccess) && canSee("pipeline.information")))
     : canSee("pipeline.information");
 
-  // Esc to clear value filter or red card filter
+  // Esc to clear value, yellow, or red card filter
   useEffect(() => {
-    if (!hasValueFilter && !hasRedFilter) return;
+    if (!hasValueFilter && !hasRedFilter && !hasYellowFilter) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setHasValueFilter(false);
         setHasRedFilter(false);
+        setHasYellowFilter(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hasValueFilter, hasRedFilter]);
+  }, [hasValueFilter, hasRedFilter, hasYellowFilter]);
 
   const handleResetFilters = useCallback(() => {
     setCardType('ALL');
     setOwnerFilter('ALL');
     setHasValueFilter(false);
     setHasRedFilter(false);
+    setHasYellowFilter(false);
     handleSearchChange('');
     handleTabChange('workspace');
   }, [handleSearchChange, handleTabChange]);
@@ -181,7 +190,8 @@ export function PipelineView({
     (cardType !== 'ALL' ? 1 : 0) + 
     (ownerFilter !== 'ALL' ? 1 : 0) +
     (hasValueFilter ? 1 : 0) +
-    (hasRedFilter ? 1 : 0);
+    (hasRedFilter ? 1 : 0) +
+    (hasYellowFilter ? 1 : 0);
 
   const hasFilters = activeFilterCount > 0;
   useEffect(() => {
@@ -292,6 +302,31 @@ export function PipelineView({
               </span>
             </button>
           )}
+
+          {/* Board Yellow / Total Cards Count Badge (Clickable Toggle Filter) */}
+          <button
+            type="button"
+            onClick={() => setHasYellowFilter((prev) => !prev)}
+            className={`h-8 px-3 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 tabular-nums select-none transition-all cursor-pointer ${
+              hasYellowFilter
+                ? "bg-[#FACC15]/20 border-2 border-[#FACC15] text-[#FDE047]"
+                : "bg-[#252728] border border-[#3A3B3C] hover:border-[#4E4F50] text-slate-300"
+            }`}
+            title={
+              hasYellowFilter
+                ? `Filtering: Showing only Yellow Cards (${boardStats.yellow}) - Click or press Esc to clear`
+                : `Yellow Cards (Clear Today): ${boardStats.yellow} / Total: ${boardStats.total} (Click to filter only Yellow Cards)`
+            }
+            aria-pressed={hasYellowFilter}
+          >
+            <span className={hasYellowFilter ? "text-[#FDE047] font-bold" : boardStats.yellow > 0 ? "text-[#FACC15] font-bold" : "text-slate-400"}>
+              {boardStats.yellow}
+            </span>
+            <span className="text-slate-500 font-normal mx-0.5">/</span>
+            <span className={hasYellowFilter ? "text-[#FEF08A]" : "text-slate-300"}>
+              {boardStats.total} YELLOW
+            </span>
+          </button>
 
           {/* Board Red / Total Cards Count Badge (Clickable Toggle Filter) */}
           <button 
@@ -405,6 +440,7 @@ export function PipelineView({
         ownerFilter={ownerFilter}
         hasValueFilter={hasValueFilter}
         hasRedFilter={hasRedFilter}
+        hasYellowFilter={hasYellowFilter}
         onOwnerFilterChange={setOwnerFilter}
         onSearchChange={handleSearchChange}
         onStatsChange={handleStatsChange}

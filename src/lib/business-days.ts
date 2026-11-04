@@ -17,6 +17,7 @@ export const WORK_MS_PER_DAY = 9 * 3600 * 1000; // 32,400,000 ms
 export const RED_CARD_WORKING_HOURS_THRESHOLD = 27; // 3 working days = 27 working hours
 export const RED_CARD_WORKING_MS_THRESHOLD = 27 * 3600 * 1000; // 97,200,000 ms
 export const LONG_HOLIDAY_OFF_STREAK_DAYS = 3; // >= 3 consecutive off-days triggers Post-Holiday 9h Check-In Cap
+export const HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS = 10; // >= 10 active cards with only 1 Red Card triggers Heavy-Load Shield (+half clean day credit)
 export const MAX_DUE_DATE_HORIZON_DAYS = 45; // Standard future Due Date horizon (covers 30d credit terms + billing cycle)
 export const MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS = 180; // Extended horizon for Trademark / Booth / Hold / Staggered Shipment with >= 20 chars reason
 export const MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH = 20;
@@ -524,12 +525,14 @@ export function resolveTimelineDueDate(params: {
         activeDueDate = parseDueDateString(match[1]);
       }
     } else if (
-      log.type === 'COMMENT' &&
-      !log.content.startsWith('[URGENT_') &&
-      !log.content.startsWith('[TIER:0H]') &&
-      activeDueDate
+      (log.type === 'COMMENT' &&
+        !log.content.startsWith('[URGENT_') &&
+        !log.content.startsWith('[TIER:0H]')) ||
+      (log.type === 'SYSTEM_UPDATE' &&
+        (log.content.startsWith('Deal reopened') ||
+          log.content.startsWith('Ownership transferred from ')))
     ) {
-      if (isDueDateFulfilled(activeDueDate, log.createdAt)) {
+      if (activeDueDate && isDueDateFulfilled(activeDueDate, log.createdAt)) {
         activeDueDate = null;
       }
     }
@@ -587,4 +590,216 @@ export function isPostHolidayCheckInDay(
   }
 
   return companyStreak >= LONG_HOLIDAY_OFF_STREAK_DAYS;
+}
+
+export interface WorkdayDeadlineSchedule {
+  /** 00:00:00 Asia/Bangkok on the final eligible working day (Yellow Card warning all day) */
+  yellowStart: Date;
+  /** 23:59:59.999 Asia/Bangkok on the Yellow Card working day (same-day wrap-up window) */
+  yellowEnd: Date;
+  /** 08:00:00 Asia/Bangkok on the NEXT active working day after Yellow day (Red Card begins here) */
+  redStart: Date;
+  /** True when >= 3 consecutive company off-days clamped remaining window to 1 return working day */
+  isPostHolidayCap: boolean;
+  /** Effective number of active working days granted after Day 0 */
+  grantWorkdays: number;
+}
+
+function formatMidnightMsToDateKey(midnightMs: number): string {
+  const bkk = new Date(midnightMs + BANGKOK_OFFSET_MS);
+  return `${bkk.getUTCFullYear()}-${String(bkk.getUTCMonth() + 1).padStart(2, '0')}-${String(bkk.getUTCDate()).padStart(2, '0')}`;
+}
+
+function findNextActiveWorkdayMidnightMs(
+  startMidnightMs: number,
+  startDayOfWeek: number,
+  holidays: Set<string>,
+  personalLeaves?: Set<string>
+): { midnightMs: number; dayOfWeek: number } {
+  const checkHolidayKeys = holidays.size > 0 || (personalLeaves !== undefined && personalLeaves.size > 0);
+  let curMidnightMs = startMidnightMs;
+  let dayOfWeek = startDayOfWeek;
+
+  for (let guard = 0; guard < 730; guard++) {
+    let isOff = dayOfWeek === 0;
+    if (!isOff && checkHolidayKeys) {
+      const dateKey = formatMidnightMsToDateKey(curMidnightMs);
+      if (holidays.has(dateKey) || personalLeaves?.has(dateKey)) {
+        isOff = true;
+      }
+    }
+    if (!isOff) {
+      return { midnightMs: curMidnightMs, dayOfWeek };
+    }
+    curMidnightMs += DAY_MS;
+    dayOfWeek = (dayOfWeek + 1) % 7;
+  }
+
+  return { midnightMs: curMidnightMs, dayOfWeek };
+}
+
+/**
+ * Workday-Aligned Card Lifecycle Schedule for timer-based updates (+9h = 1 workday, +27h = 3 workdays).
+ * - Regardless of exact hour/minute posted on Day 0 (e.g. 09:30 or 16:50), Day 0 is the update day.
+ * - Counts full active working days after Day 0 (skipping Sundays, Company Holidays, and Owner Personal Leaves).
+ * - If >= 3 consecutive company off-days occur, clamps remaining workdays on return day to 1 (Post-Holiday Check-In).
+ * - The final eligible workday is a Yellow Card all day (`yellowStart` 00:00 -> `redStart` next workday 08:00).
+ * - Flips to Red Card strictly at `08:00:00` of the NEXT active working day (`redStart`).
+ */
+export function resolveWorkdayTimerSchedule(
+  baseDate: Date,
+  grantMs: number,
+  holidays: Set<string> = new Set(),
+  personalLeaves?: Set<string>
+): WorkdayDeadlineSchedule {
+  if (grantMs <= 0) {
+    const t = new Date(baseDate);
+    return {
+      yellowStart: t,
+      yellowEnd: t,
+      redStart: t,
+      isPostHolidayCap: false,
+      grantWorkdays: 0,
+    };
+  }
+
+  const grantWorkdays = Math.max(1, Math.ceil(grantMs / WORK_MS_PER_DAY - 1e-6));
+  const baseParts = toBangkokDateParts(baseDate);
+  const baseMidnightMs = createBangkokDate(baseParts.year, baseParts.month, baseParts.date, 0, 0, 0).getTime();
+  const checkHolidayKeys = holidays.size > 0 || (personalLeaves !== undefined && personalLeaves.size > 0);
+
+  let curMidnightMs = baseMidnightMs + DAY_MS;
+  let dayOfWeek = (baseParts.day + 1) % 7;
+  let remaining = grantWorkdays;
+  let companyOffStreak = 0;
+  let isPostHolidayCap = false;
+  let yellowMidnightMs = curMidnightMs;
+  let yellowDayOfWeek = dayOfWeek;
+
+  for (let guard = 0; guard < 730; guard++) {
+    let isCompanyOff = dayOfWeek === 0;
+    let isPersonalLeave = false;
+    if (checkHolidayKeys) {
+      const dateKey = formatMidnightMsToDateKey(curMidnightMs);
+      if (!isCompanyOff && holidays.has(dateKey)) {
+        isCompanyOff = true;
+      }
+      if (!isCompanyOff && personalLeaves?.has(dateKey)) {
+        isPersonalLeave = true;
+      }
+    }
+
+    if (isCompanyOff || isPersonalLeave) {
+      if (isCompanyOff) {
+        companyOffStreak += 1;
+      }
+    } else {
+      if (companyOffStreak >= LONG_HOLIDAY_OFF_STREAK_DAYS && remaining > 1) {
+        remaining = 1;
+        isPostHolidayCap = true;
+      }
+      companyOffStreak = 0;
+      remaining -= 1;
+
+      if (remaining <= 0) {
+        yellowMidnightMs = curMidnightMs;
+        yellowDayOfWeek = dayOfWeek;
+        break;
+      }
+    }
+
+    curMidnightMs += DAY_MS;
+    dayOfWeek = (dayOfWeek + 1) % 7;
+  }
+
+  const nextActive = findNextActiveWorkdayMidnightMs(
+    yellowMidnightMs + DAY_MS,
+    (yellowDayOfWeek + 1) % 7,
+    holidays,
+    personalLeaves
+  );
+
+  return {
+    yellowStart: new Date(yellowMidnightMs),
+    yellowEnd: new Date(yellowMidnightMs + DAY_MS - 1),
+    redStart: new Date(nextActive.midnightMs + WORK_START_OFFSET_MS),
+    isPostHolidayCap,
+    grantWorkdays,
+  };
+}
+
+/**
+ * Workday-Aligned Schedule for explicit `Due Date` cards (with Holiday & Personal Leave protection):
+ * - If `dueDate` falls on a Sunday, Company Holiday, or the owner's Personal Leave, the Yellow Card day
+ *   shifts automatically to the owner's first active return working day.
+ * - That effective working day is a Yellow Card all day (`yellowStart` -> `redStart`).
+ * - Flips to Red Card strictly at `08:00:00` of the NEXT active working day (`redStart`).
+ */
+export function resolveDueDateSchedule(
+  dueDate: Date | string,
+  holidays: Set<string> = new Set(),
+  personalLeaves?: Set<string>
+): WorkdayDeadlineSchedule {
+  const dueParts = toBangkokDateParts(new Date(dueDate));
+  const rawDueMidnightMs = createBangkokDate(dueParts.year, dueParts.month, dueParts.date, 0, 0, 0).getTime();
+
+  const yellowDay = findNextActiveWorkdayMidnightMs(
+    rawDueMidnightMs,
+    dueParts.day,
+    holidays,
+    personalLeaves
+  );
+  const nextActive = findNextActiveWorkdayMidnightMs(
+    yellowDay.midnightMs + DAY_MS,
+    (yellowDay.dayOfWeek + 1) % 7,
+    holidays,
+    personalLeaves
+  );
+
+  return {
+    yellowStart: new Date(yellowDay.midnightMs),
+    yellowEnd: new Date(yellowDay.midnightMs + DAY_MS - 1),
+    redStart: new Date(nextActive.midnightMs + WORK_START_OFFSET_MS),
+    isPostHolidayCap: false,
+    grantWorkdays: 1,
+  };
+}
+
+/**
+ * Counts how many active working days remain strictly after `fromDate`'s Bangkok calendar day
+ * up to and including `targetYellowStart`'s Bangkok calendar day.
+ * Used for Non-Punitive Ceiling preservation so posting an extra short update never shortens a prior window.
+ */
+export function countRemainingActiveWorkdaysAfter(
+  fromDate: Date,
+  targetYellowStart: Date,
+  holidays: Set<string> = new Set(),
+  personalLeaves?: Set<string>
+): number {
+  const fromParts = toBangkokDateParts(fromDate);
+  const targetParts = toBangkokDateParts(targetYellowStart);
+  let curMidnightMs = createBangkokDate(fromParts.year, fromParts.month, fromParts.date, 0, 0, 0).getTime() + DAY_MS;
+  const endMidnightMs = createBangkokDate(targetParts.year, targetParts.month, targetParts.date, 0, 0, 0).getTime();
+  if (curMidnightMs > endMidnightMs) return 0;
+
+  const checkHolidayKeys = holidays.size > 0 || (personalLeaves !== undefined && personalLeaves.size > 0);
+  let dayOfWeek = (fromParts.day + 1) % 7;
+  let count = 0;
+
+  while (curMidnightMs <= endMidnightMs) {
+    let isOff = dayOfWeek === 0;
+    if (!isOff && checkHolidayKeys) {
+      const dateKey = formatMidnightMsToDateKey(curMidnightMs);
+      if (holidays.has(dateKey) || personalLeaves?.has(dateKey)) {
+        isOff = true;
+      }
+    }
+    if (!isOff) {
+      count += 1;
+    }
+    curMidnightMs += DAY_MS;
+    dayOfWeek = (dayOfWeek + 1) % 7;
+  }
+
+  return count;
 }

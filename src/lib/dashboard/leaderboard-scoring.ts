@@ -163,7 +163,7 @@ export interface UnifiedPortfolioScoringInput {
 
   // Pillar 2: Discipline & LTC Care (Max 20 XP = 10 Clean Workdays + 10 LTC Active Care)
   cleanDaysCount: number;
-  /** Heavy-Load Shield days: activeCards >= 15 && redCards === 1 (+0.25 XP half-credit) */
+  /** Heavy-Load Shield days: activeCards >= 10 && redCards === 1 (+0.25 XP half-credit) */
   graceDaysCount?: number;
   /** Individual 2-Step LTC Care XP (up to +2 XP per LTC-* card, Max 8 XP) */
   individualLtcXp?: number;
@@ -199,7 +199,7 @@ export interface UnifiedPortfolioScoringInput {
   onTimeDueFulfillmentsCount?: number;
   /** Distinct Bangkok workdays where user met a Due Date on time, completed a To-Do, or acknowledged an urgent request */
   executionWorkdaysCount?: number;
-  /** Count of missed Due Dates (fulfilled after 17:00, currently expired red Due Date, or `Postponed x2+` stalling) */
+  /** Count of missed Due Dates (fulfilled after 08:00 next workday Red cutoff, currently expired red Due Date, or `Postponed x2+` stalling) */
   missedOrStalledDueCount?: number;
   readyOwnedCardsCount?: number;
   progress27hUpdatesCount?: number;
@@ -258,7 +258,8 @@ export function calculateUnifiedPortfolioBreakdown(
     cardHealthTotalXp = ownedHealth.points;
     healthTier = getCardHealthTier(effectiveExposureCount, Math.max(0, round1(100 - effectiveRedRate)));
   } else if (collabAssisted27h >= 3) {
-    effectiveRedRate = Math.max(0, input.collaboratorAssistedRedRate ?? 0);
+    // Pure Collaborators do not own card timers and are never penalized if an owner later lets a card turn Red
+    effectiveRedRate = 0;
     const collabHealth = getCardHealthScoreFromRedRate(effectiveRedRate, collabAssisted27h);
     cardHealthTotalXp = round1(collabHealth.points * 0.85); // Max 25.5 XP for Pure Collaborator
     healthTier = getCardHealthTier(collabAssisted27h, Math.max(0, round1(100 - effectiveRedRate)));

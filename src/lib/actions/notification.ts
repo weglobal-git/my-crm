@@ -14,7 +14,16 @@ import {
 } from "@/lib/pipeline-security";
 import { pipelineOpportunitySelect } from "@/lib/pipeline-opportunities";
 import { dispatchNotification } from "@/lib/notification-dispatcher";
+import { dispatchDashboardInvalidation } from "@/lib/dashboard/dashboard-realtime-server";
 import { withSerializableRetry } from "@/lib/serializable-transaction";
+import {
+  countRemainingActiveWorkdaysAfter,
+  RED_CARD_WORKING_MS_THRESHOLD,
+  resolveDueDateSchedule,
+  resolveWorkdayTimerSchedule,
+  WORK_HOURS_PER_DAY,
+} from "@/lib/business-days";
+import { encodeTierPrefix, getCommentGrantMs } from "@/lib/pipeline-update-quality";
 
 function runBackgroundJob(task: () => Promise<void> | void) {
   try {
@@ -311,20 +320,21 @@ export async function respondToNotification(notificationId: string, accept: bool
       : Promise.resolve(null),
     prisma.opportunity.findUnique({
       where: { id: notification.referenceId },
-      select: { ownerId: true, teamMembers: { select: { id: true } } },
+      select: { ownerId: true, dueDate: true, createdAt: true, teamMembers: { select: { id: true } } },
     }),
   ]);
   if (!previousDeal) throw new Error("Deal not found");
 
-  const { updatedDeal } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  const { updatedDeal, handoverComment } = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const claimed = await tx.notification.updateMany({
       where: { id: notificationId, recipientId: session.user.id, status: 'PENDING' },
       data: { status: accept ? 'ACCEPTED' : 'REJECTED', readAt: new Date() },
     });
     if (claimed.count !== 1) throw new Error("Notification already handled");
-    if (!accept) return { updatedDeal: null };
+    if (!accept) return { updatedDeal: null, handoverComment: null };
 
     if (notification.type === 'DEAL_TRANSFER_REQUEST') {
+      const now = new Date();
       const teamMembersUpdate: Prisma.OpportunityUpdateInput['teamMembers'] = {};
       if (!previousDeal.teamMembers.some((tm: { id: string }) => tm.id === previousDeal.ownerId)) {
         teamMembersUpdate.connect = [{ id: previousDeal.ownerId }];
@@ -333,21 +343,76 @@ export async function respondToNotification(notificationId: string, accept: bool
         teamMembersUpdate.disconnect = [{ id: session.user.id }];
       }
 
+      const shouldClearExpiredDueDate =
+        Boolean(previousDeal.dueDate) &&
+        now.getTime() > resolveDueDateSchedule(previousDeal.dueDate!).yellowEnd.getTime();
+
       const fullDeal = await tx.opportunity.update({
         where: { id: notification.referenceId! },
         data: { 
           ownerId: session.user.id,
+          ...(shouldClearExpiredDueDate ? { dueDate: null } : {}),
           ...(Object.keys(teamMembersUpdate).length > 0 && { teamMembers: teamMembersUpdate })
         },
         select: pipelineOpportunitySelect,
       });
+
+      const prevTopLog = fullDeal.activityLogs?.[0];
+      const prevBaseDate = prevTopLog?.createdAt
+        ? new Date(prevTopLog.createdAt)
+        : new Date(previousDeal.createdAt);
+      const prevGrantMs = prevTopLog
+        ? getCommentGrantMs(prevTopLog.content)
+        : RED_CARD_WORKING_MS_THRESHOLD;
+      const prevSchedule = resolveWorkdayTimerSchedule(prevBaseDate, prevGrantMs);
+      const remainingWorkdays = countRemainingActiveWorkdaysAfter(now, prevSchedule.yellowStart);
+      const preservedCeilingHours = Math.max(
+        WORK_HOURS_PER_DAY,
+        remainingWorkdays * WORK_HOURS_PER_DAY
+      );
+      const handoverContent = encodeTierPrefix(
+        `[HANDOVER:${previousDeal.ownerId}->${session.user.id}] รับโอนงานต่อจาก ${sender?.name || 'เจ้าของเดิม'}`,
+        'BRIEF_9H',
+        preservedCeilingHours
+      );
+
+      const createdHandoverComment = await tx.activityLog.create({
+        data: {
+          content: handoverContent,
+          type: 'COMMENT',
+          opportunityId: notification.referenceId!,
+          userId: session.user.id,
+        },
+        include: {
+          user: true,
+          replies: { include: { user: true }, orderBy: { createdAt: 'asc' } },
+        },
+      });
+
       await tx.activityLog.create({
         data: {
           content: `Ownership transferred from ${sender?.name || 'Unknown'} to ${session.user.name || 'Unknown'}`,
           type: 'SYSTEM_UPDATE', opportunityId: notification.referenceId!, userId: session.user.id,
         },
       });
-      return { updatedDeal: fullDeal };
+
+      const dealWithFreshLog = {
+        ...fullDeal,
+        activityLogs: [
+          {
+            id: createdHandoverComment.id,
+            content: createdHandoverComment.content,
+            type: createdHandoverComment.type,
+            createdAt: createdHandoverComment.createdAt,
+            user: {
+              name: createdHandoverComment.user?.name ?? null,
+              image: createdHandoverComment.user?.image ?? null,
+            },
+          },
+        ],
+      };
+
+      return { updatedDeal: dealWithFreshLog, handoverComment: createdHandoverComment };
     } else {
       const fullDeal = await tx.opportunity.update({
         where: { id: notification.referenceId! },
@@ -360,7 +425,7 @@ export async function respondToNotification(notificationId: string, accept: bool
           type: 'SYSTEM_UPDATE', opportunityId: notification.referenceId!, userId: session.user.id,
         },
       });
-      return { updatedDeal: fullDeal };
+      return { updatedDeal: fullDeal, handoverComment: null };
     }
   });
 
@@ -369,6 +434,13 @@ export async function respondToNotification(notificationId: string, accept: bool
     invalidatePipelineRecipientCache(notification.referenceId);
     const dealId = notification.referenceId;
     runBackgroundJob(async () => {
+      if (handoverComment) {
+        await notifyPrivatePipelineUpdate(dealId, {
+          action: 'ACTIVITY_ADDED',
+          dealId,
+          activityLog: handoverComment,
+        }).catch(() => {});
+      }
       await notifyPrivatePipelineUpdate(
         dealId,
         {
@@ -378,6 +450,9 @@ export async function respondToNotification(notificationId: string, accept: bool
         },
         [previousDeal.ownerId, session.user.id],
       );
+      void dispatchDashboardInvalidation({
+        resources: ['leaderboard'],
+      }).catch(() => {});
     });
   }
 

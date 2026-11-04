@@ -1,3 +1,4 @@
+import { HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS } from '@/lib/business-days';
 import type {
   DailyCardHealthRecord,
   LeaderboardItem,
@@ -210,42 +211,42 @@ export function buildThaiLeaderboardAnalysis(
     if (dayRed === 0) {
       todayTone = 'excellent';
       todayBadgeTh = `เขียวทุกใบ 0/${dayActive} ใบ`;
-      todayHeadlineTh = `ยอดเยี่ยม! วันนี้การ์ดทั้ง ${dayActive} ใบในมือคุณเป็นสีเขียวทั้งหมด ไม่มีการ์ดค้างเลย (Daily 0/${dayActive})`;
+      todayHeadlineTh = `ยอดเยี่ยม! วันนี้การ์ดทั้ง ${dayActive} ใบในมือคุณไม่หลุดเป็นสีแดงเลย (Daily 0/${dayActive})`;
       todayDetailsTh.push(
         isCurrentPeriod
-          ? `แค่ไม่มีการ์ดแดงแบบนี้ไปจนถึงเวลา 23:00 น. คืนนี้จะได้แต้มวินัยเพิ่มทันที +${fmt(cleanDayUnitXp)} XP`
-          : `ผ่านเวลาตัดรอบ 23:00 น. แบบไม่มีการ์ดแดง ได้รับแต้มวินัยรายวัน +${fmt(cleanDayUnitXp)} XP`
+          ? `เคลียร์การ์ดสีเหลือง (Yellow Card) ให้ทันภายในวันนี้ก่อน 08:00 น. วันทำงานถัดไป จะได้รับแต้มวินัยเต็ม +${fmt(cleanDayUnitXp)} XP`
+          : `ดูแลบอร์ดไร้การ์ดแดงตลอดวันทำงาน ได้รับแต้มวินัยรายวัน +${fmt(cleanDayUnitXp)} XP`
       );
       todayDetailsTh.push(
         `ยิ่งแต่ละวันไม่มีการ์ดแดง เปอร์เซ็นต์สีแดงสะสมของทั้งเดือนก็จะยิ่งลดลง ช่วยดึงแต้ม "สุขภาพการ์ด" ให้สูงขึ้นด้วย`
       );
-    } else if (dayActive >= 15 && dayRed === 1) {
+    } else if (dayActive >= HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS && dayRed === 1) {
       todayTone = 'shield';
       todayBadgeTh = `เกราะช่วยเซฟ 1/${dayActive} ใบ`;
-      todayHeadlineTh = `คุณถือการ์ดเยอะถึง ${dayActive} ใบ และหลุดค้างสีแดงเพียง 1 ใบ — ได้รับเกราะคุ้มครองคนทำงานหนัก (Heavy-Load Shield)!`;
+      todayHeadlineTh = `คุณถือการ์ดเยอะถึง ${dayActive} ใบ และหลุดเป็นสีแดงเพียง 1 ใบ — ได้รับเกราะคุ้มครองคนทำงานหนัก (Heavy-Load Shield)!`;
       todayDetailsTh.push(
-        `ปกติถ้ามีการ์ดแดงค้างตอน 23:00 น. จะไม่ได้แต้มวินัยรายวัน แต่เพราะคุณรับผิดชอบการ์ดตั้งแต่ 15 ใบขึ้นไป ระบบจึงยังช่วยเซฟแต้มให้ครึ่งหนึ่ง (+${fmt(shieldDayUnitXp)} XP)`
+        `ปกติถ้ามีการ์ดแดงเกิดขึ้นในวันทำงาน (ตั้งแต่ 08:00 น.) จะไม่ได้แต้มวินัยรายวัน แต่เพราะคุณรับผิดชอบการ์ดตั้งแต่ ${HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS} ใบขึ้นไป ระบบจึงยังช่วยเซฟแต้มให้ครึ่งหนึ่ง (+${fmt(shieldDayUnitXp)} XP)`
       );
       if (isCurrentPeriod) {
         todayDetailsTh.push(
-          `คำแนะนำ: ถ้าเข้าไปอัปเดตเคลียร์การ์ดแดง 1 ใบด้านล่างนี้ก่อน 23:00 น. คืนนี้จะได้รับแต้มเต็ม +${fmt(cleanDayUnitXp)} XP ทันที!`
+          `คำแนะนำ: รีบเข้าไปอัปเดตเคลียร์การ์ดแดงให้เร็วที่สุด เพื่อหยุดชั่วโมงสีแดงสะสมไม่ให้วิ่งเพิ่มในเวลาทำงาน 08:00–17:00 น.`
         );
       }
     } else {
       todayTone = dayRed >= 3 ? 'danger' : 'warning';
       todayBadgeTh = `มีการ์ดแดง ${dayRed}/${dayActive} ใบ`;
-      todayHeadlineTh = `วันนี้มีการ์ดปล่อยค้างเป็นสีแดงอยู่ ${dayRed} ใบ จากการ์ดที่ถือทั้งหมด ${dayActive} ใบ (Daily ${dayRed}/${dayActive})`;
+      todayHeadlineTh = `วันนี้มีการ์ดขึ้นสีแดง ${dayRed} ใบ จากการ์ดที่ถือทั้งหมด ${dayActive} ใบ (Daily ${dayRed}/${dayActive})`;
       todayDetailsTh.push(
-        `การ์ดสีแดง คือการ์ดที่ขาดการอัปเดตเกินกำหนด (หรือเลยวันนัด Due Date) ยิ่งปล่อยค้างไว้นาน คะแนนสุขภาพการ์ดจะค่อยๆ ลดลง`
+        `การ์ดจะเตือนเป็นสีเหลือง (Yellow Card) ตลอดทั้งวันก่อนถึงกำหนด และจะตัดเป็นสีแดงตอน 08:00 น. ของวันทำงานถัดไป โดยคิดชั่วโมงสีแดงตามเวลาทำงานจริงจนกว่าจะเคลียร์`
       );
       if (isCurrentPeriod) {
-        if (dayActive >= 15 && dayRed > 1) {
+        if (dayActive >= HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS && dayRed > 1) {
           todayDetailsTh.push(
-            `แนะนำให้เข้าไปอัปเดตหรือลงนัด Due Date ก่อน 23:00 น. — ถ้าเคลียร์หมดจะได้ +${fmt(cleanDayUnitXp)} XP (หรือลดให้เหลือแดงแค่ 1 ใบ ก็ยังได้เกราะช่วยเซฟ +${fmt(shieldDayUnitXp)} XP)`
+            `แนะนำให้รีบเข้าไปอัปเดตความคืบหน้าหรือลงนัด Due Date ทันทีเพื่อหยุดชั่วโมงสีแดงสะสมวันนี้ และอย่าลืมเคลียร์การ์ดสีเหลืองใบอื่นก่อน 08:00 น. วันทำงานถัดไป`
           );
         } else {
           todayDetailsTh.push(
-            `แนะนำให้เข้าไปอัปเดตความคืบหน้าหรือลงวันนัดหมาย (Due Date) ก่อน 23:00 น. เพื่อรับแต้มวินัยวันนี้ +${fmt(cleanDayUnitXp)} XP และหยุดไม่ให้คะแนนลดลงต่อ`
+            `แนะนำให้รีบเข้าไปอัปเดตความคืบหน้าหรือลงวันนัดหมาย (Due Date) ทันที เพื่อหยุดชั่วโมงสีแดงสะสม (08:00–17:00 น.) ไม่ให้กระทบคะแนนสุขภาพการ์ดเพิ่ม`
           );
         }
       }
@@ -398,16 +399,16 @@ export function buildThaiLeaderboardAnalysis(
       `เพราะคุณดูแลสายงานภายใน (ไม่ได้ถือดีลขาย) ระบบจึงยกคะแนนหมวดนี้ให้วัดจาก "วันบอร์ดสะอาด" เต็มทั้ง 20 แต้มเลย (ได้วันละ +1 แต้ม)`
     );
     discBullets.push(
-      `เดือนนี้จบวัน (ตอน 23:00 น.) แบบไม่มีการ์ดแดงได้ ${cleanDays} วัน${totalWorkDays > 0 ? ` จาก ${totalWorkDays} วันทำงาน` : ''}${graceDays > 0 ? ` และได้เกราะช่วยเซฟคนถือการ์ดเยอะอีก ${graceDays} วัน` : ''}`
+      `เดือนนี้ดูแลบอร์ดไร้การ์ดแดงตลอดวันทำงานได้ ${cleanDays} วัน${totalWorkDays > 0 ? ` จาก ${totalWorkDays} วันทำงาน` : ''}${graceDays > 0 ? ` และได้เกราะช่วยเซฟคนถือการ์ดเยอะ (≥${HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS} ใบ) อีก ${graceDays} วัน` : ''}`
     );
   } else {
     discSummaryText = `ได้จาก วันบอร์ดสะอาด (${fmt(cleanBonusXp)}/10) + ทักลูกค้าเก่า LTC (${fmt(indivLtcXp)}/8) + ช่วยทีมเคลียร์ LTC (${fmt(teamZeroXp)}/2)`;
     discFormula = `Clean/Shield ${fmt(cleanBonusXp)}/10 + LTC รายบุคคล ${fmt(indivLtcXp)}/8 + LTC ทีม ${fmt(teamZeroXp)}/2 = ${fmt(disciplineXp)} / 20 XP`;
     discBullets.push(
-      `1) จบวันแบบไม่มีการ์ดแดง (ได้ ${fmt(cleanBonusXp)} จาก 10 แต้ม): ทุกคืนตอน 23:00 น. ถ้าไม่มีการ์ดแดงเลยจะได้วันละ +0.5 แต้ม — เดือนนี้ทำได้ ${cleanDays} วัน${
+      `1) ดูแลบอร์ดไร้การ์ดแดงตลอดวันทำงาน (ได้ ${fmt(cleanBonusXp)} จาก 10 แต้ม): เคลียร์การ์ดสีเหลืองให้ทันก่อน 08:00 น. วันทำงานถัดไป จะได้วันละ +0.5 แต้ม — เดือนนี้ทำได้ ${cleanDays} วัน${
         graceDays > 0
-          ? ` และได้เกราะช่วยเซฟคนถือการ์ดเยอะ (≥15 ใบ) อีก ${graceDays} วัน (+${fmt(graceDays * 0.25)} แต้ม)`
-          : ' (ถ้าถือการ์ด 15 ใบขึ้นไป แล้วเผลอหลุดแดงแค่ 1 ใบ ยังได้แต้มช่วยเซฟ +0.25 แต้ม/วัน)'
+          ? ` และได้เกราะช่วยเซฟคนถือการ์ดเยอะ (≥${HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS} ใบ) อีก ${graceDays} วัน (+${fmt(graceDays * 0.25)} แต้ม)`
+          : ` (ถ้าถือการ์ด ${HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS} ใบขึ้นไป แล้วหลุดแดงแค่ 1 ใบ ยังได้แต้มช่วยเซฟ +0.25 แต้ม/วัน)`
       }`
     );
     discBullets.push(
@@ -454,7 +455,7 @@ export function buildThaiLeaderboardAnalysis(
     })`,
     `2) ช่วยงานเพื่อนร่วมทีมอย่างต่อเนื่อง (ได้ ${fmt(velTeamXp)} จาก 6 แต้ม): วัดจากจำนวนวันทำงานที่เข้าไปช่วยพิมพ์อัปเดตจริง (+27h) หรือทำเช็กลิสต์ To-Do ≥2 ข้อในการ์ดเพื่อน — เดือนนี้ช่วยเพื่อน ${assistDays} วัน (${assistsCount} ใบ) จากเป้าหมาย ${fmt(targetAssistDays)} วันทำงาน (~2 วัน/สัปดาห์ ได้เต็ม 6 แต้ม)`,
     `3) ดูแลภาระงานให้สะอาดทุกวัน (ได้ ${fmt(velLoadXp)} จาก 3 แต้ม): คิดจากค่าเฉลี่ยการ์ดสีเขียวที่ดูแลไม่ให้ขึ้นแดงในแต่ละวันทำงาน (ใบละ +0.2 แต้ม) — เดือนนี้เฉลี่ย ${fmt(avgCleanCards)} ใบ/วัน (ถ้าปล่อยการ์ดแดงช่วงท้ายเดือน ค่าเฉลี่ยจะลดลง)`,
-    `4) ทำตามนัด Due Date ตรงเวลา (ได้ ${fmt(velExecXp)} จาก 4 แต้ม): อัปเดตทันวันนัดก่อน 17:00 น. (${dueFulfilled} ครั้ง), ทำ To-Do เสร็จ (${todosDone} ข้อ), รับงานด่วน (${fastReplies} ครั้ง)${
+    `4) ทำตามนัด Due Date ตรงเวลา (ได้ ${fmt(velExecXp)} จาก 4 แต้ม): อัปเดตทันภายในวันนัดก่อนตัดแดง 08:00 น. วันถัดไป (${dueFulfilled} ครั้ง), ทำ To-Do เสร็จ (${todosDone} ข้อ), รับงานด่วน (${fastReplies} ครั้ง)${
       missedDue > 0
         ? ` • มีเลื่อนนัดซ้ำหรือเลยกำหนด ${missedDue} ครั้ง (ตรงเวลา ${onTimeExecPct}%) แนะนำให้อัปเดตตรงตามนัดครั้งถัดๆ ไปเพื่อดึงแต้มกลับขึ้นมา`
         : ' • ไม่มีการผิดนัดเลย!'
@@ -608,12 +609,12 @@ export function buildThaiLeaderboardAnalysis(
   if (isCurrentPeriod && redCardsNow > 0) {
     quickWins.push({
       id: 'clear_red_cards',
-      potentialXpLabel: `รับ +${fmt(cleanDayUnitXp)} XP คืนนี้`,
-      titleTh: `อัปเดตเคลียร์การ์ดสีแดง ${redCardsNow} ใบก่อนเวลา 23:00 น.`,
+      potentialXpLabel: `หยุดชั่วโมงแดงทันที`,
+      titleTh: `รีบอัปเดตเคลียร์การ์ดสีแดง ${redCardsNow} ใบเพื่อหยุดชั่วโมงสีแดงสะสม`,
       detailTh:
-        activeCardsNow >= 15 && redCardsNow > 1
-          ? `เข้าไปพิมพ์อัปเดตงานหรือลงวันนัดหมาย (Due Date) — ถ้าเคลียร์หมดจะได้ +${fmt(cleanDayUnitXp)} XP คืนนี้ (หรือลดให้เหลือแดงแค่ 1 ใบ ก็ยังได้เกราะช่วยเซฟ +${fmt(shieldDayUnitXp)} XP)`
-          : `เข้าไปพิมพ์อัปเดตติดตามงาน หรือลงวันนัดหมาย (Due Date) เพื่อเปลี่ยนการ์ดเป็นสีเขียว รับแต้มวินัยคืนนี้และช่วยดึงคะแนนสุขภาพการ์ดขึ้นทันที`,
+        activeCardsNow >= HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS && redCardsNow > 1
+          ? `เข้าไปพิมพ์อัปเดตงานหรือลงวันนัดหมาย (Due Date) ทันทีเพื่อหยุดนาฬิกาสีแดง (08:00–17:00 น.) และเคลียร์การ์ดสีเหลืองใบอื่นก่อน 08:00 น. พรุ่งนี้เพื่อรับแต้มวินัยวันถัดไป`
+          : `เข้าไปพิมพ์อัปเดตติดตามงาน หรือลงวันนัดหมาย (Due Date) ทันทีเพื่อหยุดชั่วโมงสีแดงไม่ให้วิ่งเพิ่ม และเคลียร์การ์ดสีเหลืองให้ทันก่อน 08:00 น. วันทำงานถัดไป`,
     });
   }
 
@@ -659,11 +660,11 @@ export function buildThaiLeaderboardAnalysis(
     quickWins.push({
       id: 'ontime_execution',
       potentialXpLabel: `เก็บเพิ่มได้อีก +${fmt(remainingExecXp)} XP`,
-      titleTh: `อัปเดตงานให้ทันวันนัด Due Date ก่อน 17:00 น. และเคลียร์เช็กลิสต์ To-Do อย่างสม่ำเสมอ`,
+      titleTh: `อัปเดตงานให้ทันภายในวันนัด Due Date (Yellow Card) และเคลียร์เช็กลิสต์ To-Do อย่างสม่ำเสมอ`,
       detailTh:
         missedDue > 0
-          ? `เดือนนี้มีการเลื่อนนัดซ้ำหรืออัปเดตเลยกำหนด ${missedDue} ครั้ง — เพียงอัปเดตงานให้ทันก่อน 17:00 น. ในวันนัดถัดๆ ไป สัดส่วนความตรงเวลาจะดีดกลับขึ้นทันที`
-          : `ทำได้ง่ายๆ จากการอัปเดตงานให้ทันวันนัด Due Date ก่อน 17:00 น., ติ๊กเสร็จเช็กลิสต์ To-Do, หรือกดรับงานด่วนในแต่ละวันทำงาน`,
+          ? `เดือนนี้มีการเลื่อนนัดซ้ำหรืออัปเดตเลยกำหนด ${missedDue} ครั้ง — เพียงอัปเดตงานภายในวันนัดก่อนตัดแดง 08:00 น. วันถัดไป สัดส่วนความตรงเวลาจะดีดกลับขึ้นทันที`
+          : `ทำได้ง่ายๆ จากการอัปเดตงานภายในวันนัด Due Date, ติ๊กเสร็จเช็กลิสต์ To-Do, หรือกดรับงานด่วนในแต่ละวันทำงาน`,
     });
   }
 
@@ -830,7 +831,7 @@ export function buildThaiDepartmentAnalysis(
       if (redToday === 0) {
         statusTone = 'excellent';
         statusShortTh = `สะอาด 0/${activeToday}`;
-      } else if (activeToday >= 15 && redToday === 1) {
+      } else if (activeToday >= HEAVY_LOAD_SHIELD_MIN_ACTIVE_CARDS && redToday === 1) {
         statusTone = 'shield';
         statusShortTh = `เกราะ 1/${activeToday}`;
       } else {
@@ -929,10 +930,10 @@ export function buildThaiDepartmentAnalysis(
       badgeTh: `แดง ${m.redCardsToday}/${m.activeCardsToday} ใบ`,
       titleTh: `${m.name} มีการ์ดแดงค้างวันนี้ ${m.redCardsToday} ใบ (Accu ${fmt(m.accuRedRate)}%)`,
       detailTh: sampleTopics
-        ? `การ์ดที่ต้องเร่งติดตามก่อน 23:00 น.: ${sampleTopics}${
+        ? `การ์ดที่ต้องเร่งเคลียร์เพื่อหยุดชั่วโมงสีแดง: ${sampleTopics}${
             m.redCardsToday > 2 ? ` และอีก ${m.redCardsToday - 2} ใบ` : ''
           }`
-        : `แนะนำให้เข้าไปช่วยตรวจสอบและเคลียร์อัปเดตก่อนเวลาตัดรอบ 23:00 น.`,
+        : `แนะนำให้เข้าไปช่วยตรวจสอบและเคลียร์อัปเดตเพื่อหยุดชั่วโมงสีแดงสะสมทันที`,
     });
   }
 

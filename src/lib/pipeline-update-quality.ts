@@ -1,12 +1,10 @@
 import {
   WORK_HOURS_PER_DAY,
   RED_CARD_WORKING_HOURS_THRESHOLD,
-  WORK_DAY_END_HOUR,
-  WORK_DAY_END_MINUTE,
-  createBangkokDate,
   isDueDateFulfilled,
   isSameBangkokCalendarDay,
   parseDueDateString,
+  resolveDueDateSchedule,
   toBangkokDateParts,
 } from './business-days';
 
@@ -737,15 +735,25 @@ export interface DueDateTimelineAnalysis {
   }>;
 }
 
+export interface AnalyzeDueDateTimelineOptions {
+  companyHolidays?: Set<string>;
+  personalLeaves?: Set<string>;
+}
+
 /**
  * Analyzes chronological top-level comments on a card to distinguish:
  * 1. Genuine consecutive Due Date stalling (`Postponed x2+`)
  * 2. Fulfilled recurring monthly/milestone schedules (resets to `x1`)
  * 3. Single-step Due Date + verified progress report inside `Reason:` (resets to `x1` + credits `PROGRESS_27H` unless AI flagged `[UNVERIFIED_PROGRESS]`)
+ * 4. Same-day wrap-up (up to 23:59:59 of Yellow Due Date day, respecting Holidays & Personal Leaves) counts as On-Time;
+ *    LATE_FULFILLMENT only applies once the card crosses into Red Card (`>= 08:00` next active workday).
  */
 export function analyzeDueDateTimeline(
-  chronologicalTopLevelLogs: DueDateLogInput[]
+  chronologicalTopLevelLogs: DueDateLogInput[],
+  options?: AnalyzeDueDateTimelineOptions
 ): DueDateTimelineAnalysis {
+  const companyHolidays = options?.companyHolidays ?? new Set<string>();
+  const personalLeaves = options?.personalLeaves;
   const postponedCountByLogId = new Map<string, number>();
   const verifiedProgressDueLogIds = new Set<string>();
   const onTimeFulfilledEvents: DueDateTimelineAnalysis['onTimeFulfilledEvents'] = [];
@@ -755,12 +763,6 @@ export function analyzeDueDateTimeline(
   let activeDueDate: Date | null = null;
   let activeDueScheduledAtMs = 0;
   const priorRealComments: PreviousCommentRef[] = [];
-
-  const isBeforeOrOnDueWorkEnd = (dueDate: Date, eventDate: Date): boolean => {
-    const dp = toBangkokDateParts(dueDate);
-    const dueWorkEnd = createBangkokDate(dp.year, dp.month, dp.date, WORK_DAY_END_HOUR, WORK_DAY_END_MINUTE, 59);
-    return eventDate.getTime() <= dueWorkEnd.getTime();
-  };
 
   for (const item of chronologicalTopLevelLogs) {
     const content = item.content || '';
@@ -791,9 +793,15 @@ export function analyzeDueDateTimeline(
         evalDate: itemDate,
       });
 
+      const priorSchedule = activeDueDate
+        ? resolveDueDateSchedule(activeDueDate, companyHolidays, personalLeaves)
+        : null;
+
       const fulfilledPriorSchedule =
         activeDueDate !== null &&
-        isDueDateFulfilled(activeDueDate, itemDate) &&
+        priorSchedule !== null &&
+        (isDueDateFulfilled(activeDueDate, itemDate) ||
+          itemDate.getTime() >= priorSchedule.yellowStart.getTime()) &&
         reasonEval.tier !== '0H' &&
         !isAiFlaggedStalling;
 
@@ -803,8 +811,16 @@ export function analyzeDueDateTimeline(
         reasonEval.tier === '27H' &&
         (isAiConfirmedProgress || reasonEval.isCardProgress || reasonEval.meaningfulLength >= 25);
 
-      if (fulfilledPriorSchedule && activeDueDate) {
-        if (isBeforeOrOnDueWorkEnd(activeDueDate, itemDate)) {
+      const hasLegitimateCustomerReschedule =
+        !isAiFlaggedStalling &&
+        reasonEval.tier !== '0H' &&
+        (priorSchedule === null || itemDate.getTime() < priorSchedule.redStart.getTime()) &&
+        /(?:ลูกค้า|คุณ\s*[ก-๙a-z]|client|customer|supplier|โรงงาน|ผู้บริหาร)\s*(?:ขอเลื่อน|ติดประชุม|ไม่อยู่|ลาพักร้อน|ขอนัดใหม่|เดินทาง|reschedul)/i.test(
+          reasonRaw
+        );
+
+      if (fulfilledPriorSchedule && activeDueDate && priorSchedule) {
+        if (itemDate.getTime() <= priorSchedule.yellowEnd.getTime()) {
           if (itemDate.getTime() - activeDueScheduledAtMs >= 12 * 3600 * 1000) {
             onTimeFulfilledEvents.push({
               logId: item.id,
@@ -813,7 +829,7 @@ export function analyzeDueDateTimeline(
               scheduledDueDate: activeDueDate,
             });
           }
-        } else {
+        } else if (itemDate.getTime() >= priorSchedule.redStart.getTime()) {
           lateOrStalledEvents.push({
             logId: item.id,
             userId: item.userId,
@@ -823,7 +839,11 @@ export function analyzeDueDateTimeline(
         }
       }
 
-      if (fulfilledPriorSchedule || (!isAiFlaggedStalling && reasonEval.tier === '27H')) {
+      if (
+        fulfilledPriorSchedule ||
+        hasLegitimateCustomerReschedule ||
+        (!isAiFlaggedStalling && reasonEval.tier === '27H')
+      ) {
         consecutiveDueSets = 1;
       } else {
         consecutiveDueSets += 1;
@@ -852,6 +872,14 @@ export function analyzeDueDateTimeline(
     }
 
     const parsed = parseTierPrefix(content);
+    const isSystemLifecycleReset = /^\[(?:HANDOVER:[^\]]+|HANDOVER|REOPEN)\]/i.test(
+      parsed.cleanContent.trim()
+    );
+    if (isSystemLifecycleReset) {
+      consecutiveDueSets = 0;
+      continue;
+    }
+
     let effectiveTier: UpdateTier = parsed.tier;
     if (!parsed.hasExplicitTier) {
       const prevRecent = priorRealComments.slice(-DUPLICATE_LOOKBACK_LIMIT).reverse();
@@ -863,26 +891,32 @@ export function analyzeDueDateTimeline(
 
     if (effectiveTier !== '0H') {
       consecutiveDueSets = 0;
-      if (activeDueDate && isDueDateFulfilled(activeDueDate, itemDate)) {
-        if (isBeforeOrOnDueWorkEnd(activeDueDate, itemDate)) {
-          if (itemDate.getTime() - activeDueScheduledAtMs >= 12 * 3600 * 1000) {
-            onTimeFulfilledEvents.push({
+      if (activeDueDate) {
+        const priorSchedule = resolveDueDateSchedule(activeDueDate, companyHolidays, personalLeaves);
+        if (
+          isDueDateFulfilled(activeDueDate, itemDate) ||
+          itemDate.getTime() >= priorSchedule.yellowStart.getTime()
+        ) {
+          if (itemDate.getTime() <= priorSchedule.yellowEnd.getTime()) {
+            if (itemDate.getTime() - activeDueScheduledAtMs >= 12 * 3600 * 1000) {
+              onTimeFulfilledEvents.push({
+                logId: item.id,
+                userId: item.userId,
+                fulfilledAt: itemDate,
+                scheduledDueDate: activeDueDate,
+              });
+            }
+          } else if (itemDate.getTime() >= priorSchedule.redStart.getTime()) {
+            lateOrStalledEvents.push({
               logId: item.id,
               userId: item.userId,
-              fulfilledAt: itemDate,
-              scheduledDueDate: activeDueDate,
+              eventAt: itemDate,
+              reason: 'LATE_FULFILLMENT',
             });
           }
-        } else {
-          lateOrStalledEvents.push({
-            logId: item.id,
-            userId: item.userId,
-            eventAt: itemDate,
-            reason: 'LATE_FULFILLMENT',
-          });
+          activeDueDate = null;
+          activeDueScheduledAtMs = 0;
         }
-        activeDueDate = null;
-        activeDueScheduledAtMs = 0;
       }
       priorRealComments.push({ content: parsed.cleanContent, createdAt: item.createdAt });
     }
@@ -1065,6 +1099,30 @@ export function computeCommentBubbleBadges(
 
     const itemDate = new Date(item.createdAt);
     const parsed = parseTierPrefix(content);
+    const trimmedClean = parsed.cleanContent.trim();
+    if (/^\[HANDOVER(?::[^\]]+)?\]/i.test(trimmedClean)) {
+      result.set(item.id, {
+        grade: 'BRIEF_9H',
+        tone: 'followup',
+        label: 'Handover • +1d Grace (0 XP)',
+        tooltip:
+          'Ownership transfer grace window: gives the new owner 1 working day (Yellow tomorrow) to review and follow up without inheriting prior Red hours.',
+        isInferredLegacy: false,
+      });
+      continue;
+    }
+    if (/^\[REOPEN\]/i.test(trimmedClean)) {
+      result.set(item.id, {
+        grade: 'OUTREACH_27H',
+        tone: 'followup',
+        label: 'Reopened • +3d Reset (0 XP)',
+        tooltip:
+          'Reopened card timer reset: starts a fresh 3-workday cycle from the reopen date (0 XP).',
+        isInferredLegacy: false,
+      });
+      continue;
+    }
+
     let grade: UpdateGrade;
     const isInferredLegacy = !parsed.hasExplicitTier;
 

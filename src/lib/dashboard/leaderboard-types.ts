@@ -100,7 +100,7 @@ export interface DailyCardHealthRecord {
   isOffDay: boolean;
   offDayReason?: 'Sunday' | 'Dayoff' | 'Leave';
   isNoCards?: boolean;
-  /** True when user held >= 15 active cards and slipped on only 1 red card (earns +0.25 XP Heavy-Load Shield) */
+  /** True when user held >= 10 active cards and slipped on only 1 red card (earns +0.25 XP Heavy-Load Shield) */
   isGraceShieldDay?: boolean;
   activeCardsCount: number;
   cleanCardsCount: number;

@@ -256,7 +256,7 @@ function ActivityCommentImpl({
 
   let dueDateMatch: RegExpMatchArray | null = null;
   if (isDueDateLog) {
-    dueDateMatch = log.content.match(/\[DUE DATE: (.*?)\]\nReason: ([\s\S]*)/);
+    dueDateMatch = log.content.match(/\[DUE DATE: (.*?)\](?:\n\[TIER:[^\]]+\])?\nReason: ([\s\S]*)/);
   }
 
   const handleEdit = async () => {

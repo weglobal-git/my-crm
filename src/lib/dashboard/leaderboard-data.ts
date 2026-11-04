@@ -10,16 +10,16 @@ import {
 import {
   buildEffectiveOffDatesMap,
   checkIsRedCard,
+  evaluateCardTimingState,
   pipelineCardSelect,
   type KanbanCardDTO,
 } from '@/lib/pipeline-card-dto';
 import { getCompanyHolidaysAction, getUserLeavesAction } from '@/lib/actions/holiday';
 import {
   calculateElapsedWorkingMs,
-  createBangkokDate,
+  RED_CARD_WORKING_MS_THRESHOLD,
+  resolveDueDateSchedule,
   toBangkokDateParts,
-  WORK_DAY_END_HOUR,
-  WORK_DAY_END_MINUTE,
 } from '@/lib/business-days';
 import {
   analyzeDueDateTimeline,
@@ -448,9 +448,22 @@ export async function getDepartmentLeaderboardData(params: {
         activityLogs: {
           where: {
             parentId: null,
-            type: 'COMMENT' as const,
             createdAt: { lte: asOfDate },
-            NOT: [{ content: { startsWith: '[URGENT_' } }],
+            OR: [
+              {
+                type: 'COMMENT' as const,
+                NOT: [{ content: { startsWith: '[URGENT_' } }],
+              },
+              {
+                type: 'SYSTEM_UPDATE' as const,
+                OR: [
+                  { content: { startsWith: 'Ownership transferred from ' } },
+                  { content: { startsWith: 'Deal reopened' } },
+                  { content: { startsWith: 'Deal marked as ' } },
+                  { content: { startsWith: 'Task completed' } },
+                ],
+              },
+            ],
           },
           orderBy: [{ createdAt: 'desc' as const }, { id: 'desc' as const }],
           select: {
@@ -560,9 +573,18 @@ export async function getDepartmentLeaderboardData(params: {
     return true;
   };
 
-  // 5. Daily 23:00 Card Health Sampling across ALL owned board cards (SALES_DEAL + INTERNAL_TASK)
+  // 5. Daily Workday-Aligned Card Health Sampling across ALL owned board cards (including historical transfers)
   const ownedBoardDeals = deptOpportunities
-    .filter((d) => userIdSet.has(d.ownerId) && d.pipelineStageId !== null)
+    .filter(
+      (d) =>
+        d.pipelineStageId !== null &&
+        (userIdSet.has(d.ownerId) ||
+          d.activityLogs.some(
+            (l) =>
+              l.content.includes('[HANDOVER:') ||
+              (l.type === 'SYSTEM_UPDATE' && l.content.startsWith('Ownership transferred from '))
+          ))
+    )
     .map((d) => ({
       ...(d as unknown as KanbanCardDTO),
       closedAt: d.status === 'OPEN' ? null : d.closedAt,
@@ -599,6 +621,9 @@ export async function getDepartmentLeaderboardData(params: {
     rawContent: string
   ): { isNonZero: boolean; isVerified27h: boolean; isCardProgress: boolean } => {
     const parsed = parseTierPrefix(rawContent);
+    if (/^\[(?:HANDOVER:[^\]]+|HANDOVER|REOPEN)\]/i.test(parsed.cleanContent.trim())) {
+      return { isNonZero: false, isVerified27h: false, isCardProgress: false };
+    }
     if (parsed.hasExplicitTier) {
       return {
         isNonZero: parsed.tier !== '0H',
@@ -808,7 +833,6 @@ export async function getDepartmentLeaderboardData(params: {
 
   // Evaluate Substance Gate, Due Date Timelines, LTC Care, Coverage, and Outcomes across deptOpportunities
   let departmentTotalRevenue = 0;
-  const isCardCurrentlyRedById = new Map<string, boolean>();
 
   for (const opp of deptOpportunities) {
     if (!matchesGlobalFilter(opp)) continue;
@@ -821,34 +845,39 @@ export async function getDepartmentLeaderboardData(params: {
 
     const cardDto = opp as unknown as KanbanCardDTO;
     const effDueNow = opp.status === 'OPEN' ? resolveEffectiveDueDateAt(cardDto, asOfDate) : null;
-    const isCurrentlyRed =
+    const timingNow =
       opp.status === 'OPEN'
-        ? checkIsRedCard(
+        ? evaluateCardTimingState(
             { ...cardDto, dueDate: effDueNow },
             companyHolidays,
             leavesByUser,
             asOfDate,
             prebuiltOffDatesMap
           )
-        : false;
-    isCardCurrentlyRedById.set(opp.id, isCurrentlyRed);
+        : null;
+    const isCurrentlyRed = timingNow?.isRed ?? false;
 
-    const chronologicalLogs = [...opp.activityLogs].reverse().map((l) => ({
+    const commentLogs = opp.activityLogs.filter((l) => l.type === 'COMMENT');
+    const chronologicalLogs = [...commentLogs].reverse().map((l) => ({
       id: l.id,
       content: l.content,
       createdAt: l.createdAt,
       userId: l.userId,
     }));
-    const dueTimeline = analyzeDueDateTimeline(chronologicalLogs);
+    const ownerLeaves = leavesByUser.get(opp.ownerId);
+    const dueTimeline = analyzeDueDateTimeline(chronologicalLogs, {
+      companyHolidays,
+      personalLeaves: ownerLeaves,
+    });
 
-    // Single pass over opp.activityLogs to gather verified +27h & card progress timelines
+    // Single pass over commentLogs to gather verified +27h & card progress timelines
     const lifetimeVerified27hDaysOnCard = new Set<string>();
     const lifetimeVerified27hHelpersOnCard = new Set<string>();
     const monthlyVerified27hDaysByUser = new Map<string, Set<string>>();
     const monthlyProgressTimestampsByUser = new Map<string, number[]>();
     const monthlyProgressDaysOnCard = new Set<string>();
 
-    for (const log of opp.activityLogs) {
+    for (const log of commentLogs) {
       const logMs = new Date(log.createdAt).getTime();
       const logDayKey = toBangkokDayKey(log.createdAt);
       const isVerifiedProgressDueLog = dueTimeline.verifiedProgressDueLogIds.has(log.id);
@@ -948,16 +977,8 @@ export async function getDepartmentLeaderboardData(params: {
       }
     }
     if (opp.status === 'OPEN' && isCurrentlyRed && effDueNow !== null) {
-      const dp = toBangkokDateParts(effDueNow);
-      const dueWorkEnd = createBangkokDate(
-        dp.year,
-        dp.month,
-        dp.date,
-        WORK_DAY_END_HOUR,
-        WORK_DAY_END_MINUTE,
-        59
-      );
-      if (asOfDate.getTime() > dueWorkEnd.getTime() && !lastMissedDueMsByUser.has(opp.ownerId)) {
+      const dueSched = resolveDueDateSchedule(effDueNow, companyHolidays, ownerLeaves);
+      if (asOfDate.getTime() >= dueSched.redStart.getTime() && !lastMissedDueMsByUser.has(opp.ownerId)) {
         const oAcc = accByUser.get(opp.ownerId);
         if (oAcc) {
           oAcc.missedOrStalledDueCount += 1;
@@ -965,7 +986,7 @@ export async function getDepartmentLeaderboardData(params: {
       }
     }
 
-    const hasMeaningfulComment = opp.activityLogs.some((log) => {
+    const hasMeaningfulComment = commentLogs.some((log) => {
       if (dueTimeline.verifiedProgressDueLogIds.has(log.id)) return true;
       if (log.content.startsWith('[DUE DATE:') || log.content.startsWith('[URGENT_')) {
         return false;
@@ -1184,16 +1205,12 @@ export async function getDepartmentLeaderboardData(params: {
           const effDueAtClose = resolveEffectiveDueDateAt(cardDto, closedAtDate);
           let completedOnTime = true;
           if (effDueAtClose) {
-            const dueParts = toBangkokDateParts(effDueAtClose);
-            const dueWorkEnd = createBangkokDate(
-              dueParts.year,
-              dueParts.month,
-              dueParts.date,
-              WORK_DAY_END_HOUR,
-              WORK_DAY_END_MINUTE,
-              0
+            const closeSchedule = resolveDueDateSchedule(
+              effDueAtClose,
+              companyHolidays,
+              ownerLeaves
             );
-            completedOnTime = closedMs <= dueWorkEnd.getTime();
+            completedOnTime = closedMs <= closeSchedule.yellowEnd.getTime();
           } else {
             const openSnapshot: KanbanCardDTO = {
               ...cardDto,
@@ -1223,15 +1240,25 @@ export async function getDepartmentLeaderboardData(params: {
           }
         } else if (opp.status === 'OPEN') {
           if (isCurrentlyRed) {
-            ownerAcc.overdueOpenInternalTasksCount += 1;
-            if (ownerAcc.outcomeCards.length < 15) {
-              ownerAcc.outcomeCards.push({
-                dealId: opp.id,
-                topic: opp.topic,
-                companyName: oppCompanyName,
-                badgeText: 'Overdue (Hurts SLA)',
-                tone: 'rose',
-              });
+            const overdueRedMs = timingNow?.threshold
+              ? calculateElapsedWorkingMs(timingNow.threshold, asOfDate, companyHolidays, {
+                  ceilingMs: 0,
+                  personalLeaves: ownerLeaves,
+                })
+              : 0;
+            // Only penalize Pillar 4 Open Task SLA once an open task is neglected in Red for >= 27 working hours (3+ full workdays),
+            // preventing quadruple Day-1 punishment across Card Health + Discipline + Execution + Task SLA.
+            if (overdueRedMs >= RED_CARD_WORKING_MS_THRESHOLD) {
+              ownerAcc.overdueOpenInternalTasksCount += 1;
+              if (ownerAcc.outcomeCards.length < 15) {
+                ownerAcc.outcomeCards.push({
+                  dealId: opp.id,
+                  topic: opp.topic,
+                  companyName: oppCompanyName,
+                  badgeText: 'Neglected 3d+ (Hurts SLA)',
+                  tone: 'rose',
+                });
+              }
             }
           } else {
             const openTaskMilestones = monthlyProgressDaysOnCard.size + ownerTodosOnCard;
@@ -1326,22 +1353,8 @@ export async function getDepartmentLeaderboardData(params: {
     const totalOwnedSubstantive = acc.substantiveSalesDeals + acc.substantiveInternalTasks;
     const isPureCollaborator = totalOwnedSubstantive === 0 && acc.teammate27hAssistedCards.size > 0;
 
-    let collaboratorAssistedRedRate = 0;
-    let assistedCleanCount = 0;
-    if (acc.teammate27hAssistedCards.size > 0) {
-      let assistedRedCount = 0;
-      for (const cardId of acc.teammate27hAssistedCards) {
-        if (isCardCurrentlyRedById.get(cardId)) {
-          assistedRedCount += 1;
-        } else {
-          assistedCleanCount += 1;
-        }
-      }
-      if (!hasMonthlyCardExposure) {
-        collaboratorAssistedRedRate =
-          Math.round((assistedRedCount / acc.teammate27hAssistedCards.size) * 1000) / 10;
-      }
-    }
+    const collaboratorAssistedRedRate = 0;
+    const assistedCleanCount = acc.teammate27hAssistedCards.size;
 
     const effectiveProgressedCards = isPureCollaborator
       ? acc.progressedCollaboratorCards.size

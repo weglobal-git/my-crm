@@ -42,6 +42,7 @@ import {
   classifyUpdateQuality,
   DUPLICATE_LOOKBACK_LIMIT,
   encodeTierPrefix,
+  getCommentGrantMs,
   MIN_CHARS_FOR_27H,
   parseTierPrefix,
   resolveEditedCommentGrade,
@@ -52,12 +53,17 @@ import {
   gradeDueDateReasonWithAi,
 } from '@/lib/actions/ai-accelerator';
 import {
+  countRemainingActiveWorkdaysAfter,
   createBangkokDate,
   formatBangkokDueDateDisplay,
   MAX_DUE_DATE_HORIZON_DAYS,
   MAX_LONG_LEAD_DUE_DATE_HORIZON_DAYS,
   MIN_LONG_LEAD_DUE_DATE_REASON_LENGTH,
+  RED_CARD_WORKING_MS_THRESHOLD,
+  resolveDueDateSchedule,
+  resolveWorkdayTimerSchedule,
   toBangkokDateParts,
+  WORK_HOURS_PER_DAY,
 } from '@/lib/business-days';
 import { getCachedPipelineStages } from '@/lib/pipeline-stage-titles';
 import { withSerializableRetry } from '@/lib/serializable-transaction';
@@ -194,6 +200,7 @@ export async function moveOpportunity(
         currency: true,
         companyId: true,
         ownerId: true,
+        dueDate: true,
         goodsLoadingDate: true,
         invoiceId: true,
         lossReason: true,
@@ -251,18 +258,53 @@ export async function moveOpportunity(
   }
 
   const isClosing = newStatus === "WON" || newStatus === "LOST";
+  const isReopening = opportunity.status !== "OPEN" && newStatus === "OPEN";
+  const now = new Date();
+  const shouldClearStaleDueDateOnReopen =
+    isReopening && opportunity.dueDate
+      ? now.getTime() >= resolveDueDateSchedule(opportunity.dueDate).yellowStart.getTime()
+      : false;
 
   // Perform the update and select pipelineOpportunitySelect directly in 1 DB trip
-  const fullDeal = await prisma.opportunity.update({
-    where: { id: opportunityId },
-    data: {
-      pipelineStageId: newStageId,
-      status: newStatus,
-      closedAt: isClosing ? new Date() : null,
-      ...(effectiveLossReason ? { lossReason: effectiveLossReason } : {}),
-    },
-    select: pipelineOpportunitySelect,
-  });
+  // (when reopening a closed deal, also create a top-level [REOPEN] timer reset comment)
+  let reopenActivityLog: Awaited<ReturnType<typeof prisma.activityLog.create>> | null = null;
+  const fullDeal = isReopening
+    ? await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const createdReopenLog = await tx.activityLog.create({
+          data: {
+            opportunityId,
+            userId: actor.id,
+            type: "COMMENT",
+            content: `[TIER:27H]\n[REOPEN] เปิดการ์ดกลับมาดำเนินการต่อ`,
+          },
+          include: {
+            user: true,
+            replies: { include: { user: true }, orderBy: { createdAt: "asc" as const } },
+          },
+        });
+        reopenActivityLog = createdReopenLog;
+        return tx.opportunity.update({
+          where: { id: opportunityId },
+          data: {
+            pipelineStageId: newStageId,
+            status: newStatus,
+            closedAt: null,
+            ...(shouldClearStaleDueDateOnReopen ? { dueDate: null } : {}),
+            ...(effectiveLossReason ? { lossReason: effectiveLossReason } : {}),
+          },
+          select: pipelineOpportunitySelect,
+        });
+      })
+    : await prisma.opportunity.update({
+        where: { id: opportunityId },
+        data: {
+          pipelineStageId: newStageId,
+          status: newStatus,
+          closedAt: isClosing ? now : null,
+          ...(effectiveLossReason ? { lossReason: effectiveLossReason } : {}),
+        },
+        select: pipelineOpportunitySelect,
+      });
 
   invalidateOpportunityReadAccess(opportunityId);
 
@@ -286,6 +328,14 @@ export async function moveOpportunity(
           content: systemMessage,
         }
       }).catch((err) => console.warn('[moveOpportunity] Failed to create system log:', err));
+
+      if (reopenActivityLog) {
+        await notifyPrivatePipelineUpdate(opportunityId, {
+          action: 'ACTIVITY_ADDED',
+          dealId: opportunityId,
+          activityLog: reopenActivityLog,
+        });
+      }
 
       if (isClosing) {
         const recipients = [
@@ -671,16 +721,61 @@ export async function updateDueDateWithLog(opportunityId: string, dueDate: Date 
       replies: { include: { user: true }, orderBy: { createdAt: 'asc' as const } },
     };
 
+    // Preserve Non-Punitive Ceiling when removing a Due Date so existing +27h runway isn't shrunk to 1d
+    let removedTierMeta = '';
+    if (!dueDate) {
+      const prevTimerLog = opp.activityLogs?.[0];
+      const baseTimestamp = prevTimerLog
+        ? new Date(prevTimerLog.createdAt)
+        : opp.createdAt
+          ? new Date(opp.createdAt)
+          : new Date();
+      let prevGrantMs = RED_CARD_WORKING_MS_THRESHOLD;
+      if (prevTimerLog) {
+        if (prevTimerLog.content.startsWith('[DUE DATE: Removed]')) {
+          const tierLine = prevTimerLog.content.split('\n').find((l) => l.startsWith('[TIER:'));
+          prevGrantMs = tierLine
+            ? Math.max(WORK_HOURS_PER_DAY * 3600 * 1000, getCommentGrantMs(tierLine))
+            : WORK_HOURS_PER_DAY * 3600 * 1000;
+        } else {
+          prevGrantMs = getCommentGrantMs(prevTimerLog.content) || RED_CARD_WORKING_MS_THRESHOLD;
+        }
+      }
+      const prevSchedule = resolveWorkdayTimerSchedule(baseTimestamp, prevGrantMs);
+      const remainingDays = countRemainingActiveWorkdaysAfter(new Date(), prevSchedule.yellowEnd);
+      if (remainingDays > 1) {
+        removedTierMeta = `\n[TIER:9H:${remainingDays * WORK_HOURS_PER_DAY}]`;
+      }
+    }
+
     // 1. Log to Activity (with special format for pill badge)
     const createdActivityLog = await tx.activityLog.create({
       data: {
-        content: `[DUE DATE: ${formattedDate}]\nReason: ${sanitizedReason}`,
+        content: `[DUE DATE: ${formattedDate}]${removedTierMeta}\nReason: ${sanitizedReason}`,
         type: "COMMENT",
         opportunityId,
         userId: actor.id,
       },
       include: logInclude,
     });
+
+    if (!dueDate) {
+      opp = {
+        ...opp,
+        activityLogs: [
+          {
+            id: createdActivityLog.id,
+            content: createdActivityLog.content,
+            type: createdActivityLog.type,
+            createdAt: createdActivityLog.createdAt,
+            user: {
+              name: createdActivityLog.user?.name ?? null,
+              image: createdActivityLog.user?.image ?? null,
+            },
+          },
+        ],
+      };
+    }
 
     // 2. Log to System (text only)
     const createdSystemLog = await tx.activityLog.create({

@@ -9,10 +9,11 @@ import {
 import { dispatchNotification } from "@/lib/notification-dispatcher";
 import { isDueDateFulfilled, pipelineOpportunitySelect } from "@/lib/pipeline-opportunities";
 import {
-  calculateElapsedWorkingMs,
+  countRemainingActiveWorkdaysAfter,
   isSameBangkokCalendarDay,
   RED_CARD_WORKING_MS_THRESHOLD,
   resolveTimelineDueDate,
+  resolveWorkdayTimerSchedule,
   WORK_HOURS_PER_DAY,
 } from "@/lib/business-days";
 import {
@@ -189,13 +190,23 @@ export async function addActivityLogForActor(
           }
         }
 
-        const elapsedMs = calculateElapsedWorkingMs(baseDate, new Date(), companyHolidays, {
-          ceilingMs: prevGrantMs,
-          stopAtMs: prevGrantMs,
-          personalLeaves: ownerPersonalLeaves,
-        });
-        const remainingHours = Math.max(0, (prevGrantMs - elapsedMs) / (3600 * 1000));
-        priorCeilingHours = Math.max(WORK_HOURS_PER_DAY, remainingHours);
+        const nowDate = new Date();
+        const prevSchedule = resolveWorkdayTimerSchedule(
+          baseDate,
+          prevGrantMs,
+          companyHolidays,
+          ownerPersonalLeaves
+        );
+        const remainingWorkdays = countRemainingActiveWorkdaysAfter(
+          nowDate,
+          prevSchedule.yellowStart,
+          companyHolidays,
+          ownerPersonalLeaves
+        );
+        priorCeilingHours = Math.max(
+          WORK_HOURS_PER_DAY,
+          remainingWorkdays * WORK_HOURS_PER_DAY
+        );
       }
     }
 
